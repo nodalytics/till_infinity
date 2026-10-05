@@ -32,17 +32,31 @@ rising steadily" is precisely `r2`, and only the fit produces it.
 
 The arithmetic is arithmetic and the tests pin it against hand-computed fits.
 
-**The thresholds are not measured.** `FLAT_VOL`, `STRONG_VOL` and `MIN_R2` are
-stated here so they can be argued with rather than discovered inside a
-condition, but nothing has scored them against outcomes. The honest way to
-settle them is to publish `regression_slope_vol` and `regression_r2` on every
-decision and score them the way `research/docs/settings.md` settles everything
-else - which is what `features` exists for.
+**The thresholds are still not measured against outcomes**, but two of them are
+no longer mine. `SPAN` and `MIN_R2` are now the reference indicators' own
+values - 100 bars, and `|R| > 0.8` written as `r2 > 0.64` - recorded in
+`research/docs/lrc-retest.md`. A number taken from the script a human is
+actually looking at beats a number taken from my reasoning about holding
+periods, because the whole point of publishing these is to compare them with
+what the chart says. `FLAT_ACROSS` and `STRONG_ACROSS` have no reference value
+to borrow, since the scripts colour a slope rather than thresholding it, and
+they remain arguable constants stated out loud.
+
+**On DGT's slope.** That script computes the slope as
+`correlation * stdev(close) / stdev(bar_index)`, which looks like a second
+method and is not one: `r * sigma_y / sigma_x` *is* the least-squares slope,
+exactly, by the algebra of r. The two scripts the desk sent therefore compute
+one number two ways. What was missing here was the correlation itself, because
+`r2` discards the sign - so `Channel.correlation` reports it signed, in the
+units the reference states its threshold in. There is no second slope
+calculation because there is no second slope.
 
 So this module **does not gate a trade**. It publishes features and renders an
-arrow. A gate that reads it should be a separate, measured change, and should
-be weighed against turning on `max_against_vol`, which is the momentum filter
-this deployment already has and currently runs at zero.
+arrow, and `Trader._read_the_trend` is what puts them on every decision - which
+is the step that was missing, and the reason nothing could be scored. A gate
+that reads them should be a separate, measured change, and should be weighed
+against turning on `max_against_vol`, which is the momentum filter this
+deployment already has and currently runs at 1.5.
 """
 
 from __future__ import annotations
@@ -55,31 +69,60 @@ from .candles import Bar
 
 NAN = float("nan")
 
-#: Bars in the fit. Twenty is one trading hour on a 3m chart and a third of a
-#: session on 15m, which is the horizon the entry timeframes actually trade -
-#: 85% of this desk's live entries are 5m or faster. It is **not** measured.
-SPAN = 20
+#: Bars in the fit. **100, which is the reference indicator's own default** -
+#: see `research/docs/lrc-retest.md`, where the two TradingView scripts this
+#: module was asked for are recorded as `len` 100, 200 and 50.
+#:
+#: It was 20 when this module was written, chosen because 20 bars is one
+#: trading hour on a 3m chart and most of this desk's entries are 5m or faster.
+#: That was a reasonable guess and it was still a guess, and the scripts the
+#: desk actually reads were specified afterwards. A number taken from the
+#: indicator a human is looking at is worth more than a number taken from my
+#: reasoning about holding periods, because the point of publishing these is to
+#: compare them against what the chart says.
+SPAN = 100
+
+#: The three reference lengths, fitted together. A trend that only exists at one
+#: window is a property of the window, and the cheapest way to see that is to
+#: report all three rather than to pick one and hope.
+SPANS: tuple[int, ...] = (50, 100, 200)
 
 #: Bars for the true-range average that normalises the slope. Fourteen is the
 #: conventional ATR window and is used here for the same reason the rest of
 #: this file states its constants: so the number is arguable, not implicit.
 ATR_SPAN = 14
 
-#: Below this the line is flat. In volatility units per bar, so 0.05 means the
-#: fit climbs one twentieth of a bar's typical range each bar - over a 20-bar
-#: window, one whole unit. Unmeasured.
-FLAT_VOL = 0.05
+#: Flat and steep, **in volatility units across the whole window** rather than
+#: per bar. Per bar was the original form and it does not survive a change of
+#: span: 0.05 a bar is one unit over 20 bars and five units over 100, so
+#: lengthening the window silently moved the thresholds by 5x. Stating the
+#: across-window figure and dividing by `span` keeps the meaning the original
+#: comments described - "one whole unit" and "four units across the window" -
+#: whatever the window is.
+#:
+#: Still unmeasured against outcomes. Unlike `MIN_R2` these have no reference
+#: value to borrow, because the scripts colour a slope rather than thresholding
+#: it.
+FLAT_ACROSS = 1.0
+STRONG_ACROSS = 4.0
 
-#: At or above this the line is steep: a fifth of a unit per bar is four units
-#: across the window, which is further than most of this desk's stops.
-#: Unmeasured.
-STRONG_VOL = 0.20
+#: The same two at the default span, kept as module constants because that is
+#: how callers without a span in hand read them.
+FLAT_VOL = FLAT_ACROSS / SPAN
+STRONG_VOL = STRONG_ACROSS / SPAN
 
 #: Below this r-squared the slope is not describing the bars it was fitted to,
-#: and the arrow should say so rather than point confidently at noise. A quarter
-#: of the variance is a weak line by any standard and a deliberately permissive
-#: floor: the point is to catch the fits that explain nothing. Unmeasured.
-MIN_R2 = 0.25
+#: and the arrow should say so rather than point confidently at noise.
+#:
+#: **0.64, which is the reference's |R| > 0.8 squared.** DGT's script calls a
+#: trend usable at a correlation of 0.8 and r-squared is that correlation
+#: squared, so the two thresholds are the same threshold written in different
+#: units - see `research/docs/lrc-retest.md`.
+#:
+#: It was 0.25 here, which is a far weaker line: a quarter of the variance
+#: explained. That was deliberately permissive and aimed only at catching fits
+#: that explain nothing, which is a different job from "is this a trend".
+MIN_R2 = 0.64
 
 #: Glyphs for the five states. Triangles rather than words because these land in
 #: an alert line beside the emoji the other cards use, and a reader scanning a
@@ -107,6 +150,23 @@ class Channel:
     stderr: float
     r2: float
     span: int
+
+    @property
+    def correlation(self) -> float:
+        """Pearson's r for the fit, **signed** - the reference script's `R`.
+
+        `r2` loses the direction, and the direction is in `slope`, so nothing
+        needed this until the threshold had to be stated in the same units the
+        indicator states it in: DGT's script tests `|R| > 0.8`, which is
+        `r2 > 0.64`.
+
+        See the note on `slope` in this module's docstring for why there is no
+        second slope calculation to go with this: `r * stdev(y) / stdev(x)` is
+        the least-squares slope, exactly, so the script's two formulations are
+        one number.
+        """
+        root = math.sqrt(self.r2) if self.r2 > 0 else 0.0
+        return -root if self.slope < 0 else root
 
     @property
     def last(self) -> float:
@@ -213,28 +273,42 @@ def slope_vol(channel: Channel | None, unit: float) -> float:
     return channel.slope / unit
 
 
-def arrow(slope: float, r2: float = 1.0) -> str:
+def flat_vol(span: int = SPAN) -> float:
+    """`FLAT_ACROSS` as a per-bar slope at this span."""
+    return FLAT_ACROSS / float(span) if span > 0 else NAN
+
+
+def strong_vol(span: int = SPAN) -> float:
+    """`STRONG_ACROSS` as a per-bar slope at this span."""
+    return STRONG_ACROSS / float(span) if span > 0 else NAN
+
+
+def arrow(slope: float, r2: float = 1.0, span: int = SPAN) -> str:
     """The glyph for a slope in volatility units per bar.
 
     A fit that explains less than `MIN_R2` of its own window reads flat whatever
     its slope, because the slope of a cloud is not a direction. An absent
     reading reads flat too - the alert says "no trend", which is what an unknown
     trend means to someone looking at it.
+
+    `span` because the thresholds are stated across the window: the same per-bar
+    slope is a gentle drift over 200 bars and a steep line over 50.
     """
     if math.isnan(slope) or math.isnan(r2) or r2 < MIN_R2:
         return FLAT
-    if slope >= STRONG_VOL:
+    steep, gentle = strong_vol(span), flat_vol(span)
+    if slope >= steep:
         return RISING_FAST
-    if slope >= FLAT_VOL:
+    if slope >= gentle:
         return RISING
-    if slope <= -STRONG_VOL:
+    if slope <= -steep:
         return FALLING_FAST
-    if slope <= -FLAT_VOL:
+    if slope <= -gentle:
         return FALLING
     return FLAT
 
 
-def agrees(slope: float, r2: float, buying: bool) -> bool | None:
+def agrees(slope: float, r2: float, buying: bool, span: int = SPAN) -> bool | None:
     """Whether a trade in this direction runs with the line.
 
     None when there is no usable fit, and that is deliberately not False: a gate
@@ -244,7 +318,7 @@ def agrees(slope: float, r2: float, buying: bool) -> bool | None:
     """
     if math.isnan(slope) or math.isnan(r2) or r2 < MIN_R2:
         return None
-    if abs(slope) < FLAT_VOL:
+    if abs(slope) < flat_vol(span):
         return None
     return (slope > 0) == buying
 
@@ -276,6 +350,10 @@ def features(
     out = {
         "regression_slope_vol": per_bar,
         "regression_r2": channel.r2,
+        # Signed, and the reference's own threshold unit: the script tests
+        # |R| > 0.8 where this file tests r2 > 0.64. Published beside r2 rather
+        # than instead of it so a reading can be compared with either.
+        "regression_correlation": channel.correlation,
         "regression_span": float(channel.span),
         # The channel's half-width in volatility units: how wide the line's own
         # error is, which is the scale any "price left the channel" test needs.
@@ -298,6 +376,39 @@ def features(
     return out
 
 
+def features_across(
+    bars: Sequence[Bar],
+    *,
+    unit: float = 0.0,
+    spans: Sequence[int] = SPANS,
+    step: int = 0,
+) -> dict[str, float]:
+    """`features` at each reference length, the default span unsuffixed.
+
+    `SPAN` keeps the bare `regression_*` names so `card_line` and anything else
+    reading one fit is unaffected; the other lengths are suffixed with their own
+    span - `regression_slope_vol_50`, `regression_r2_200`.
+
+    Three windows rather than one because a slope that only exists at one length
+    is a property of the length. Nothing here compares them: the comparison is
+    the point of writing all three to the journal, and it is a question for the
+    record rather than for this function.
+
+    Empty when not one of the spans could be fitted, for the same reason
+    `features` is empty rather than NaN-filled.
+    """
+    out: dict[str, float] = {}
+    for span in sorted({int(s) for s in spans}):
+        got = features(bars, unit=unit, span=span, step=step)
+        if not got:
+            continue
+        if span == SPAN:
+            out.update(got)
+        else:
+            out.update({f"{k}_{span}": v for k, v in got.items()})
+    return out
+
+
 def card_line(got: dict[str, float]) -> list[str]:
     """The trend line for an alert card, or nothing when there is no fit.
 
@@ -313,15 +424,13 @@ def card_line(got: dict[str, float]) -> list[str]:
     r2 = float(r2)
     if math.isnan(slope) or math.isnan(r2):
         return []
-    glyph = arrow(slope, r2)
+    span = int(float(got.get("regression_span") or SPAN))
+    glyph = arrow(slope, r2, span)
     # The slope is quoted per bar and across the window, because per bar is the
     # comparable number and across the window is the one a reader can see on a
     # chart. Stating only the first has had people read 0.08 as "nothing".
-    across = slope * float(got.get("regression_span") or SPAN)
-    line = (
-        f"{glyph} trend {slope:+.2f}v/bar ({across:+.1f}v over "
-        f"{int(float(got.get('regression_span') or SPAN))}) · r² {r2:.2f}"
-    )
+    across = slope * float(span)
+    line = f"{glyph} trend {slope:+.3f}v/bar ({across:+.1f}v over {span}) · r² {r2:.2f}"
     place = got.get("regression_place")
     if place is not None and not math.isnan(float(place)):
         line += f" · {float(place):+.1f}sd in channel"
