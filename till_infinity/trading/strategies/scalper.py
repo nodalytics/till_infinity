@@ -400,7 +400,7 @@ class LevelStrategy(Strategy):
         See `strategies-scalper.md` in research/docs.
         """
         aim = push_vol * self.target_multiple
-        floor = getattr(self, "reward_floor", 0.0) or 0.0
+        floor = self.reward_floor
         return max(aim, stop_vol * floor) if floor > 0 else aim
 
     def at_the_right_place(
@@ -674,6 +674,10 @@ class LevelStrategy(Strategy):
             floor_vol=self.settings.parked_stop_vol if tight else 0.0,
         )
 
+        # The geometry is finished here and nowhere earlier: the stop has been
+        # widened for the zone, the fill and the broker, and the target has been
+        # pulled back. See `Strategy.floored_target`.
+        target = self.floored_target(spec, side, entry, stop, target)
         broker_says = respects_stops_level(spec, entry, stop, target)
         if broker_says:
             return Refusal("stops_level", broker_says, feed)
@@ -838,6 +842,12 @@ class LevelScalp(LevelStrategy):
     """The plain reading: take the call as published."""
 
     name: ClassVar[str] = "level-scalp"
+
+    #: Median reward-to-risk 0.55 over 245 live decisions, 89% below 1.0.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     description: ClassVar[str] = (
         "Trade a level call in the direction it states, stop beyond the level, "
         "target the expected push. Fast timeframes only. The default."
@@ -899,6 +909,12 @@ class MomentumScalp(LevelStrategy):
     """
 
     name: ClassVar[str] = "momentum-scalp"
+
+    #: Median reward-to-risk 0.61 over 82 live decisions, 88% below 1.0.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     description: ClassVar[str] = (
         "Only calls agreeing with three speeds of recent edge. Misses turns by construction."
     )
@@ -949,6 +965,14 @@ class Snap(LevelStrategy):
     """
 
     name: ClassVar[str] = "snap"
+
+    #: Median reward-to-risk 0.94 over 174 live decisions, 53% below 1.0. The
+    #: mean of 59.20 is one call with an enormous target and not a reason to
+    #: leave the other half alone.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     description: ClassVar[str] = (
         "The level call held for as long as the interaction actually lasts - "
         "the median touch resolves in 18 seconds. Same trade as level-scalp "
@@ -980,6 +1004,17 @@ class ThesisOnly(LevelStrategy):
     """
 
     name: ClassVar[str] = "thesis-only"
+
+    #: Median reward-to-risk 0.40 over 361 live decisions, 98% of them below
+    #: 1.0 and 72% below 0.5 - the worst geometry on the desk. This is also
+    #: the strategy the one existing measurement was taken on, in
+    #: `opportunity.Shape`: it won 45.9% needing 73%, and lost 441 units over
+    #: 159 trades while its targets earned 639. That fix has been sitting in a
+    #: table this class never reads.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     description: ClassVar[str] = (
         "The level call with the stop moved out of the way - a circuit breaker "
         "rather than a trade decision. Exits on target or on the clock. An "
@@ -1023,6 +1058,12 @@ class Inverse(LevelStrategy):
     """
 
     name: ClassVar[str] = "inverse"
+
+    #: Median reward-to-risk 0.60 over 64 live decisions, 83% below 1.0.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     description: ClassVar[str] = (
         "The calls the model likes best, traded the other way. A control on "
         "whether the direction or the execution is what loses money."

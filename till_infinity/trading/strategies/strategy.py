@@ -32,7 +32,7 @@ from typing import Any, ClassVar
 
 from ...logging import get_logger
 from ..config import Settings
-from ..models import SymbolSpec, Tick, Verdict
+from ..models import Side, SymbolSpec, Tick, Verdict
 from ..risk import Limits
 from .floors import Floors
 
@@ -198,6 +198,69 @@ class Strategy(ABC):
     #: One global number cannot fit both: 900s against a 120-second scalp is a
     #: seven-to-one throttle, and against a day-long swing it is nothing.
     cooldown_s: ClassVar[float] = 0.0
+
+    #: The least reward this strategy will accept for the risk it ends up with,
+    #: as a multiple. Zero is off. **It moves the target out; it refuses
+    #: nothing** - which is the whole difference between this and
+    #: `Limits.min_reward_to_risk`, and the reason the measurement against that
+    #: one does not apply here. See `risk.py` on the 47,676 touches that refuted
+    #: the gate: refusing 40,421 calls bought 0.040R of quality. Raising a
+    #: target refuses nothing, so it has none of that cost.
+    #:
+    #: **This field existed and was wired to nothing.** It was read in two
+    #: places by `getattr(self, "reward_floor", 0.0)` and declared in exactly
+    #: one - `opportunity.Shape` - so every strategy that runs standalone got
+    #: the `getattr` default and the floor never fired. The one measurement
+    #: behind it was taken on `thesis-only` and recorded in `opportunity.py`: a
+    #: 4v stop against a 1.5v target is 0.37 reward to risk, needs a 73% win
+    #: rate, won 45.9%, and lost 441 units over 159 trades while its targets
+    #: earned 639. That diagnosis was never delivered to the strategy it was
+    #: about, whose live median reward-to-risk is 0.40 over 361 decisions.
+    #:
+    #: Measured over all 2,563 live decisions on 2026-10-05, median
+    #: reward-to-risk and the share below 1.0: `thesis-only` 0.40/98%,
+    #: `approach-scalp` 0.51/89%, `level-scalp` 0.55/89%, `inverse` 0.60/83%,
+    #: `momentum-scalp` 0.61/88%, `snap` 0.94/53%, `fade-to-value` 1.27/42%
+    #: against `sweep-aware` 2.71/5% - which is the only strategy of size that
+    #: makes money. That is the argument for this number in one line.
+    reward_floor: ClassVar[float] = 0.0
+
+    def floored_target(
+        self,
+        spec: SymbolSpec,
+        side: Side,
+        entry: float,
+        stop: float,
+        target: float,
+    ) -> float:
+        """`target`, pushed out until it pays `reward_floor` times the **real** risk.
+
+        Called where the geometry is finished rather than where it is proposed,
+        and that is the point. A stop is proposed as a multiple of volatility
+        and then widened twice - once to clear the level's zone, once to clear
+        the fill and the broker's own `stops_level` - while a target is proposed
+        from the expected push and then pulled *back* by `target_buffer_vol`.
+        Flooring against the proposed stop therefore floors against a number
+        that is not the risk the trade carries.
+
+        The live case this was written for: `fade-to-value` sold EURUSD with a
+        44.1 pip stop and a 9.8 pip target, 0.22 reward to risk, needing an 82%
+        win rate. Its stop was proposed at 1.69v and the level's zone widened it
+        to 21.7v, while its target is fair value and cannot move - so the only
+        number that describes that trade is `abs(entry - stop)` after both
+        widenings, which is what this reads.
+
+        Never pulls a target in, so a strategy whose geometry is already sound
+        is untouched - `sweep-aware` would see this fire on 5% of its calls.
+        """
+        if self.reward_floor <= 0:
+            return target
+        risk = abs(entry - stop)
+        if risk <= 0:
+            return target
+        if abs(target - entry) >= risk * self.reward_floor:
+            return target
+        return spec.round_price(entry + side.sign * risk * self.reward_floor)
 
     @property
     def share_of_risk(self) -> float:

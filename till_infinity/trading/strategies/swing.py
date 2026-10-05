@@ -59,6 +59,13 @@ class ApproachScalp(LevelStrategy):
 
     name: ClassVar[str] = "approach-scalp"
 
+    #: Median reward-to-risk 0.51 over 44 live decisions, 89% below 1.0 and
+    #: half of them below 0.5.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
+
     #: Forty-five minutes, longer than `max_hold`. A swing wearing a
     #: scalp's name - the name is historical, the hold is what decides.
     style: ClassVar[str] = "swing"
@@ -586,7 +593,7 @@ class SwingLevel(LevelStrategy):
         # target, because a level the market drew is a better reason to aim
         # somewhere than a multiple of the stop - it only raises a target that
         # neither the push nor the range has already put far enough out.
-        floor = getattr(self, "reward_floor", 0.0) or 0.0
+        floor = self.reward_floor
         if floor > 0:
             aim = max(aim, wide * floor)
         return (
@@ -849,6 +856,27 @@ class FadeToValue(LevelStrategy):
     """
 
     name: ClassVar[str] = "fade-to-value"
+
+    #: **The live trade this was written for.** Its median is 1.27, which is
+    #: sound, and its tail is not: 42% of 183 live decisions below 1.0, 13%
+    #: below 0.5, and a floor of 0.11. On 2026-10-05 it sold EURUSD with a 44.1
+    #: pip stop against a 9.8 pip target - 0.22, needing an 82% win rate - and
+    #: three days earlier it took the same shape on the same feed at 0.114.
+    #:
+    #: Its geometry has no floor path at all: this class overrides `consider`
+    #: and composes its own stop and target, so neither `_aim` nor
+    #: `_stops_and_targets` ever runs for it. The stop is a volatility multiple
+    #: beyond the level widened by the level's zone - 1.69v became 21.7v on that
+    #: trade - while the target is fair value and cannot move further out. A
+    #: floor is the only thing that can relate the two.
+    #:
+    #: A floor binds here by moving the target *past* fair value, which is a
+    #: real change of thesis and the reason this is 1.0 rather than more: see
+    #: `magnet.md` on why the target sits short of value in the first place.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     #: Its thesis is duration. See `Strategy.stale_exempt`.
     stale_exempt: ClassVar[bool] = True
 
@@ -1072,6 +1100,10 @@ class FadeToValue(LevelStrategy):
         if (target - entry) * side.sign <= 0:
             return Refusal("at_value", "the buffer puts the target behind price", feed)
 
+        # The geometry is finished here and nowhere earlier: the stop has been
+        # widened for the zone, the fill and the broker, and the target has been
+        # pulled back. See `Strategy.floored_target`.
+        target = self.floored_target(spec, side, entry, stop, target)
         broker_says = respects_stops_level(spec, entry, stop, target)
         if broker_says:
             return Refusal("stops_level", broker_says, feed)

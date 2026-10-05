@@ -4229,9 +4229,27 @@ def test_thesis_only_gives_the_trade_room_and_takes_less_of_it():
     assert abs(roomy.entry - roomy.stop) > abs(normal.entry - normal.stop) * 3
     # The same money at risk over a wider stop buys proportionally fewer lots.
     assert roomy.volume < normal.volume
-    # The target is untouched: moving both would make it a different trade
-    # rather than the same trade with more room.
-    assert roomy.target == pytest.approx(normal.target)
+    # **The target used to be held still here, and holding it still was the
+    # defect.** This test took the stop out of the decision by keeping the
+    # target fixed, which is a clean experiment and also a 0.37 reward-to-risk
+    # trade: `thesis-only` won 45.9% needing 73%, and lost 441 units over 159
+    # trades while its targets earned 639 - recorded in `opportunity.Shape`
+    # against a shape this class never read. Its live median reward-to-risk was
+    # 0.40 over 361 decisions.
+    #
+    # So the answer to the docstring is neither: it was the *ratio*. Both
+    # strategies now carry `reward_floor` of 1.0, and a wider stop therefore
+    # buys a proportionally further target rather than the same one.
+    # Not three times, and the shortfall is the interesting part: `level-scalp`
+    # already aimed 1.26 times its own stop here, so the floor never fired for
+    # it and only `thesis-only` moved. 18.10 against 6.16 is 2.94.
+    assert abs(roomy.target - roomy.entry) > abs(normal.target - normal.entry) * 2.5
+    for got in (roomy, normal):
+        assert got.reward_to_risk >= 1.0 - 1e-6, f"{got.symbol} {got.side}: {got.reward_to_risk}"
+    # `thesis-only` lands exactly on the floor, which is what a floor that binds
+    # looks like; `level-scalp` is above it on its own merits.
+    assert roomy.reward_to_risk == pytest.approx(1.0)
+    assert normal.reward_to_risk == pytest.approx(1.257, abs=0.01)
 
 
 def test_thesis_only_still_has_a_circuit_breaker():
@@ -9770,3 +9788,103 @@ def test_fade_to_value_enters_at_the_hour_and_is_judged_above_it():
     fade = td.STRATEGIES["fade-to-value"]
     assert "1h" in fade.entries
     assert fade.context == ("2h", "4h")
+
+
+#: Every strategy whose live geometry argued for a reward floor, and the
+#: measured median reward-to-risk that argued for it. See
+#: `Strategy.reward_floor`.
+FLOORED = {
+    "thesis-only": 0.40,
+    "level-scalp": 0.55,
+    "momentum-scalp": 0.61,
+    "snap": 0.94,
+    "inverse": 0.60,
+    "approach-scalp": 0.51,
+    "fade-to-value": 1.27,
+}
+
+
+def test_the_reward_floor_is_declared_rather_than_guessed_at():
+    """It was read through `getattr` and declared in one unrelated module.
+
+    Which meant `if floor > 0` was false for every strategy that runs
+    standalone - a floor that reads as enforced and is not, which is the exact
+    defect this repository keeps finding in itself.
+    """
+    assert td.Strategy.reward_floor == 0.0
+    # Declared on the class, not conjured by `getattr`'s default.
+    assert "reward_floor" in td.Strategy.__annotations__
+
+
+def test_the_strategies_with_broken_geometry_carry_a_floor():
+    made = settings()
+    for name, measured in FLOORED.items():
+        engine = td.STRATEGIES[name](made)
+        assert engine.reward_floor == 1.0, f"{name} (median RR {measured})"
+
+
+def test_the_strategies_whose_geometry_is_sound_are_left_alone():
+    """A floor can only move a target out, so applying it everywhere would be
+    free. It is not applied everywhere because `sweep-aware` is the only
+    profitable strategy of size and 95% of its calls already clear 1.0 - there
+    is nothing to repair and a change would be a change for its own sake."""
+    made = settings()
+    for name in ("sweep-aware", "confluence-scalp", "runner"):
+        assert td.STRATEGIES[name](made).reward_floor == 0.0, name
+
+
+def test_a_floor_moves_the_target_out_to_meet_the_real_risk():
+    engine = strategy("fade-to-value")
+    # A sell: entry 100, stop 110, so the risk is 10 whatever was proposed.
+    got = engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 98.0)
+    assert got == 90.0
+    # And a buy, the other way.
+    got = engine.floored_target(GOLD, td.Side.BUY, 100.0, 90.0, 102.0)
+    assert got == 110.0
+
+
+def test_a_floor_never_pulls_a_target_in():
+    """The one thing it must not do. A target already past the floor is a
+    strategy's own reading of how far price goes, and a *floor* that shortened
+    it would be a cap wearing the wrong name."""
+    engine = strategy("fade-to-value")
+    assert engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 80.0) == 80.0
+    assert engine.floored_target(GOLD, td.Side.BUY, 100.0, 90.0, 130.0) == 130.0
+
+
+def test_no_floor_means_the_target_is_returned_untouched():
+    engine = strategy("sweep-aware")
+    assert engine.reward_floor == 0.0
+    assert engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 99.99) == 99.99
+
+
+def test_a_floor_measures_risk_from_the_fill_and_not_the_proposed_stop():
+    """The whole reason this runs late.
+
+    `fade-to-value` sold EURUSD on 2026-10-05 at 1.11870 with its stop at
+    1.12311 and its target at 1.11772: 44.1 pips of risk against 9.8 of
+    reward, 0.22, needing an 82% win rate. The stop was proposed at 1.69
+    volatility units and the level's zone widened it to 21.7, so anything that
+    floored against the *proposed* stop would have called that trade fine.
+    """
+    engine = strategy("fade-to-value")
+    entry, stop, target = 1.11870, 1.12311, 1.11772
+    assert abs(target - entry) / abs(entry - stop) == pytest.approx(0.222, abs=0.001)
+    got = engine.floored_target(EURGBP, td.Side.SELL, entry, stop, target)
+    assert abs(got - entry) / abs(entry - stop) == pytest.approx(1.0, abs=0.001)
+    # Which is 1.11429 - below the old target, because this is a sell.
+    assert got == pytest.approx(1.11429, abs=1e-5)
+
+
+def test_a_zero_risk_geometry_is_left_alone_rather_than_divided_by():
+    engine = strategy("fade-to-value")
+    assert engine.floored_target(GOLD, td.Side.SELL, 100.0, 100.0, 99.0) == 99.0
+
+
+def test_the_opportunity_space_still_sets_its_own_floor_over_the_class_default():
+    """`Shape.reward_floor` is assigned as an instance attribute in `_wear`,
+    exactly like the six knobs beside it. Declaring the field on `Strategy`
+    must not take that away."""
+    engine = strategy("opportunity")
+    engine._wear(td.strategies.opportunity.Shape(stop=1.0, target=1.0, reward_floor=2.5))
+    assert engine.reward_floor == 2.5
