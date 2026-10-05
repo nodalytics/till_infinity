@@ -545,7 +545,7 @@ def prep_one(sym):
     res = analyse(sl, ms, bid, ask, theta, m2, warm_bridge=warm, by_day=True)
     res["theta"] = theta
     res["check"] = bridge_check(sym, ms, bid)
-    res["spikes"] = dict(t=ms[first] // 1000, J=J.astype(np.float32))
+    res["spikes"] = dict(t=ms[first] // 1000, J=J.astype(np.float32), i=first)
     with open(OUT / f"real_{sl}.pkl", "wb") as f:
         pickle.dump(res, f)
     return f"{sl}: {len(ms)} ticks, {res['n_spikes']} spikes, theta {theta:.4g}, sub {res['sub']}, {time.time() - t0:.0f}s"
