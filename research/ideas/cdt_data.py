@@ -145,10 +145,51 @@ def load_mt5(sym, iv):
     return d.reset_index(drop=True).astype({"ts": np.int64})
 
 
+_ALL = {}
+
+
+def mt5x_specs():
+    """Symbol -> (family, point, spread floor in points) for the broker's other classes (lab export)."""
+    f = DATA / "mt5" / "specs.jsonl"
+    if not f.exists():
+        return {}
+    out = {}
+    for line in f.read_text().splitlines():
+        r = json.loads(line)
+        if r["family"] != "crypto":
+            fam = "range_break" if r["symbol"] == "Range Break 100 Index" else r["family"]
+            out[r["symbol"]] = (fam, r["point"], r["floor"])
+    return out
+
+
+def load_mt5x(sym, iv):
+    """Other classes (FX, metals, indices, energy, Deriv) from the broker's bars, every date, 1d and 4h."""
+    if iv not in _ALL:
+        f = DATA / "mt5" / f"all_{iv}.csv"
+        _ALL[iv] = pd.read_csv(f) if f.exists() else None
+    a = _ALL[iv]
+    if a is None:
+        return None
+    d = a[a["symbol"] == sym].drop(columns=["symbol"]).drop_duplicates("ts").sort_values("ts")
+    d = d[(d["close"] > 0) & (d["high"] >= d["low"])] if not sym.startswith(("Volatility", "Step", "Range", "Drift", "Jump", "Boom", "Crash")) else d[d["high"] >= d["low"]]
+    return d.reset_index(drop=True).astype({"ts": np.int64}) if len(d) >= 400 else None
+
+
+def mt5x_cost(sym, df):
+    """run.spread_floor x point; where the floor is 0, the median bar spread (as tv_indicators)."""
+    fam, point, floor = mt5x_specs()[sym]
+    if not floor > 0:
+        floor = float(np.nanmedian(df["spread"].to_numpy(float)))
+    return floor * point
+
+
 def load(coin, iv):
-    """Bars (ts in seconds, open time) for one coin ('mt5:SYM' for the broker's CFDs), or None."""
+    """Bars (ts in seconds, open time) for one coin ('mt5:SYM' for the broker's crypto CFDs, 'mt5x:SYM'
+    for its other classes), or None."""
     if coin.startswith("mt5:"):
         return load_mt5(coin[4:], iv)
+    if coin.startswith("mt5x:"):
+        return load_mt5x(coin[5:], iv)
     p = kpath(coin, iv)
     if not p.exists():
         return None

@@ -301,7 +301,13 @@ def series(coin, iv, src, seed):
     if df is None:
         return None, None
     a = candles._atr(df)
-    cost_px = (np.full(len(df), D.MT5_COST[coin[4:]]) if coin.startswith("mt5:") else FEE * df["close"].to_numpy(float))
+    if coin.startswith("mt5:"):
+        cost_px = np.full(len(df), D.MT5_COST[coin[4:]])
+    elif coin.startswith("mt5x:"):
+        cost_px = np.full(len(df), D.mt5x_cost(coin[5:], df))
+    else:
+        cost_px = FEE * df["close"].to_numpy(float)
+    df = df[["ts", "open", "high", "low", "close", "volume"]]
     cost_atr = cost_px / np.maximum(a, 1e-12)
     cost_atr = np.where(np.isfinite(cost_atr), cost_atr, np.nanmedian(cost_atr))
     if src != "real":
@@ -327,7 +333,7 @@ def job(spec):
     ts = df["ts"].to_numpy(np.int64)
     atr = candles._atr(df)
     S, stage, _ = components(df, iv)
-    reg200, regst = regime(btc_daily(iv, src, seed, "mt5:BTCUSD" if coin.startswith("mt5:") else "BTC"), ts, sec)
+    reg200, regst = regime(btc_daily(iv, src, seed, "mt5:BTCUSD" if coin.startswith("mt5") else "BTC"), ts, sec)
     rng = np.random.default_rng(zlib.crc32(f"twin{coin}{iv}{src}{seed}".encode()))
     keep_path = iv in ("1d", "4h")
     rows, paths = [], []
@@ -367,6 +373,8 @@ def specs(iv):
              "15m": D.CORE + D.FRESH58}[iv]
     coins = [c for c in coins if D.kpath(c, iv).exists()]
     coins += [f"mt5:{s}" for s in D.MT5_COST if D.load(f"mt5:{s}", iv) is not None]
+    if iv in ("1d", "4h") and os.environ.get("OTHER", "1") == "1":
+        coins += [f"mt5x:{s}" for s in D.mt5x_specs() if D.load(f"mt5x:{s}", iv) is not None]
     out = [(c, iv, "real", 0) for c in coins]
     for k in range(WALK_SEEDS[iv]):
         out += [(c, iv, s, k) for s in ("iid", "garch") for c in coins]
