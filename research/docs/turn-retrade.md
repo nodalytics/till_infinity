@@ -199,7 +199,7 @@ walks: 1,458 p-values in all.
   cell reaches 1/(N+1). Every crypto one is a SIG zone, with P(≥10R) of 0.03-0.04 against 0.03 on
   walks.
 
-**The Deriv positives are a measurement artefact: bar fills miss the jumps** ([deriving.md](deriving.md)).
+**The Deriv positives are a fill error: bar fills miss the jumps** ([deriving.md](deriving.md)).
 
 T2 E1 by symbol and side shows where the gain sits. It is only on the side whose stop a spike jumps
 through:
@@ -214,7 +214,7 @@ through:
 - The bar fill stops such a trade at the stop. The real tick path is filled beyond it.
 - Every low on the jump-exposed side shows the same gain: +0.75 / +0.73 at 15m.
 - Range Break shows it on every low too (+3.69R at 15m).
-- Deriv's generators are published martingales, so these cells are a fill artefact and are not
+- Deriv's generators are published martingales, so these cells are a fill error and are not
   carried forward. On the diffusive Deriv indices, corrected T2 and T_any sit with their walks.
 
 ## 4. Confirmation on unseen coins
