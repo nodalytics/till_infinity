@@ -72,3 +72,11 @@ def test_feedback_raises_the_aligned_hazard():
     a = res["agg"]["4h|full|dir"].sum(0)
     r = (a[0, B.F_SPK] / a[0, B.F_TICKS]) / (a[1, B.F_SPK] / a[1, B.F_TICKS])
     assert 1.12 < r < 1.4
+
+
+def test_ex_spike_series_survives_a_long_grind():
+    n = 3_000_000                                             # a grind of -500 in log over the path
+    ms = np.arange(n, dtype=np.int64) * 1000
+    bid = 1000.0 * np.exp(np.r_[0.0, np.cumsum(np.full(n - 1, -1e-6))]) + 1e-9
+    _, _, _, ex, _, _ = B.detect(ms, bid, +1, theta=1e-3)
+    assert np.isfinite(ex).all() and ex[-1] < ex[0] and np.isclose(ex[0], np.log(bid[0]))

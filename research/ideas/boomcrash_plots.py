@@ -197,7 +197,7 @@ def fig_example():
         _, _, _, _, ec, _, _ = B.minute_bars(m, ex)
         hours = (T - T[0]) / 3600
         ax.plot(hours, c, color=BLUE, lw=1, label="bid (full series)")
-        ax.plot(hours, ec + (c[0] - ec[0]), color=ORANGE, lw=1.2, label="ex-spike (the grind alone)")
+        ax.plot(hours, c[0] * np.exp(ec - ec[0]), color=ORANGE, lw=1.2, label="ex-spike (the grind alone)")
         ax.set_title(f"{A.PRETTY[sl]}: three days of 1m closes, {len(first)} spikes", fontsize=9)
         ax.set_xlabel("hours")
         ax.legend(fontsize=7, frameon=False)

@@ -99,7 +99,7 @@ def theta_of(bid, ms, s, disc_end_ms):
 def detect(ms, bid, s, theta):
     """Spike events on ticks, in log-price units (the indices are multiplicative: Boom 300 went from 715
     to 4,359 and back to 1,055 in the sample, and its grind and spikes scaled with it). Returns (first
-    tick, last tick, log size J > 0) per event, the ex-spike bid, the count of sub-threshold spike-side
+    tick, last tick, log size J > 0) per event, the ex-spike LOG bid, the count of sub-threshold spike-side
     moves and the outage mask (moves across a > 60 s hole)."""
     d = np.diff(np.log(bid))
     outage = np.diff(ms) > OUTAGE_MS
@@ -116,7 +116,9 @@ def detect(ms, bid, s, theta):
         first = last = np.zeros(0, np.int64)
         J = np.zeros(0)
     inc = np.where(sp | outage, 0.0, d)
-    ex = bid[0] * np.exp(np.r_[0.0, np.cumsum(inc)])
+    # the ex-spike series is kept in LOG price: exponentiated, the one-signed grind compounds over 55M
+    # ticks to exp(-500) and underflows to zero within months
+    ex = np.log(bid[0]) + np.r_[0.0, np.cumsum(inc)]
     return first, last, J, ex, sub, outage
 
 

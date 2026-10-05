@@ -207,7 +207,11 @@ def trade_summary(T, h):
             continue
         out[name] = dict(n=int(len(x)), net=float(x[:, 2].mean()), gross=float(x[:, 3].mean()),
                          **{f"p{N}": float((x[:, 2] >= N).mean()) for N in NS},
-                         pstop=float((x[:, 4] == 0).mean()), held_min=float(np.median(x[:, 7]) / 60))
+                         pstop=float((x[:, 4] == 0).mean()), held_min=float(np.median(x[:, 7]) / 60),
+                         stop_r=float(x[x[:, 4] == 0, 2].mean()) if (x[:, 4] == 0).any() else np.nan,
+                         stop_worst=float(x[x[:, 4] == 0, 2].min()) if (x[:, 4] == 0).any() else np.nan,
+                         stop_beyond_1p1=float((x[x[:, 4] == 0, 2] < -1.1).mean()) if (x[:, 4] == 0).any() else np.nan,
+                         spike_r=float(x[x[:, 4] == 1, 2].mean()) if (x[:, 4] == 1).any() else np.nan)
     return out
 
 
