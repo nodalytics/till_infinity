@@ -2,7 +2,6 @@
   "study": "crypto daily trend combination (cdt)",
   "frozen": "2026-10-05, before any real-data run",
   "after": "geraked-eas.md (2MAAOS / DHLAOS crypto 4h cells survive BH: +0.08-0.10R), tv-indicators.md (Weinstein Stage 2 on 1d: +0.20R, all crypto long drift), turn-follow-ups.md + pca-residuals.md (DISPLACE_C at a 12-bar low, structure exit: +0.049R fresh coins, +0.11 to +0.17R on 1d; its edge is the crypto market factor, residual -0.016R), tail-scan.md (4h/1d momentum words carry a fat right tail worth less than costs). The one recurring pulse is crypto daily trend: does a frozen combination of the four trade, and is it more than the market?",
-
   "data": {
     "core12": "turn_trade.COINS: BTC ETH SOL BNB XRP DOGE ADA AVAX LINK LTC DOT TRX, USDT perpetual klines from data.binance.vision (15m, 1h, 4h, 1d), funding files",
     "fresh58": "turn_confirm FRESH: (binance.py SET_A + SET_B) minus core12",
@@ -12,41 +11,60 @@
     "mt5": "the broker's BTCUSD, ETHUSD, SOLUSD CFDs (mt5bt db), 1d/4h/1h/15m, cost = run.spread_floor x point; SOLUSD 15m bars from 2025-08-01 excluded (the alt-coin CFD 15m feed)",
     "other_classes_reported": "MT5 FX 12, metals 5, indices 7, energy 2 and the 15 Deriv synthetics (Range Break 100 apart), 1d and 4h, components and the two primaries without the BTC regime filter - reported, not judged",
     "split": "2024-01-01 UTC: core12 before = discovery (reported only; nothing is selected - every rule below is frozen a priori), core12 from 2024 = confirmation-12",
-    "timeframes": {"1d": "primary", "4h": "secondary", "1h": "check: core12 + fresh131", "15m": "check: core12 + fresh58 (compute)"}
+    "timeframes": {
+      "1d": "primary",
+      "4h": "secondary",
+      "1h": "check: core12 + fresh131",
+      "15m": "check: core12 + fresh58 (compute)"
+    }
   },
-
   "components": {
     "note": "signals at bar t's close, entry at t+1's open. 2MAAOS and DHLAOS use geraked_eas.ea_2MAAOS / ea_DHLAOS on the real chart for both sides (Andean is not sign-symmetric, so no flipped chart); Stage uses tv_indicators.stages(df, 'pct'); DISPLACE_C uses turn_trade.ups on the chart and mcfl.parse.flip(chart) for shorts. Every component also defines an ON state per side (indicator-only, ignoring the stop), used for its structure exit and for agreement",
-    "C1_2MAAOS": {"entry": "geraked ea_2MAAOS buy/sell (Andean(50,9) bull crosses above its signal, bull > bear, SMA50 > SMA200, next open > SMA50 - 0.5|SMA50 - SMA200|; sells mirror)", "on_long": "from the entry bar until the first bar with bear >= bull or SMA50 <= SMA200 (that bar is off)"},
-    "C2_DHLAOS": {"entry": "geraked ea_DHLAOS buy/sell; the level is the previous UTC day's low/high on 15m-4h and the previous ISO week's (Monday 00:00 UTC) on 1d, because a 24/7 daily bar can never trade wholly below the previous day's low", "on_long": "from the entry bar until the first bar with bear >= bull"},
-    "C3_STAGE": {"entry": "entering Weinstein Stage 2 (long) / Stage 4 (short), tv_indicators 'pct' variant (SMA30, +-0.5% over 4 bars, 30-bar breakouts)", "on_long": "stage == 2 (stage == 4 for shorts)"},
-    "C4_DISPLACE_C": {"entry": "turn_trade T1: a 12-bar low knowable at t (lowest low of t-2..t <= lowest of t-11..t-3) and bar t completes DISPLACE_C up (known_at = t); shorts on the flipped chart", "on_long": "from the entry bar until the first bar j > t with a DELIVERY_SHIFT down known at j (j is off), at most 10 days of bars (turn_trade E2)"}
+    "C1_2MAAOS": {
+      "entry": "geraked ea_2MAAOS buy/sell (Andean(50,9) bull crosses above its signal, bull > bear, SMA50 > SMA200, next open > SMA50 - 0.5|SMA50 - SMA200|; sells mirror)",
+      "on_long": "from the entry bar until the first bar with bear >= bull or SMA50 <= SMA200 (that bar is off)"
+    },
+    "C2_DHLAOS": {
+      "entry": "geraked ea_DHLAOS buy/sell; the level is the previous UTC day's low/high on 15m-4h and the previous ISO week's (Monday 00:00 UTC) on 1d, because a 24/7 daily bar can never trade wholly below the previous day's low",
+      "on_long": "from the entry bar until the first bar with bear >= bull"
+    },
+    "C3_STAGE": {
+      "entry": "entering Weinstein Stage 2 (long) / Stage 4 (short), tv_indicators 'pct' variant (SMA30, +-0.5% over 4 bars, 30-bar breakouts)",
+      "on_long": "stage == 2 (stage == 4 for shorts)"
+    },
+    "C4_DISPLACE_C": {
+      "entry": "turn_trade T1: a 12-bar low knowable at t (lowest low of t-2..t <= lowest of t-11..t-3) and bar t completes DISPLACE_C up (known_at = t); shorts on the flipped chart",
+      "on_long": "from the entry bar until the first bar j > t with a DELIVERY_SHIFT down known at j (j is off), at most 10 days of bars (turn_trade E2)"
+    }
   },
-
   "combinations": {
     "AGREE": "long at bar t when the number of components ON long is >= 2, was < 2 at t-1, and exceeds the number ON short (shorts mirror); its ON state is that count >= 2",
     "DCS": "DISPLACE_C entries taken only when the coin's own Stage (pct) at bar t is 2 for longs, 4 for shorts; ON state = DISPLACE_C's",
     "REG200": "regime filter on each of C1-C4, AGREE, DCS: longs only when BTCUSDT's last completed daily close (close time <= the signal bar's close) is above its 200-day SMA, shorts only when below. BTC is BTCUSDT perpetual (MT5: the broker's BTCUSD). On walk panels the regime comes from BTC's own walk",
     "REGST": "secondary regime filter: BTC's last completed daily Stage (pct) is 2 for longs, 4 for shorts"
   },
-
   "geometry": {
     "entry": "next open after the signal bar",
     "stop": "3-bar extreme (bars t-2..t) minus 0.1 ATR(t) for longs (plus for shorts); risk at least 0.25 ATR(t) (the stop moves to entry -+ 0.25 ATR when nearer); ATR = mcfl.candles.table(df)['atr']",
     "stop_fill": "at the stop, or the open when the bar gaps through it, less 0.05 ATR(t) slippage",
-    "exits": {"STATE (primary)": "out at the next open after the first bar on which the strategy's ON state is off, or at the stop", "TRAIL": "2 ATR(t) behind the best high of completed bars (from the second bar), or the stop"},
+    "exits": {
+      "STATE (primary)": "out at the next open after the first bar on which the strategy's ON state is off, or at the stop",
+      "TRAIL": "2 ATR(t) behind the best high of completed bars (from the second bar), or the stop"
+    },
     "max_hold": "300 bars",
     "overlap": "every signal is a trade (as turn_confirm); the book sums overlapping trades"
   },
-
-  "costs": {"binance": "0.07% of price a round trip (charged as cost/risk in R) + 0.05 ATR on every stop fill", "mt5": "run.spread_floor x point a round trip + 0.05 ATR on stop fills", "walks": "the real series' cost in ATR units at the same bar", "funding": "real funding (core12 and fresh131 files) charged in the portfolio view as a separate net-of-funding line; setD has none"},
-
+  "costs": {
+    "binance": "0.07% of price a round trip (charged as cost/risk in R) + 0.05 ATR on every stop fill",
+    "mt5": "run.spread_floor x point a round trip + 0.05 ATR on stop fills",
+    "walks": "the real series' cost in ATR units at the same bar",
+    "funding": "real funding (core12 and fresh131 files) charged in the portfolio view as a separate net-of-funding line; setD has none"
+  },
   "nulls": {
     "walks": "geraked_eas.make_walk: log-price iid and GARCH(1,1) (a 0.08, b 0.90) walks matched to each series' sigma, 256 sub-steps a bar, real first price and timestamps; 5 seeds per kind on 1d, 1 on 4h/1h/15m",
     "random_entry_twin": "for every trade, 20 twins on the same coin and side at uniformly drawn signal bars (with ATR and room for the hold), the same risk in ATR units, held the same number of bars unless stopped, same costs: the same exposure with no timing",
     "one_over_n_plus_1": "P(+N R before -1R) on a martingale"
   },
-
   "measures": {
     "R": "net R a trade; 90% day-bootstrap interval (2,000 draws, days of the signal) and one-sided p of R <= 0",
     "PNR": "barrier P(max R reached before the initial stop, within 300 bars, >= N) for N in 0.5, 1, 2, 4, 10, 20 against 1/(N+1) (a bar touching both counts as stopped); realised P(R >= 4) and P(R >= 10) per exit",
@@ -54,7 +72,6 @@
     "btc_same_exposure": "each trade replaced by BTCUSDT on the same side over the same entry and exit opens, net 0.07%, in bps of notional, against the alt's own net bps (R x risk / entry); also long BTC over the same windows",
     "portfolio": "1d and 4h strategies marked to daily closes: an equal-risk book, each trade risking 2% of the capital of its coin's sleeve and sleeves equal (1 / live coins that day); daily book return = 0.02 / N_live x the day's mark-to-market R of all open trades (costs on entry and exit days). Annualised Sharpe (365), max drawdown, CAGR, with 90% circular block bootstrap intervals (20-day blocks, 2,000 draws); against BTCUSDT buy-and-hold and the equal-weight basket over the same dates (paired block bootstrap of the Sharpe difference), the random-entry twin books (20), the BTC-same-exposure book, and the books on the iid and GARCH walk panels (5 seeds each, 1d)"
   },
-
   "primary": {
     "P1 (primary)": "AGREE, 1d, STATE exit, both sides, fresh131 (every date)",
     "P2 (co-primary)": "DCS, 1d, STATE exit (DISPLACE_C's E2), both sides, fresh131",
@@ -66,10 +83,17 @@
       "R above the random-entry twin's mean R"
     ],
     "beyond_beta": "reported verdict for each primary: (i) R minus the trade's twin mean R > 0 with its 90% day-bootstrap interval above 0 (timing beyond the coin's drift), (ii) the residual against the equal-weight index > 0 with its interval above 0 (beyond the crypto market factor)",
-    "replications_reported_with_the_same_rule": ["setD 1d (halves of its own signal dates instead of 2024)", "core12 from 2024 (confirmation-12)", "MT5 BTC/ETH/SOL 1d"]
+    "replications_reported_with_the_same_rule": [
+      "setD 1d (halves of its own signal dates instead of 2024)",
+      "core12 from 2024 (confirmation-12)",
+      "MT5 BTC/ETH/SOL 1d"
+    ]
   },
-
   "secondary": "every other cell: strategy (C1-C4, AGREE, DCS) x filter (none, REG200, REGST) x exit (STATE, TRAIL) x timeframe (1d, 4h, 1h, 15m) on fresh131 (15m: fresh58); Benjamini-Hochberg at q = 0.10 on the one-sided day-bootstrap p; a cell 'survives' when R > 0, it passes BH and R exceeds both walks and the twin. Long and short reported apart, not judged",
   "sanity_check": "DISPLACE_C, E2, no 0.25-ATR floor, every signal, fresh58 1d must reproduce turn_confirm's +0.142R (n about 1,000) before anything else is read",
-  "not_tested": "position limits, leverage caps, funding on setD, intrabar ordering beyond OHLC (bars, not ticks)"
+  "not_tested": "position limits, leverage caps, funding on setD, intrabar ordering beyond OHLC (bars, not ticks)",
+  "amended_before_run": [
+    "2026-10-05, before any MT5 run: the broker's bars are used from 2019-01-01 (the Binance sample's era), because its fixed spread floor is many ATR on the 2011-2016 BTC bars; bars and spread floors (run.spread_floor: BTCUSD 2.424, ETHUSD 1.58, SOLUSD 0.14 in price) exported read-only from the lab db, the study running on the desk's local machine",
+    "2026-10-05, before any real-data run: DISPLACE_C and DELIVERY_SHIFT come from mcfl.parse(df, v2=False, time=False), which gives the same entities as the full parse (checked on walks in test_cdt.py) about six times faster"
+  ]
 }

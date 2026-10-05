@@ -122,8 +122,33 @@ def main():
     print("fetch done", flush=True)
 
 
+MT5_COST = {"BTCUSD": 2.424, "ETHUSD": 1.58, "SOLUSD": 0.14}  # run.spread_floor x point, in price (lab, 2026-10-05)
+MT5_START = pd.Timestamp("2019-01-01", tz="UTC").timestamp()
+MT5_SOL_15M_END = pd.Timestamp("2025-08-01", tz="UTC").timestamp()
+_MT5 = {}
+
+
+def load_mt5(sym, iv):
+    """The broker's bars exported from the lab's mt5bt db (bars_<iv>.csv), from 2019 (the Binance sample's
+    era: the fixed spread is many ATR on the 2011-2016 BTC bars); SOLUSD 15m stops at 2025-08-01."""
+    if iv not in _MT5:
+        f = DATA / "mt5" / f"bars_{iv}.csv"
+        _MT5[iv] = pd.read_csv(f) if f.exists() else None
+    a = _MT5[iv]
+    if a is None:
+        return None
+    d = a[(a["symbol"] == sym) & (a["ts"] >= MT5_START)].drop(columns=["symbol", "spread"])
+    if sym == "SOLUSD" and iv == "15m":
+        d = d[d["ts"] < MT5_SOL_15M_END]
+    d = d.drop_duplicates("ts").sort_values("ts")
+    d = d[(d["close"] > 0) & (d["low"] > 0) & (d["high"] >= d["low"])]
+    return d.reset_index(drop=True).astype({"ts": np.int64})
+
+
 def load(coin, iv):
-    """Bars (ts in seconds, open time) for one coin, or None."""
+    """Bars (ts in seconds, open time) for one coin ('mt5:SYM' for the broker's CFDs), or None."""
+    if coin.startswith("mt5:"):
+        return load_mt5(coin[4:], iv)
     p = kpath(coin, iv)
     if not p.exists():
         return None

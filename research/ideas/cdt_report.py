@@ -28,6 +28,7 @@ SAMPLES = {
     "core12_disc": lambda d: d["coin"].isin(D.CORE) & (d["ts"] < C.SPLIT),
     "core12_conf": lambda d: d["coin"].isin(D.CORE) & (d["ts"] >= C.SPLIT),
     "setD": lambda d: d["coin"].isin(D.SETD),
+    "mt5": lambda d: d["coin"].str.startswith("mt5:"),
 }
 FILTERS = ("none", "REG200", "REGST")
 CELLS = tuple(C.STRATS) + ("DCS",)
@@ -137,6 +138,7 @@ def table(d, iv, rng):
         samples += ("setD",)
     if iv == "15m":
         samples = ("fresh58", "core12_disc", "core12_conf")
+    samples += ("mt5",)
     for sample in samples:
         halves = None
         ds = d[SAMPLES[sample](d)]
@@ -181,7 +183,7 @@ def panel_returns(iv, coins):
 def market_split(d, iv):
     """Each real trade's market part (equal-weight index of core12 + fresh131, and BTC) and residual, and
     the BTC / basket trades over the same windows, in bps."""
-    r = d[(d["src"] == "real")].copy()
+    r = d[(d["src"] == "real") & ~d["coin"].str.startswith("mt5:")].copy()
     coins = tuple(dict.fromkeys(D.CORE + D.FRESH131 + tuple(r["coin"].unique())))
     grid, names, lr, Cl = panel_returns(iv, coins)
     idx_coins = [names.index(c) for c in D.CORE + D.FRESH131 if c in names]

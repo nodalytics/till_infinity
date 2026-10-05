@@ -262,13 +262,13 @@ def twins(A, t_hold, risk_atr, atr, cost_atr, rng, k=K_TWIN):
 
 # ------------------------------------------------------------------------------------------ series
 
-def btc_daily(iv, src, seed):
+def btc_daily(iv, src, seed, btc="BTC"):
     """BTC's daily bars for the regime: the real 1d file, or BTC's walk at this timeframe resampled to
-    UTC days (so a walk panel's regime comes from its own BTC)."""
+    UTC days (so a walk panel's regime comes from its own BTC). `btc`: 'BTC' (Binance) or 'mt5:BTCUSD'."""
     if src == "real":
-        d = D.load("BTC", "1d")
+        d = D.load(btc, "1d")
     else:
-        d, _ = series("BTC", iv, src, seed)
+        d, _ = series(btc, iv, src, seed)
         g = d["ts"] // 86400 * 86400
         d = d.groupby(g).agg(open=("open", "first"), high=("high", "max"), low=("low", "min"),
                              close=("close", "last")).reset_index().rename(columns={"index": "ts"})
@@ -301,7 +301,8 @@ def series(coin, iv, src, seed):
     if df is None:
         return None, None
     a = candles._atr(df)
-    cost_atr = FEE * df["close"].to_numpy(float) / np.maximum(a, 1e-12)
+    cost_px = (np.full(len(df), D.MT5_COST[coin[4:]]) if coin.startswith("mt5:") else FEE * df["close"].to_numpy(float))
+    cost_atr = cost_px / np.maximum(a, 1e-12)
     cost_atr = np.where(np.isfinite(cost_atr), cost_atr, np.nanmedian(cost_atr))
     if src != "real":
         s = zlib.crc32(f"cdt{coin}{iv}{src}{seed}".encode()) % 2 ** 31
@@ -326,7 +327,7 @@ def job(spec):
     ts = df["ts"].to_numpy(np.int64)
     atr = candles._atr(df)
     S, stage, _ = components(df, iv)
-    reg200, regst = regime(btc_daily(iv, src, seed), ts, sec)
+    reg200, regst = regime(btc_daily(iv, src, seed, "mt5:BTCUSD" if coin.startswith("mt5:") else "BTC"), ts, sec)
     rng = np.random.default_rng(zlib.crc32(f"twin{coin}{iv}{src}{seed}".encode()))
     keep_path = iv in ("1d", "4h")
     rows, paths = [], []
@@ -365,6 +366,7 @@ def specs(iv):
     coins = {"1d": D.CORE + D.FRESH131 + D.SETD, "4h": D.CORE + D.FRESH131, "1h": D.CORE + D.FRESH131,
              "15m": D.CORE + D.FRESH58}[iv]
     coins = [c for c in coins if D.kpath(c, iv).exists()]
+    coins += [f"mt5:{s}" for s in D.MT5_COST if D.load(f"mt5:{s}", iv) is not None]
     out = [(c, iv, "real", 0) for c in coins]
     for k in range(WALK_SEEDS[iv]):
         out += [(c, iv, s, k) for s in ("iid", "garch") for c in coins]
