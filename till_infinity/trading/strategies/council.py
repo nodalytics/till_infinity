@@ -449,6 +449,10 @@ class CouncilStrategy(Strategy):
 
         if (side is Side.BUY and entry <= stop) or (side is Side.SELL and entry >= stop):
             return Refusal("through", f"price is already past {stop:.5g}", feed)
+        # The geometry is finished here and nowhere earlier: the stop has been
+        # widened for the zone, the fill and the broker, and the target has been
+        # pulled back. See `Strategy.floored_target`.
+        target = self.floored_target(spec, side, entry, stop, target)
         broker_says = respects_stops_level(spec, entry, stop, target)
         if broker_says:
             return Refusal("stops_level", broker_says, feed)
