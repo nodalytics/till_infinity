@@ -217,6 +217,31 @@ class Strategy(ABC):
     #: earned 639. That diagnosis was never delivered to the strategy it was
     #: about, whose live median reward-to-risk is 0.40 over 361 decisions.
     #:
+    #: **What the live record says about this, which is less than it should.**
+    #: 1,534 closed trades joined to the decision that sized them, 2026-10-05:
+    #: trades whose *intended* reward-to-risk was at or above 1.0 made -1.342 a
+    #: trade against -0.765 for those below it, and within strategy none of the
+    #: three with enough trades on both sides did better on the high side. In R
+    #: the picture is flat rather than reversed - every bucket from 0-0.5 to 6+
+    #: sits near zero (-0.126 to +0.101, three significantly negative, none
+    #: significantly positive) and the ordering is not monotonic. Risk per trade
+    #: is 28-35 in every bucket, so it is not a sizing artefact.
+    #:
+    #: That is `1/(1+N)` showing up in production: reward-to-risk alone has
+    #: expected value about zero, so **"higher RR earns more" is not a claim
+    #: this desk's record supports.** See `research/docs/walks-and-edge.md`.
+    #:
+    #: What survives is narrower: a trade at 0.22 needs an 82% win rate, and the
+    #: observed rates here are 40-57%. That is a losing bet under any hit rate
+    #: this desk reaches, whatever the average says. The floor is set on that
+    #: arithmetic, not on a measured improvement, and it is worth knowing which
+    #: of the two is holding it up.
+    #:
+    #: Those trades are also not this population: the floor does not turn a
+    #: sub-1.0 trade into one of the RR >= 1 trades above, which got there by
+    #: their own stop placement. It pushes a target past a stop that blew out,
+    #: which is a third thing neither bucket contains.
+    #:
     #: Measured over all 2,563 live decisions on 2026-10-05, median
     #: reward-to-risk and the share below 1.0: `thesis-only` 0.40/98%,
     #: `approach-scalp` 0.51/89%, `level-scalp` 0.55/89%, `inverse` 0.60/83%,

@@ -9804,10 +9804,14 @@ FLOORED = {
     "fade-to-value": 1.27,
     "runner": 1.49,
     "confluence-scalp": 2.69,
-    # The best geometry on the desk, and it still placed the EURUSD short at
-    # 0.22 that this whole floor came from. 5% of 514 calls is 26 trades.
-    "sweep-aware": 2.71,
 }
+
+#: The one strategy left without a floor on purpose. It placed the 0.22 EURUSD
+#: short, so this is not an exemption for good behaviour - it is the only
+#: profitable strategy of size, the floor would bind on 5% of its calls, and the
+#: live record does not support the claim that raising reward-to-risk improves
+#: outcomes. See `Strategy.reward_floor`.
+EXEMPT = "sweep-aware"
 
 #: Registered, and with no live decisions in the journal to quote a median
 #: from, so their floor rests on the arithmetic alone.
@@ -9856,11 +9860,12 @@ def test_every_strategy_carries_a_floor_except_the_parameter_space():
     missing = {
         name: cls(made).reward_floor
         for name, cls in td.STRATEGIES.items()
-        if name not in SHAPED and cls(made).reward_floor <= 0
+        if name not in SHAPED and name != EXEMPT and cls(made).reward_floor <= 0
     }
     assert missing == {}
     for name in SHAPED:
         assert td.STRATEGIES[name](made).reward_floor == 0.0, name
+    assert td.STRATEGIES[EXEMPT](made).reward_floor == 0.0
 
 
 def test_the_unmeasured_floors_are_named_rather_than_quietly_included():
@@ -9871,7 +9876,7 @@ def test_the_unmeasured_floors_are_named_rather_than_quietly_included():
         assert name in td.STRATEGIES, name
         assert td.STRATEGIES[name](made).reward_floor == 1.0, name
     assert not set(FLOORED) & set(FLOORED_UNMEASURED)
-    assert set(FLOORED) | set(FLOORED_UNMEASURED) | set(SHAPED) == set(td.STRATEGIES)
+    assert set(FLOORED) | set(FLOORED_UNMEASURED) | set(SHAPED) | {EXEMPT} == set(td.STRATEGIES)
 
 
 def test_a_floor_moves_the_target_out_to_meet_the_real_risk():
@@ -10078,3 +10083,21 @@ def test_a_magic_resolves_through_strategy_for_and_not_by_hand():
     wrong = strategy_for(777_700, magic_for(DEFAULT_MAGIC, "sweep-aware"))
     assert wrong == "fade-to-value"
     assert wrong != "sweep-aware"
+
+
+def test_the_exempt_strategy_is_the_profitable_one_and_not_the_blameless_one():
+    """`sweep-aware` placed the 0.22 EURUSD short the floor was written for. It
+    is exempt because it is the only strategy of size that makes money and the
+    floor would bind on 5% of its calls - not because its geometry is clean.
+
+    Worth a test of its own, because "we left the good one alone" is the kind of
+    decision that gets re-read later as "the good one did not need it".
+    """
+    made = settings()
+    engine = td.STRATEGIES[EXEMPT](made)
+    assert engine.reward_floor == 0.0
+    # And the machinery is still wired to it, so turning the floor on is a
+    # one-line change rather than a reinstatement.
+    assert engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 99.0) == 99.0
+    engine.reward_floor = 1.0
+    assert engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 99.0) == 90.0

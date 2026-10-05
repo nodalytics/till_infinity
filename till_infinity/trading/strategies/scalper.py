@@ -1184,21 +1184,17 @@ class SweepAware(LevelStrategy):
 
     name: ClassVar[str] = "sweep-aware"
 
-    #: **It placed the trade that prompted all of this**: EURUSD short on
-    #: 2026-10-05, 44.1 pip stop against a 9.8 pip target, 0.22 reward to risk,
-    #: closed at -6.06 on a managed exit having touched neither end.
+    #: **No `reward_floor`, and it is the one exception.** This strategy placed
+    #: the EURUSD short at 0.22 reward-to-risk that the floor was written for,
+    #: so it is not exempt for being blameless - it is exempt because the floor
+    #: would barely touch it and it is the only strategy of size that makes
+    #: money: median 2.71 over 514 live decisions, 5% below 1.0, +260.66 over
+    #: 317 broker positions. Asked for on 2026-10-05, on the grounds that
+    #: sweep-aware is not easily influenced by the floor either way, so the
+    #: profitable thing is left alone.
     #:
-    #: Its geometry is the best on the desk - median 2.71 over 514 live
-    #: decisions, only 5% below 1.0 - and it is the only strategy of size that
-    #: makes money (+260.66 over 317 broker positions). The floor was left off
-    #: here for exactly that reason, which was the wrong reason: 5% of 514 calls
-    #: is still 26 trades needing an impossible win rate, and the floor cannot
-    #: touch the 95% that are already sound because it only ever moves a target
-    #: further out.
-    #:
-    #: 1.0 rather than something braver, following the one precedent in this
-    #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.0
+    #: `Strategy.reward_floor` carries the measurement that makes this a real
+    #: question rather than caution.
     #: Every call `level-scalp` takes, minus the ones whose stop sits in front
     #: of resting liquidity. Listed after it, this would never fire.
     refines: ClassVar[str] = "level-scalp"
