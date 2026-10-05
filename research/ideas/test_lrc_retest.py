@@ -116,3 +116,88 @@ def test_fill_path_mirror():
     assert L.fill_path(-10.0, -7.0, -12.0, -8.0, -9.0, "up") == [-7.0, -8.0]
     # an up bar O-L-H-C filled while falling: L, then H, then C all come after the fill
     assert L.fill_path(10.0, 13.0, 8.0, 12.0, 9.0, "down") == [8.0, 13.0, 12.0]
+
+
+# ------------------------------------------------- structural targets (XL / XI / XF)
+
+
+class _F:
+    """The three arrays `leg_top` and `imbalance_top` read, and nothing else."""
+
+    def __init__(self, h, l):
+        self.h, self.l = np.asarray(h, float), np.asarray(l, float)
+        self.n = len(self.h)
+
+
+def test_leg_top_is_the_highest_high_in_the_window():
+    F = _F(h=[10, 12, 15, 13, 11], l=[9, 11, 14, 12, 10])
+    assert L.leg_top(F, 0, 4) == 15.0
+    # The window is clipped at WINDOW bars past the break, like `strength`.
+    assert L.leg_top(F, 1, 2) == 15.0
+    assert L.leg_top(F, 3, 4) == 13.0
+
+
+def test_an_imbalance_is_the_three_bar_gap_and_its_far_side_is_the_target():
+    # Bar 2 displaces: low[3] = 14 is above high[1] = 11, so bars 1-3 leave a gap.
+    F = _F(h=[10, 11, 16, 17, 18], l=[9, 10, 12, 14, 15])
+    assert L.imbalance_top(F, 0, 4, entry=10.0) == 14.0
+
+
+def test_a_leg_with_no_gap_has_no_imbalance_target():
+    """Most quiet legs. NaN rather than a substitute, so the trades that have one
+    can be read on their own instead of being averaged with the ones that do not.
+
+    The bars have to *overlap* for there to be no gap - a steady climb whose
+    bars clear each other is a run of imbalances, which is the point of the
+    pattern and was the bug in this test's first fixture.
+    """
+    F = _F(h=[10, 11, 12, 13, 14], l=[9, 9.5, 10, 10.5, 11])
+    assert np.isnan(L.imbalance_top(F, 0, 4, entry=10.0))
+
+
+def test_an_imbalance_price_has_traded_back_through_is_not_a_target():
+    """A gap that has been filled is history, not a destination."""
+    # Exactly one gap: low[3] = 14 clears high[1] = 11, and no other triple does.
+    gapped = _F(h=[10, 11, 12, 17, 18], l=[9, 9.5, 10, 14, 11.5])
+    assert L.imbalance_top(gapped, 0, 4, entry=10.0) == 14.0
+    # The same leg, with the last bar trading back down through high[1].
+    filled = _F(h=[10, 11, 12, 17, 18], l=[9, 9.5, 10, 14, 10.5])
+    assert np.isnan(L.imbalance_top(filled, 0, 4, entry=10.0))
+
+
+def test_the_imbalance_target_is_the_furthest_one_still_open():
+    """"Way past the imbalance candles" - the far side of the last gap price has
+    not come back through, not the first one it would meet."""
+    F = _F(h=[10, 11, 12, 17, 18, 24], l=[9, 9.5, 10, 14, 15, 20])
+    assert L.imbalance_top(F, 0, 5, entry=10.0) == 20.0
+
+
+def test_an_imbalance_below_the_fill_is_not_a_target_either():
+    F = _F(h=[10, 11, 16, 17, 18], l=[9, 10, 12, 14, 15])
+    assert np.isnan(L.imbalance_top(F, 0, 4, entry=20.0))
+
+
+def test_a_structural_target_uses_the_same_fill_and_stop_rules_as_2r():
+    o, h, l, c = _frame([10, 10, 10.5, 11, 12.5, 12.5])
+    r = L.exits(o, h, l, c, 1, 10.0, 9.0, 1.0, 0.1, None, tgts={"XL": 12.0})
+    # A limit at 12.0 is the 2R target here, so the two must agree exactly.
+    assert abs(r["R_XL"] - r["X2"]) < 1e-12
+    assert abs(r["d_XL"] - 2.0) < 1e-12
+
+
+def test_a_target_at_or_below_the_fill_is_recorded_as_absent():
+    o, h, l, c = _frame([10, 10, 10.5, 11, 12.5, 12.5])
+    r = L.exits(o, h, l, c, 1, 10.0, 9.0, 1.0, 0.1, None, tgts={"XI": float("nan"), "XL": 9.5})
+    assert np.isnan(r["R_XI"])
+    assert np.isnan(r["d_XI"])
+    assert np.isnan(r["R_XL"])
+
+
+def test_a_further_structural_target_is_further_in_r_and_hit_less_often():
+    o, h, l, c = _frame([10, 10, 10.5, 11, 12.5, 12.5])
+    r = L.exits(o, h, l, c, 1, 10.0, 9.0, 1.0, 0.0, None, tgts={"near": 11.0, "far": 20.0})
+    assert abs(r["d_near"] - 1.0) < 1e-12
+    assert abs(r["d_far"] - 10.0) < 1e-12
+    assert abs(r["R_near"] - 1.0) < 1e-12
+    # 20.0 is never reached, so the trade runs to the cap and closes at 12.5.
+    assert abs(r["R_far"] - 2.5) < 1e-12
