@@ -9,7 +9,8 @@ real data and on matched iid and GARCH walks. Modes:
           value over always-on, portfolio Sharpe, P(N R)
   hedge   exponential weights across strategies, with a cash arm
   kill    closes needed to call a strategy dead or alive; hot streaks on zero-edge streams
-  live    the same rules on the live closes export (run locally: CLOSES=.data/closes.json)
+  live    the same rules on the live closes export (run locally: CLOSES=.data/closes.json; a journal
+          .db, or several sources comma-separated, are read too - see read_closes)
   plot    figures
 
 Every rule's state is a function of the shadow record only (every outcome is observed whether the
@@ -792,8 +793,48 @@ def hot(t, centred, rng):
 
 # --------------------------------------------------------------------------------------------- live
 
+def read_closes(path):
+    """Close records [{t, title, ctx, src}] from one source: the desk's closes export (a JSON list, as
+    `.data/closes.json`) or a journal database (SQLite, table `entries`), where a close is an entry by
+    actor `trading` of kind `outcome` (attributed) or `observation` (unattributed) whose context carries
+    `profit`. The export is exactly those journal rows, so both read the same closes."""
+    p = Path(path)
+    if p.suffix not in (".db", ".sqlite", ".sqlite3"):
+        return json.loads(p.read_text())  # the desk's closes export (research data)
+    import sqlite3
+    from urllib.parse import quote
+    con = sqlite3.connect(f"file:{quote(str(p.resolve()))}?immutable=1", uri=True)  # read-only, no -shm writes
+    try:
+        rows = con.execute("SELECT time, kind, title, context FROM entries WHERE actor = 'trading' "
+                           "AND kind IN ('outcome', 'observation') ORDER BY time").fetchall()
+    finally:
+        con.close()
+    out = []
+    for t, kind, title, ctx in rows:
+        c = json.loads(ctx or "{}")
+        if c.get("profit") is None:
+            continue  # trading observations that are not closes (entries, skips)
+        out.append(dict(t=float(t), title=title, ctx=c, src="outcome" if kind == "outcome" else "unattributed"))
+    return out
+
+
+def read_all_closes(paths):
+    """Several sources (comma-separated paths or a list), merged and de-duplicated on (time, title):
+    an export and a newer journal can be read together and each close counts once."""
+    if isinstance(paths, (str, Path)):
+        paths = [s.strip() for s in str(paths).split(",") if s.strip()]
+    seen, out = set(), []
+    for p in paths:
+        for r in read_closes(p):
+            key = (round(float(r.get("t") or 0), 3), r.get("title"))
+            if key not in seen:
+                seen.add(key)
+                out.append(r)
+    return sorted(out, key=lambda r: float(r.get("t") or 0))
+
+
 def live_streams(path):
-    raw = json.loads(Path(path).read_text())  # the desk's closes export (research data)
+    raw = read_all_closes(path)
     rows = []
     for r in raw:
         c = r.get("ctx", {})
