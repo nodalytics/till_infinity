@@ -246,7 +246,8 @@ def main(mode):
             p = OUT / "sim" / f"null_{sl}_{k:03d}.pkl"
             if p.exists():
                 res = load(p)
-                ntr[sl].append({h: trade_summary(res.pop("trades", None), h) for h in (0, 1)})
+                tr = res.pop("trades", None)
+                ntr[sl].append({h: trade_summary(tr, h) for h in (0, 1)})
                 nulls[sl].append(Run(res, meta))
         for k in range(B.N_CTRL):
             p = OUT / "sim" / f"ctrl_{sl}_{k:03d}.pkl"
