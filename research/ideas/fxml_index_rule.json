@@ -1,0 +1,38 @@
+{
+ "frozen": "2026-10-06",
+ "addendum_to": "fxml_rule.json (c6e4872, amended 4b7a325 and a6ce025)",
+ "why": "the desk asked for stock-index CFDs as a third class after the FX/metals model runs had started. P1 and P2 stay as frozen on FX + metals. INDEX is frozen here, before any INDEX build or model run, with its own mirrors of P1 and P2 as secondaries under Benjamini-Hochberg",
+ "everything_else": "as fxml_rule.json and its two amendments: targets, features (first-frozen set for the registered models; Q, E and O in the ablation and importance), models, tuning budget, conformal layers, reporting in three parts (skill on walks, real-minus-walk behavioural skill, the after-cost trade)",
+
+ "universe": {
+  "mt5bt_db": ["US SP 500", "US Tech 100", "Wall Street 30", "Germany 40", "UK 100", "Japan 225", "Australia 200"],
+  "broker_csv": {
+   "series": ["France 40", "Europe 50", "Hong Kong 50", "US Small Cap 2000"],
+   "source": "the lab's broker bar exports data/deep2/<name>_1h_broker.csv.gz (the same broker; not in MT5BT_DB); 4h and 1d resampled from 1h on the UTC grid",
+   "note": "the DB holds no other index CFD; the 15m exports in data/fine cover the same four"
+  },
+  "class": "INDEX, reported apart from FX and METAL"
+ },
+ "split": {
+  "history": "the broker's index bars start 2024-01-22 at every timeframe, so 2024-01-01 leaves no discovery",
+  "rule": "split at the midpoint of the index span: discovery = labels resolved before 2025-06-01, confirmation = bars from 2025-06-01 (about 16 months each); fit / calibration = the first 80% / last 20% of discovery as in the main rule",
+  "caveat": "1d has about 340 discovery bars a series: thin, reported but not leaned on"
+ },
+ "costs": {
+  "spread": "per bar: max(the spread floor, the median of the series' bar spread column at that UTC hour) x point, so session-dependent spreads are charged where the bars carry them. Floor: R.spread_floor for the MT5BT_DB indices; for France 40 and Hong Kong 50 the median tick spread in data/research.db (fra40, hk50); Europe 50 and US Small Cap 2000 have no spread source and are forecast but left out of the trade translation",
+  "swap": "INDEX trades also pay swap: the broker's swap_long / swap_short (swap_mode 5, annual % of the current price, / 360 a night, x3 on the Friday rollover as swap_rollover3days = 5) for every 17:00 New York rollover the trade is held across; CSV indices use the median rate of the MT5BT_DB indices. Trades are reported with and without swap",
+  "slippage": "0.05 ATR on stop exits, as the main rule"
+ },
+ "walks": "hour-profiled walks (synth.matched_profiled): each series' own UTC hour-of-day volatility profile and its own overnight / weekend jumps, on its real timestamps, 256 sub-steps a bar, in log price. iid: no clustering; GARCH: the profile times a GARCH(1,1) variance (alpha 0.08, beta 0.9). The FX / metals walks inside the index build are the main rule's walks (same seeds)",
+ "features_added": {
+  "session_x": "every name starts with x_. Hours since the latest US cash open (09:30 New York) and since the latest EU cash open (09:00 Frankfurt), each at the bar's close, local time with daylight saving; in US regular hours (09:30-16:00 New York) and in EU regular hours (09:00-17:30 Frankfurt) at the bar's close; whether the bar contains the US / EU cash open. All are clock facts known at t. For 1d they are constant and carry nothing",
+  "index_pca": "ix_*: the cross-index factor model (the main rule's rolling PCA with the 11 indices as panel members); pc_*: every index's loadings on and residual against the FX / metals panel factors (the 17 main instruments as members, the indices projected)",
+  "registered_models_use": "the first-frozen features plus x_ and ix_"
+ },
+ "registered_secondary": {
+  "I-P1": "INDEX 1h rvk QLIKE, confirmation: tuned HGB against log-HAR-RV, (a) interval below 0 and (b) beyond the GARCH walk, as P1",
+  "I-P2": "INDEX 4h sign1 AUC of the frozen best model against its walk-trained twins: AUC >= 0.510 and real-minus-walk interval above 0 against both, as P2",
+  "bh": "both join the BH family with every other INDEX secondary (q = 0.10)"
+ },
+ "trade_translation": "the main rule's frozen conformal-set trade, run on INDEX as a diagnostic unless I-P2 passes"
+}
