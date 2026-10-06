@@ -336,7 +336,7 @@ def online_sgd(Xs, z, ts, res_t, lab, kind):
 
 # ------------------------------------------------------------------------------------------ risk baselines
 
-def ewma_garch(rows, fit_mask, k):
+def ewma_garch(rows, fit_mask, k, garch=True):
     """Per series: the EWMA (0.94) one-step variance and the GARCH(1,1) k-step variance sum and one-step
     variance, in raw log-return units at each row (after bar t's close)."""
     from scipy.optimize import minimize
@@ -357,6 +357,8 @@ def ewma_garch(rows, fit_mask, k):
             s = LAMBDA * s + (1 - LAMBDA) * r[i] ** 2
             e[i] = s
         ew[ix] = e
+        if not garch:          # the touch baselines need the EWMA only
+            continue
         fr = r[fit_mask[ix]]
         sc = float(np.std(fr)) if len(fr) > 300 else float(np.std(r))
         sc = sc if sc > 0 else 1.0
@@ -853,7 +855,7 @@ def job(spec):
             if tgt.startswith(("tup", "tdn")):
                 from scipy.stats import norm
                 from sklearn.linear_model import LogisticRegression
-                ew, _, _, _ = ewma_garch(rows, fit | ~sp["main"] & sp["disc"], 1)
+                ew, _, _, _ = ewma_garch(rows, fit | ~sp["main"] & sp["disc"], 1, garch=False)
                 sig = np.sqrt(ew) / (rows["atr"].to_numpy(float) / rows["close"].to_numpy(float))
                 x = 0.5 if tgt.endswith("05") else 1.0
                 pr = np.clip(2 * (1 - norm.cdf(x / np.maximum(sig, 1e-6))), 1e-4, 1 - 1e-4)

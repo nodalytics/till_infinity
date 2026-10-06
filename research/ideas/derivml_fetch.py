@@ -115,13 +115,19 @@ def bars(c):
             print(f"{sym} {iv}: {n} bars", flush=True)
 
 
+JUMP_FIT_END = int(datetime(2025, 11, 18, tzinfo=UTC).timestamp())
+
+
 def ticks(c):
     last = int(time.time() // 86400) * 86400 - 86400       # the last complete UTC day
-    for sym in STEP + DIFF + JUMP:
+    # the Jump fit half (to 2025-11-17) before the rest of the Jump days (only the tick fills need those)
+    plan = [(s, FIRST_DAY, last) for s in STEP + DIFF] + [(s, FIRST_DAY, JUMP_FIT_END - 86400) for s in JUMP] + \
+           [(s, JUMP_FIT_END, last) for s in JUMP]
+    for sym, lo, hi in plan:
         d = OUT / "ticks" / slug(sym)
         d.mkdir(parents=True, exist_ok=True)
         n_ok = 0
-        for t0 in range(FIRST_DAY, last + 1, 86400 * EVERY[sym]):
+        for t0 in range(lo, hi + 1, 86400 * EVERY[sym]):
             f = d / (datetime.fromtimestamp(t0, UTC).strftime("%Y-%m-%d") + ".npz")
             if f.exists():
                 continue
