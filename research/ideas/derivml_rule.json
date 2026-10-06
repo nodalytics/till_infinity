@@ -137,5 +137,10 @@
   "split_midpoint": "Volatility 150/250 (1s) at 1h (bars from 2023-07-25, split 2025-03-01); Volatility 15/30/90 (1s) and Multi Step 3 (from 2025-01-31, split 2025-12-04); Volatility 5/15/30/90 (2s), Volatility 5 (1s) and High Frequency Vol 10-100 (from 2025-12-26 / 2026-02-13 / 2026-03-19, splits 2026-05 to 2026-06); Step 200/500 (2024-04-04, split 2025-07-06); Step 300/400 (2024-11-07, split 2025-10-22); Multi Step 2/4 (2024-06-03, split 2025-08-05); Skew Step 4/5 Up/Down (2024-08-30, split 2025-09-18)",
   "excluded_cells": "1d of Volatility 5/15/30/90 (2s), Volatility 5 (1s) and High Frequency Vol 10-100: fewer than 600 daily bars",
   "short_history_note": "the series listed under split_midpoint at 1h/4h join the pooled models with few rows; the classes VOLHF and the new 2s indices (5/15/30/90) are reported but their confirmation spans only 4-5 months"
+ },
+ "amended_before_run": {
+  "date": "2026-10-06",
+  "state_when_amended": "the BC and RB generators had been fitted (derivml_gen.py) and a first dataset build had run for BC and RB as a pipeline test; no model had been fitted, tuned or scored on any data",
+  "reset_detection": "data.inclusion's feed-reset rule, as first written, was applied per timeframe; on Range Break at 1h it flagged ordinary multi-break hours (11 on RB100, 1,443 on RB200, where the median hourly move is tiny). Amended: resets are found on the 4h bars only (a 4h log move above 20x the median absolute 4h move of discovery), which finds exactly one event per series, Range Break 100 and 200 at 2022-11-24 (none on any other series at any timeframe), and are applied by time to every timeframe: bars within 4h of the reset bar are reset bars, and the rows within 120 bars after one, or whose label spans one, are dropped (nr labels within 500 bars before one set missing)"
  }
 }
