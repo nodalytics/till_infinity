@@ -571,6 +571,9 @@ def run():
     only = os.environ.get("ONLY")
     if only:
         js = [j for j in js if any(o in _tagify(*j) for o in only.split(","))]
+    skip = os.environ.get("SKIP")
+    if skip:
+        js = [j for j in js if not any(o in _tagify(*j) for o in skip.split(","))]
     # the heavy Deriv tape jobs first, then the longest series
     order = {"bc": 0, "rb": 0, "binance": 1, "fresh": 2, "mt5": 3, "deriv1s": 4}
     js.sort(key=lambda j: (order[j[0]], SEC.get(j[2], 0)))
