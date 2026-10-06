@@ -20,6 +20,10 @@ its matched iid and GARCH walks therefore has zero edge before costs, and loses 
 measurement of no edge, not a claim that the pattern doesn't exist. See
 [walks-and-edge.md](walks-and-edge.md).
 
+For models that read chart shape, report three parts: skill on walks (what any chart shows), real minus
+walk (**behavioural skill**, the only place traders acting on those shapes can show), and the trade after
+costs. See [walks-and-edge.md](walks-and-edge.md#models-that-read-chart-shape-the-chart-reader-and-the-crowd).
+
 ## Alive, and being watched
 
 | signal | evidence | doc | status |
