@@ -3,6 +3,8 @@
 A synthesis of every study in [`README.md`](README.md), as of 2026-09-30 (updated after the last study merged). Each claim links to the doc
 that measured it. Read this first. The individual docs carry the numbers, methods and caveats.
 
+**For the studies of 2026-10-04 to 2026-10-06, read [desk-summary-2026-10.md](desk-summary-2026-10.md).**
+
 ## The one-paragraph answer
 
 **This desk can forecast risk. Direction, with one thin exception (crypto trend-following, [`battery.md`](battery.md)), it cannot.** Everything that survived our
