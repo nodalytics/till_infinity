@@ -107,3 +107,33 @@ def test_ohlc_block_is_causal():
         x, y = full.iloc[cut].to_numpy(float), part.iloc[cut].to_numpy(float)
         bad = ~((x == y) | (np.isnan(x) & np.isnan(y)) | np.isclose(x, y, rtol=1e-5, atol=1e-6))
         assert not bad.any(), list(full.columns[bad])
+
+
+def test_session_x_us_open():
+    # 2025-07-01 13:00 UTC 1h bar = 09:00-10:00 New York (EDT): contains the 09:30 open; at its close
+    # 10:00 NY it is 0.5h since the open and inside regular hours
+    ts = np.array([pd.Timestamp("2025-07-01 13:00", tz="UTC").timestamp()], np.int64)
+    F = D.session_x(ts, "1h")
+    assert F["x_us_open_in_bar"][0] == 1.0
+    assert np.isclose(F["x_us_since_open"][0], 0.5)
+    assert F["x_us_rth"][0] == 1.0
+    # Frankfurt (CEST) 15:00-16:00: no EU open in the bar, 7h since the 09:00 open
+    assert F["x_eu_open_in_bar"][0] == 0.0
+    assert np.isclose(F["x_eu_since_open"][0], 7.0)
+
+
+def test_add_roll_slope_and_touch():
+    import fxml_add as A
+    y = np.arange(10, dtype=float) * 2.0 + 1
+    s, r = A.roll_slope(y, 5)
+    assert np.isclose(s[-1], 2.0) and np.isclose(r[-1], 1.0) and np.isnan(s[3])
+    sw, _ = A.roll_slope(y, 5, np.ones(10))
+    assert np.isclose(sw[-1], 2.0)
+    h = np.array([1.0, 1.5, 2.6, 1.0, 1.0, 1.0])
+    l = np.array([0.5, 0.4, 0.9, 0.2, 0.9, 0.9])
+    up, dn, first = A.first_touch(h, l, np.full(6, 2.5), np.full(6, 0.3), 2)
+    # from bar 0: bar 1 neither, bar 2 high 2.6 -> up first
+    assert up[0] == 1.0 and dn[0] == 0.0 and first[0] == 1.0
+    # from bar 1: bar 2 up, bar 3 low 0.2 -> up first, both reached
+    assert first[1] == 1.0 and dn[1] == 1.0
+    assert np.isnan(up[5])

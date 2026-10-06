@@ -59,7 +59,7 @@ CORE_E = ["lrc10_sgn", "lrc20_sgn", "lrc50_sgn", "lrc100_sgn", "lrc10_d1", "lrc2
 def groups(cols):
     """The frozen feature groups (Q: the amendment's polynomial fits)."""
     S = [c for c in cols if c.startswith(("lrc", "cs", "ema", "mtf"))]
-    P = [c for c in cols if c.startswith(("pc_", "spca"))]
+    P = [c for c in cols if c.startswith(("pc_", "spca", "ix_"))]
     C = [c for c in cols if c.startswith(("pd", "pw")) or c in ("body", "uwick", "lwick", "cloc")]
     Q = [c for c in cols if c.startswith("pf")]
     O = [c for c in cols if c.startswith("o_")]
@@ -288,7 +288,7 @@ def online_sgd(Xs, z, ts, res_t, lab, kind):
     n, p = Xs.shape
     w = np.zeros(p + 1)
     G = np.full(p + 1, 1e-8)
-    target = np.log(np.maximum(z, EPS)) if kind == "reg" else z.astype(float)
+    target = np.log(np.maximum(z, EPS)) if kind == "reg" else np.nan_to_num(z.astype(float))
     order = np.argsort(ts, kind="stable")
     tsu, first = np.unique(ts[order], return_index=True)
     bounds = np.r_[first, len(order)]
@@ -317,7 +317,8 @@ def online_sgd(Xs, z, ts, res_t, lab, kind):
             w -= SGD_LR * grad / np.sqrt(G)
         rix = order[bounds[g]:bounds[g + 1]]
         out = np.c_[Xs[rix], np.ones(len(rix))] @ w
-        pred[rix] = 1 / (1 + np.exp(-np.clip(out, -30, 30))) if kind == "cls" else np.exp(out + 0.5 * s2)
+        pred[rix] = (1 / (1 + np.exp(-np.clip(out, -30, 30))) if kind == "cls" else
+                     out if kind == "lin" else np.exp(out + 0.5 * s2))
     return pred
 
 
@@ -845,7 +846,7 @@ def all_jobs():
                     js.append((tf, src, tgt, "imp"))
     # the primaries (tuning) and 1h first, so the pool drains evenly
     def key(j):
-        return (0 if (j[0], j[2]) in (P1, P2) and not j[3] else 1, {"1h": 0, "4h": 1, "1d": 2}[j[0]])
+        return (0 if (j[0], j[2]) in (P1, P2) and not j[3] else 1, {"15m": 0, "1h": 0, "4h": 1, "1d": 2}[j[0]])
     return sorted(js, key=key)
 
 

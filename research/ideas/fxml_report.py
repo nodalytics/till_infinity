@@ -26,7 +26,7 @@ REP = OUT / "report"
 IMG = REP / "img"
 B_PRIMARY, B_SEC = 1000, 300
 SEED = 7
-CLASSES = ("POOL", "FX", "METAL", "HOLD")
+CLASSES = ("POOL", "FX", "METAL", "HOLD", "INDEX")
 NS = (1, 2, 4, 10)
 WALKS = ("iid", "garch")
 
@@ -99,15 +99,16 @@ class Boot:
         starts = np.r_[0, np.flatnonzero(np.diff(p)) + 1]
         pos = y == 1
 
-        def one(w):
-            wp = np.add.reduceat(np.where(pos, w, 0.0), starts)
-            wn = np.add.reduceat(np.where(pos, 0.0, w), starts)
-            cn = np.cumsum(wn) - wn
-            P, N = wp.sum(), wn.sum()
-            return float((wp * (cn + 0.5 * wn)).sum() / (P * N)) if P > 0 and N > 0 else np.nan
+        def batch(W):
+            wp = np.add.reduceat(np.where(pos, W, 0.0), starts, axis=1)
+            wn = np.add.reduceat(np.where(pos, 0.0, W), starts, axis=1)
+            cn = np.cumsum(wn, axis=1) - wn
+            P, N = wp.sum(1), wn.sum(1)
+            with np.errstate(divide="ignore", invalid="ignore"):
+                return (wp * (cn + 0.5 * wn)).sum(1) / (P * N)
 
-        point = one(np.ones(len(y)))
-        dr = np.array([one(self.C[b][d]) for b in range(self.draws)])
+        point = float(batch(np.ones((1, len(y))))[0])
+        dr = np.concatenate([batch(self.C[b:b + 25][:, d]) for b in range(0, self.draws, 25)])
         return point, dr
 
 
@@ -319,7 +320,7 @@ def cqr_tables():
                 sess = np.where(hr < 7, "asia", np.where(hr < 12, "london", np.where(hr < 16, "overlap",
                                 np.where(hr < 21, "ny", "late"))))
                 month = pd.to_datetime(m["ts"], unit="s").dt.to_period("M").astype(str).to_numpy()
-                for c in ("POOL", "FX", "METAL", "HOLD"):
+                for c in CLASSES:
                     sel0 = scored(pr, m, c)
                     for nm, meths in pr["cqr"].items():
                         for meth, (lo, hi) in meths.items():
@@ -396,7 +397,7 @@ def ablation_tables(boots):
             if any(v is None for v in prs.values()):
                 continue
             kind = "reg" if tgt in M.REG else "cls"
-            for c in ("POOL", "FX", "METAL"):
+            for c in ("POOL", "FX", "METAL", "INDEX"):
                 stats = {}
                 for s in D.SOURCES:
                     pr, m = prs[s], meta(tf, s)
@@ -499,6 +500,20 @@ def pnr_diag():
     return pd.DataFrame(rows)
 
 
+def rollovers(t0, t1):
+    """17:00 New York rollovers in (t0, t1], Friday counted three times (swap_rollover3days = 5)."""
+    if t1 <= t0:
+        return 0
+    a = pd.Timestamp(t0 - 17 * 3600, unit="s", tz="UTC").tz_convert(D.NY).date()
+    b = pd.Timestamp(t1 - 17 * 3600, unit="s", tz="UTC").tz_convert(D.NY).date()
+    n = 0
+    d = a
+    while d < b:
+        d = d + pd.Timedelta(days=1)
+        n += 3 if d.weekday() == 4 else 1
+    return n
+
+
 def simulate(bars, entries):
     """Trades from entries [(t, side)] on one series' bars: entry O_{t+1}, the 3-bar structural stop
     (0.1 ATR pad, 0.25 ATR minimum risk); exits at fixed +N R (N in NS) and a trailing structural stop
@@ -507,6 +522,9 @@ def simulate(bars, entries):
     o, h, l, c = (bars[k].to_numpy(float) for k in ("open", "high", "low", "close"))
     a = bars["atr"].to_numpy(float)
     cost_atr = bars["cost_atr"].to_numpy(float)
+    ts_ = bars["ts"].to_numpy(np.int64)
+    bar_sec = int(np.median(np.diff(ts_))) if len(ts_) > 1 else 3600
+    has_swap = "swapL" in bars
     n = len(c)
     out = []
     for t, side in entries:
@@ -525,6 +543,7 @@ def simulate(bars, entries):
         if not risk > 0:
             continue
         res = {f"x{n_}": None for n_ in NS}
+        jx = {}
         trail = stop0
         tr_res = None
         mfe = 0.0
@@ -554,13 +573,17 @@ def simulate(bars, entries):
                     if res[f"x{n_}"] is None:
                         if mfe >= n_:
                             res[f"x{n_}"] = (float(n_), False)
+                            jx[n_] = b
                         elif stopped:
                             res[f"x{n_}"] = ((stop_px - E) / risk, True)
+                            jx[n_] = b
             if tr_res is None:
                 if oo[b] <= trail:
                     tr_res = ((oo[b] - E) / risk, True)
+                    jx["trail"] = b
                 elif ll[b] <= trail:
                     tr_res = ((trail - E) / risk, True)
+                    jx["trail"] = b
                 else:
                     trail = max(trail, min(ll[max(b - 2, 0):b + 1]) - D.PAD * a[b])
             if stopped and tr_res is not None and all(v is not None for v in res.values()):
@@ -574,12 +597,22 @@ def simulate(bars, entries):
         cost_R = cost_atr[t] * a[t] / risk
         slip_R = 0.05 * a[t] / risk
         r = dict(t=t, side=side, risk_atr=risk / a[t], cost_R=cost_R, mfe=mfe)
+
+        def swap_R(key):
+            if not has_swap:
+                return 0.0
+            rate = float(bars["swapL"].iloc[t] if side > 0 else bars["swapS"].iloc[t])
+            nights = rollovers(int(ts_[t + 1]), int(ts_[jx.get(key, last)]) + bar_sec)
+            return nights * c[t] * rate / 100 / 360 / risk
+
         for n_ in NS:
             g, st = res[f"x{n_}"]
             r[f"g{n_}"] = g
             r[f"net{n_}"] = g - cost_R - (slip_R if st else 0.0)
+            r[f"swap{n_}"] = swap_R(n_)
         r["gtrail"] = tr_res[0]
         r["nettrail"] = tr_res[0] - cost_R - (slip_R if tr_res[1] else 0.0)
+        r["swaptrail"] = swap_R("trail")
         out.append(r)
     return out
 
@@ -622,7 +655,10 @@ def trades(boots):
                 B = boots[tf][0]
                 r = dict(tf=tf, cls=c, source=s, n=len(x), risk_atr=float(x.risk_atr.median()),
                          cost_R=float(x.cost_R.mean()))
-                for ex in [f"net{n_}" for n_ in NS] + ["nettrail", "gtrail"] + [f"g{n_}" for n_ in NS]:
+                if "swaptrail" in x and x["swaptrail"].abs().sum() > 0:
+                    x = x.assign(**{f"nets{k_}": x[f"net{k_}"] + x[f"swap{k_}"] for k_ in list(NS) + ["trail"]})
+                for ex in [f"net{n_}" for n_ in NS] + ["nettrail", "gtrail"] + [f"g{n_}" for n_ in NS] + \
+                        [c_ for c_ in x.columns if c_.startswith("nets")]:
                     pt, dr = B.mean(x.ts.to_numpy(np.int64), x[ex].to_numpy(float))
                     lo, hi, _ = ci(dr, pt)
                     r[ex], r[f"{ex}_lo"], r[f"{ex}_hi"] = pt, lo, hi
@@ -642,6 +678,17 @@ def agg():
         ts = m["ts"].to_numpy(np.int64)
         ts = ts[ts >= D.SPLIT]
         boots[tf] = (Boot(ts, B_SEC), Boot(ts, B_PRIMARY))
+    partial = os.environ.get("PARTIAL") == "1"  # re-use the risk / class / conformal / trade tables
+    if partial:
+        risk = pd.read_csv(REP / "risk.csv")
+        cls_t = pd.read_csv(REP / "classes.csv")
+        rel_t = pd.read_csv(REP / "behavioural.csv")
+        old = json.load(open(REP / "summary.json"))
+        p1, p2 = old["P1"], old["P2"]
+        ab = ablation_tables(boots)
+        ab.to_csv(REP / "ablation.csv", index=False)
+        importance_tables().to_csv(REP / "importance.csv", index=False)
+        return finish(risk, cls_t, rel_t, ab, p1, p2)
     risk, p1 = risk_tables(boots)
     risk.to_csv(REP / "risk.csv", index=False)
     print("risk done", flush=True)
@@ -675,6 +722,10 @@ def agg():
     T.to_pickle(REP / "trades.pkl")
     tt.to_csv(REP / "trades.csv", index=False)
     print("trades done", flush=True)
+    return finish(risk, cls_t, rel_t, ab, p1, p2)
+
+
+def finish(risk, cls_t, rel_t, ab, p1, p2):
     # Benjamini-Hochberg over the secondary family
     fam = []
     r = risk[risk.get("vs", pd.Series(dtype=object)) == "har"] if "vs" in risk else pd.DataFrame()
@@ -689,11 +740,13 @@ def agg():
         fam.append(dict(kind="behavioural", key=f"{x.tf} {x.target} {x.cls} {x.model} real-{x.walk}", p=x.p))
     for _, x in cls_t[(cls_t.source == "real") & (cls_t.model != "coin")].iterrows():
         fam.append(dict(kind="auc>0.5", key=f"{x.tf} {x.target} {x.cls} {x.model}", p=x.p_auc))
-    for _, x in ab[ab.source.isin(["real", "real-iid", "real-garch"])].iterrows():
+    for _, x in (ab[ab.source.isin(["real", "real-iid", "real-garch"])] if len(ab) else ab).iterrows():
         fam.append(dict(kind="ablation", key=f"{x.tf} {x.target} {x.cls} {x.source} {x.variant} over {x.base}", p=x.p))
     F = pd.DataFrame(fam)
     F["bh"] = bh(F["p"].to_numpy())
     F.to_csv(REP / "bh.csv", index=False)
+    if not len(F):
+        F = pd.DataFrame(columns=["kind", "key", "p"])
     summ = dict(P1=p1, P2=p2, bh_tested=int(len(F)), bh_survive=int(F["bh"].sum()),
                 bh_by_kind=F.groupby("kind")["bh"].agg(["sum", "count"]).to_dict())
     with open(REP / "summary.json", "w") as f:

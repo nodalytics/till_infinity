@@ -18,7 +18,7 @@ import fxml_report as R  # noqa: E402
 COL = {"real": "#2a78d6", "iid": "#eb6834", "garch": "#1baf7a", "ref": "#8a8984", "4": "#eda100",
        "5": "#e87ba4", "6": "#008300", "7": "#4a3aa7"}
 INK, INK2 = "#0b0b0b", "#52514e"
-TFS = ("1h", "4h", "1d")
+TFS = R.D.TFS
 plt.rcParams.update({"axes.spines.top": False, "axes.spines.right": False, "axes.edgecolor": INK2,
                      "axes.labelcolor": INK, "xtick.color": INK2, "ytick.color": INK2, "font.size": 9,
                      "axes.titlesize": 10, "axes.grid": True, "grid.color": "#e6e5e0", "grid.linewidth": 0.6,

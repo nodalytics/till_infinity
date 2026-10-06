@@ -33,10 +33,20 @@ FX = "EURUSD GBPUSD USDJPY AUDUSD USDCAD USDCHF NZDUSD EURJPY GBPJPY EURGBP AUDJ
 METAL = "XAUUSD XAGUSD XPTUSD XPDUSD XCUUSD".split()
 HOLD = "EURCHF CHFJPY EURAUD".split()
 MAIN = FX + METAL
-TFS = ("1h", "4h", "1d")
+# INDEX addendum (fxml_index_rule.json)
+INDEX_DB = ["US SP 500", "US Tech 100", "Wall Street 30", "Germany 40", "UK 100", "Japan 225", "Australia 200"]
+INDEX_CSV = {"France 40": "france_40", "Europe 50": "europe_50", "Hong Kong 50": "hong_kong_50",
+             "US Small Cap 2000": "us_small_cap_2000"}
+INDEX = INDEX_DB + list(INDEX_CSV)
+INDEX_TICK_FEED = {"France 40": "fra40", "Hong Kong 50": "hk50"}
+UNIVERSE = os.environ.get("UNIVERSE", "fxm")
+DEEP2 = os.environ.get("DEEP2", os.path.expanduser("~/till_infinity/data/deep2"))
+RESEARCH_DB = os.environ.get("RESEARCH_DB", os.path.expanduser("~/till_infinity/data/research.db"))
+FRA = ZoneInfo("Europe/Berlin")
+TFS = tuple(os.environ.get("TFS", "1h,4h,1d").split(","))
 SEC = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
 K = {"15m": 16, "1h": 24, "4h": 6, "1d": 5}
-SPLIT = int(pd.Timestamp("2024-01-01", tz="UTC").timestamp())
+SPLIT = int(pd.Timestamp(os.environ.get("SPLIT_DATE", "2024-01-01"), tz="UTC").timestamp())  # 15m check: 2025-07-01
 SOURCES = ("real", "iid", "garch")
 WALK_STEPS = 256
 MAX_COST_ATR = 0.5
@@ -101,10 +111,63 @@ def load_main(sym, tf):
     if not floor > 0:
         sp = df["spread"].to_numpy(float) if "spread" in df else np.array([np.nan])
         floor = float(np.nanmedian(sp)) if np.isfinite(sp).any() else 0.0
+    if sym in INDEX_DB:
+        # session spreads: max(floor, the median bar spread at that UTC hour)
+        hr = (df["ts"].to_numpy(np.int64) // 3600) % 24
+        sp = pd.Series(df["spread"].to_numpy(float)).groupby(hr).median()
+        per = np.maximum(floor, sp.reindex(hr).to_numpy(float))
+        per = np.where(np.isfinite(per), per, floor)
+        raw = spec_raw(db, sym)
+        df = df[["ts", "open", "high", "low", "close"]].astype({"ts": np.int64}).reset_index(drop=True)
+        df["swapL"], df["swapS"] = float(raw.get("swap_long", 0.0)), float(raw.get("swap_short", 0.0))
+        return df, per * spec.point
     df = df[["ts", "open", "high", "low", "close"]].astype({"ts": np.int64}).reset_index(drop=True)
     if sym in FX:
         df = trim_rollover(df, tf)
     return df, floor * spec.point
+
+
+def spec_raw(db, sym):
+    import json
+    import sqlite3
+    conn = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
+    try:
+        r = conn.execute("SELECT raw FROM specs WHERE symbol = ?", (sym,)).fetchone()
+    finally:
+        conn.close()
+    return (json.loads(r[0]) or {}) if r and r[0] else {}
+
+
+def median_index_swap():
+    db = os.environ.get("MT5BT_DB")
+    raws = [spec_raw(db, s) for s in INDEX_DB]
+    return (float(np.median([r.get("swap_long", 0.0) for r in raws])),
+            float(np.median([r.get("swap_short", 0.0) for r in raws])))
+
+
+def load_csv_index(sym, tf):
+    """The four index CFDs outside MT5BT_DB: the broker's 1h exports; 4h / 1d resampled on the UTC grid."""
+    import sqlite3
+    f = Path(DEEP2) / f"{INDEX_CSV[sym]}_1h_broker.csv.gz"
+    if not f.exists():
+        return None, None
+    df = pd.read_csv(f)[["ts", "open", "high", "low", "close"]].drop_duplicates("ts").sort_values("ts")
+    df["ts"] = df["ts"].astype(np.int64)
+    if tf != "1h":
+        df = resample(df, SEC[tf])
+    df = df.reset_index(drop=True)
+    cost = np.nan
+    if sym in INDEX_TICK_FEED:
+        conn = sqlite3.connect(f"file:{RESEARCH_DB}?mode=ro", uri=True)
+        try:
+            sp = conn.execute("SELECT ask - bid FROM ticks WHERE feed = ? LIMIT 20000",
+                              (INDEX_TICK_FEED[sym],)).fetchall()
+        finally:
+            conn.close()
+        cost = float(np.median([x[0] for x in sp])) if sp else np.nan
+    sl, ss = median_index_swap()
+    df["swapL"], df["swapS"] = sl, ss
+    return df, np.full(len(df), cost)
 
 
 def load_hold(sym, tf):
@@ -120,6 +183,23 @@ def load_hold(sym, tf):
     cost = float(np.median(sp)) * point if len(sp) else 0.0
     df = df[["ts", "open", "high", "low", "close"]].astype({"ts": np.int64}).reset_index(drop=True)
     return trim_rollover(df, tf), cost
+
+
+def make_walk_profiled(df, kind, seed):
+    """INDEX addendum: an hour-profiled walk in log price (synth.matched_profiled), with the series' own
+    UTC hour-of-day volatility and overnight jumps; GARCH(1,1) clustering on top for 'garch'."""
+    from mcfl import synth
+    lg = pd.DataFrame({"ts": df["ts"].to_numpy(np.int64)})
+    for k in ("open", "high", "low", "close"):
+        lg[k] = np.log(df[k].to_numpy(float))
+    w = synth.matched_profiled(lg, seed, steps=WALK_STEPS, garch=(0.08, 0.9) if kind == "garch" else None)
+    out = pd.DataFrame({"ts": df["ts"].to_numpy(np.int64)})
+    for k in ("open", "high", "low", "close"):
+        out[k] = np.exp(w[k].to_numpy(float))
+    for k in ("swapL", "swapS"):
+        if k in df:
+            out[k] = df[k].to_numpy()
+    return out
 
 
 def make_walk(df, kind, seed):
@@ -288,7 +368,27 @@ def prior_hl(ts, h, l, key):
     return H, L
 
 
-def features(df, tf, is_metal):
+def session_x(ts, tf):
+    """INDEX addendum: cash-session clock features, known at the bar's close."""
+    end = pd.to_datetime(ts + SEC[tf], unit="s", utc=True)
+    start = pd.to_datetime(ts, unit="s", utc=True)
+    F = {}
+    for nm, tz, oh, om, ch, cm in (("us", NY, 9, 30, 16, 0), ("eu", FRA, 9, 0, 17, 30)):
+        le = end.tz_convert(tz)
+        mins = le.hour * 60 + le.minute
+        o_min, c_min = oh * 60 + om, ch * 60 + cm
+        since = (mins - o_min) % (24 * 60)
+        F[f"x_{nm}_since_open"] = np.asarray(since / 60.0, float)
+        F[f"x_{nm}_rth"] = np.asarray((mins > o_min) & (mins <= c_min), float)
+        ls = start.tz_convert(tz)
+        smin = ls.hour * 60 + ls.minute
+        dur = SEC[tf] // 60
+        F[f"x_{nm}_open_in_bar"] = np.asarray(((o_min - smin) % (24 * 60)) < dur, float) if dur < 1440 else \
+            np.zeros(len(ts))
+    return F
+
+
+def features(df, tf, is_metal, is_index=False):
     o, h, l, c = (df[k].to_numpy(float) for k in ("open", "high", "low", "close"))
     ts = df["ts"].to_numpy(np.int64)
     k = K[tf]
@@ -331,6 +431,8 @@ def features(df, tf, is_metal):
     F["s_ny"] = ((hr >= 16) & (hr < 21)).astype(float)
     F["rollover"] = rollover_open(ts).astype(float) if tf in ("15m", "1h") else np.zeros(len(ts))
     F["is_metal"] = np.full(len(c), float(is_metal))
+    if is_index:
+        F.update(session_x(ts, tf))
     # S: slopes
     for L in LRC_L:
         s, r = lrc_stats(c, L)
@@ -470,20 +572,21 @@ def targets(df, a, tf):
 
 def series_job(job):
     sym, tf, source = job
-    cls = "FX" if sym in FX else "METAL" if sym in METAL else "HOLD"
-    df, cost_px = (load_hold if cls == "HOLD" else load_main)(sym, tf)
+    cls = "FX" if sym in FX else "METAL" if sym in METAL else "INDEX" if sym in INDEX else "HOLD"
+    loader = load_hold if cls == "HOLD" else load_csv_index if sym in INDEX_CSV else load_main
+    df, cost_px = loader(sym, tf)
     if df is None or len(df) < 600:
         return sym, tf, source, None, "no data"
     h, l, c = (df[k].to_numpy(float) for k in ("high", "low", "close"))
     a_real = atr(h, l, c)
     cost_atr = cost_px / np.maximum(a_real, 1e-12)
-    med = float(np.nanmedian(cost_atr[50:]))
-    if not med <= MAX_COST_ATR:
+    med = float(np.nanmedian(cost_atr[50:])) if np.isfinite(cost_atr).any() else np.nan
+    if not med <= MAX_COST_ATR and not (cls == "INDEX" and np.isnan(med)):
         return sym, tf, source, None, f"dropped: cost {med:.2f} ATR"
     if source != "real":
         seed = zlib.crc32(f"{sym}{tf}{source}fxml".encode()) % 2**31
-        df = make_walk(df, source, seed)
-    F, a = features(df, tf, cls == "METAL")
+        df = make_walk_profiled(df, source, seed) if cls == "INDEX" else make_walk(df, source, seed)
+    F, a = features(df, tf, cls == "METAL", cls == "INDEX")
     O = ohlc_block(df, a)
     T, tr = targets(df, a, tf)
     meta = pd.DataFrame({"sym": sym, "cls": cls, "ts": df["ts"].to_numpy(np.int64),
@@ -502,13 +605,13 @@ def series_job(job):
 
 # ------------------------------------------------------------------------------------------ cross-sectional PCA
 
-def pca_panel(series, tf, prefix="pc_"):
+def pca_panel(series, tf, prefix="pc_", members=None):
     """series: sym -> (ts, z), z the per-bar standardised value (close returns, or log range shocks).
     Returns sym -> DataFrame(ts, pca features named <prefix>*)."""
     W, R = PCA_W[tf], PCA_R[tf]
     grid = np.unique(np.concatenate([series[s][0] for s in series]))
     syms = list(series)
-    members = [s for s in syms if s in MAIN]
+    members = [s for s in syms if s in (members or MAIN)]
     Z = np.full((len(grid), len(syms)), np.nan)
     for j, s in enumerate(syms):
         ts, z = series[s]
@@ -568,7 +671,8 @@ def build():
     OUT.mkdir(parents=True, exist_ok=True)
     tfs = os.environ.get("TFS", ",".join(TFS)).split(",")
     sources = os.environ.get("SOURCES", ",".join(SOURCES)).split(",")
-    jobs = [(s, tf, src) for tf in tfs for src in sources for s in MAIN + HOLD]
+    universe = MAIN + (INDEX if UNIVERSE == "index" else HOLD)
+    jobs = [(s, tf, src) for tf in tfs for src in sources for s in universe]
     res = {}
     with ProcessPoolExecutor(int(os.environ.get("WORKERS", 8))) as pool:
         for sym, tf, src, r, msg in pool.map(series_job, jobs, chunksize=1):
@@ -587,7 +691,13 @@ def build():
                 series[k[0]] = (b["ts"].to_numpy(np.int64), np.r_[np.nan, np.diff(np.log(c_)) / (a_[:-1] / c_[:-1])])
             pc = pca_panel(series, tf)
             rseries = {k[0]: (res[k][0]["ts"].to_numpy(np.int64), res[k][4]) for k in keys}
-            pr = pca_panel(rseries, tf, prefix="o_pr_")
+            if UNIVERSE == "index":
+                ix = pca_panel(series, tf, prefix="ix_", members=INDEX)
+                pr = pca_panel(rseries, tf, prefix="o_pr_", members=INDEX)
+                keys = [k for k in keys if k[0] in INDEX]
+                pc = {s_: pd.concat([pc[s_], ix[s_].drop(columns="ts")], axis=1) for s_ in pc if s_ in INDEX}
+            else:
+                pr = pca_panel(rseries, tf, prefix="o_pr_")
             frames, oframes, bars, trs = [], [], {}, None
             for k in keys:
                 rows, b, tr, O, _ = res[k]
