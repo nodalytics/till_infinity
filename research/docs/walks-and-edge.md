@@ -48,11 +48,69 @@ the walks, and leads with the tail. Examples so far:
 - **The turn trade with market exits.** Its lift over "buy every low" also showed up on walks, and
   its P(N R) curve sat on the walk's. That means zero edge before costs, not a broken pattern.
 
+*Update, 2026-10-06:* DISPLACE_C's edge turned out to be the crypto market factor, timed
+([pca-residuals.md](pca-residuals.md)). Traded on BTC as the market mirror, it passed again on 274
+unseen perps ([turn-follow-ups.md](turn-follow-ups.md) §6). See
+[desk-summary-2026-10.md](desk-summary-2026-10.md).
+
+## Models that read chart shape: the chart reader and the crowd
+
+*Added 2026-10-06, from a point the desk raised while starting the FX and metals ML study.* When a
+model trained on real charts scores as well on matched walks, it is reading chart shape. That may
+mean it sees the chart the way retail traders do. The walk control is the tool that separates what
+that view contains from what people do with it. Report every such model in three parts:
+
+| part | measured as | what it means |
+|---|---|---|
+| **1. What the chart shows** | the model's skill on matched walks | The information any chart's shape carries, with nobody trading it. A walk has slopes, swings, breaks and channels too. This is real and measured; it is not "nothing". |
+| **2. Behavioural skill** | real skill minus walk skill | The only place an effect of people trading those shapes can appear. If retail behaviour around shapes (stops under swings, entries at breaks, crowding at round levels) moves price, real exceeds walk here. |
+| **3. Whether it pays** | the trade translation after costs, P(N R) against 1/(N+1) and against walks | Behavioural skill can be real and still too small to pay a spread. |
+
+**How to read the result:**
+- **Real equals walk:** the model sees the chart the way a chart reader does, and that view holds the
+  same information on a random walk. People acting on it don't move price enough to show. That is a
+  finding about the crowd, not "the model learned nothing".
+- **Real above walk:** behavioural skill. It is the candidate edge, and the thing to confirm on unseen
+  data and then price after costs.
+- **Real below walk:** the market punishes the chart-reader's view, for instance stop runs beyond the
+  obvious swings. That too is behaviour, and the opposite side becomes a hypothesis for its own frozen
+  test.
+
+**Measuring the crowd directly.** Where retail positioning data exists (the long/short share of
+traders), add it as a feature block frozen before the run. That measures the crowd directly instead of
+inferring it from the real-minus-walk gap.
+
+**So far on this desk** the gap has been small or zero wherever it was measured:
+- break prediction: side AUC 0.75 on real and 0.755–0.757 on walks ([bos-predict.md](bos-predict.md));
+- fuzzy rules: direction AUC 0.508 against walks at 0.499 ([fuzzy-logic.md](fuzzy-logic.md));
+- level holds: 0.58–0.60 against 0.565 ([tv-indicators.md](tv-indicators.md), [lrc-retest.md](lrc-retest.md)).
+
+Level holds are the clearest behavioural signal found so far: real levels hold slightly more often
+than walk levels, consistent with people defending them. The gap is too small to pay a stop and a
+spread. The FX and metals ML study (`fx-metals-ml.md`, in progress) reports behavioural skill as a
+named quantity per class and timeframe.
+
+## Where "artefact" still applies
+
+The word is kept for measurement bugs that make a result unreal on the market as served. Examples from
+these studies:
+- **Fill errors on jump instruments.** A bar replay fills a jumped stop at −1R, while the tick fill
+  averages −7.8R. Range Break's "+3.7R" was this ([range-break-100.md](range-break-100.md)).
+- **Bid-bar opens at the FX reopen**, which turned a +0.46R gap fade into −0.41R
+  ([mean-reversion.md](mean-reversion.md)).
+- **Look-ahead in a conditioning flag**, such as a trend read from the bar that contains the spike
+  ([boomcrash-trend.md](boomcrash-trend.md)).
+- **Cost scaling bugs** and **near-zero-risk entries** (minimum risk is 0.25 ATR).
+
+A pattern that matches its walks is none of these.
+
 ## How to report it
 
 - **Lead with tail excess:** real P(≥ N R) minus the walk's, and against 1/(N+1), at the N the trade
   is built for.
 - **Say "matches the walk: no edge before costs"**, not "artefact" or "only geometry".
+- **For models, report three parts:** skill on walks (what the chart shows), real minus walk
+  (behavioural skill), and the after-cost trade.
 - **Keep the walk null.** Without it, a 1:10 rule winning 9% of the time looks like a strategy.
 - **Use walks that keep what real markets have** (GARCH for volatility clustering, the hour-of-day
   profile, the same calendar). Then any excess is about the side, not the volatility.
