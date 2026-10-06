@@ -762,6 +762,7 @@ def tick_trade(tape, bars, t, side, spread_px, swap_px):
                 ex, en, mid = -ask, -bid, -(bid + ask) / 2
             if E is None:
                 E, Em = en[0], mid[0]
+                sp_entry = float(en[0] - ex[0])
                 risk = max(E - stop0_bar, D.MIN_RISK * a[t])
                 stop0 = E - risk
                 trail = stop0
@@ -810,7 +811,7 @@ def tick_trade(tape, bars, t, side, spread_px, swap_px):
             res[n_] = ((last_ex - E) / risk, (last_md - Em) / risk, False, cap_ms)
     if tr_res is None:
         tr_res = ((last_ex - E) / risk, (last_md - Em) / risk, False, cap_ms)
-    r = dict(t=t, side=side, risk_atr=risk / a[t], cost_R=spread_px / risk, mfe=mfe, mfe_mid=mfe_g, fill="tick")
+    r = dict(t=t, side=side, risk_atr=risk / a[t], cost_R=sp_entry / risk, mfe=mfe, mfe_mid=mfe_g, fill="tick")
     for n_ in NS:
         net, g, st, msx = res[n_]
         sw = nights(t_in // 1000, msx // 1000) * swap_px / risk

@@ -282,15 +282,23 @@ def walk_forward(tgt, kind, X, z, ts, res_t, lab, main, cfg):
     for a, b in zip(edges[:-1], edges[1:]):
         tr = lab & main & (res_t < a)
         sc = (ts >= a) & (ts < b)
-        if not sc.any():
+        if not sc.any() or tr.sum() < 200:
             continue
+        # a column with no finite value in the training rows (e.g. the panel PCA while one series was
+        # alone in its group) carries nothing: zero it for this fit (sklearn cannot bin an empty column)
+        Xtr, Xsc = X[tr], X[sc]
+        dead = ~np.isfinite(Xtr).any(0)
+        if dead.any():
+            Xtr, Xsc = Xtr.copy(), Xsc.copy()
+            Xtr[:, dead] = 0.0
+            Xsc[:, dead] = 0.0
         if kind == "cls":
-            m = hgb("cls", cfg).fit(X[tr], z[tr].astype(int))
-            pred[sc] = m.predict_proba(X[sc])[:, 1]
+            m = hgb("cls", cfg).fit(Xtr, z[tr].astype(int))
+            pred[sc] = m.predict_proba(Xsc)[:, 1]
         else:
             loss = "squared_error" if tgt == "absret1" else "gamma"
-            m = hgb("reg", cfg, loss).fit(X[tr], z[tr] + (EPS if loss == "gamma" else 0.0))
-            pred[sc] = np.maximum(m.predict(X[sc]), EPS)
+            m = hgb("reg", cfg, loss).fit(Xtr, z[tr] + (EPS if loss == "gamma" else 0.0))
+            pred[sc] = np.maximum(m.predict(Xsc), EPS)
     return pred
 
 
@@ -740,11 +748,22 @@ def job(spec):
         Xc = XA[idx]
         base = score(pred_h(Xc))
         imp = []
-        for gname, cols in list(g.items()) + [(c, [c]) for c in allf]:
+        for gname, cols in g.items():
             A = Xc.copy()
             ci = [allf.index(c) for c in cols]
             A[:, ci] = A[rng.permutation(len(A))][:, ci]
-            imp.append(dict(model="hgb", feature=gname, group=gname in g, drop=drop(base, score(pred_h(A)))))
+            imp.append(dict(model="hgb", feature=gname, group=True, drop=drop(base, score(pred_h(A)))))
+        # single features on a 20,000-row subsample of the same rows (compute budget; groups use all)
+        k1 = np.sort(rng.choice(len(idx), min(20000, len(idx)), replace=False))
+        idx_all, idx = idx, idx[k1]
+        Xs1 = Xc[k1]
+        base1 = score(pred_h(Xs1))
+        for c in [c for c in allf if not c.startswith("o_")]:
+            A = Xs1.copy()
+            j = allf.index(c)
+            A[:, j] = A[rng.permutation(len(A)), j]
+            imp.append(dict(model="hgb", feature=c, group=False, drop=drop(base1, score(pred_h(A)))))
+        idx = idx_all
         # the linear model on base + Q + E, by group
         XQ = Std(rows[g["Q"]].to_numpy(np.float32)[fit])(rows[g["Q"]].to_numpy(np.float32))
         E = expansion(rows, fit, False)
