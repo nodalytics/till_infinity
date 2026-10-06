@@ -243,12 +243,24 @@ class Strategy(ABC):
         Flooring against the proposed stop therefore floors against a number
         that is not the risk the trade carries.
 
-        The live case this was written for: `fade-to-value` sold EURUSD with a
-        44.1 pip stop and a 9.8 pip target, 0.22 reward to risk, needing an 82%
-        win rate. Its stop was proposed at 1.69v and the level's zone widened it
-        to 21.7v, while its target is fair value and cannot move - so the only
-        number that describes that trade is `abs(entry - stop)` after both
-        widenings, which is what this reads.
+        The live case this was written for: on 2026-10-05 **`sweep-aware`** sold
+        EURUSD with a 44.1 pip stop and a 9.8 pip target - 0.22 reward to risk,
+        needing an 82% win rate - and closed it at -6.06 on a managed exit,
+        having touched neither end. Three days earlier `fade-to-value` took the
+        same shape on the same feed at 0.114, and the journal shows the
+        mechanism: a stop proposed at 1.69v that the level's zone widened to
+        **21.7v**, against a target at fair value that cannot move.
+
+        So the only number that describes either trade is `abs(entry - stop)`
+        after every widening, which is what this reads.
+
+        **That first attribution was wrong when it was written here**, and it is
+        worth the sentence: I read the magic against a base of 777700 when
+        `DEFAULT_MAGIC` is 777701, which shifts every strategy to its neighbour
+        in `MAGIC_ORDER` - and every neighbour is a plausible name, so the
+        mistake reads as a finding. `strategy_for` exists precisely so nobody
+        does that arithmetic by hand. The MT5 order comment carries
+        `till <strategy>` and is the free cross-check.
 
         Never pulls a target in, so a strategy whose geometry is already sound
         is untouched - `sweep-aware` would see this fire on 5% of its calls.

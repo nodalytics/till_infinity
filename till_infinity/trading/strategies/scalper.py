@@ -752,6 +752,15 @@ class CycleScalp(LevelStrategy):
     """
 
     name: ClassVar[str] = "cycle-scalp"
+
+    #: Median 1.03 over 404 live decisions and **48% of them below 1.0** - the
+    #: median sits on the line because the distribution straddles it, which is
+    #: the one shape a median hides. The largest loser on the broker's record:
+    #: -584.07 over 872 positions.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     refines: ClassVar[str] = "level-scalp"
     reverse_if_better: ClassVar[bool] = True
     description: ClassVar[str] = (
@@ -871,6 +880,12 @@ class ConfluenceScalp(LevelStrategy):
     """
 
     name: ClassVar[str] = "confluence-scalp"
+
+    #: Median 2.69 over 252 live decisions, 6% below 1.0, floor 0.09.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     description: ClassVar[str] = (
         "Only calls confirmed by another timeframe, with a wider stop. Fewer trades."
     )
@@ -1168,6 +1183,22 @@ class SweepAware(LevelStrategy):
     """
 
     name: ClassVar[str] = "sweep-aware"
+
+    #: **It placed the trade that prompted all of this**: EURUSD short on
+    #: 2026-10-05, 44.1 pip stop against a 9.8 pip target, 0.22 reward to risk,
+    #: closed at -6.06 on a managed exit having touched neither end.
+    #:
+    #: Its geometry is the best on the desk - median 2.71 over 514 live
+    #: decisions, only 5% below 1.0 - and it is the only strategy of size that
+    #: makes money (+260.66 over 317 broker positions). The floor was left off
+    #: here for exactly that reason, which was the wrong reason: 5% of 514 calls
+    #: is still 26 trades needing an impossible win rate, and the floor cannot
+    #: touch the 95% that are already sound because it only ever moves a target
+    #: further out.
+    #:
+    #: 1.0 rather than something braver, following the one precedent in this
+    #: repository: a repair, not a claim that the strategy works.
+    reward_floor: ClassVar[float] = 1.0
     #: Every call `level-scalp` takes, minus the ones whose stop sits in front
     #: of resting liquidity. Listed after it, this would never fire.
     refines: ClassVar[str] = "level-scalp"

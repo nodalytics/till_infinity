@@ -21,6 +21,11 @@ mean the pattern is fake.
 was fixed today. The violent-origin flag (`SIG`) in sections 1 and 4 therefore included a wrong-side,
 nearly empty T2. DISPLACE_C is unaffected.
 
+**Re-run, 2026-10-05 ([turn-retrade.md](turn-retrade.md)).** With the corrected side, no verdict changes. The SIG
+zone primary is −0.256R [−0.292, −0.221] (was −0.233), against −0.238 / −0.203 on walks. On fresh coins and SET_C,
+the 4h and 1d SIG zones lose −0.14 to −0.33R. On Deriv, the corrected turns match the walks on the diffusive indices.
+The gains on Boom/Crash/Jump and Range Break sit only on the side whose stop the jumps cross: bar fills miss the jumps.
+
 ## 1. The origin of a violent turn, as a zone (`ideas/turn_zones.py`, `turn_zone_rule.json`)
 
 - **The zone:** [low, low + 0.5 ATR] at a 12-bar low.

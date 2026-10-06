@@ -64,6 +64,8 @@ from . import manage, plans, turning
 from .candles import confirms, rejection_wick
 from .config import Settings, magic_for, strategy_for
 from .context import Context
+from .impulse import card_line as impulse_card
+from .impulse import features as impulse_features
 from .manage import Move, Take
 from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
@@ -4374,8 +4376,13 @@ class Trader:
     # ---------------------------------------------------------------- record
 
     async def _read_the_trend(self, intent: Intent) -> None:
-        """Fit the regression channel on this intent's own timeframe and write
-        it onto the features, where the journal will pick it up.
+        """Read this intent's own timeframe and write what it says onto the
+        features, where the journal will pick them up: the regression channel,
+        and the displacement and imbalances in `trading/impulse.py`.
+
+        One bars fetch for both. They answer different questions - the channel
+        is "is price on a line", the impulse is "did price just lurch, and what
+        did it skip" - and neither is worth a second round trip to the broker.
 
         **This is the desk's own trend reading and not `structures`'.** The
         three movement numbers already on a decision - `speeds`, `efficiency`,
@@ -4424,6 +4431,14 @@ class Trader:
         got = trend_features(bars, unit=unit)
         if got:
             intent.features.update(got)
+        # **On the same bars, so this costs nothing.** Displacement and the gaps
+        # it leaves are a local reading where the channel is a slow one, and both
+        # were asked for together; fetching twice for two readings of one series
+        # would be the only expensive part of either. See `trading/impulse.py`,
+        # and note it gates nothing, for the same reason the channel does not.
+        marks = impulse_features(bars, unit=unit)
+        if marks:
+            intent.features.update(marks)
 
     async def _record_intent(self, intent: Intent, by: str) -> str:
         return await decide(
@@ -4509,6 +4524,9 @@ class Trader:
             # Renders nothing until something publishes the fit, which is
             # deliberate: see `trading/regression.py` on why it gates nothing yet.
             *trend_card(intent.features),
+            # How far price lurched to get here, and which holes it left open.
+            # Renders nothing until `_read_the_trend` has published them.
+            *impulse_card(intent.features),
             rule,
         ]
         await self.bus.publish(

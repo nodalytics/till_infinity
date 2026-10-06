@@ -1,0 +1,9 @@
+📈 ARB 1d · Bullish reversal · long
+Tier A · an exit alert will follow
+paper alert, not a trade instruction
+Entry ref: 0.10938 (next open)
+Stop: 0.0821895
+Risk: 0.0271905
+Venue: binance
+Bar: 2026-08-31 00:00 UTC
+2026-10-05 14:22 UTC
