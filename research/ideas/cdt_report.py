@@ -466,7 +466,7 @@ def report():
     tabs, splits = [], []
     for iv in ivs:
         d, files = load(iv)
-        t = table(d, iv, rng)
+        t = table(d, iv, np.random.default_rng({"1d": 1, "4h": 4, "1h": 60, "15m": 15}[iv]))  # stable per timeframe
         tabs.append(t)
         print(f"{iv}: {len(d)} trades loaded", flush=True)
         if iv in ("1d", "4h"):
@@ -520,6 +520,7 @@ def report():
                     f"{fmt(q['R_after'])}; iid {fmt(q['R_iid'])} garch {fmt(q['R_garch'])} twin {fmt(q['twin'])} -> "
                     f"{'passes' if passes(q, []) else 'fails'}")
     # market split for the primaries and components
+    rng = np.random.default_rng(11)
     if splits:
         say("\nMARKET SPLIT (STATE exit, real trades; R = market part + residual; EW = equal-weight index of 143)")
         rows = []
@@ -549,7 +550,7 @@ def report():
         say(M.round(3).to_string(index=False))
     # portfolio
     if "1d" in ivs:
-        P, X, series = portfolio(rng, d1, files1)
+        P, X, series = portfolio(np.random.default_rng(7), d1, files1)
         P.to_csv(OUT / "portfolio.csv", index=False)
         X.to_csv(OUT / "portfolio_twins.csv", index=False)
         pd.to_pickle(series, OUT / "books.pkl")
@@ -705,6 +706,31 @@ def plot():
             ax.grid(alpha=0.3, axis="y")
         fig.tight_layout()
         fig.savefig(IMG / "by_year.png", dpi=90)
+        plt.close(fig)
+    # 6. by sample: big coins, fresh coins, the unseen sets, MT5 and the other classes (1d, STATE, no filter)
+    for fname, samples, title in (
+            ("by_sample.png", ("core12_disc", "core12_conf", "mt5", "fresh58", "setC", "setD"),
+             "1d, STATE exit, no filter: the 12 large coins (before / from 2024), the broker's BTC/ETH/SOL, and the unseen coin sets"),
+            ("by_class.png", ("cls_fx", "cls_metal", "cls_index", "cls_energy", "cls_deriv", "cls_range_break"),
+             "1d, STATE exit, no filter: the broker's other classes (Range Break 100 apart)")):
+        fig, ax = plt.subplots(figsize=(16, 5.5))
+        w = 0.8 / len(samples)
+        for k, smp in enumerate(samples):
+            y = T[(T["iv"] == "1d") & (T["filt"] == "none") & (T["exit"] == "STATE") & (T["sample"] == smp)].set_index("cell").reindex(CELLS)
+            pos = np.arange(len(CELLS)) + k * w
+            ax.bar(pos, y["R"].clip(-1.5, 1.5), w, label=f"{smp}", alpha=0.85)
+            ax.errorbar(pos, y["R"].clip(-1.5, 1.5), yerr=[(y["R"] - y["lo"]).clip(0, 3), (y["hi"] - y["R"]).clip(0, 3)],
+                        fmt="none", ecolor="k", lw=0.7)
+            ax.scatter(pos, y["twin"], marker="x", color="k", s=18, zorder=3)
+        ax.axhline(0, color="k", lw=0.7)
+        ax.set_xticks(np.arange(len(CELLS)) + 0.4 - w / 2)
+        ax.set_xticklabels([C.NAMES[c] for c in CELLS])
+        ax.set_ylabel("net R a trade (90% day bootstrap; x = twin; clipped at +-1.5)")
+        ax.set_title(title)
+        ax.legend(fontsize=8, ncol=3)
+        ax.grid(alpha=0.3, axis="y")
+        fig.tight_layout()
+        fig.savefig(IMG / fname, dpi=90)
         plt.close(fig)
     gallery(plt)
     print("plots written", flush=True)
