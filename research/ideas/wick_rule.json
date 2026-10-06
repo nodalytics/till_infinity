@@ -1,0 +1,116 @@
+{
+  "frozen": "2026-10-06",
+  "study": "wicks (write-up research/docs/wicks.md)",
+  "before": "written and committed before any real-data run of this study. Read first: walks-and-edge.md (chart reader and crowd), tv-indicators.md Part B (real levels hold 0.58-0.59 on the first touch against 0.565 on walks; clustering adds nothing), lrc-retest.md (every broken level holds 0.601; R4b fade-to-value with fade_min_touches 4 fails), ftv-tuning.md, sweeps.md (wick sweeps occur at their own bars' rate; protected lows hold 61% as on walks), boomcrash-trend.md and range-break-100.md (fitted generator nulls, tick fills), fx-metals-ml.md (rollover bars carry the direction AUC), imbalance.md, zone-fill.md, state-and-memory.md, holdlabel.md, hold-clock.md, mcfl.md. Production's level engine (till_infinity/structures/levels.py, engine.py) keeps wick depth past the origin in vol units (observe_wick, wick_below_vol / wick_above_vol, wick_n), decayed own_touches, record_hold and sweep_rate; it never conditions a hold on the wick count against a walk. Read only.",
+  "question": "Part A (primary): does a price level with many wick rejections hold - reading (a) DEFENDED, hold rate rising with the wick count, against reading (b) ABSORBED, hold rate falling ('the more it is tested the weaker it gets') - and is either beyond what a random walk's wicks produce? Part B (secondary families, the desk's widening of 2026-10-06): what does a wick carry - is it a rejection and can rejections be predicted, does it carry direction, does it carry volatility beyond ATR / HAR / range estimators, and what is it otherwise (sweep, absorption, exhaustion, quote artefact, session or news spike, Deriv jump)?",
+
+  "data": {
+    "classes": {
+      "FX": "the 12 MT5 pairs of lrc_retest.FX",
+      "METAL": "XAUUSD XAGUSD XPTUSD XPDUSD XCUUSD",
+      "INDEX": "the 7 MT5 index CFDs of lrc_retest.INDEX",
+      "ENERGY": "US Oil, UK Brent Oil",
+      "CRYPTO_CFD": "BTCUSD ETHUSD SOLUSD and the 32 alt-coin CFDs (lrc_retest.CRYPTO_ALT). The alt-coin 15m feed is cut at 2025-08-01 (coarse grid, no spread; desk rule). Its bars after that date are kept apart as ALT15_GRID and used only in the artefact family",
+      "BINANCE": "the 12 USDT perpetuals of turn_trade.COINS (the lab's data/binance klines)",
+      "FRESH": "the 58 fresh coins of turn_confirm.FRESH (data.binance.vision monthly klines; 4h/1d from the lab cache data/binance_fresh, 15m/1h fetched for this study into its own cache by turn_confirm.fetch_one)",
+      "DERIV_DIFFUSIVE": "Volatility 10/25/50/75/100, Drift Switch 10/20/30 (MT5 bars) and the five 1s Volatility indices (lrc_retest.DERIV_1S)",
+      "DERIV_STEP": "Step Index, Step Index 200, Step Index 500 (MT5 bars)",
+      "DERIV_JUMPY": "Boom 300/500/1000 and Crash 300/500/1000: bars built from the bridge's ticks (2025-01-01 to 2026-10-04, boomcrash-trend's cache), per-second tape for fills",
+      "JUMP50": "Jump 50 Index, MT5 bars: no ticks and no fitted generator; reported apart against walks and an iid bar bootstrap, trades not interpreted",
+      "RANGE_BREAK": "Range Break 100 and 200: the broker's bars (rb100.load_bars, from 2020) and the per-second tick tape where it exists (from 2025-01-01)"
+    },
+    "pools": "NONDERIV = FX + METAL + INDEX + ENERGY + CRYPTO_CFD + BINANCE + FRESH. Deriv classes are reported apart, never pooled with markets and never used as a control.",
+    "timeframes": "15m, 1h, 4h, 1d (the desk's four). The primary pools 1h, 4h and 1d; 15m is secondary",
+    "split": "discovery: events (test touch, or bar t) before 2024-01-01; confirmation: at or after. DERIV_JUMPY uses its own tick-era split (boomcrash meta split_day 2025-11-18) and RANGE_BREAK rb100's (bars 2024-01-01; tick trades 2025-10-01)",
+    "costs": "MT5: R.spread_floor (median tick spread, else quoted), else the median bar spread (lrc_retest._mt5); Binance and fresh: 0.07% of price; series with median cost above 0.5 ATR dropped (lrc_retest.MAX_COST_ATR). Charged once a trade as cost_px / risk; every bar-filled stop pays 0.05 ATR slippage. Deriv jumpy and Range Break: the tick spread inside the fill (buy ask, sell bid) and swap pro rata (bc meta annual % of price; rb100.SWAP a night)",
+    "atr": "ATR(14) Wilder (lrc_retest.atr) including bar t; every quantity in units of ATR at the bar stated"
+  },
+
+  "nulls": {
+    "walks": "per real series an iid walk (mcfl.synth.walk) and a GARCH(1,1) walk (synth.garch, alpha 0.08, beta 0.90), 256 sub-steps a bar so highs and lows (and so wicks) come from a path, sigma = sd of the real close changes, on the real timestamps, the real cost in ATR units carried bar by bar (lrc_retest.one's construction). 'walk' in a verdict = iid and GARCH events pooled; each is also reported alone",
+    "boot": "JUMP50 only: iid bar bootstrap (sweeps.boot_bars), the exact null for a memoryless bar generator",
+    "deriv_jumpy": "boomcrash-trend's fitted constant-hazard tick simulator (boomcrash_trend.simulate with the null.pkl fitted on discovery ticks), on the real tick timestamps with the real spread, 4 seeds per index; bars and tape built from it exactly as from the real ticks",
+    "range_break": "range-break-100's fitted simulator (rb100.rbsim with rb_sim_params.json fitted on discovery ticks), 4 seeds per instrument, built by rb100.build; also its iid and GARCH per-second walks",
+    "framing": "walks-and-edge.md: report (1) what the chart shows = the walk's number, (2) behavioural = real minus walk, (3) whether it pays after costs. Matching the walks means zero edge before costs, never 'artefact'. On jump processes 1/(N+1) is not the yardstick; the fitted generator is"
+  },
+
+  "part_A_levels": {
+    "wick_bar": "upper wick u = high - max(open, close), range r = high - low. A wick bar (upper) has r > 0, u >= 0.4 r and u >= 0.2 ATR(bar). Lower wicks mirror it; supports are run as resistances on the flipped chart (lrc_retest.flip)",
+    "level": "every upper wick bar w spawns a resistance at p = high[w] with a bucket of half-width tol = 0.125 ATR(w) (bucket width 0.25 ATR). Its life is LIFE = 200 bars after w",
+    "events": "after w: break-before-test = the first close above p + tol (the level is dropped); live = the first close <= p - ATR(w) before that; the TEST (touch) is the first bar f > max(live, w + 3) with high >= p - tol, f <= w + LIFE. Duplicates: one test per (chart side, f), keeping the level with the latest w (all counts are re-read at f, so nothing is lost)",
+    "counts_at_test": {
+      "window": "bars [f - L, f - 1], L = 200 (primary) and 50 (secondary); every bar in it is closed before the test bar",
+      "member": "a wick bar j in the window with |high[j] - p| <= tol and max(open[j], close[j]) <= p - tol (the body stays below the bucket)",
+      "K (wick count)": "the number of distinct wick rejections: runs of consecutive member bars count once",
+      "K_bins": "1, 2, 3, 4-5, 6+",
+      "tests": "touch episodes in the window: bars with high >= p - tol, a new episode after any close <= p - 0.5 ATR(w) since the last touching bar; bins 1, 2, 3, 4-5, 6+",
+      "body_touches": "bars in the window with max(open, close) >= p - tol (a body at or through the bucket). WICK_ONLY = 0 body touches; BODY = 1 or more",
+      "wick_weighted": "wick_atr = sum of member upper wicks / ATR(f-1); recency = f - (last member bar); spread = (last member - first member) / L. Terciles cut on real NONDERIV 1h-1d discovery events",
+      "pivot": "PIVOT1 = K = 1 and w is a 3/3 swing high (high[w] > the 3 highs before, >= the 3 after; known at w + 3 < f). Contrast: PIVOT1 against K >= 4"
+    },
+    "outcomes": {
+      "hold": "from the test bar f with A = ATR(f): HELD if a low <= p - A (from bar f + 1) comes before a close >= p + A (from bar f); BROKEN if the close comes first; unresolved after 300 bars (excluded from rates, share reported). The same 1-ATR hold label as tv-indicators and lrc-retest",
+      "time_to_break": "bars from f to the first close >= p + A, censored at 300; reported as P(broken within 5, 20, 100 bars) and the median among broken",
+      "extension": "at the break close k: ext20 = (max high over k+1..k+20 - close[k]) / ATR(k), and FOLLOW = 1 if +1 ATR from close[k] comes before -1 ATR (a coin on a walk)"
+    },
+    "hold_curves": "hold rate against K bin and against tests bin, real against iid, GARCH and pooled walk, per class, per timeframe, discovery and confirmation"
+  },
+
+  "primary": {
+    "statistic": "D = slope_real - slope_walk, where slope = the least-squares slope of HELD (0/1) on the K bin index (0 for K = 1, 1 for 2, 2 for 3, 3 for 4-5, 4 for 6+), L = 200, resolved tests",
+    "scope": "NONDERIV pooled, 1h + 4h + 1d pooled, confirmation (test bar at or after 2024-01-01)",
+    "walk": "iid and GARCH walk events pooled",
+    "interval": "paired day bootstrap (the same resampled UTC days for real and walk; real and walk share timestamps), 2,000 draws, 90% interval",
+    "test": "TWO-SIDED, chosen in advance: p = 2 min(P*(D <= 0), P*(D >= 0)) over the draws. Reading (a) DEFENDED if D > 0 with p < 0.05; reading (b) ABSORBED if D < 0 with p < 0.05; otherwise NEITHER (a slope that a walk's wicks produce). The raw real slope is reported beside it as what the chart shows"
+  },
+
+  "part_A_trades": {
+    "fade": "at the test bar f: a limit against the level at p - tol (sell a resistance, buy a support), filled at min(open[f], ...) as tv_indicators.exits_x does on the negated chart; stop = max(highest member high + 0.1 ATR(f-1), entry + 0.25 ATR(f-1)) - beyond the wick extreme, minimum risk 0.25 ATR",
+    "break": "after the test, the first close above max(highest member high, p + tol) within 300 bars of f ('the level gives way'): enter the break's way at the next open, stop = min(p - tol - 0.1 ATR(k), entry - 0.25 ATR(k)) - back inside the bucket is a failed break. One break per (chart side, break bar), keeping the latest test",
+    "exits": "E1: a 2-ATR trail behind completed bars' best price, 300 bars at most (tv_indicators.exits_x). Market-decided; no target",
+    "P(N R)": "P(+N R before -1R) by first passage against the fixed initial stop within 300 bars (a bar reaching both counts as the stop), N = 1, 2, 3, 4, 5, 10, against 1/(N+1) and the walks; P(R >= 4) and P(R >= 10) of the realised E1 R net of costs",
+    "cells": "fade all, fade K = 1, fade K >= 4, fade PIVOT1; break all, break K >= 4 ('absorbed gives way'), break K = 1",
+    "jump_instruments": "DERIV_JUMPY and RANGE_BREAK fill on the per-second tick tape: the limit fills at the first second whose executable price crosses it (at that price, better if jumped), the stop at the first second beyond it at that second's executable price (where a jump lands), the trail updated at bar closes; market entries at the first second of the bar. Judged against the fitted generator through the same fills. JUMP50 bar fills only, not interpreted"
+  },
+
+  "part_B_what_wicks_carry": {
+    "rows": "every bar t of every series and source (warm-up 250 bars). Stored per series and source: every long-wick row (capped at 40,000 by a seeded draw) and a uniform seeded sample of 25,000 bars; exact bar counts and wick-length histograms from all bars",
+    "long_wick": "upper (lower) wick >= 0.4 of the range and >= 0.25 ATR(t). Size bins in ATR [0.25, 0.5), [0.5, 1), [1, 2), 2+; share-of-range bins [0.4, 0.6), [0.6, 0.8), [0.8, 1]",
+    "distributions_first": "per class and timeframe: quantiles (50/90/99%) of upper and lower wick in ATR and of wick share of range, the long-wick rate, real against iid and GARCH",
+    "B1_rejection": {
+      "outcome": "REJ: after a long upper wick at t, a low <= close[t] - 1 ATR(t) before a high >= high[t] (from bar t + 1, 300 bars; both in one bar = unresolved). Lower wicks mirrored",
+      "contexts": "size bin, share bin; AT_SWING (the wick extreme within 0.25 ATR of, or beyond, a standing 3/3 swing high known before t); SWEEP (beyond it and the close back below it - sweeps.md's BREACH_REVERT, cited, new angle only: the rejection label); AT_ROUND (within 0.1 ATR of a multiple of 10^ceil(log10 ATR)); AT_BAND (beyond the LRC(50) +/- 2 dev band of bar t-1); AT_PREVDAY (within 0.25 ATR of, or beyond, the previous UTC day's high; intraday only); ABSORB (K >= 2 at p = the wick extreme by Part A's member rule, L = 200); EXHAUST (close[t] - close[t-20] >= 3 ATR toward the wick, an extended trend into it); SESSION (UTC hour buckets 0-7 Asia, 7-12 London, 12-16 overlap, 16-21 New York, 21-24 late); ROLLOVER (the bar's span includes 17:00 New York; 15m-4h); REOPEN (the first bar after a hole in the clock longer than 2 days); WIDE_SPREAD (MT5 bar spread > 3x the series median, real only); NEWS (span includes 08:30 New York, US data); LONDON_OPEN (08:00 London); NY_OPEN (09:30 New York)",
+      "measure": "REJ rate per context cell, real against walk (behavioural = real - walk), per class and timeframe"
+    },
+    "B1_prediction": {
+      "W_next": "P(bar t+1 prints a long upper wick), and a long lower wick, from features at t",
+      "R_given_wick": "P(REJ) at the close of a long-wick bar, from the context at t - 1 and the wick bar's own shape",
+      "features": "r1, r5, r20 (close change / ATR), LRC(50) and LRC(20) slope / ATR, range/ATR, log ATR5/ATR50, upper and lower wick / ATR, wick shares, body / ATR, close location, wick-pressure WPI5 and WPI20 (sum of (lower - upper) / ATR over the last 5 / 20 bars), distance to the standing swing high and low / ATR, distance to the round grid / ATR, distance to the LRC(50) band / dev, previous-day high/low distance / ATR, the higher timeframe's last completed bar (wick shares, close location, slope) where a higher desk timeframe exists, UTC hour sin/cos, day of week, session, rollover and reopen flags. For the R_given_wick target the wick bar's own shape and the context flags above",
+      "models": "logistic (C 0.1, standardised on discovery) and sklearn HistGradientBoosting at fxml's frozen default (learning_rate 0.05, max_iter 300, max_leaf_nodes 31, min_samples_leaf 200, l2 1.0), fitted per class x timeframe on discovery rows (at most 400,000, seeded), scored on confirmation. The walk twin: the identical pipeline fitted on the walk's discovery and scored on its confirmation (fx-metals-ml's method). AUC real, AUC walk, behavioural = real - walk with a paired day bootstrap"
+    },
+    "B2_direction": {
+      "targets": "the next 1, 5 and 20-bar close change / ATR(t) and its sign",
+      "single_features": "the bar's wick imbalance (lower - upper) / range, wick/body ratio (log of (u + l) / (|body| + 0.05 ATR)), close location, WPI5, WPI20",
+      "measures": "rank IC (Spearman) of each feature with each forward return, and the HGB / logistic sign AUC on the wick feature set alone, real against walk, per class and timeframe, confirmation, paired day bootstrap",
+      "mtf": "on 1h series: the last completed 4h bar's (UTC 4h blocks built from the 1h bars) wick imbalance and close location against the next 1, 5 and 20 1h returns; and on 15m series the last completed 1h bar's",
+      "rollover": "every FX / METAL / INDEX / ENERGY direction number is also given with ROLLOVER and REOPEN bars removed; the rollover-only number apart"
+    },
+    "B3_volatility": {
+      "targets": "log(next-bar range / ATR(t)) and log(realised variance of the next 5 close changes / ATR(t)^2 + 1e-4)",
+      "baseline": "OLS on log range_t/ATR, log mean range over 5 and 20 bars / ATR, log Parkinson(20) and Garman-Klass(20) over ATR^2 (HAR-RV and the range estimators in ATR units), fitted on discovery per class x timeframe",
+      "augmented": "baseline + upper and lower wick / ATR, wick share of range, wick asymmetry |u - l| / range, and their 5-bar means",
+      "score": "R2_OS gain (augmented minus baseline, on confirmation) and the QLIKE change of the variance forecast exp(prediction) (smearing-corrected), real against walk; the sign of the long-wick coefficient = expansion (+) or contraction (-) after long-wick bars"
+    },
+    "B4_meanings": "sweep, absorption, exhaustion, artefact (ROLLOVER, REOPEN, WIDE_SPREAD, ALT15_GRID), session and news: for each, the share of long wicks it holds (real against walk, which has no clock and no quotes) and its REJ rate real against walk. DERIV_JUMPY spikes (one-tick wicks) and RANGE_BREAK breaks are measured as bar wick statistics against their fitted generators, reported apart",
+    "B5_trades": {
+      "gate": "a trade is opened as a verdict only for a family whose confirmation behavioural gap (real minus walk) survives BH in the direction the trade needs; otherwise it is run and reported as a description",
+      "T_REJ": "at the close of a long upper wick at a level (AT_SWING or ABSORB), sell at the next open, stop = the wick extreme + 0.1 ATR (min risk 0.25 ATR), exit E1 (lower wicks mirrored)",
+      "T_WPI": "when WPI20 is beyond the series' own discovery 10% / 90% quantile, enter at the next open toward the pressure (positive = lower wicks = long), stop beyond the last 3 bars' extreme + 0.1 ATR (min 0.25 ATR), exit E1; one position at a time per series and side",
+      "report": "R net of costs with day-bootstrap 90% intervals, P(N R) against 1/(N+1) and the walks, P(R >= 4), P(R >= 10)"
+    }
+  },
+
+  "multiplicity": "everything but the primary is secondary. Benjamini-Hochberg at q = 0.10 over all NONDERIV secondary cells of Parts A and B together (two-sided paired-day-bootstrap p of real minus walk, or of R for trades), the count stated; the Deriv cells form their own family",
+  "plots": "hold rate against wick count and against tests, real against walks, per class; the behavioural gap by bin; examples of high-wick levels that held and broke; P(N R) for the fade and the break; the wick-length distributions real against walk; the rejection rate by context; IC and AUC by family real against walk; the volatility gain; the rollover / spread share; example galleries. Committed to research/docs/img/wicks/",
+  "code": "research/ideas/wick_levels.py (Part A, all classes incl. Deriv tick parts), research/ideas/wick_info.py (Part B rows), research/ideas/wick_report.py (tables, models, bootstrap, BH, plots); tests in research/ideas/test_wicks.py"
+}
