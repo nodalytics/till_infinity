@@ -179,6 +179,22 @@ rejected the low, and the close-in-the-upper-half test is the rejection claim.
 All of it mirrors for supply: upper wicks, a bearish impulse, a close below the
 20-bar low.
 
+### 6b. The retest: wait for the displacement, trade the pullback
+
+> "instead of choppiness, let's use displacement - it's either it enters the zone
+> or touches the zone and bounces back in the opposite direction with the strong
+> displacement candles, and comes back for retest, forms pattern and moves"
+
+A different entry, not a filter on this one: the first touch is refused, the zone
+has to throw price away from itself with `DISP_N` impulsive candles, and the
+trade is the pullback into the origin that reaction left behind - with the stop
+under *that* candle rather than under the original zone.
+
+Measured in [`zone-retest.md`](zone-retest.md): it is better on both axes at once
+on the development set - a higher win rate **and** a tighter stop - and it fails
+both out-of-sample checks, flipping sign across the period at 1h and across
+instruments at 4h.
+
 ### 7. Open question: does the approach decide whether it holds?
 
 > "the momentum candles with which it comes back to the zone matters before the

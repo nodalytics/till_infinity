@@ -78,7 +78,12 @@ ARMS: list[tuple[str, dict[str, str], str]] = [
 #: The cell read out of each arm. `touch` is the zone with no confirmation at
 #: all, `pin` the strict candlestick, `wick` the desk's looser one - so the
 #: three rows price the confirmation itself.
-TRIGGERS = ("touch", "pin", "wick")
+#: `touch` is the zone with no confirmation, `pin` and `wick` the candlestick
+#: ones, and the `retest` family the displacement-and-pullback entry - which is
+#: a different trade, not a filter on the same one, so it is reported beside
+#: them rather than folded in.
+TRIGGERS = tuple(os.environ.get("SHOW",
+                                "touch,pin,wick,retest,retest_line,retest_pin").split(","))
 #: `rank1` and `rank2` only mean anything under `ZONES=chain`, where a leg hands
 #: back several zones; elsewhere every zone has rank 0 and both are empty, which
 #: is the expected degenerate case and not a fault.
