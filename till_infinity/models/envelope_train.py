@@ -74,12 +74,22 @@ def _track(symbol: str, bars: Sequence[Bar]) -> Track:
     return out
 
 
-def tracks(series: Mapping[tuple[str, str], Sequence[Bar]]) -> dict[str, Track]:
-    """Every FX 15m series given, replayed; everything else is skipped."""
+def tracks(
+    series: Mapping[tuple[str, str], Sequence[Bar]], family: str | None = None
+) -> dict[str, Track]:
+    """Every 15m series in `family`, replayed; everything else is skipped.
+
+    `family` of None keeps every family that has a boosted envelope, which is
+    only useful for inspecting the whole book - **a contest must name one**.
+    Pooling families would train one model on several processes and then judge
+    it on their average, which is how a hole in one of them rides in on the
+    others' margin.
+    """
     return {
         symbol.lower(): _track(symbol, bars)
         for (symbol, interval), bars in series.items()
         if ev.model_applies(symbol.lower(), interval)
+        and (family is None or ev.model_family(symbol.lower()) == family)
     }
 
 

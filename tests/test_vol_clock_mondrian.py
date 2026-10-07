@@ -194,7 +194,7 @@ def test_the_switch_turns_mondrian_off(monkeypatch):
 def test_a_boosted_base_stays_the_base_in_every_bucket(monkeypatch):
     monkeypatch.setattr(ev, "MONDRIAN", True)  # off by default; these test it on
     fixed = [-2.0, -1.2, 0.0, 1.2, 2.0]
-    monkeypatch.setattr(ev, "_safe_quantiles", lambda n, features: list(fixed))
+    monkeypatch.setattr(ev, "_safe_quantiles", lambda n, features, family: list(fixed))
     book = ev.Book()
     for price in _walk(50):
         book.observe("eurusd", "15m", price, 0.001, {"lvol": 0.0}, bucket=0)
