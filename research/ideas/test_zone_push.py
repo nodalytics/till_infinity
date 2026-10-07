@@ -570,3 +570,67 @@ def test_weekly_bars_are_cut_on_monday_not_on_thursday():
     for t in ts:
         k = int(t // 86400)
         assert (k - (k + 3) % 7) * 86400 in list(w["ts"])
+
+
+def test_a_chain_survives_one_weak_candle_and_the_pause_is_a_zone():
+    """"Sometimes we might have 2 impulsive then a candle that is not too strong
+    then another impulsive" - 2026-10-07. `ob_zones` cannot see that shape: its
+    push is `PUSH_N` consecutive candles, so one ordinary candle ends the leg."""
+    o, h, l, c = bars([
+        (10.0, 11.0, 9.9, 10.9),   # impulsive
+        (10.9, 12.0, 10.8, 11.9),  # impulsive - the seed pair
+        (11.9, 12.2, 11.7, 12.0),  # the pause: not too strong
+        (12.0, 13.2, 11.9, 13.1),  # impulsive again
+        (13.1, 14.2, 13.0, 14.1),  # and again
+    ])
+    got = Z.chains(o, h, l, c, 5)
+    assert len(got) == 1, "one chain, not two legs"
+    first, last, weak = got[0]
+    assert (first, last) == (0, 4)
+    assert weak == [2], "the pause inside the leg is where a zone sits"
+
+
+def test_a_gap_wider_than_chain_gap_ends_the_leg():
+    """The chain stops when `CHAIN_GAP` candles go by without an impulsive one.
+    Two ordinary candles at the default of 1 is the end of the move, and what
+    follows is a separate leg rather than the same one."""
+    rows = [
+        (10.0, 11.0, 9.9, 10.9),
+        (10.9, 12.0, 10.8, 11.9),
+        (11.9, 12.2, 11.7, 12.0),
+        (12.0, 12.3, 11.8, 12.1),  # a second quiet candle: too far
+        (12.1, 13.3, 12.0, 13.2),
+        (13.2, 14.4, 13.1, 14.3),
+    ]
+    o, h, l, c = bars(rows)
+    got = Z.chains(o, h, l, c, len(rows))
+    assert [(f, e) for f, e, _ in got] == [(0, 1), (4, 5)], "two legs, not one"
+
+
+def test_the_nearest_pause_is_rank_one():
+    """"We look at the candle before that, it is zone 1, then we also look back
+    for more impulsive candles" - so the ranking runs backwards in time from the
+    end of the leg, which is the order a reader marks them in."""
+    import pandas as pd
+
+    rows = [(100.0, 101.0, 99.0, 100.0) for _ in range(40)]
+    rows += [
+        (100.0, 100.4, 99.0, 99.3),      # the candle before the chain -> deepest rank
+        (99.3, 103.0, 99.2, 102.9),      # impulsive
+        (102.9, 106.0, 102.8, 105.9),    # impulsive - the seed pair
+        (105.9, 106.6, 105.4, 106.5),    # the pause: a 50% body, not impulsive -> rank 1
+        (106.5, 110.0, 106.4, 109.9),    # impulsive again
+        (109.9, 114.0, 109.8, 113.9),    # impulsive
+        (113.9, 118.0, 113.8, 117.9),    # impulsive
+        (117.9, 122.0, 117.8, 121.9),    # impulsive
+    ]
+    rows += [(112.0, 112.5, 98.0, 100.0) for _ in range(40)]
+    a = np.array(rows, float)
+    df = pd.DataFrame({"ts": np.arange(len(a)) * 14400, "open": a[:, 0],
+                       "high": a[:, 1], "low": a[:, 2], "close": a[:, 3]})
+    got = Z.chain_zones(df, np.full(len(df), 2.0), 1)
+    assert got, "the chain must produce at least one zone"
+    by_rank = {z.rank: z.p for z in got}
+    assert min(by_rank) == 1
+    # rank 1 is the later bar: the pause nearest the end of the leg
+    assert all(by_rank[r] > by_rank[r + 1] for r in sorted(by_rank)[:-1])

@@ -235,6 +235,12 @@ class Zone:
     protected: bool = False
     major: bool = False
     has_sl: bool = False
+    #: Which pause inside the leg this is, counting back from its end - 1 is the
+    #: nearest, which is the one a reader marks first. Only `chain_zones` sets
+    #: it. **A field added here must also be added to the keyword rebuild in
+    #: `setups`**: when that rebuild was positional, inserting four fields moved
+    #: `ret` into `push` and every short zone silently vanished.
+    rank: int = 0
 
 
 def flip(df: pd.DataFrame) -> pd.DataFrame:
@@ -606,6 +612,164 @@ def ob_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
                 break
         out.append(z)
     return out
+
+
+#: How many candles the scan may look back, past weaker ones, for the next
+#: impulsive candle before it decides the displacement has ended. Asked for
+#: 2026-10-07:
+#:
+#:     after finding 2 impulsive candles like that we look at the candle before
+#:     that, it is zone 1, then we also look back for more impulsive candles, we
+#:     stop when after looking back N candles we could not find impulsive candles
+#:     anymore, so sometimes we might have 2 impulsive then a candle that is not
+#:     too strong then another impulsive
+#:
+#: `ob_zones` cannot see that shape: its push is `PUSH_N` **consecutive**
+#: candles, so one ordinary candle in the middle of a leg ends it and the setup
+#: is dropped. With a chain, the leg survives the interruption - and the
+#: interruption itself is a zone.
+CHAIN_GAP = int(os.environ.get("CHAIN_GAP", 1))
+
+#: The consecutive impulsive candles that start a chain: "after finding 2
+#: impulsive candles like that". `PUSH_N` keeps its meaning as that minimum.
+#: Beyond the seed the chain may skip up to `CHAIN_GAP` candles at a time.
+PUSH_MIN = int(os.environ.get("PUSH_MIN", PUSH_N))
+
+#: Zones kept per chain, nearest the end of the leg first - zone 1, zone 2 ...
+#: 0 keeps all of them. A stacked leg can hand back four or five, and whether
+#: the deep ones are worth anything is the question the rank is there to answer.
+CHAIN_ZONES = int(os.environ.get("CHAIN_ZONES", 0))
+
+
+def impulsive(o, h, l, c, k: int) -> bool:
+    """One candle of the move's own colour with a body of `PUSH_BODY`+ of its range."""
+    return bool((c[k] - o[k]) >= PUSH_BODY * max(h[k] - l[k], 1e-12))
+
+
+def chains(o, h, l, c, n: int) -> list[tuple[int, int, list[int]]]:
+    """Every impulsive chain as (first bar, last bar, the weak bars inside it).
+
+    A chain starts where `PUSH_MIN` impulsive candles sit consecutively, then
+    extends forward over gaps of at most `CHAIN_GAP` non-impulsive candles. The
+    weak bars inside are what the desk calls the zones - "a candle that is not
+    too strong" between two pieces of the same move - and the candle before the
+    chain is one too.
+
+    Chains cannot overlap: once a chain has consumed its bars the scan resumes
+    after it, so the same impulsive candle is never part of two legs.
+    """
+    imp = [impulsive(o, h, l, c, k) for k in range(n)]
+    out, k = [], 0
+    while k < n - PUSH_MIN + 1:
+        if not all(imp[k:k + PUSH_MIN]):
+            k += 1
+            continue
+        start = end = k + PUSH_MIN - 1
+        weak: list[int] = []
+        while True:
+            nxt = next((j for j in range(end + 1, min(n, end + 2 + CHAIN_GAP)) if imp[j]), None)
+            if nxt is None:
+                break
+            weak += [j for j in range(end + 1, nxt)]
+            end = nxt
+        out.append((k, end, weak))
+        k = end + 1
+    return out
+
+
+def chain_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
+    """`ob_zones`, but the displacement is a chain and every pause in it is a zone.
+
+    The tests a zone has to pass are unchanged - the size cap against the candle
+    that left it, the body floor, the break of a previous high without pivots,
+    the imbalance, freshness, the first return - so a difference between this and
+    `ob_zones` is the chain and nothing else.
+
+    `Zone.rank` is 1 for the pause nearest the end of the leg, counting back, so
+    a run can be read as "only the nearest" or "all of them" afterwards rather
+    than being decided here.
+    """
+    o, h, l, c = (df[k].to_numpy() for k in ("open", "high", "low", "close"))
+    n = len(df)
+    out = []
+    for first, last, weak in chains(o, h, l, c, n):
+        if first < OB_LOOKBACK or last + HOLD_BARS >= n:
+            continue
+        # the candle before the chain, then each pause inside it; ranked from the
+        # end of the leg backwards, which is the order the desk names them in
+        cands = sorted([first - 1] + weak, reverse=True)
+        kept = 0
+        for rank, p in enumerate(cands, start=1):
+            if CHAIN_ZONES and kept >= CHAIN_ZONES:
+                break
+            if p < OB_LOOKBACK or not a[p] > 0:
+                continue
+            q = next((j for j in range(p + 1, last + 1) if impulsive(o, h, l, c, j)), None)
+            if q is None:
+                continue
+            body = abs(c[p] - o[p])
+            if body / max(h[p] - l[p], 1e-12) < ORIGIN_BODY:
+                continue
+            if h[p] - l[p] > ORIGIN_MAX * (h[q] - l[q]):
+                continue
+            low = l[p]
+            level = float(h[p - OB_LOOKBACK:p].max())
+            if level <= low:
+                continue
+            b = -1
+            for k in range(p + 1, min(n, p + MAXLEG + 1)):
+                if l[k] < low:
+                    break
+                if c[k] > level:
+                    b = k
+                    break
+            if b < 0 or b + HOLD_BARS >= n:
+                continue
+            if c[b + 1:b + 1 + HOLD_BARS].min() <= level or h[b:b + 6].max() < level + FOLLOW * a[p]:
+                continue
+            strong = b + max(HOLD_BARS, int(np.argmax(h[b:b + 6] >= level + FOLLOW * a[p])))
+            ext = h[p:b + 1].max()
+            if ext - low < OB_MINLEG * a[p]:
+                continue
+            end_gap = max(b, last)
+            gaps = [k for k in range(p + 2, end_gap + 1)
+                    if k < len(l) and l[k] > h[k - 2] + FVG_MIN * a[p]]
+            if not gaps:
+                continue
+            top = h[p] if OB_BAND == "range" else max(o[p], c[p])
+            top = min(max(top, low + 0.2 * a[p]), low + OB_CLIP * a[p])
+            if QUIET:
+                w = c[max(0, p - QUIET):max(0, p - QUIET_SKIP)]
+                if np.any((w >= low) & (w <= top)):
+                    continue
+            # the chain is complete at `last`; nothing earlier could know it
+            known = last
+            live = max(known, strong, gaps[0])
+            if FRESH and known + 1 <= live and float(l[known + 1:live + 1].min()) <= top:
+                continue
+            z = Zone(
+                side, p, low, top, b, level, gaps[0], live, ext,
+                strong_leg(o, h, l, c, a[p], p, b),
+                True, True, True, float(min(o[p], c[p])),
+            )
+            z.rank = rank
+            for k in range(z.live + 1, min(n, z.live + EXPIRE)):
+                if l[k] <= z.hi:
+                    z.ret = k
+                    break
+            out.append(z)
+            kept += 1
+    return out
+
+
+def zones_chain(df, a):
+    """Both sides of `chain_zones`, in this chart's prices."""
+    zl = chain_zones(df, a, 1)
+    zs = chain_zones(flip(df), a, -1)
+    for z in zs:
+        z.lo, z.hi, z.bos_level, z.leg_extreme = -z.lo, -z.hi, -z.bos_level, -z.leg_extreme
+        z.line = -z.line
+    return zl + zs
 
 
 def zones_ob(df, a):
@@ -990,6 +1154,7 @@ def setups(df: pd.DataFrame, a: np.ndarray, zs: list[Zone]) -> pd.DataFrame:
             side=1, p=z.p, lo=-z.lo, hi=-z.hi, bos=z.bos, bos_level=-z.bos_level,
             fvg=z.fvg, live=z.live, leg_extreme=-z.leg_extreme, clean=z.clean,
             push=z.push, push_hi=z.push_hi, ob=z.ob, line=-z.line, ret=z.ret,
+            rank=z.rank,
         )
         ex = ex_l if z.side > 0 else ex_s
         fc, fl_ = frame["close"].to_numpy(), frame["low"].to_numpy()
@@ -1010,7 +1175,7 @@ def setups(df: pd.DataFrame, a: np.ndarray, zs: list[Zone]) -> pd.DataFrame:
                                                          else opposite_target(zs, z, t["i"], ref)), zone_p=z.p,
                              zone_lo=z.lo, zone_hi=z.hi, zone_live=z.live, zone_ret=z.ret, clean=z.clean, push=z.push, push_hi=z.push_hi, ob=z.ob, age=age, approach=approach,
                              protected=z.protected, dax_major=z.major, has_sl=z.has_sl,
-                             inducement=bool(inner.any()), n_gaps=len(z.parts),
+                             inducement=bool(inner.any()), n_gaps=len(z.parts), rank=z.rank,
                              held=zone_held(frame, a, zz), **shape))
     return pd.DataFrame(rows)
 
@@ -1319,6 +1484,8 @@ elif os.environ.get("ZONES") == "fvglevel":  # or on levels where gaps line up (
     zones = zones_fvglevel  # noqa: F811
 elif os.environ.get("ZONES") == "ob":  # or on the order block: the last candle against the move
     zones = zones_ob  # noqa: F811
+elif os.environ.get("ZONES") == "chain":  # or the chain: every pause inside the leg is a zone
+    zones = zones_chain  # noqa: F811
 
 
 # ------------------------------------------------------------------------------------------ plot
@@ -1663,6 +1830,12 @@ def run_one(job):
     st["push"] = st["bias"] & st["push"]
     st["push_hi"] = st["bias"] & st["push_hi"]
     st["push_ob"] = st["push_hi"] & st["ob"]
+    # `chain_zones` only: which pause inside the leg this is, counting back from
+    # its end. A stacked leg hands back several, and whether the deep ones are
+    # worth trading is a question the rank is there to answer rather than a
+    # choice to make in the builder.
+    st["rank1"] = st["rank"] == 1
+    st["rank2"] = st["rank"] >= 2
     # SMC: the 4h dealing range (last known 4h swing high and low) - longs from its discount half,
     # shorts from its premium; London (02-05 New York) and New York (07-10) killzones
     h4, l4 = d4["high"].to_numpy(), d4["low"].to_numpy()
@@ -1705,7 +1878,7 @@ def run_one(job):
     st["zma_stretch"] = st["bias"] & st["zma_st"]
     st["zma_bjorg"] = st["zma_stretch"] & st["bj"]
     st["zma_strong"] = st["strong"] & st["zma_st"]
-    filters = ["none", "bias", "strong", "push", "push_hi", "push_ob",
+    filters = ["none", "bias", "strong", "push", "push_hi", "push_ob", "rank1", "rank2",
                "smc_pd", "smc_idm", "smc_all", "fast_old",
                "nogap", "hasgap", "dax", "dax_major", "bjorg", "bjorg_strong", "bjorg_dax",
                "zma", "zma_stretch", "zma_bjorg", "zma_strong"] + \

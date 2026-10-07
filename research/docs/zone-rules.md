@@ -38,6 +38,34 @@ is `PUSH_STRONG=0` and is kept only for comparison.
 Every adjacent pair must clear, not only the first: a run that stalls in the
 middle is a push and then a pause.
 
+### 1b. The chain: the leg may skip a weak candle, and each pause is a zone
+
+> "we will not use that approach but rather after finding 2 impulsive candles
+> like that we look at the candle before that, it is zone 1, then we also look
+> back for more impulsive candles, we stop when after looking back N candles we
+> could not find impulsive candles anymore, so sometimes we might have 2
+> impulsive then a candle that is not too strong then another impulsive"
+
+`PUSH_N` **consecutive** candles cannot see that shape: one ordinary candle in
+the middle of a leg ends the displacement and the whole setup is dropped, however
+obvious the move looks on the chart. The chain fixes that, and it changes what a
+zone *is*:
+
+| | |
+|---|---|
+| **seed** | `PUSH_MIN` (**2**) consecutive impulsive candles start a chain |
+| **extend** | from the last impulsive candle, look forward up to `CHAIN_GAP` (**1**) ordinary candles for the next one. Found, the leg continues; not found, it has ended |
+| **zones** | **every pause inside the chain**, plus the candle before the chain - each one tested exactly as section 2 tests a single origin |
+| **rank** | counted back from the end of the leg: **zone 1 is the pause nearest the end**, which is the one a reader marks first. `CHAIN_ZONES` keeps only the first few; 0 keeps all |
+
+Chains do not overlap - once one has consumed its bars the scan resumes after it -
+so an impulsive candle is never part of two legs.
+
+This is `ZONES=chain`. The consecutive rule stays as `ZONES=ob` and is still the
+one every number in this file was measured on, because a builder that replaces
+the measured one without being measured itself would quietly invalidate the whole
+study. The sweep runs both.
+
 ### 2. The candle before them - the zone
 
 > "demand zone is the last candle before the impulsive move, vice versa for supply"
