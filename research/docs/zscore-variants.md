@@ -155,6 +155,14 @@ structure a person could not state; it is finding a blurrier version of it,
 because it optimises squared error over every bar while the hand condition goes
 straight to the rare corner where the effect lives.
 
+## Followed up in
+
+[`zscore-ml.md`](zscore-ml.md), which changes the model's objective as this file
+suggested. Training on the rare corner does sharpen it to the best cell in the
+study (+0.257, the only interval here that clears zero) - and then the same
+features put through **the question a trade asks**, "did price reach +1 ATR
+before -1 ATR", find **nothing at all**: 48.7% against a base rate of 48.6%.
+
 ## What to do with this
 
 * **Keep the term structure.** It is the only variant that adds something the
