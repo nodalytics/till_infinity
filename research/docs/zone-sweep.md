@@ -1,152 +1,162 @@
-# Sweeping the zone rule: nothing moves, and one thing does
+# Sweeping the zone rule: nothing moves, and the one thing that did was noise
 
 **Measured 2026-10-07**, asked for as "test different parameters". The rule is
 [`zone-rules.md`](zone-rules.md); the code is
-[`zone_sweep.py`](../ideas/zone_sweep.py), the table is `.data/zsweep/sweep.csv`.
-Twenty-three arms, each one tunable moved on its own around the desk's setting,
-on the sixteen instruments the rule was developed on - twelve FX pairs, gold,
-silver, BTC and ETH - at 4h and 1d.
+[`zone_sweep.py`](../ideas/zone_sweep.py), the table `.data/zsweep4/sweep.csv`.
+Twenty-four arms, each tunable moved on its own around the desk's setting, on the
+sixteen instruments the rule was developed on - twelve FX pairs, gold, silver,
+BTC and ETH - at 4h and 1d.
 
-**This is a development-set sweep and it selects nothing.** 138 cells, so at a
-90% interval about fourteen clear zero by chance; twenty-eight do. Read it for
-shape, not for a maximum.
+**This is a development-set sweep and it selects nothing.** 135 cells, so at a
+90% interval about fourteen clear zero by chance; twenty-four do, and
+**twenty-three of those twenty-four are negative**. Read it for shape, not for a
+maximum.
 
-## What the sweep says
+> Run twice: once before the freshness correction (`FRESH`, no bar may trade back
+> into the band between the displacement and the setup being known) and once
+> after. The correction removes six trades of 334 and no figure here moves by
+> more than 0.01R. The numbers below are the corrected run.
 
-### The strong displacement is a no-op
+## The base rule, in full
+
+| iv | trigger | n | long | win | R | 90% interval | coin | at market | flipped |
+|---|---|---:|---:|---:|---:|---|---:|---:|---:|
+| 1d | touch | 144 | 51% | 29% | -0.104 | [-0.397, +0.231] | +0.055 | -0.778 | +0.735 |
+| 1d | pin | 41 | 49% | 54% | **+0.211** | [-0.157, +0.634] | +0.022 | -0.073 | -0.186 |
+| 1d | wick | 75 | 52% | 48% | +0.087 | [-0.192, +0.400] | +0.030 | -0.064 | +0.071 |
+| 4h | touch | 328 | 59% | 30% | -0.005 | [-0.176, +0.167] | +0.100 | -0.779 | +1.145 |
+| 4h | pin | 86 | 62% | 33% | **-0.368** | [-0.558, -0.168] | -0.266 | -0.415 | +0.173 |
+| 4h | wick | 153 | 58% | 36% | -0.149 | [-0.337, +0.050] | -0.028 | -0.197 | -0.033 |
+
+**Exactly one cell of 135 is positive with its interval clear of zero**:
+`origin_small` at 1d `pin`, +0.567 [+0.033, +1.220], on **23 trades**. One cell,
+the smallest population in its column, from looking 135 times.
+
+## The strong displacement is a no-op
 
 The desk asked for the strong form - the second candle closing past the first's
 whole range - in place of the weak one. It changes almost nothing:
 
 | | n | R | win |
 |---|---:|---:|---:|
-| strong (`PUSH_STRONG=1`), 4h touch | 334 | -0.013 | 29.3% |
-| weak (`PUSH_STRONG=0`), 4h touch | 335 | -0.011 | 29.6% |
+| strong (`PUSH_STRONG=1`), 4h touch | 328 | -0.005 | 29.6% |
+| weak (`PUSH_STRONG=0`), 4h touch | 329 | -0.003 | 29.6% |
 
-**One trade in 335.** At a 70% body floor a candle that closes past the previous
-*close* has nearly always closed past its *high* as well, so the two forms select
-the same population. The distinction only had room to matter at a looser body
-floor, where the first build measured it - and measured it as a *filter* on the
-84%-long population, which is why that earlier reading ("the strong form is worse
-than the weak one") should be discarded rather than reversed.
+**One trade in 329.** At a 70% body floor a candle that closes past the previous
+*close* has nearly always closed past its *high* too, so the two forms select the
+same population. The distinction only had room to matter at a looser body floor,
+where the first build measured it - as a *filter*, on the 84%-long population -
+so that earlier reading ("the strong form is worse than the weak one") should be
+discarded rather than reversed.
 
-### The lookback breaks the one positive cell
+## The lookback breaks the one positive cell
 
-`OB_BACK` - the desk's "check backward too" - lets the scan walk back from the
-impulse until it finds a bar that passes the zone tests. It only ever *adds*
-setups, and it adds a lot of them:
+`OB_BACK` - the desk's "check backward too for more info" - lets the scan walk
+back from the impulse until it finds a bar that passes the zone tests. It can
+only **add** setups; it cannot remove one that already qualified.
 
-| | 4h touch n | 4h R | 1d pin n | **1d pin R** |
-|---|---:|---:|---:|---:|
-| `OB_BACK` 0 | 334 | -0.013 | 43 | **+0.180** |
-| `OB_BACK` 3 | 540 | -0.007 | 92 | **-0.084** |
-| `OB_BACK` 5 | 609 | +0.021 | 102 | **-0.098** |
+| | 4h touch n | 4h touch R | 4h pin R | 1d pin n | **1d pin R** |
+|---|---:|---:|---:|---:|---:|
+| `OB_BACK` 0 | 328 | -0.005 | -0.368 | 41 | **+0.211** |
+| `OB_BACK` 1 | 429 | +0.001 | -0.341 | 58 | -0.006 |
+| `OB_BACK` 3 | 534 | -0.006 | -0.249 | 91 | -0.075 |
+| `OB_BACK` 5 | 603 | +0.034 | -0.196 | 101 | **-0.089** |
 
-The 4h result does not move. The **1d `pin` result - the only positive candidate
-in the whole sweep - does**: it goes from +0.180 to -0.098 as the population
-triples, on a parameter the desk asked for and which cannot remove any of the
-original 43 trades. Those 43 were a favourable subset of a rule that is flat;
-the extra 59 are the same rule and they are not favourable.
+The 4h figures do not move - and 4h `pin`, the worst cell in the table, improves
+steadily as the population grows, which is what a sampling artefact does when you
+dilute it. The **1d `pin` result goes from +0.211 to -0.089 as its population
+goes 41 to 101**.
 
-That is worth more than the sweep's main finding. It is the cheapest available
-test of a small positive cell - widen the population along an axis that cannot
-remove the trades you already have - and it failed.
+That is the cheapest available test of a small positive cell: widen the
+population along an axis that cannot remove the trades you already have. It
+failed. Those 41 trades were a favourable subset of a rule that is flat.
 
-### Every parameter is a plateau
+## Every parameter is a plateau
 
-Across all twenty-three arms, at 4h, with no confirmation:
+Across all twenty-four arms, with no confirmation:
 
 | | min | median | max |
 |---|---:|---:|---:|
-| R | -0.550 | **-0.018** | +0.282 |
+| 4h touch | -0.550 | **-0.005** | +0.862 |
+| 1d touch | -0.672 | -0.133 | +0.154 |
 
-and at 1d, -0.445 / -0.139 / +0.154. The two extremes are the smallest
-populations in the sweep (`push_n3`, n=37; `origin_colour`, n=77). Nothing in
-the middle of the range moves the result: `OB_LOOKBACK` 10 against 40,
-`OB_MINLEG` 0 against 3, the band drawn body-high against wick-high, the clip on
-or off, the window 12 bars or 36, the hold 5 days or 15 - every one of them lands
-within 0.1R of the base.
+Both extremes are the smallest populations in the sweep (`push_n3` n=37,
+`push_n4` n=2). Nothing in the middle moves the result: `OB_LOOKBACK` 10 against
+40, `OB_MINLEG` 0 against 3, the band body-high against wick-high, the clip on or
+off, the window 12 bars or 36, the hold 5 days or 15 - each lands within 0.1R of
+the base.
 
-That is the useful finding. **The zone rule's parameters are not where its
-result lives.** A rule whose answer is the same from `OB_LOOKBACK` 10 to 40 is
-not being tuned, and a sweep that cannot move it cannot be accused of having
-found the result by tuning either.
+That is the useful finding. **The zone rule's parameters are not where its result
+lives.** A rule whose answer is the same from `OB_LOOKBACK` 10 to 40 is not being
+tuned - and a sweep that cannot move it cannot have found its result by tuning
+either.
 
-### The confirmation splits clean across timeframes
+Two arms look like exceptions and are not. `push_body_80` is +0.168 at 4h and
+**-0.475** at 1d; `origin_colour` is +0.334 at 4h and **-0.425** at 1d. Opposite
+signs across timeframes on 104 and 74 trades is what noise looks like when it is
+given two chances.
 
-The one consistent structure in the whole table, and it points both ways:
+## The confirmation splits clean across timeframes
+
+The one consistent structure in the table, and it points both ways:
 
 | | pin minus touch | positive in |
 |---|---:|---:|
-| **4h** | **-0.339** | **0 of 23 arms** |
-| **1d** | **+0.294** | **22 of 23 arms** |
+| **4h** | **-0.341** | **0 of 22 arms** |
+| **1d** | **+0.271** | **20 of 22 arms** |
 
-`wick`, the looser reading, sits between them both times (-0.131 and +0.183), as
+`wick`, the looser reading, sits between them both times (-0.107 and +0.164), as
 a superset of `pin` should.
 
-So waiting for a candlestick confirmation **costs about a third of an R at 4h and
-pays about a third at 1d**, and it does so in essentially every parameter arm.
-Arms share most of their trades, so this is two observations and not forty-six -
-but it is two observations that survive every change made to the rule around
-them, and the sign flip is not something a single sample noise story explains
-comfortably.
+Waiting for a candlestick confirmation **costs about a third of an R at 4h and
+pays about a quarter at 1d**, in essentially every parameter arm. Arms share most
+of their trades, so this is two observations rather than forty-four - but two
+that survive every change made to the rule around them.
 
-Read against the win rates it makes sense: at 1d, `pin` wins 53.5% of the time
-against `touch`'s 28.4%. The confirmation is not finding better trades, it is
-**refusing the ones where price went straight through** - which is worth more on
-a daily bar, where the next bar's range is the whole day, than on a 4h bar, where
-waiting means giving up a quarter of the move.
+The win rates say what it is doing: at 1d, `pin` wins 53.7% against `touch`'s
+28.5%. The confirmation is not finding better trades, it is **refusing the ones
+price went straight through** - worth more on a daily bar, where the next bar is
+the whole day, than on a 4h bar, where waiting gives up a quarter of the move.
 
-### What is still negative
+**But the lookback arms break the 1d half of it** (above), so what is left is the
+4h half: confirmation at 4h is reliably expensive. That is a real and usable
+negative.
 
-The base rule, in full:
+## Freshness, and the reading that was not meant
 
-| iv | trigger | n | long | win | R | 90% interval | coin | at market | flipped |
-|---|---|---:|---:|---:|---:|---|---:|---:|---:|
-| 1d | touch | 148 | 53% | 28% | -0.114 | [-0.400, +0.236] | +0.060 | -0.784 | +0.721 |
-| 1d | pin | 43 | 51% | 54% | **+0.180** | [-0.170, +0.585] | -0.014 | -0.091 | -0.212 |
-| 1d | wick | 77 | 53% | 48% | +0.073 | [-0.206, +0.369] | +0.067 | -0.089 | +0.049 |
-| 4h | touch | 334 | 60% | 29% | -0.013 | [-0.179, +0.161] | +0.064 | -0.783 | +1.141 |
-| 4h | pin | 87 | 62% | 32% | **-0.376** | [-0.563, -0.178] | -0.236 | -0.422 | +0.287 |
-| 4h | wick | 155 | 58% | 36% | -0.160 | [-0.345, +0.036] | -0.059 | -0.208 | +0.031 |
+`FRESH` - the zone untested between the displacement and the setup being known -
+costs six trades of 334 and moves nothing. The hole it closes was real and rarely
+fell through.
 
-**Not one cell in the sweep is positive with an interval clear of zero**, except
-`origin_small` 1d `pin` at +0.519 [+0.008, +1.152] on **25 trades** - one cell in
-138, at the smallest population in its column, which is what one expects to find
-by looking 138 times.
+`QUIET` - the band sitting where price had not lately been working - is a
+different claim and a dead end at these settings: 328 trades become **71** at 20
+bars and the result gets worse (-0.005 to -0.162). A filter that removes 78% of a
+flat population and makes it worse is removing signal or nothing; either way it
+is not what "fresh" meant.
 
 ## The thing that does move, and why it is probably not an edge
 
 `flip` - the same fills and stops, entered at market, on the **opposite** side -
-is positive in **every arm and both timeframes**, median +1.11R at 4h and +0.72R
-at 1d, with intervals clear of zero in all forty-six `touch` cells.
+is positive in every arm and both timeframes, median **+1.05R** at 4h and
+**+0.74R** at 1d, intervals clear of zero in every `touch` cell.
 
-It would be easy to call that an edge. It is mostly an entry artefact, and the
-column beside it says so: `straight`, the *same* side at market, is **-0.78R**
-across the board while the real limit entry is -0.01R. Entering at market once
-price has reached the zone is three-quarters of an R worse than resting a limit
-at its edge. `flip` is the mirror of `straight`, so most of what it earns is that
-same three-quarters of an R, reflected.
+The column beside it explains most of that. `straight`, the *same* side at
+market, is **-0.78R** across the board while the real limit entry is -0.005R.
+Entering at market once price has reached the zone is three-quarters of an R
+worse than resting a limit at its edge, and `flip` is `straight` reflected.
 
-What survives after that reflection is small and in the same direction as
-everything else the desk has measured this week: **price that reaches a zone
-tends to keep going through it**. The band is not holding. That is consistent
-with [`magnet.md`](../../docs/magnet.md) - levels are not magnets - and with the
-82% return rate being a statement about fifty days of wandering rather than about
-the zone.
+What survives the reflection is small and points where everything else this week
+has pointed: **price that reaches a zone tends to keep going through it**. The
+band is not holding - which matches the measured hold rate of ~50% at 1d and ~46%
+at 4h in [`zone-approach.md`](zone-approach.md), and
+[`magnet.md`](../../docs/magnet.md) on levels not being magnets.
 
-## What this does not settle
+## What is left
 
-* The `pin`-at-1d result was the only live candidate, and **the lookback arms
-  broke it** (above). It is not out of sample that it failed - it failed on the
-  development set, against a parameter the desk had already asked for. The held-out instruments - indices,
-  energy, crypto alts, Deriv, the minor metals - produced about a hundred zones
-  in total and **no cell reached thirty trades**, so that set cannot confirm
-  anything at these settings. A forward test needs either more instruments or
-  more time, and more time is the honest one.
-* **This table predates the freshness correction.** `FRESH` - no bar may trade
-  back into the band between the displacement and the setup being known - is now
-  on, and it removes six trades of 334. Every figure here moves by less than
-  0.01R under it, so the shape stands, but the arms were re-run against the
-  corrected rule and that run supersedes this one cell for cell.
-* Everything here is the development set. Nothing in it should be traded.
+* **4h: confirmation is expensive**, reliably, across every arm. Negative, usable.
+* **1d: nothing survives the lookback.** The only positive cell in the table is
+  one of 135 at n=23.
+* The held-out instruments produced about a hundred zones in total and no cell
+  reached thirty trades, so they cannot confirm anything at these settings. What
+  this needs is **more time, not more instruments**.
+* Nothing here should be traded.
