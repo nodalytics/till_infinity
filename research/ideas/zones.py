@@ -121,6 +121,8 @@ LR, MAXLEG, MINLEG, FVG_MIN, WINDOW, NEAR, EXPIRE = 3, 10, 3.0, 0.2, 12, 0.25, 3
 # for a setup that takes longer. `EXPIRE` (300 bars, 50 days at 4h) already allows a late
 # return; this is the other half of the same point.
 WINDOW = int(os.environ.get("WINDOW", WINDOW))
+EXPIRE = int(os.environ.get("EXPIRE", EXPIRE))  # bars a zone stays live waiting for its return
+MAXLEG = int(os.environ.get("MAXLEG", MAXLEG))  # bars the break of structure is allowed to take
 BUF = float(os.environ.get("BUF", 0.1))  # the stop past the zone, in ATR (0.3 / 0.5 / 1 tried after a wick stopped one)
 HOLD_BARS, FOLLOW = 3, 1.0  # a strong break: no close back through it for 3 bars, 1 ATR beyond it within 5
 OB_MINLEG = float(os.environ.get("OB_MINLEG", 1.5))  # `ob_zones`' leg floor, in ATR
@@ -130,7 +132,49 @@ OB_MINLEG = float(os.environ.get("OB_MINLEG", 1.5))  # `ob_zones`' leg floor, in
 #: 1d; it is not measured, and it is the one number here that replaced a rule
 #: rather than a threshold.
 OB_LOOKBACK = int(os.environ.get("OB_LOOKBACK", 20))
-TRIGGERS = ("touch", "touch_mid", "touch_far", "touch_deep", "pin", "engulf", "star", "inside", "reclaim", "cisd",
+#: Whether the zone spans the zone candle's body or its whole range, wick to
+#: wick.
+#:
+#: **"range" by default from 2026-10-07**: "for a demand we mark the full candle
+#: range from high to low". "body" keeps `long_zones`' convention and the first
+#: build's, and is kept so the two can be compared - the choice moves the entry,
+#: the stop and therefore every R in the study, so it is a real variant and not
+#: a drawing preference.
+OB_BAND = os.environ.get("OB_BAND", "range")
+
+#: The zone's width, clipped to this many ATR either side, so a single enormous
+#: candle is not a zone the width of the screen. A large value turns it off;
+#: `ORIGIN_MAX` now limits the candle's size directly, which is the better
+#: handle on the same problem.
+OB_CLIP = float(os.environ.get("OB_CLIP", 1.5))
+#: How far back from the impulse the origin may sit. Asked for 2026-10-07:
+#: "look for impulsive candles, then candle before this impulsive candle".
+#:
+#: The first build scanned the other way - every bar was tested as an origin and
+#: the push had to begin on the very next bar - which is the same rule only when
+#: the candle immediately before the impulse happens to be the last one against
+#: the move. It often is not: a small candle the move's own colour sits between
+#: them and the setup is dropped, though a reader would mark the red candle
+#: behind it.
+#:
+#: With `OB_BACK` at `d`, the push may begin up to `d` bars after the origin, and
+#: every bar in between must be the move's own colour - if one of them is
+#: against the move then *it* is the last candle against the move, and the scan
+#: finds it as its own origin at a smaller gap. 0 is the original behaviour.
+OB_BACK = int(os.environ.get("OB_BACK", 0))
+#: How much of a confirming candle's range must be the wick *under* its body
+#: (over it, on a supply zone) before the return counts as a rejection. Asked
+#: for 2026-10-07: "after it returns to the zone let's wait for a candlestick
+#: pattern as confirmation, looking at pinbars/hammers or candle with medium to
+#: long lower wick if it was a demand zone or support level".
+#:
+#: `pin` is the strict reading already in `TRIGGERS` - 60% of the range below
+#: the body, a body of a third or less. `wick` is the "medium to long" one: a
+#: lower wick of `WICK_MIN`+ of the range and longer than the body, closing in
+#: the upper half. `pin` is a subset of `wick`, so the pair measures how much
+#: the strictness is worth rather than whether a wick is worth anything.
+WICK_MIN = float(os.environ.get("WICK_MIN", 0.40))
+TRIGGERS = ("touch", "touch_mid", "touch_far", "touch_deep", "pin", "wick", "engulf", "star", "inside", "reclaim", "cisd",
             "sweep", "double", "ifvg", "choch", "rsi_div", "displace", "tweezer", "outside", "climax")
 SEC = {"1h": 3600, "4h": 14400, "1d": 86400}
 
@@ -244,7 +288,30 @@ def long_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
 #: visible - so any figure from it carries one degree of freedom that the first
 #: did not. Recorded here rather than left in a commit message, because a
 #: threshold's history is the difference between a frozen rule and a swept one.
-PUSH_BODY = float(os.environ.get("PUSH_BODY", 0.45))
+PUSH_BODY = float(os.environ.get("PUSH_BODY", 0.70))
+
+#: The origin's own body floor, separate from the impulsive candles'. The desk
+#: set the push to 70% on 2026-10-07 while the order block keeps 45%: they are
+#: different claims - a momentum candle should be nearly all body, while the
+#: last candle against the move only has to be a real candle rather than a doji.
+ORIGIN_BODY = float(os.environ.get("ORIGIN_BODY", 0.45))
+
+#: Whether the origin must be a candle **against** the move - red before a
+#: rally, green before a sell-off.
+#:
+#: The desk gave it both ways on 2026-10-07. First "the origin bar is the last
+#: candle before the opposite move", which reads as the order block; then, after
+#: seeing the marked charts, **"for the zone the colour of the candle does not
+#: matter"** - the zone is simply the candle the impulse left from, whatever
+#: colour it closed. Off by default, because that is the later word; `1`
+#: restores the order-block reading and the sweep runs both.
+ORIGIN_COLOUR = os.environ.get("ORIGIN_COLOUR", "0") not in ("0", "", "no", "false")
+
+#: The origin's range, as a multiple of the **first impulse candle's** range.
+#: "It is normally a small candle", 2026-10-07 - small next to what left it, not
+#: small in absolute terms, so this is a ratio and not an ATR figure. 1.0 means
+#: "no bigger than the candle that left it"; a large value turns the test off.
+ORIGIN_MAX = float(os.environ.get("ORIGIN_MAX", 1.0))
 
 
 #: How many consecutive candles must leave the zone. Two was the desk's first
@@ -252,8 +319,26 @@ PUSH_BODY = float(os.environ.get("PUSH_BODY", 0.45))
 #: another value tried, and the count belongs beside the result.
 PUSH_N = int(os.environ.get("PUSH_N", 2))
 
+#: Which form of `sequential_push` **admits** a zone at all, as opposed to
+#: tagging one that already exists. Asked for 2026-10-07: "for the displacement
+#: candles, let's use the strong one instead of the weak ones".
+#:
+#: Weak is `close[k+1] > close[k]`, strong is `close[k+1] > high[k]` - the second
+#: candle closing past the first's whole range rather than merely past its
+#: close. Strong implies weak, so this only ever removes zones.
+#:
+#: It is **not** the same change as the `push_hi` filter, which selects among
+#: zones the weak gate already let in. The gate decides which zones *exist*, and
+#: zones are read by `opposite_target`, so a zone dropped here also stops being
+#: a target for every other zone. The first run reported the strong form as
+#: worse than the weak one - but that was measured as a filter, on the
+#: 84%-long population, before the `setups` bug was found. Both claims are
+#: therefore open, and `PUSH_STRONG=0` restores the old gate for the comparison.
+PUSH_STRONG = os.environ.get("PUSH_STRONG", "1") not in ("0", "", "no", "false")
 
-def sequential_push(o, h, l, c, p, side: int, strong: bool, n: int | None = None) -> bool:
+
+def sequential_push(o, h, l, c, p, side: int, strong: bool, n: int | None = None,
+                    offset: int = 0) -> bool:
     """`n` **consecutive** candles leaving the zone, each making progress on the last.
 
     Asked for 2026-10-07, and it is not `strong_leg`. That one is an aggregate
@@ -277,7 +362,12 @@ def sequential_push(o, h, l, c, p, side: int, strong: bool, n: int | None = None
     n = PUSH_N if n is None else n
     if n < 2:
         raise ValueError("a push needs at least two candles")
-    k = list(range(p + 1, p + 1 + n))
+    #: `offset` moves the push away from the origin. The desk's search order,
+    #: 2026-10-07, is "look for impulsive candles, then candle before this
+    #: impulsive candle" - and the candle immediately before an impulse is not
+    #: always the last one against the move; it can be a small candle the
+    #: move's own colour. With `offset` 0 this is the original behaviour.
+    k = list(range(p + 1 + offset, p + 1 + offset + n))
     if k[-1] >= len(c):
         return False
     bodies = [c[i] - o[i] for i in k]
@@ -310,8 +400,10 @@ def strong_origin(o, h, l, c, p, side: int) -> bool:
     """
     body = c[p] - o[p]
     rng = max(h[p] - l[p], 1e-12)
-    if abs(body) / rng < PUSH_BODY:
+    if abs(body) / rng < ORIGIN_BODY:
         return False
+    if not ORIGIN_COLOUR:  # "for the zone the colour of the candle does not matter"
+        return True
     return bool(body < 0) if side > 0 else bool(body > 0)
 
 
@@ -353,7 +445,7 @@ def ob_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
     o, h, l, c = (df[k].to_numpy() for k in ("open", "high", "low", "close"))
     n = len(df)
     out = []
-    for p in range(OB_LOOKBACK, n - PUSH_N - 1):
+    for p in range(OB_LOOKBACK, n - PUSH_N - OB_BACK - 1):
         if not a[p] > 0:
             continue
         # **Always the long logic, whatever `side` says.** `zones_ob` passes an
@@ -369,7 +461,16 @@ def ob_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
         # the period, not a finding.
         if not strong_origin(o, h, l, c, p, 1):
             continue
-        if not sequential_push(o, h, l, c, p, 1, strong=False):
+        # The impulse, allowed to start up to `OB_BACK` bars later (see the
+        # constant). The first gap that works is taken: a nearer impulse is the
+        # one a reader would draw the zone from.
+        d = next((d for d in range(OB_BACK + 1)
+                  if (not ORIGIN_COLOUR or all(c[i] >= o[i] for i in range(p + 1, p + 1 + d)))
+                  and sequential_push(o, h, l, c, p, 1, strong=PUSH_STRONG, offset=d)), None)
+        if d is None:
+            continue
+        # "It is normally a small candle" - small beside the candle that left it.
+        if h[p] - l[p] > ORIGIN_MAX * (h[p + 1 + d] - l[p + 1 + d]):
             continue
         low = l[p]
         # **The break of structure, without a swing high.** Asked for
@@ -416,24 +517,40 @@ def ob_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
         # fast-breaking setup was dropped in silence, whatever it did. The gap the
         # displacement leaves is at `p + 2` (`low[p+2] > high[p]`), the hole over
         # the order block itself, so the window has to reach at least that far.
-        end_gap = max(b, p + PUSH_N)
-        gaps = [k for k in range(p + 2, end_gap + 1)
+        end_gap = max(b, p + d + PUSH_N)
+        gaps = [k for k in range(p + d + 2, end_gap + 1)
                 if k < len(l) and l[k] > h[k - 2] + FVG_MIN * a[p]]
         if not gaps:
             continue
         # The band is the order block's own body, clipped like `long_zones` clips
         # its own so one enormous candle is not a zone the width of the screen.
-        top = max(o[p], c[p])
-        top = min(max(top, low + 0.2 * a[p]), low + 1.5 * a[p])
-        known = p + PUSH_N  # the push is complete here; nothing earlier could know it
+        # **The band: the body, or the whole candle.** Asked for 2026-10-07.
+        # `long_zones` uses the body top and that was inherited; a reader who
+        # draws the order block wick to wick gets a wider band, a deeper entry
+        # and a different stop, so it is a real variant and not a presentation
+        # choice. Both are run rather than one being picked.
+        top = h[p] if OB_BAND == "range" else max(o[p], c[p])
+        top = min(max(top, low + 0.2 * a[p]), low + OB_CLIP * a[p])
+        known = p + d + PUSH_N  # the push is complete here; nothing earlier could know it
         z = Zone(
             side, p, low, top, b, level, gaps[0],
             max(known, strong, gaps[0]), ext,
             strong_leg(o, h, l, c, a[p], p, b),
-            True,  # push, by construction
-            sequential_push(o, h, l, c, p, 1, strong=True),
+            True,  # push (weak), by construction: strong implies weak
+            PUSH_STRONG or sequential_push(o, h, l, c, p, 1, strong=True, offset=d),
             True,  # ob, by construction
-            float(c[p]),
+            # **The line inside the zone: the body's near edge.** 2026-10-07:
+            # "the support is the open price if the candle was a green candle,
+            # and the close if the candle was a red candle" - which is
+            # `min(open, close)` for a demand zone, the bottom of the body,
+            # mirrored for supply by the flipped frame.
+            #
+            # It is the same price as the first draft on a red zone candle, and
+            # the first draft only ever had red ones: that version read the line
+            # as "where the last opposite candle closed". Once the colour stopped
+            # mattering the two readings parted, and this is the one the desk
+            # gave second.
+            float(min(o[p], c[p])),
         )
         # Its first return, exactly as `long_zones` finds one. Left out of the
         # first draft, which is why that build produced sixteen zones and not
@@ -660,6 +777,12 @@ def triggers(df: pd.DataFrame, a: np.ndarray, z: Zone, ex: dict | None = None) -
         pats = {
             "pin": (min(o[j], c[j]) - l[j] >= 0.6 * rng and bd <= rng / 3 and c[j] >= l[j] + 0.5 * rng
                     and rng >= 0.5 * a[j]),
+            # the looser reading of the same confirmation: a medium-to-long lower wick, longer
+            # than the body, closing in the upper half. Not required to be a green candle - a
+            # hammer that closes red is still a rejection of the low - but it must close high
+            # in its own range, which is the rejection claim itself.
+            "wick": (min(o[j], c[j]) - l[j] >= WICK_MIN * rng and min(o[j], c[j]) - l[j] >= bd
+                     and c[j] >= l[j] + 0.5 * rng and rng >= 0.5 * a[j]),
             "engulf": (j >= 1 and c[j] > o[j] and c[j - 1] < o[j - 1] and c[j] >= o[j - 1] and o[j] <= c[j - 1]
                        and bd >= abs(c[j - 1] - o[j - 1])),
             "star": (j >= 2 and c[j - 2] < o[j - 2] and abs(c[j - 1] - o[j - 1]) <= 0.3 * abs(c[j - 2] - o[j - 2])
@@ -756,8 +879,17 @@ def setups(df: pd.DataFrame, a: np.ndarray, zs: list[Zone]) -> pd.DataFrame:
         if z.ret < 0:
             continue
         frame = df if z.side > 0 else fl
-        zz = z if z.side > 0 else Zone(1, z.p, -z.lo, -z.hi, z.bos, -z.bos_level, z.fvg, z.live, -z.leg_extreme,
-                                                 z.clean, z.ret)
+        # **By keyword, not by position.** This was positional, and adding
+        # `push`, `push_hi`, `ob` and `line` to `Zone` between `clean` and `ret`
+        # silently moved `z.ret` into `push`: every short zone arrived here with
+        # `ret` at its default -1, the trigger search found nothing, and the
+        # trade population came out **84% long** while the zones themselves were
+        # 50/50. Keywords cannot drift when a field is added.
+        zz = z if z.side > 0 else Zone(
+            side=1, p=z.p, lo=-z.lo, hi=-z.hi, bos=z.bos, bos_level=-z.bos_level,
+            fvg=z.fvg, live=z.live, leg_extreme=-z.leg_extreme, clean=z.clean,
+            push=z.push, push_hi=z.push_hi, ob=z.ob, line=-z.line, ret=z.ret,
+        )
         ex = ex_l if z.side > 0 else ex_s
         fc, fl_ = frame["close"].to_numpy(), frame["low"].to_numpy()
         r = z.ret
@@ -1494,6 +1626,14 @@ def run(one=None, primary=("pin", "bias", "opp"), show="bias"):
                              p_coin=max(boot_p(r, c, rng, 200), 1 / 201) if len(c) >= 30 else np.nan,
                              p_rt=max(boot_p(r, n_, rng, 200), 1 / 201) if len(n_) >= 30 else np.nan))
     cells = pd.DataFrame(rows)
+    if cells.empty:
+        # A setting strict enough to leave no cell with 30 trades is a result -
+        # the rule is too rare to measure - and not a crash. The trades are
+        # already on disk above, so a sweep can still read what there was.
+        print("\nno cell reached 30 trades; nothing to score")
+        pd.DataFrame(columns=["scope", "iv", "trigger", "filter", "exit", "n", "R"]).to_csv(
+            OUT / "zones.csv", index=False)
+        return
     # Benjamini-Hochberg over every cell, on the weaker of the two nulls
     pmax = cells[["p_coin", "p_rt"]].fillna(1.0).max(axis=1).to_numpy()  # a null too thin to test fails
     order = np.argsort(pmax)
