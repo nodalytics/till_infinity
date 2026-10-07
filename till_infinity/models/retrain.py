@@ -319,34 +319,54 @@ def envelope_gate(challenger: dict) -> list[str]:
     return reasons
 
 
-def _envelope_contest(horizon: int, fetch: Callable[[str, str], list], names: list[str]):
-    """One contest for one horizon's boosted envelope. Returns (spec to promote or None, report)."""
-    from ..structures import rollover as ro
+def _envelope_contest(
+    family: str, horizon: int, fetch: Callable[[str, str], list], names: list[str]
+):
+    """One contest for one family's boosted envelope at one horizon.
+
+    **One contest per family**, and promoted per family, because a family is a
+    different process and a single verdict lets one family's hole ride in on
+    another's margin - which is how `conformal.md` could measure a metals model
+    covering 78.1% at a quoted 90%. Returns (spec to promote or None, report).
+    """
     from ..structures.vol import envelope as ev
     from . import envelope_train as et
 
-    key = (id(fetch), tuple(names), int(time.time() // 3600))
+    key = (id(fetch), tuple(names), family, int(time.time() // 3600))
     if key not in _envelope_tracks:
         _envelope_tracks.clear()
         series = {}
         for symbol in names:
-            if ro.is_fx(symbol):
-                got = fetch(symbol, ev.MODEL_INTERVAL)
-                if len(got) > 2_000:
-                    series[(symbol, ev.MODEL_INTERVAL)] = got
-        _envelope_tracks[key] = (len(series), et.tracks(series))
+            if ev.model_family(symbol.lower()) != family:
+                continue
+            got = fetch(symbol, ev.MODEL_INTERVAL)
+            if len(got) > 2_000:
+                series[(symbol, ev.MODEL_INTERVAL)] = got
+        _envelope_tracks[key] = (len(series), et.tracks(series, family))
     count, found = _envelope_tracks[key]
     when, x, y = et.rows(found, horizon)
     if len(y) == 0:
-        return None, {"series": count, "promoted": False, "reasons": ["no usable FX 15m history"]}
+        return None, {
+            "family": family,
+            "series": count,
+            "promoted": False,
+            "reasons": [f"no usable {family} {ev.MODEL_INTERVAL} history"],
+        }
     cut = when.max() - HOLDOUT_DAYS * 86_400
     early = when.max() - et.SLICE_DAYS * 86_400
     if not (when < early).any() or not (when >= cut).any():
-        return None, {"series": count, "promoted": False, "reasons": ["too little history"]}
+        return None, {
+            "family": family,
+            "series": count,
+            "promoted": False,
+            "reasons": ["too little history"],
+        }
     spec = et.train(when[when < cut], x[when < cut], y[when < cut], horizon)
     fitted = spec.pop("_sklearn")
     exact = et.exactness(spec, fitted, x[when >= cut][:2_000])
-    current = frozen.load(ev.MODELS[horizon], recipe=ev.MODEL_RECIPE, names=ev.MODEL_NAMES)
+    current = frozen.load(
+        ev.MODELS[(family, horizon)], recipe=ev.MODEL_RECIPE, names=ev.MODEL_NAMES
+    )
     specs = [spec, None] + ([current] if current else [])
     got = et.scored(found, horizon, specs, cut)
     challenger = et.summary(got[0])
@@ -369,6 +389,7 @@ def _envelope_contest(horizon: int, fetch: Callable[[str, str], list], names: li
     spec["test"] = challenger
     spec["holdout_from"] = datetime.fromtimestamp(cut, UTC).isoformat(timespec="seconds")
     report = {
+        "family": family,
         "series": count,
         "challenger": challenger,
         "champion": champion,
@@ -380,19 +401,15 @@ def _envelope_contest(horizon: int, fetch: Callable[[str, str], list], names: li
     return (spec if not reasons else None), report
 
 
-def run_envelope5(fetch: Callable[[str, str], list], names: list[str]):
-    """The 5-bar boosted envelope's contest."""
-    return _envelope_contest(5, fetch, names)
+def _envelope_runner(family: str, horizon: int):
+    """The contest for one family and horizon, as `REGISTRY` wants it."""
 
+    def run(fetch: Callable[[str, str], list], names: list[str]):
+        return _envelope_contest(family, horizon, fetch, names)
 
-def run_envelope20(fetch: Callable[[str, str], list], names: list[str]):
-    """The 20-bar boosted envelope's contest."""
-    return _envelope_contest(20, fetch, names)
-
-
-def run_envelope50(fetch: Callable[[str, str], list], names: list[str]):
-    """The 50-bar boosted envelope's contest."""
-    return _envelope_contest(50, fetch, names)
+    run.__name__ = f"run_envelope_{family}{horizon}"
+    run.__doc__ = f"The {horizon}-bar boosted envelope's contest for {family}."
+    return run
 
 
 #: In run order. The envelope contests come before the touch contests, because the touch models
@@ -531,12 +548,19 @@ def run_expansion(fetch: Callable[[str, str], list], names: list[str]) -> tuple[
     return (spec if not reasons else None), report
 
 
+def _envelope_models() -> dict[tuple[str, int], str]:
+    """`envelope.MODELS`, imported late so `retrain` stays importable without it."""
+    from ..structures.vol import envelope as ev
+
+    return ev.MODELS
+
+
 REGISTRY: dict[str, Callable[..., tuple[dict | None, dict]]] = {
     "shocks": run_shocks,
     "expansion": run_expansion,
-    "envelope_fx15m_5": run_envelope5,
-    "envelope_fx15m_20": run_envelope20,
-    "envelope_fx15m_50": run_envelope50,
+    # One entry per family and horizon, named for the file each writes, so a
+    # family promotes or does not on its own evidence.
+    **{_ev_name: _envelope_runner(_fam, _n) for (_fam, _n), _ev_name in _envelope_models().items()},
     "touch90_fx15m": run_touch90,
     "touch10_fx15m": run_touch10,
     "deriv_law": run_deriv_law,

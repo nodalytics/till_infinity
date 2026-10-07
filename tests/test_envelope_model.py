@@ -140,10 +140,11 @@ def test_a_change_of_base_relearns_agaci():
     assert len(env.pending[-1]) == 5  # the new base's quote carries its correctors
 
 
-def _ship(tmp_path, horizon: int = 5) -> None:
+def _ship(tmp_path, horizon: int = 5, family: str = "fx") -> None:
     out = tmp_path / "models"
     out.mkdir(exist_ok=True)
-    (out / f"{ev.MODELS[horizon]}.json").write_text(json.dumps(_constant(_gaussian(horizon))))
+    name = ev.MODELS[(family, horizon)]
+    (out / f"{name}.json").write_text(json.dumps(_constant(_gaussian(horizon))))
     frozen.forget_cache()
 
 
@@ -156,13 +157,54 @@ def test_an_fx_15m_book_reads_the_shipped_model(tmp_path):
 
 
 @pytest.mark.parametrize(
-    ("feed", "interval"), [("xauusd", "15m"), ("eurusd", "1h"), ("btcusd", "15m")]
+    ("feed", "interval"),
+    [
+        # Another family at 15m: it has a boosted envelope in principle, and no
+        # model file, so it quotes from the history exactly as it always did.
+        ("xauusd", "15m"),
+        ("btcusd", "15m"),
+        # The wrong interval, which no model is trained for at all.
+        ("eurusd", "1h"),
+        # A family with no boosted envelope of any kind.
+        ("us500", "15m"),
+    ],
 )
 def test_other_series_keep_the_history(tmp_path, feed, interval):
+    """Only the series the shipped model was trained for reads it.
+
+    Metals and crypto are families the contest now runs for, so `model_applies`
+    is true of them - but an *untrained* family must still quote from the
+    history rather than borrowing FX's model, which is the whole reason the
+    file is keyed by family.
+    """
     _ship(tmp_path)
     book = ev.Book()
     book.observe(feed, interval, 1.1, 0.001, _features())
     assert book.envelopes[f"{feed}|{interval}|5"].base == ""
+
+
+def test_a_family_reads_its_own_model_and_not_another_s(tmp_path, monkeypatch):
+    """The point of keying by family: metals gets a model, FX has none, and FX
+    must quote from the history rather than borrowing the metals one.
+
+    The packaged FX models have to be hidden for this, or FX finds its own real
+    one and the test proves nothing.
+    """
+    monkeypatch.setattr(frozen, "PACKAGED", tmp_path / "nothing")
+    _ship(tmp_path, family="metals")
+    book = ev.Book()
+    book.observe("xauusd", "15m", 1.1, 0.001, _features())
+    book.observe("eurusd", "15m", 1.1, 0.001, _features())
+    assert book.envelopes["xauusd|15m|5"].base == ev.MODEL_RECIPE
+    assert book.envelopes["eurusd|15m|5"].base == ""
+
+
+def test_every_family_with_a_model_has_one_per_horizon():
+    for family in ev.MODEL_FAMILIES:
+        for horizon in ev.HORIZONS:
+            assert (family, horizon) in ev.MODELS
+    # The FX names are unchanged, so the models already shipped keep loading.
+    assert ev.MODELS[("fx", 5)] == "envelope_fx15m_5"
 
 
 def test_no_model_no_features_or_a_wrong_recipe_falls_back(tmp_path, monkeypatch):
@@ -174,7 +216,7 @@ def test_no_model_no_features_or_a_wrong_recipe_falls_back(tmp_path, monkeypatch
     book.observe("eurusd", "15m", 1.1, 0.001, None)  # cold: no features
     assert book.envelopes["eurusd|15m|5"].base == ""
     wrong = {**_constant(_gaussian(5)), "recipe": "something else"}
-    (tmp_path / "models" / f"{ev.MODELS[5]}.json").write_text(json.dumps(wrong))
+    (tmp_path / "models" / f"{ev.MODELS[('fx', 5)]}.json").write_text(json.dumps(wrong))
     frozen.forget_cache()
     book.observe("eurusd", "15m", 1.1, 0.001, _features())
     assert book.envelopes["eurusd|15m|5"].base == ""
@@ -226,15 +268,23 @@ def test_the_card_tags_a_boosted_band():
 
 
 def test_the_shipped_models_load_and_match_the_features(monkeypatch):
+    """FX is the only family with models in the tree today. The others are in
+    the contest and have not been trained, so they load as None - which is an
+    untrained family, not a fault, and the history quotes instead."""
     monkeypatch.delenv("TI_MODELS_DIR")
     frozen.forget_cache()
-    for horizon, name in ev.MODELS.items():
+    shipped = 0
+    for (family, horizon), name in ev.MODELS.items():
         spec = frozen.load(name, recipe=ev.MODEL_RECIPE, names=ev.MODEL_NAMES)
-        assert spec is not None, name
+        got = ev.model_quantiles(horizon, _features(), family=family)
+        if spec is None:
+            assert got is None, f"{name} quoted without a model"
+            continue
+        shipped += 1
         assert spec["levels"] == list(ev.MODEL_LEVELS)
         assert spec["horizon"] == horizon
-        got = ev.model_quantiles(horizon, _features())
         assert got == sorted(got)
+    assert shipped == len(ev.HORIZONS), "FX's three models must still be found"
 
 
 GOOD = {
@@ -311,7 +361,9 @@ def test_the_contest_runs_on_a_toy_fetch():
         return out
 
     data = {"EURUSD": walk(1), "GBPUSD": walk(2)}
-    spec, report = rt.run_envelope5(lambda s, i: data[s] if i == "15m" else [], list(data))
+    run = rt.REGISTRY["envelope_fx15m_5"]
+    spec, report = run(lambda s, i: data[s] if i == "15m" else [], list(data))
+    assert report["family"] == "fx"
     assert report["evaluator_max_diff"] <= rt.GATES["exact"]
     for key in ("vs_empirical", "vs_empirical_slice", "worst_window", "empirical_worst_window"):
         assert key in report["challenger"]

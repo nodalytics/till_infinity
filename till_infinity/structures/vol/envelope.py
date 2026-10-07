@@ -152,35 +152,72 @@ TR_TO_SD = 1.25
 STEP_SIZE, STEP_EVERY_S = 0.1, 1.0
 
 
-#: The boosted envelope (`research/docs/gbm-envelope.md`): FX at 15m, one model file per horizon
-#: holding one quantile regressor per level, read through `shared/frozen.py`.
+#: The boosted envelope (`research/docs/gbm-envelope.md`): 15m, one model file per
+#: **family and horizon**, each holding one quantile regressor per level, read
+#: through `shared/frozen.py`.
 MODEL_INTERVAL = "15m"
-MODELS: dict[int, str] = {n: f"envelope_fx15m_{n}" for n in HORIZONS}
+
+#: Families that may have a boosted envelope, as `vol/clock.family` names them.
+#:
+#: **It was FX alone until 2026-10-07**, and that is why `conformal.md` could
+#: measure a metals model covering 78.1% where it quoted 90% and nothing in the
+#: pipeline would ever have caught it: metals was not in the contest. One model
+#: per family rather than one over all of them, because a family is a different
+#: process - the whole finding of `deriv-variants.md` is that an index with a
+#: published law is quoted better by the law than by anything learned from a
+#: pooled history.
+#:
+#: A family with no file yet simply has no model: `frozen.load` returns None,
+#: `model_quantiles` returns None, and the history envelope quotes as it always
+#: did. The miss is cached for `frozen.RECHECK`, so an untrained family does not
+#: read the disk on every bar.
+MODEL_FAMILIES: tuple[str, ...] = ("fx", "metals", "crypto")
+MODELS: dict[tuple[str, int], str] = {
+    (fam, n): f"envelope_{fam}15m_{n}" for fam in MODEL_FAMILIES for n in HORIZONS
+}
 MODEL_LEVELS: tuple[float, ...] = (0.05, 0.1, 0.5, 0.9, 0.95)
 MODEL_NAMES: tuple[str, ...] = ("lvol", "r1", "r5", "r20", "rng", "hour")
 #: What changing the meaning of an input requires bumping.
 MODEL_RECIPE = "2026-09-29 envelope: vol state, moves, range, hour (touches.base)"
 
 
-def model_applies(feed: str, interval: str) -> bool:
-    """Whether a series is one the boosted envelope was trained for: an FX pair at 15m."""
-    from .. import rollover as ro
+def model_family(feed: str) -> str | None:
+    """The boosted envelope's family for a feed, or None if it has none.
 
-    return interval == MODEL_INTERVAL and ro.is_fx(feed)
+    `clock.family` is the classifier the rest of `vol` already uses, so a feed
+    cannot be one family here and another there.
+    """
+    from .clock import family
+
+    fam = family(feed)
+    return fam if fam in MODEL_FAMILIES else None
+
+
+def model_applies(feed: str, interval: str) -> bool:
+    """Whether a series is one a boosted envelope could be trained for: a feed in
+    a known family, at 15m. Whether a model has actually been trained for it is
+    `model_quantiles`' question, not this one."""
+    return interval == MODEL_INTERVAL and model_family(feed) is not None
 
 
 def model_quantiles(
-    horizon: int, features: Mapping[str, float] | None, spec: dict | None = None
+    horizon: int,
+    features: Mapping[str, float] | None,
+    spec: dict | None = None,
+    *,
+    family: str = "fx",
 ) -> list[float] | None:
     """The boosted model's quantiles of the next `horizon` bars' move, in volatility units, at
     `MODEL_LEVELS`; None without features or a usable model. `spec` overrides the shipped one
-    (the trainer scores a challenger with it)."""
-    if not features or horizon not in MODELS:
+    (the trainer scores a challenger with it), in which case `family` is not read."""
+    if not features:
         return None
     if spec is None:
+        if (family, horizon) not in MODELS:
+            return None
         from ...shared import frozen
 
-        spec = frozen.load(MODELS[horizon], recipe=MODEL_RECIPE, names=MODEL_NAMES)
+        spec = frozen.load(MODELS[(family, horizon)], recipe=MODEL_RECIPE, names=MODEL_NAMES)
         if spec is None:
             return None
     from ...shared.frozen import Quantiles
@@ -605,7 +642,8 @@ class Book(Restorable):
         Mondrian envelopes; `scale` is the hour-of-week multiplier of the unit per horizon
         (`clock.py`), applied only where the history is the base."""
         seconds = _bar_seconds(interval)
-        boosted = features is not None and model_applies(feed, interval)
+        fam = model_family(feed)
+        boosted = features is not None and interval == MODEL_INTERVAL and fam is not None
         for n in HORIZONS:
             key = f"{feed}|{interval}|{n}"
             found = self.envelopes.get(key)
@@ -614,7 +652,7 @@ class Book(Restorable):
             if found.feed != feed or found.bar_seconds != seconds:
                 # Also fills an envelope restored from a state saved before it knew its series.
                 found.feed, found.bar_seconds = feed, seconds
-            model = _safe_quantiles(n, features) if boosted else None
+            model = _safe_quantiles(n, features, fam) if boosted else None
             lawful = found.lawful
             unit = sigma
             if scale and not model and not lawful:
@@ -678,7 +716,8 @@ class Book(Restorable):
         if has_law(feed) or any(own_law(feed, interval, n) for n in HORIZONS):
             return 0  # quoted from a law, which has nothing to learn
         timed = bool(bars) and len(bars[0]) == 5
-        boosted = timed and model_applies(feed, interval)
+        fam = model_family(feed)
+        boosted = timed and interval == MODEL_INTERVAL and fam is not None
         seconds = _bar_seconds(interval)
         taught = 0
         for n in HORIZONS:
@@ -708,7 +747,7 @@ class Book(Restorable):
                 if state is not None and state.advance(
                     feed, interval, when, high, low, close, bps / 10_000
                 ):
-                    model = _safe_quantiles(n, state.base(feed, interval))
+                    model = _safe_quantiles(n, state.base(feed, interval), fam)
                 replay.observe(close, bps / 10_000, model)
             if found is None:
                 found = self.envelopes[key] = Envelope(horizon=n)
@@ -728,11 +767,15 @@ class Book(Restorable):
         return len(gone)
 
 
-def _safe_quantiles(horizon: int, features: Mapping[str, float] | None) -> list[float] | None:
+def _safe_quantiles(
+    horizon: int, features: Mapping[str, float] | None, family: str | None
+) -> list[float] | None:
     """`model_quantiles`, with any fault read as no model: the history is always there to fall
     back on, and a model must never stop the envelope."""
+    if family is None:
+        return None
     try:
-        return model_quantiles(horizon, features)
+        return model_quantiles(horizon, features, family=family)
     except Exception:
         return None
 
