@@ -300,6 +300,22 @@ def envelope_gate(challenger: dict) -> list[str]:
             f"worst {WINDOW_DAYS}-day P90 cover over {SLICE_DAYS} days {mine} against the history"
             f" envelope's {theirs}"
         )
+    # **The absolute floor, which every gate above lacks.** The three before this
+    # are comparisons, so a challenger that is badly calibrated in company clears
+    # all of them: if the history envelope's worst window is poor too, a model
+    # covering 78% while quoting 90% passes. See `ENVELOPE_GATES`.
+    floor = ENVELOPE_GATES["worst_window_floor"]
+    if mine is None or math.isnan(mine) or mine < floor:
+        reasons.append(
+            f"worst {WINDOW_DAYS}-day P90 cover {mine} under the {floor:.0%} floor, "
+            f"whatever the history envelope does"
+        )
+    # And pooled, at every level: a band wrong in a useful direction buys pinball.
+    band = ENVELOPE_GATES["cover_band"]
+    for name, nominal in (("p10", 0.10), ("p50", 0.50), ("p90", 0.90)):
+        got = challenger.get(name)
+        if got is None or math.isnan(got) or abs(got - nominal) > band:
+            reasons.append(f"{name} covers {got} against a nominal {nominal:.0%} +-{band:.0%}")
     return reasons
 
 
