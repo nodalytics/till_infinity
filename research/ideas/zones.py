@@ -707,6 +707,11 @@ def chain_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
             q = next((j for j in range(p + 1, last + 1) if impulsive(o, h, l, c, j)), None)
             if q is None:
                 continue
+            # the consecutive impulsive run that leaves *this* zone, which is
+            # what its imbalance is read over - not the whole chain
+            run_end = q
+            while run_end + 1 <= last and impulsive(o, h, l, c, run_end + 1):
+                run_end += 1
             body = abs(c[p] - o[p])
             if body / max(h[p] - l[p], 1e-12) < ORIGIN_BODY:
                 continue
@@ -731,7 +736,7 @@ def chain_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
             ext = h[p:b + 1].max()
             if ext - low < OB_MINLEG * a[p]:
                 continue
-            end_gap = max(b, last)
+            end_gap = max(b, run_end)
             gaps = [k for k in range(p + 2, end_gap + 1)
                     if k < len(l) and l[k] > h[k - 2] + FVG_MIN * a[p]]
             if not gaps:
@@ -742,8 +747,20 @@ def chain_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
                 w = c[max(0, p - QUIET):max(0, p - QUIET_SKIP)]
                 if np.any((w >= low) & (w <= top)):
                     continue
-            # the chain is complete at `last`; nothing earlier could know it
-            known = last
+            # **When this zone becomes knowable, not when the leg stops.**
+            #
+            # The first build used `last`, the end of the whole chain, and that
+            # drops returns: a leg that keeps extending for another ten bars
+            # holds every zone inside it unknowable until it does, so price can
+            # come back and leave again before the zone is allowed to exist. It
+            # cost the chain 24 zones of 144 at 1d against the consecutive rule,
+            # which is the wrong reason for a builder to look worse.
+            #
+            # A zone is knowable as soon as what *makes it a zone* has closed:
+            # the impulsive candle after it (`q`), and - for the candle before
+            # the chain, which has no chain behind it yet - the seed of
+            # `PUSH_MIN` consecutive candles that starts one.
+            known = max(q, first + PUSH_MIN - 1)
             live = max(known, strong, gaps[0])
             if FRESH and known + 1 <= live and float(l[known + 1:live + 1].min()) <= top:
                 continue

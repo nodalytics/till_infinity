@@ -386,6 +386,49 @@ band is not holding - which matches the measured hold rate of ~50% at 1d and ~46
 at 4h in [`zone-approach.md`](zone-approach.md), and
 [`magnet.md`](../../docs/magnet.md) on levels not being magnets.
 
+## 1h: with five times the sample, the rule is reliably negative
+
+Asked for 2026-10-07 along with weekly. 1h is the only interval where this study
+has real power - 721 trades at the desk's setting against 328 at 4h and 144 at
+1d, and 1,624 at the loosest arm - and it is the clearest answer in the file.
+
+| arm | trigger | n | long | win | R | 90% interval |
+|---|---|---:|---:|---:|---:|---|
+| base | touch | 721 | 49% | 18% | -0.147 | [-0.335, +0.058] |
+| base | pin | 220 | 52% | 21% | -0.249 | [-0.510, +0.025] |
+| base | wick | 366 | 52% | 24% | **-0.241** | **[-0.427, -0.037]** |
+| `PUSH_BODY` 0.60 | touch | 1394 | 49% | 20% | **-0.175** | **[-0.294, -0.040]** |
+| `PUSH_BODY` 0.60 | pin | 448 | 53% | 27% | **-0.182** | **[-0.339, -0.019]** |
+| no body floor | touch | 1624 | 47% | 18% | **-0.241** | **[-0.342, -0.137]** |
+| no body floor | pin | 513 | 50% | 21% | **-0.364** | **[-0.513, -0.209]** |
+| `OB_BACK` 5 | touch | 1441 | 49% | 20% | **-0.128** | **[-0.248, -0.005]** |
+| `OB_BACK` 5 | pin | 521 | 52% | 26% | **-0.183** | **[-0.330, -0.029]** |
+
+**Every arm and every trigger is negative, and ten cells of fifteen have their
+whole interval below zero.** Not one is positive. The long share is 47-52%, so
+there is no skew doing it, and the strong-versus-weak push is a no-op here too -
+721 trades against 723.
+
+This is what the 4h and 1d tables look like when they are given enough trades to
+say something. The pattern across the four intervals is the one a zero-or-worse
+edge produces:
+
+| | n | R |
+|---|---:|---:|
+| 1h | 721 | **-0.147** |
+| 4h | 328 | -0.005 |
+| 1d | 144 | -0.104 (`pin` +0.211) |
+| 1w | 33 | -0.036 |
+
+The more trades an interval has, the more clearly negative it reads. The one
+positive cell in the study sits on the interval with the fewest trades, and
+[the lookback already broke it](#the-lookback-breaks-the-one-positive-cell).
+
+The confirmation agrees with 4h and not with 1d: `pin` minus `touch` is **-0.102**
+at 1h on the base arm and negative in four arms of five. Two intervals now say
+waiting for a candlestick costs money and one says it pays, and the one that says
+it pays has 41 trades.
+
 ## Weekly: the rule is too selective to measure there
 
 Asked for 2026-10-07, "let's run it on more time, like 1h and weekly". There are

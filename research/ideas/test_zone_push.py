@@ -634,3 +634,35 @@ def test_the_nearest_pause_is_rank_one():
     assert min(by_rank) == 1
     # rank 1 is the later bar: the pause nearest the end of the leg
     assert all(by_rank[r] > by_rank[r + 1] for r in sorted(by_rank)[:-1])
+
+
+def test_a_long_chain_does_not_hide_its_own_zones_until_it_ends():
+    """A zone is knowable when what makes it a zone has closed - the impulsive
+    candle after it - not when the leg finally stops extending.
+
+    The first build used the end of the whole chain, so a leg that ran on for
+    another ten bars held every zone inside it unknowable until it did, and
+    price could come back and leave again before the zone was allowed to exist.
+    """
+    import pandas as pd
+
+    rows = [(100.0, 101.0, 99.0, 100.0) for _ in range(40)]
+    rows += [
+        (100.0, 100.4, 99.0, 99.3),      # the candle before the chain
+        (99.3, 103.0, 99.2, 102.9),      # impulsive
+        (102.9, 106.0, 102.8, 105.9),    # impulsive - the seed closes here
+    ]
+    px = 106.0
+    for _ in range(12):                  # the leg runs on for a long time
+        rows.append((px, px + 4.1, px - 0.1, px + 4.0))
+        px += 4.0
+    rows += [(px - 2, px, 98.0, 100.0) for _ in range(40)]
+    a = np.array(rows, float)
+    df = pd.DataFrame({"ts": np.arange(len(a)) * 14400, "open": a[:, 0],
+                       "high": a[:, 1], "low": a[:, 2], "close": a[:, 3]})
+    got = Z.chain_zones(df, np.full(len(df), 2.0), 1)
+    assert got, "the chain must find the zone before the chain"
+    z = got[0]
+    # the seed closes on bar 42; nothing about this zone needs bars 43 onwards
+    assert z.live <= 44, f"live at {z.live} waits for a leg that is still running"
+    assert z.ret > 0, "and the return is not lost behind it"
