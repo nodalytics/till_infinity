@@ -216,6 +216,14 @@ a thing a short window can express.
 * It is the **development set**, and the window and the thresholds were both
   swept.
 
+## Followed up in
+
+[`zscore-variants.md`](zscore-variants.md): the ceiling normalisation (which does
+**not** make thresholds comparable, contrary to what this file's conclusion
+suggested), the term structure across windows (which works), volatility z (which
+is empty), cross-sectional z, and whether a gradient-boosting model beats any of
+them (it does not beat two hand-written inequalities).
+
 ## What is worth keeping
 
 1. **`(N-1)/sqrt(N)`.** Any threshold on a rolling z-score has to be checked
