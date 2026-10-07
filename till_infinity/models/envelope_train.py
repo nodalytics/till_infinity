@@ -290,8 +290,29 @@ def worst_window(r: dict, since: float) -> float:
 #:   trained before them, no more than this under the history envelope's worst on the same
 #:   windows. 90 days, because 14 cannot judge a slice: one window is one regime
 #:   (touches_train.CAL_* measured the same for calibration).
+#: - `worst_window_floor` and `cover_band`: **the absolute gates, added 2026-10-07.** Every gate
+#:   above is *relative* - better than the history envelope, not worse than the champion, no further
+#:   under the history envelope's worst window than `slice_points`. A relative gate cannot catch a
+#:   model that is badly calibrated in company: if the history envelope's worst window is also poor,
+#:   a challenger that covers 78% while quoting 90% clears every one of them.
+#:
+#:   That is not hypothetical. `conformal.md` measured quantile boosting with the lowest pinball in
+#:   all 18 family x horizon cells and regime-flat coverage (91.3 / 90.8 / 91.1 where every
+#:   corrector splits 1.07-1.37 calm to 0.73-0.91 volatile) - and a worst slice in metals of
+#:   **78.1% at 50 bars**. Its closing recommendation was that the gate "should include a
+#:   worst-slice floor per family", and this is that floor. A band quoted at 90 and covering 78
+#:   is a stop wrong a tenth more often than it says, which no amount of pinball buys back.
+#:
+#:   85% rather than 90: a 14-day window of overlapping 50-bar moves is about 27 independent
+#:   windows, so the worst of several will sit under nominal by sampling alone. 85 is five points of
+#:   room for that and still refuses 78.1.
+#:
+#:   `cover_band` is the same argument pooled: P10, P50 and P90 within three points of nominal, so a
+#:   model cannot buy pinball with a band that is wrong in a useful direction.
 ENVELOPE_GATES: dict[str, float] = {
     "beats_empirical": 0.0,
     "vs_champion": 0.005,
     "slice_points": 0.01,
+    "worst_window_floor": 0.85,
+    "cover_band": 0.03,
 }
