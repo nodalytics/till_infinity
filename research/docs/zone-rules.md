@@ -386,6 +386,71 @@ band is not holding - which matches the measured hold rate of ~50% at 1d and ~46
 at 4h in [`zone-approach.md`](zone-approach.md), and
 [`magnet.md`](../../docs/magnet.md) on levels not being magnets.
 
+## The return rate: four zones in five, and half of those hold
+
+Measured on the zone population rather than on the trades, because `setups`
+drops a zone that never returned - which is exactly the case being counted.
+[`zone_returns.py`](../ideas/zone_returns.py).
+
+| builder | iv | zones | returned | median bars to return | held, of those that returned |
+|---|---|---:|---:|---:|---:|
+| `ob` | 1h | 1101 | **76.7%** | 29 | 49.5% |
+| `ob` | 4h | 443 | **80.8%** | 30 | 45.5% |
+| `ob` | 1d | 215 | **78.6%** | 20 | 49.7% |
+| `ob` | 1w | 45 | **77.8%** | 13 | 54.3% |
+| `chain` | 4h | 316 | 80.7% | 29 | 42.0% |
+| `chain` | 1d | 167 | 79.0% | 19 | 52.3% |
+
+Four zones in five are revisited, and of those about half hold - so roughly
+**40% of zones both return and hold**. The rate is flat across four intervals
+spanning an hour to a week and across both builders, which is itself worth
+knowing: it is not a property of the timeframe.
+
+Read the first column against [`magnet.md`](../../docs/magnet.md) before reading
+anything into it. `EXPIRE` is 300 bars, and 300 bars is long enough to wander
+back to most places; 80% over that window is a statement about the window as
+much as about the zone. The second column is the one with teeth, and it says a
+coin flip.
+
+## The chain, measured: no better, and for a reason that is not the gap
+
+| | 4h touch | 4h pin | 4h wick | 1d touch | 1d pin |
+|---|---:|---:|---:|---:|---:|
+| consecutive (`ob`) | 328 / -0.005 | 86 / -0.368 | 153 / -0.149 | 144 / -0.104 | 41 / **+0.211** |
+| chain, `CHAIN_GAP` 1 | 240 / -0.064 | 59 / **-0.471** | 115 / -0.223 | 120 / -0.094 | 36 / +0.109 |
+| chain, gap 2 | 249 / -0.011 | 62 / -0.243 | 121 / -0.102 | 123 / -0.083 | 36 / +0.109 |
+| chain, gap 3 | 263 / -0.050 | 66 / -0.210 | 128 / -0.087 | 134 / -0.052 | 39 / +0.036 |
+| chain, `PUSH_MIN` 3 | 29 / -0.575 | 6 / -1.008 | 10 / -0.682 | 17 / -0.103 | 3 / +0.262 |
+
+Nothing improves. At 4h the chain is worse on every trigger; at 1d it is the same
+rule with fewer trades. A three-candle seed destroys the population, as three
+consecutive 70%-body candles should be expected to.
+
+**And the chain finds *fewer* zones than the consecutive rule, not more** - 316
+against 443 at 4h. That is the opposite of what a rule designed to survive an
+interruption should do, and the reason is worth recording because the first
+diagnosis was wrong.
+
+It is **not** the `live` timing. That was a real defect - the first build held
+every zone inside a chain unknowable until the whole leg stopped extending, so
+price could come back and leave again before the zone was allowed to exist, and
+`test_a_long_chain_does_not_hide_its_own_zones_until_it_ends` fails at `live 54`
+on that code. Fixing it recovered **nothing**: the 1d chain is still 120 trades
+at -0.094, identical to the figure before the fix. `live` is
+`max(known, strong, gaps[0])`, and `strong` - the break of structure holding
+three bars and reaching an ATR past the level - lands after the chain ends
+anyway, so it was binding the whole time.
+
+The actual cause is that **chains do not overlap**. `ob_zones` tests every bar as
+an origin, so a long leg with several good origins hands back several zones;
+`chain_zones` collapses that leg into one chain and emits only its pauses. The
+chain is a different population, not a superset - which is also why its numbers
+cannot be read as "the same zones plus the ones the gap rule rescued".
+
+On `rank`: the deeper zones look better at 4h (`gap2` rank 2 at +0.388 on 65
+trades against rank 1 at -0.162 on 186) and worse at 1d (rank 1 `pin` +0.353,
+rank 2 -0.323). Opposite signs across timeframes, both intervals spanning zero.
+
 ## 1h: with five times the sample, the rule is reliably negative
 
 Asked for 2026-10-07 along with weekly. 1h is the only interval where this study
