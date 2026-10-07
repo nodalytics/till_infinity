@@ -60,7 +60,7 @@ def mirrored(z):
     return z if z.side > 0 else Z.Zone(
         side=1, p=z.p, lo=-z.lo, hi=-z.hi, bos=z.bos, bos_level=-z.bos_level,
         fvg=z.fvg, live=z.live, leg_extreme=-z.leg_extreme, clean=z.clean,
-        push=z.push, push_hi=z.push_hi, ob=z.ob, line=-z.line, ret=z.ret)
+        push=z.push, push_hi=z.push_hi, ob=z.ob, line=-z.line, ret=z.ret, rank=z.rank)
 
 
 def confirmation(df, a, z):

@@ -46,7 +46,7 @@ import setups as S  # noqa: E402
 OUT = Path(os.environ.get("OUT", ".data/ideas"))
 warnings.filterwarnings("ignore", category=FutureWarning)
 DB = os.environ.get("MT5BT_DB")
-SEC = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}
+SEC = {"5m": 300, "15m": 900, "1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800}
 UP = {"5m": ("15m", "1h"), "15m": ("1h", "4h", "1d"), "1h": ("4h", "1d"), "4h": ("1d",), "1d": ()}
 INTERVALS = tuple(os.environ.get("INTERVALS", "15m,1h,4h,1d").split(","))
 ONLY = [s for s in os.environ.get("SETUPS", "").split(",") if s]

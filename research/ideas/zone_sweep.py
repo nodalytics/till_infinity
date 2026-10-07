@@ -40,11 +40,17 @@ DRAWS = 4000
 BASE = dict(ZONES="ob", PUSH_N="2", PUSH_BODY="0.70", PUSH_STRONG="1",
             ORIGIN_BODY="0.45", ORIGIN_COLOUR="0", ORIGIN_MAX="1.0", OB_BACK="0",
             OB_BAND="range", OB_LOOKBACK="20", OB_MINLEG="1.5", OB_CLIP="1.5", FRESH="1", QUIET="0", QUIET_SKIP="2",
+            CHAIN_GAP="1", PUSH_MIN="2", CHAIN_ZONES="0",
             WICK_MIN="0.40", WINDOW="36", HOLD_DAYS="15")
 
 #: One at a time, each with the reason it is in the sweep at all.
 ARMS: list[tuple[str, dict[str, str], str]] = [
     ("base", {}, "the desk's setting"),
+    ("chain", dict(ZONES="chain"), "the leg may skip a weak candle; every pause is a zone"),
+    ("chain_gap2", dict(ZONES="chain", CHAIN_GAP="2"), "two weak candles may be skipped"),
+    ("chain_gap3", dict(ZONES="chain", CHAIN_GAP="3"), "three"),
+    ("chain_near", dict(ZONES="chain", CHAIN_ZONES="1"), "only the pause nearest the leg's end"),
+    ("chain_min3", dict(ZONES="chain", PUSH_MIN="3"), "three consecutive candles seed the chain"),
     ("push_weak", dict(PUSH_STRONG="0"), "close past the previous close, not its high"),
     ("push_n3", dict(PUSH_N="3"), "three impulsive candles"),
     ("push_n4", dict(PUSH_N="4"), "four"),
@@ -73,7 +79,11 @@ ARMS: list[tuple[str, dict[str, str], str]] = [
 #: all, `pin` the strict candlestick, `wick` the desk's looser one - so the
 #: three rows price the confirmation itself.
 TRIGGERS = ("touch", "pin", "wick")
-FILTER, EXIT = "none", "opp"
+#: `rank1` and `rank2` only mean anything under `ZONES=chain`, where a leg hands
+#: back several zones; elsewhere every zone has rank 0 and both are empty, which
+#: is the expected degenerate case and not a fault.
+FILTERS = tuple(os.environ.get("FILTERS", "none,rank1,rank2").split(","))
+EXIT = "opp"
 
 
 def block_ci(values, days, draws=DRAWS, seed=5):
@@ -121,9 +131,10 @@ def summarise(tag: str, why: str, df: pd.DataFrame) -> list[dict]:
     rows = []
     real = df[~df["family"].str.startswith("deriv")]
     for iv in sorted(real["iv"].unique()):
+      for flt in FILTERS:
         for trig in TRIGGERS:
             g = real[(real["iv"] == iv) & (real["trigger"] == trig)
-                     & (real["filter"] == FILTER) & (real["exit"] == EXIT)]
+                     & (real["filter"] == flt) & (real["exit"] == EXIT)]
             r = g[g["kind"] == "real"]
             if r.empty:
                 continue
@@ -132,7 +143,7 @@ def summarise(tag: str, why: str, df: pd.DataFrame) -> list[dict]:
             fm, flo, fhi = block_ci(fl["R"], fl["day"]) if len(fl) else (np.nan,) * 3
             st = g[g["kind"] == "straight"]
             co = g[g["kind"] == "coin"]
-            rows.append(dict(arm=tag, why=why, iv=iv, trigger=trig, n=len(r),
+            rows.append(dict(arm=tag, why=why, iv=iv, filter=flt, trigger=trig, n=len(r),
                              zones=int(r["sid"].nunique()) if "sid" in r else len(r),
                              long=float((r["side"] > 0).mean()), win=float((r["R"] > 0).mean()),
                              R=m, lo=lo, hi=hi,
@@ -155,7 +166,7 @@ def main() -> None:
         got = summarise(tag, why, df)
         rows += got
         for r in got:
-            print(f"    {r['iv']:>3} {r['trigger']:<6} n={r['n']:>5} long={r['long']:.0%} "
+            print(f"    {r['iv']:>3} {r['filter']:<6} {r['trigger']:<6} n={r['n']:>5} long={r['long']:.0%} "
                   f"R={r['R']:+.3f} [{r['lo']:+.3f}, {r['hi']:+.3f}]  "
                   f"straight={r['straight']:+.3f} flip={r['flip']:+.3f}", flush=True)
     if not rows:
