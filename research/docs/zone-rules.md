@@ -69,25 +69,37 @@ cap, the body floor, and (if it is on) the colour. The nearest qualifying bar
 wins, so raising `OB_BACK` only ever *adds* setups the adjacent-bar rule had
 dropped; it never moves one that already qualified. Swept at 1, 2, 3 and 5.
 
-### 2b. The zone must be fresh
+### 2b. The zone must be fresh - untested before it is traded
 
 > "and also the zone should be fresh"
-
-Three things are usually meant by this, and two of them the rule already does:
+> "what I mean by fresh is that it does not have to have been tested before"
+> "the zone I mean"
 
 | reading | where it lives |
 |---|---|
-| untested when traded | `Zone.ret` is the **first** bar back in the band, by construction |
-| traded once | one entry per zone, same place |
-| at a level price has not lately been working | **`FRESH`** - new |
+| untested between going live and the entry | `Zone.ret` is the **first** bar back in the band |
+| traded once | one entry per zone |
+| **untested between the displacement and the setup being known** | **`FRESH`** - this was missing |
 
-`FRESH` is the number of bars before the zone candle in which **nothing may have
-closed inside the band**. Closes, not ranges: in a continuous market the bar
-immediately before the zone candle almost always overlaps its range, so a range
-test rejects nearly everything and only reports that bars touch each other. A
-close inside the band means price actually settled there.
+The third one was a real gap, not a filter. `live` is the bar by which the push,
+the break of structure and the imbalance are all known - and the break has to
+hold three bars and reach an ATR past the level, which takes time. The return
+search began *after* `live`, so price could come back into the band while the
+break was still being confirmed and the "first return" the study traded would be
+the zone's **second** test. Nothing in the first build looked.
 
-`FRESH` = **0** (off) by default, swept at 10, 20 and 50 bars.
+`FRESH` is **on**, because it corrects the rule rather than tightening it.
+`FRESH=0` restores the old behaviour so the difference can be measured, and it
+is small: 328 trades against 334 at 4h, 144 against 148 at 1d. The hole was real
+and rarely fell through.
+
+A separate parameter, `QUIET`, asks a different question - whether the band sits
+where price had lately been *working*, measured as bars before the zone candle in
+which something closed inside it. It is **off**, and its first run is a caution
+about turning a word into a test: at 10 bars it left **twelve** trades on 1d and
+three at 4h, because the leg that creates a demand zone arrives from above and
+its last bar closes inside the band almost by definition. `QUIET_SKIP` ignores
+that delivery.
 
 ### 3. The imbalance
 

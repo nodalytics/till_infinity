@@ -163,21 +163,37 @@ OB_CLIP = float(os.environ.get("OB_CLIP", 1.5))
 #: finds it as its own origin at a smaller gap. 0 is the original behaviour.
 OB_BACK = int(os.environ.get("OB_BACK", 0))
 
-#: How many bars before the zone candle must be clear of it for the zone to
-#: count as **fresh**. Asked for 2026-10-07: "the zone should be fresh".
+#: **The zone must not have been tested before it is traded.** Asked for
+#: 2026-10-07 - "also the zone should be fresh", then, when the first reading
+#: missed: "what I mean by fresh is that it does not have to have been tested
+#: before ... the zone I mean".
 #:
-#: Two of the three usual readings are already in the rule and cost nothing to
-#: state: the zone is traded on its **first** return (`Zone.ret`), so it is
-#: untested at entry by construction, and it is traded once.
+#: Part of that the rule already had: `Zone.ret` is the **first** bar back in the
+#: band, so nothing between the zone going live and the entry has touched it, and
+#: each zone is traded once.
 #:
-#: What is left is freshness at **creation** - whether the band sits where price
-#: has recently been doing business. Measured on **closes**, not ranges: the bar
-#: immediately before the zone candle almost always overlaps its range in a
-#: continuous market, so a range test rejects nearly everything and says only
-#: that bars touch. A close inside the band means price actually settled there.
+#: The gap was earlier. `live` is the bar by which the push, the break of
+#: structure and the imbalance are all known, and the return search begins
+#: *after* it. So price could come back into the band between the displacement
+#: leaving and the setup being confirmed, and the "first return" the study traded
+#: would be the **second** test of the zone. Nothing in the first build looked.
 #:
-#: 0 is off, which is the first build's behaviour.
-FRESH = int(os.environ.get("FRESH", 0))
+#: With this on, any bar from the end of the push to `live` trading back into the
+#: band disqualifies the zone. On by default: it is a correction of the rule, not
+#: an extra filter, and `FRESH=0` is kept to measure what it costs.
+FRESH = os.environ.get("FRESH", "1") not in ("0", "", "no", "false")
+
+#: A different claim, and not what the desk meant: whether the band sits where
+#: price had lately been *working*, measured as bars before the zone candle in
+#: which something closed inside the band. Kept because it was built first and
+#: is cheap to carry, off by default.
+#:
+#: Its first run is also a warning about operationalising a word: at 10 bars it
+#: left **twelve** trades on 1d and three at 4h, because the leg that creates a
+#: demand zone arrives from above and its last bar closes inside the band almost
+#: by definition. `QUIET_SKIP` ignores that delivery.
+QUIET = int(os.environ.get("QUIET", 0))
+QUIET_SKIP = int(os.environ.get("QUIET_SKIP", 2))
 #: How much of a confirming candle's range must be the wick *under* its body
 #: (over it, on a supply zone) before the return counts as a rejection. Asked
 #: for 2026-10-07: "after it returns to the zone let's wait for a candlestick
@@ -547,13 +563,22 @@ def ob_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
         # choice. Both are run rather than one being picked.
         top = h[p] if OB_BAND == "range" else max(o[p], c[p])
         top = min(max(top, low + 0.2 * a[p]), low + OB_CLIP * a[p])
-        # Fresh: nothing closed inside the band in the bars before it formed.
-        if FRESH and np.any((c[max(0, p - FRESH):p] >= low) & (c[max(0, p - FRESH):p] <= top)):
-            continue
+        # Quiet: nothing closed inside the band in the bars before it formed,
+        # ignoring the few that delivered price into it.
+        if QUIET:
+            w = c[max(0, p - QUIET):max(0, p - QUIET_SKIP)]
+            if np.any((w >= low) & (w <= top)):
+                continue
         known = p + d + PUSH_N  # the push is complete here; nothing earlier could know it
+        live = max(known, strong, gaps[0])
+        # **Untested before it is traded.** Between the push leaving the band and
+        # the bar the setup is known, nothing may trade back into it - otherwise
+        # the "first return" is the zone's second test. See `FRESH`.
+        if FRESH and known + 1 <= live and float(l[known + 1:live + 1].min()) <= top:
+            continue
         z = Zone(
             side, p, low, top, b, level, gaps[0],
-            max(known, strong, gaps[0]), ext,
+            live, ext,
             strong_leg(o, h, l, c, a[p], p, b),
             True,  # push (weak), by construction: strong implies weak
             PUSH_STRONG or sequential_push(o, h, l, c, p, 1, strong=True, offset=d),

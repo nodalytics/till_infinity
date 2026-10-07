@@ -30,6 +30,28 @@ floor, where the first build measured it - and measured it as a *filter* on the
 84%-long population, which is why that earlier reading ("the strong form is worse
 than the weak one") should be discarded rather than reversed.
 
+### The lookback breaks the one positive cell
+
+`OB_BACK` - the desk's "check backward too" - lets the scan walk back from the
+impulse until it finds a bar that passes the zone tests. It only ever *adds*
+setups, and it adds a lot of them:
+
+| | 4h touch n | 4h R | 1d pin n | **1d pin R** |
+|---|---:|---:|---:|---:|
+| `OB_BACK` 0 | 334 | -0.013 | 43 | **+0.180** |
+| `OB_BACK` 3 | 540 | -0.007 | 92 | **-0.084** |
+| `OB_BACK` 5 | 609 | +0.021 | 102 | **-0.098** |
+
+The 4h result does not move. The **1d `pin` result - the only positive candidate
+in the whole sweep - does**: it goes from +0.180 to -0.098 as the population
+triples, on a parameter the desk asked for and which cannot remove any of the
+original 43 trades. Those 43 were a favourable subset of a rule that is flat;
+the extra 59 are the same rule and they are not favourable.
+
+That is worth more than the sweep's main finding. It is the cheapest available
+test of a small positive cell - widen the population along an axis that cannot
+remove the trades you already have - and it failed.
+
 ### Every parameter is a plateau
 
 Across all twenty-three arms, at 4h, with no confirmation:
@@ -115,12 +137,16 @@ the zone.
 
 ## What this does not settle
 
-* The `pin`-at-1d result is the only live candidate, and it is **43 trades**. It
-  has not been tested out of sample at all. The held-out instruments - indices,
+* The `pin`-at-1d result was the only live candidate, and **the lookback arms
+  broke it** (above). It is not out of sample that it failed - it failed on the
+  development set, against a parameter the desk had already asked for. The held-out instruments - indices,
   energy, crypto alts, Deriv, the minor metals - produced about a hundred zones
   in total and **no cell reached thirty trades**, so that set cannot confirm
   anything at these settings. A forward test needs either more instruments or
   more time, and more time is the honest one.
-* `FRESH` and the larger `OB_BACK` arms were added after this table was taken and
-  are measured separately.
+* **This table predates the freshness correction.** `FRESH` - no bar may trade
+  back into the band between the displacement and the setup being known - is now
+  on, and it removes six trades of 334. Every figure here moves by less than
+  0.01R under it, so the shape stands, but the arms were re-run against the
+  corrected rule and that run supersedes this one cell for cell.
 * Everything here is the development set. Nothing in it should be traded.

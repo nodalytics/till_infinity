@@ -475,33 +475,65 @@ def _fresh_series():
                          "high": a[:, 1], "low": a[:, 2], "close": a[:, 3]})
 
 
-def test_a_zone_is_fresh_when_nothing_closed_in_it_first():
-    """"The zone should be fresh", 2026-10-07.
+def test_a_zone_tested_before_it_is_known_is_not_fresh():
+    """"What I mean by fresh is that it does not have to have been tested before
+    ... the zone I mean", 2026-10-07.
 
-    Two of the three usual readings are already in the rule: the zone is traded
-    on its **first** return, so it is untested at entry, and it is traded once.
-    This is the third - freshness at creation, whether the band sits where price
-    was lately doing business.
-
-    Measured on closes rather than ranges. In `_demand_series` the forty bars
-    before the zone close at 100.0, inside a band of 97.0-100.0, so that level
-    had been traded repeatedly; in `_fresh_series` they close at 110, clear of
-    the band entirely.
+    `Zone.ret` already guarantees the band is untouched from `live` to the entry.
+    The gap was *before* `live`: the break of structure has to hold three bars
+    and reach an ATR past the level, and price can come back into the band while
+    that is happening - in which case the "first return" the study trades is the
+    zone's **second** test. Nothing in the first build looked.
     """
     import importlib
     import os
 
-    a = np.full(120, 2.0)
-    stale, fresh = _demand_series(), _fresh_series()
+    import pandas as pd
+
+    rows = [(100.0, 101.0, 99.0, 100.0) for _ in range(40)]
+    rows.append((100.0, 100.2, 97.0, 97.3))      # the zone: band 97.0-100.0 after the clip
+    rows.append((97.3, 102.0, 97.2, 101.8))      # push 1
+    rows.append((101.8, 107.0, 101.6, 106.8))    # push 2, the break
+    rows.append((106.8, 107.2, 99.5, 106.0))     # dips back into the band before it is confirmed
+    for px in (112.0, 118.0, 124.0):
+        rows.append((px - 5.5, px + 0.5, px - 5.7, px))
+    rows += [(101.0, 101.5, 96.5, 98.0) for _ in range(40)]
+    a = np.array(rows, float)
+    tested = pd.DataFrame({"ts": np.arange(len(a)) * 14400, "open": a[:, 0],
+                           "high": a[:, 1], "low": a[:, 2], "close": a[:, 3]})
+    atr = np.full(len(tested), 2.0)
+    untested = _demand_series()
+
+    assert Z.ob_zones(untested, np.full(len(untested), 2.0), 1), "the clean one is a zone"
+    assert Z.ob_zones(tested, atr, 1) == [], "it was tested before it was known"
+    os.environ["FRESH"] = "0"
+    try:
+        importlib.reload(Z)
+        assert Z.ob_zones(tested, atr, 1), "with the test off, the first build's behaviour"
+    finally:
+        os.environ.pop("FRESH", None)
+        importlib.reload(Z)
+
+
+def test_quiet_is_a_different_claim_from_fresh():
+    """"Has price lately been working at this level" is not "has the zone been
+    tested". Kept apart and off by default, and its first run is a lesson in
+    operationalising a word: at ten bars it left twelve trades, because the leg
+    that creates a demand zone closes inside the band on its way in."""
+    import importlib
+    import os
+
+    a = np.full(200, 2.0)
+    stale, quiet = _demand_series(), _fresh_series()
     assert Z.ob_zones(stale, a[:len(stale)], 1), "both are zones with the test off"
-    assert Z.ob_zones(fresh, a[:len(fresh)], 1)
-    os.environ["FRESH"] = "20"
+    assert Z.ob_zones(quiet, a[:len(quiet)], 1)
+    os.environ["QUIET"] = "20"
     try:
         importlib.reload(Z)
         assert Z.ob_zones(stale, a[:len(stale)], 1) == [], "price had been closing in that band"
-        assert Z.ob_zones(fresh, a[:len(fresh)], 1), "nothing closed in this one"
+        assert Z.ob_zones(quiet, a[:len(quiet)], 1), "nothing closed in this one"
     finally:
-        os.environ.pop("FRESH", None)
+        os.environ.pop("QUIET", None)
         importlib.reload(Z)
 
 
