@@ -456,3 +456,63 @@ def test_a_medium_lower_wick_confirms_where_a_pinbar_does_not():
     # a candle closing in the lower half rejects nothing, whatever its wick
     weak = flat + [(100.0, 100.05, 99.0, 99.2)]
     assert "wick" not in _wick_bar(weak, 3)
+
+
+def _fresh_series():
+    """The same shape as `_demand_series`, but the bars before the zone sit well
+    clear of its band - nothing closed inside it before it formed."""
+    import pandas as pd
+
+    rows = [(110.0, 111.0, 109.0, 110.0) for _ in range(40)]
+    rows.append((105.0, 105.2, 102.0, 102.3))      # the zone candle
+    rows.append((102.3, 107.0, 102.2, 106.8))      # push 1
+    rows.append((106.8, 112.0, 106.6, 111.8))      # push 2, past push 1's high
+    for px in (118.0, 124.0, 130.0):
+        rows.append((px - 5.5, px + 0.5, px - 5.7, px))
+    rows += [(105.0, 105.5, 101.5, 103.0) for _ in range(40)]
+    a = np.array(rows, float)
+    return pd.DataFrame({"ts": np.arange(len(a)) * 14400, "open": a[:, 0],
+                         "high": a[:, 1], "low": a[:, 2], "close": a[:, 3]})
+
+
+def test_a_zone_is_fresh_when_nothing_closed_in_it_first():
+    """"The zone should be fresh", 2026-10-07.
+
+    Two of the three usual readings are already in the rule: the zone is traded
+    on its **first** return, so it is untested at entry, and it is traded once.
+    This is the third - freshness at creation, whether the band sits where price
+    was lately doing business.
+
+    Measured on closes rather than ranges. In `_demand_series` the forty bars
+    before the zone close at 100.0, inside a band of 97.0-100.0, so that level
+    had been traded repeatedly; in `_fresh_series` they close at 110, clear of
+    the band entirely.
+    """
+    import importlib
+    import os
+
+    a = np.full(120, 2.0)
+    stale, fresh = _demand_series(), _fresh_series()
+    assert Z.ob_zones(stale, a[:len(stale)], 1), "both are zones with the test off"
+    assert Z.ob_zones(fresh, a[:len(fresh)], 1)
+    os.environ["FRESH"] = "20"
+    try:
+        importlib.reload(Z)
+        assert Z.ob_zones(stale, a[:len(stale)], 1) == [], "price had been closing in that band"
+        assert Z.ob_zones(fresh, a[:len(fresh)], 1), "nothing closed in this one"
+    finally:
+        os.environ.pop("FRESH", None)
+        importlib.reload(Z)
+
+
+def test_freshness_at_entry_is_already_guaranteed_by_the_first_return():
+    """`Zone.ret` is the *first* bar back in the band, so a zone is untested
+    when it is traded whatever `FRESH` is set to. Worth a test because it is the
+    reading most people mean by "fresh", and it would be easy to add a second
+    mechanism for something the rule already does."""
+    df = _fresh_series()
+    z = Z.ob_zones(df, np.full(len(df), 2.0), 1)[0]
+    lo, hi = min(z.lo, z.hi), max(z.lo, z.hi)
+    l_, h_ = df["low"].to_numpy(), df["high"].to_numpy()
+    between = [k for k in range(z.live + 1, z.ret) if l_[k] <= hi and h_[k] >= lo]
+    assert between == [], "no bar touched the band between the zone going live and its return"

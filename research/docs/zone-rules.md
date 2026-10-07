@@ -61,9 +61,33 @@ compared, not so one can be chosen after the fact.
 | **body** | at least `ORIGIN_BODY` of its range. **0.45** - a real candle rather than a doji |
 | **distance** | `OB_BACK` = **0**: the impulse begins on the very next bar |
 
-`OB_BACK` above zero lets a quiet candle sit between the zone and the impulse. It
-exists because the desk's search order allows it - a reader who finds the impulse
-first does not insist the bar behind it be adjacent - and it is swept.
+`OB_BACK` is the **lookback** the desk asked for directly: "sometimes the candle
+before the impulsive candles might not be it, and we might need to still check
+backward too for more info". With it at `d`, the scan will walk back up to `d`
+bars from the impulse until it finds a bar that passes the zone tests - the size
+cap, the body floor, and (if it is on) the colour. The nearest qualifying bar
+wins, so raising `OB_BACK` only ever *adds* setups the adjacent-bar rule had
+dropped; it never moves one that already qualified. Swept at 1, 2, 3 and 5.
+
+### 2b. The zone must be fresh
+
+> "and also the zone should be fresh"
+
+Three things are usually meant by this, and two of them the rule already does:
+
+| reading | where it lives |
+|---|---|
+| untested when traded | `Zone.ret` is the **first** bar back in the band, by construction |
+| traded once | one entry per zone, same place |
+| at a level price has not lately been working | **`FRESH`** - new |
+
+`FRESH` is the number of bars before the zone candle in which **nothing may have
+closed inside the band**. Closes, not ranges: in a continuous market the bar
+immediately before the zone candle almost always overlaps its range, so a range
+test rejects nearly everything and only reports that bars touch each other. A
+close inside the band means price actually settled there.
+
+`FRESH` = **0** (off) by default, swept at 10, 20 and 50 bars.
 
 ### 3. The imbalance
 
@@ -129,7 +153,7 @@ tried with the first's result visible), `ORIGIN_MAX` 1.0, `WICK_MIN` 0.40,
 `WINDOW` 36, `HOLD_DAYS` 15, `EXPIRE` 300.
 
 [`zone_sweep.py`](../ideas/zone_sweep.py) runs each of these one at a time around
-the given setting. It is read for **shape, not for a maximum**: a result that
+the given setting, and [`zone-sweep.md`](zone-sweep.md) is what it found. It is read for **shape, not for a maximum**: a result that
 survives a parameter's whole range is a property of the market, one that lives at
 a single value is a property of this sample. The sweep selects nothing - whatever
 the desk keeps is confirmed once, on instruments the rule never saw.

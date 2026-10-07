@@ -162,6 +162,22 @@ OB_CLIP = float(os.environ.get("OB_CLIP", 1.5))
 #: against the move then *it* is the last candle against the move, and the scan
 #: finds it as its own origin at a smaller gap. 0 is the original behaviour.
 OB_BACK = int(os.environ.get("OB_BACK", 0))
+
+#: How many bars before the zone candle must be clear of it for the zone to
+#: count as **fresh**. Asked for 2026-10-07: "the zone should be fresh".
+#:
+#: Two of the three usual readings are already in the rule and cost nothing to
+#: state: the zone is traded on its **first** return (`Zone.ret`), so it is
+#: untested at entry by construction, and it is traded once.
+#:
+#: What is left is freshness at **creation** - whether the band sits where price
+#: has recently been doing business. Measured on **closes**, not ranges: the bar
+#: immediately before the zone candle almost always overlaps its range in a
+#: continuous market, so a range test rejects nearly everything and says only
+#: that bars touch. A close inside the band means price actually settled there.
+#:
+#: 0 is off, which is the first build's behaviour.
+FRESH = int(os.environ.get("FRESH", 0))
 #: How much of a confirming candle's range must be the wick *under* its body
 #: (over it, on a supply zone) before the return counts as a rejection. Asked
 #: for 2026-10-07: "after it returns to the zone let's wait for a candlestick
@@ -531,6 +547,9 @@ def ob_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
         # choice. Both are run rather than one being picked.
         top = h[p] if OB_BAND == "range" else max(o[p], c[p])
         top = min(max(top, low + 0.2 * a[p]), low + OB_CLIP * a[p])
+        # Fresh: nothing closed inside the band in the bars before it formed.
+        if FRESH and np.any((c[max(0, p - FRESH):p] >= low) & (c[max(0, p - FRESH):p] <= top)):
+            continue
         known = p + d + PUSH_N  # the push is complete here; nothing earlier could know it
         z = Zone(
             side, p, low, top, b, level, gaps[0],

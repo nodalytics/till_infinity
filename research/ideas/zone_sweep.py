@@ -39,7 +39,7 @@ DRAWS = 4000
 #: rather than through it.
 BASE = dict(ZONES="ob", PUSH_N="2", PUSH_BODY="0.70", PUSH_STRONG="1",
             ORIGIN_BODY="0.45", ORIGIN_COLOUR="0", ORIGIN_MAX="1.0", OB_BACK="0",
-            OB_BAND="range", OB_LOOKBACK="20", OB_MINLEG="1.5", OB_CLIP="1.5",
+            OB_BAND="range", OB_LOOKBACK="20", OB_MINLEG="1.5", OB_CLIP="1.5", FRESH="0",
             WICK_MIN="0.40", WINDOW="36", HOLD_DAYS="15")
 
 #: One at a time, each with the reason it is in the sweep at all.
@@ -57,6 +57,12 @@ ARMS: list[tuple[str, dict[str, str], str]] = [
     ("origin_any_size", dict(ORIGIN_MAX="9.9"), "no size test at all"),
     ("back_1", dict(OB_BACK="1"), "the origin may sit one bar behind the impulse"),
     ("back_2", dict(OB_BACK="2"), "or two"),
+    ("back_3", dict(OB_BACK="3"), "or three"),
+    ("back_5", dict(OB_BACK="5"), "or five - 'check backward too for more info'"),
+    ("fresh_10", dict(FRESH="10"), "nothing closed in the band for 10 bars before it"),
+    ("fresh_20", dict(FRESH="20"), "20 bars"),
+    ("fresh_50", dict(FRESH="50"), "50 bars - a genuinely untraded level"),
+    ("fresh_back", dict(FRESH="20", OB_BACK="3"), "fresh, and the zone found by looking back"),
     ("band_body", dict(OB_BAND="body"), "the band is the body, not the whole candle"),
     ("clip_off", dict(OB_CLIP="99"), "no width clip"),
     ("look_10", dict(OB_LOOKBACK="10"), "a nearer high to break"),
