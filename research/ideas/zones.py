@@ -206,7 +206,8 @@ QUIET_SKIP = int(os.environ.get("QUIET_SKIP", 2))
 #: the upper half. `pin` is a subset of `wick`, so the pair measures how much
 #: the strictness is worth rather than whether a wick is worth anything.
 WICK_MIN = float(os.environ.get("WICK_MIN", 0.40))
-TRIGGERS = ("touch", "touch_mid", "touch_far", "touch_deep", "pin", "wick", "engulf", "star", "inside", "reclaim", "cisd",
+TRIGGERS = ("touch", "touch_mid", "touch_far", "touch_deep", "pin", "wick",
+            "retest", "retest_line", "retest_pin", "engulf", "star", "inside", "reclaim", "cisd",
             "sweep", "double", "ifvg", "choch", "rsi_div", "displace", "tweezer", "outside", "climax")
 SEC = {"1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800}
 
@@ -1031,7 +1032,93 @@ def triggers(df: pd.DataFrame, a: np.ndarray, z: Zone, ex: dict | None = None) -
         for k, hit in pats.items():
             if hit and k not in found:
                 found[k] = dict(i=j, entry=np.nan, stop_px=stop_px, limit=0)
+    found |= retest(o, h, l, c, z, A, n)
     return [dict(trigger=k, **{"expires": 1, **v}) for k, v in found.items()]
+
+
+#: Candles of displacement the reaction out of the zone has to make before the
+#: zone is believed. Asked for 2026-10-07:
+#:
+#:     instead of choppiness, let's use displacement - it's either it enters the
+#:     zone or touches the zone and bounces back in the opposite direction with
+#:     the strong displacement candles, and comes back for retest, forms pattern
+#:     and moves
+#:
+#: Everything measured until now entered on the **first** reaction, which is the
+#: bar this rule refuses to trade. Here the first reaction is only evidence: the
+#: zone has to throw price away from itself with `DISP_N` impulsive candles, and
+#: the trade is the **pullback into the origin that displacement left behind**.
+DISP_N = int(os.environ.get("DISP_N", PUSH_N))
+
+#: Bars allowed between the displacement ending and the retest arriving. The
+#: reaction has to be recent to be the reason price turned; a pullback forty
+#: bars later is a different trade.
+RETEST = int(os.environ.get("RETEST", 12))
+
+
+def retest(o, h, l, c, z: Zone, A: float, n: int) -> dict:
+    """The displacement-and-retest entry, in a long's terms.
+
+    Four things in order, each from bars that had already closed:
+
+    1. price reaches the zone (`z.ret`, as every other trigger uses)
+    2. within `WINDOW`, `DISP_N` consecutive impulsive candles leave it - the
+       zone throwing price away from itself, not drifting off it
+    3. the candle **before** that displacement is the retest zone, read exactly
+       as a zone is read elsewhere: the band is its range (or body, under
+       `OB_BAND`) and the line is the near edge of its body
+    4. price comes back into that band within `RETEST` bars
+
+    Two triggers come out of it. `retest` is a resting limit at the retest
+    band's near edge, which is the version with the tighter stop - the stop sits
+    under the retest candle rather than under the original zone, and that is the
+    point of waiting. `retest_pin` additionally requires the desk's candlestick
+    confirmation on the bar that returns: "comes back for retest, forms pattern
+    and moves".
+    """
+    r = z.ret
+    if r < 0 or DISP_N < 1:
+        return {}
+    # (2) the displacement away from the zone
+    start = None
+    for j in range(r, min(n - DISP_N, r + WINDOW)):
+        if all(c[k] - o[k] >= PUSH_BODY * max(h[k] - l[k], 1e-12) for k in range(j, j + DISP_N)):
+            start = j
+            break
+    if start is None or start == 0:
+        return {}
+    end = start + DISP_N - 1
+    # (3) the candle before it, which is the zone that displacement left
+    p2 = start - 1
+    lo2 = l[p2]
+    hi2 = h[p2] if OB_BAND == "range" else max(o[p2], c[p2])
+    hi2 = min(max(hi2, lo2 + 0.2 * A), lo2 + OB_CLIP * A)
+    if not h[end] > hi2:  # the displacement has to have cleared it
+        return {}
+    line2 = min(o[p2], c[p2])
+    # (4) the pullback into it
+    out = {}
+    for k in range(end + 1, min(n - 1, end + 1 + RETEST)):
+        if l[k] > hi2:
+            continue
+        if c[k] < lo2 - BUF * A:  # it did not hold; this is not a retest
+            break
+        out["retest"] = dict(i=k - 1, entry=hi2, stop_px=lo2 - BUF * A, limit=1, expires=RETEST)
+        out["retest_line"] = dict(i=k - 1, entry=line2, stop_px=lo2 - BUF * A, limit=1,
+                                  expires=RETEST)
+        # "forms pattern and moves": the confirmation on the bar that returns
+        for m in range(k, min(n - 1, k + RETEST)):
+            if l[m] > hi2 + NEAR * A or c[m] < lo2 - BUF * A:
+                break
+            rngm = max(h[m] - l[m], 1e-12)
+            bd = abs(c[m] - o[m])
+            wick = min(o[m], c[m]) - l[m]
+            if wick >= WICK_MIN * rngm and wick >= bd and c[m] >= l[m] + 0.5 * rngm \
+                    and rngm >= 0.5 * A:
+                out["retest_pin"] = dict(i=m, entry=np.nan, stop_px=lo2 - BUF * A, limit=0)
+                break
+        break
+    return out
 
 
 def _double(l, h, c, r, j, A):

@@ -666,3 +666,77 @@ def test_a_long_chain_does_not_hide_its_own_zones_until_it_ends():
     # the seed closes on bar 42; nothing about this zone needs bars 43 onwards
     assert z.live <= 44, f"live at {z.live} waits for a leg that is still running"
     assert z.ret > 0, "and the return is not lost behind it"
+
+
+def _retest_series():
+    """A zone, a touch, a displacement away from it, and a pullback into the
+    candle that displacement left behind."""
+    import pandas as pd
+
+    rows = [(100.0, 101.0, 99.0, 100.0) for _ in range(40)]
+    rows.append((100.0, 100.2, 97.0, 97.3))      # the zone candle
+    rows.append((97.3, 102.0, 97.2, 101.8))      # push 1
+    rows.append((101.8, 107.0, 101.6, 106.8))    # push 2, breaks the 20-bar high
+    for px in (112.0, 118.0, 124.0):
+        rows.append((px - 5.5, px + 0.5, px - 5.7, px))
+    for _ in range(8):                           # drift back into the zone
+        rows.append((101.0, 101.5, 98.0, 99.5))
+    rows.append((99.5, 99.8, 98.5, 99.0))        # the retest zone: the bar before the reaction
+    rows.append((99.0, 103.5, 98.9, 103.4))      # displacement away, candle 1
+    rows.append((103.4, 108.0, 103.3, 107.9))    # candle 2
+    rows.append((107.9, 108.2, 99.6, 100.2))     # the pullback into it
+    rows.append((100.2, 101.0, 99.3, 100.8))     # a wick holding the retest band
+    for _ in range(20):
+        rows.append((104.0, 112.0, 103.5, 111.0))
+    a = np.array(rows, float)
+    return pd.DataFrame({"ts": np.arange(len(a)) * 14400, "open": a[:, 0],
+                         "high": a[:, 1], "low": a[:, 2], "close": a[:, 3]})
+
+
+def test_the_retest_entry_waits_for_a_displacement_off_the_zone():
+    """"It either enters the zone or touches the zone and bounces back in the
+    opposite direction with the strong displacement candles, and comes back for
+    retest, forms pattern and moves" - 2026-10-07.
+
+    Everything measured before this entered on the **first** reaction. Here that
+    reaction is only evidence, and the trade is the pullback into the origin the
+    displacement left behind - which is nearer, so the stop is tighter.
+    """
+    df = _retest_series()
+    a = np.full(len(df), 2.0)
+    zs = Z.ob_zones(df, a, 1)
+    assert zs, "the setup must be found first"
+    z = zs[0]
+    got = {t["trigger"]: t for t in Z.triggers(df, a, z)}
+    assert "retest" in got, "the displacement and pullback were not found"
+    t, touch = got["retest"], got["touch"]
+    # The retest band can sit inside the original zone - usually does, since the
+    # reaction starts from within it. What has to be true is that the **stop is
+    # nearer**, because that is the whole return on waiting.
+    assert t["stop_px"] > z.lo, "a retest stop must be nearer than the zone's own"
+    assert t["entry"] - t["stop_px"] < touch["entry"] - touch["stop_px"], \
+        "the retest risks less per unit than the first-touch entry"
+    assert t["limit"] == 1
+
+
+def test_no_displacement_means_no_retest_trade():
+    """A zone price drifts away from, rather than is thrown from, produces no
+    retest entry at all - which is the whole point of the rule."""
+    df = _demand_series()          # drifts back and sits there
+    a = np.full(len(df), 2.0)
+    z = Z.ob_zones(df, a, 1)[0]
+    got = {t["trigger"] for t in Z.triggers(df, a, z)}
+    assert "retest" not in got
+
+
+def test_the_retest_is_abandoned_if_the_band_does_not_hold():
+    """Price coming back **through** the retest band is not a retest. The scan
+    stops rather than waiting for a deeper pullback, because by then the level
+    that produced the displacement has gone."""
+    df = _retest_series().copy()
+    # drive the pullback straight through the retest band
+    df.loc[57, ["open", "high", "low", "close"]] = [107.9, 108.2, 94.0, 94.5]
+    a = np.full(len(df), 2.0)
+    z = Z.ob_zones(df, a, 1)[0]
+    got = {t["trigger"] for t in Z.triggers(df, a, z)}
+    assert "retest" not in got
