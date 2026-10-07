@@ -84,16 +84,35 @@ def block_ci(v, days, draws=1500, seed=61):
     return float(v.mean()), float(np.percentile(got, 5)), float(np.percentile(got, 95))
 
 
-def prequential(model, X, y, warm=5000, clf=False):
-    """Predict, score, then learn - in that order, for every bar."""
+def prequential(model, X, y, ts, ready, warm=5000, clf=False):
+    """Predict, then learn from whichever labels have actually arrived by now.
+
+    **The label is not available when the bar closes.** `y` is a move over the
+    next `H` bars and `hit` is a barrier touched up to `BARS` later, so learning
+    from `(x_i, y_i)` at step `i` hands the model the next three bars before it
+    predicts bars `i+1`, `i+2` and `i+3` - whose own labels overlap `y_i` by two
+    thirds. The first version of this file did exactly that and reported an IC of
+    **+0.30** against the batch model's +0.0045, a hundredfold jump that was
+    entirely the overlap.
+
+    So a bar enters the queue when it closes and is learned from only once its
+    label's own window has elapsed - `ready[i]`, a timestamp. That is also how a
+    live desk would have to do it: the outcome of a trade opened now is not a
+    training example until it is over.
+    """
     pred = np.full(len(y), np.nan)
-    for i, (x, t) in enumerate(zip(X, y)):
+    queue, head = list(zip(ready, X, y)), 0
+    for i, x in enumerate(X):
+        now = ts[i]
+        while head < len(queue) and queue[head][0] <= now:
+            _, xq, tq = queue[head]
+            if clf:
+                model.learn_one(xq, bool(tq))
+            else:
+                model.learn_one(xq, float(tq))
+            head += 1
         if i >= warm:
             pred[i] = model.predict_proba_one(x).get(1, 0.5) if clf else model.predict_one(x)
-        if clf:
-            model.learn_one(x, bool(t))
-        else:
-            model.learn_one(x, float(t))
     return pred
 
 
@@ -142,6 +161,10 @@ def main() -> None:
     y = d["y"].to_numpy()
     hit = d["hit"].to_numpy()
     day = d["day"].to_numpy()
+    sec = {"1h": 3600, "4h": 14400, "1d": 86400}[os.environ.get("IV", "4h")]
+    ts = d["ts"].to_numpy()
+    ready_y = ts + Z.H * sec          # the forward move is known H bars later
+    ready_h = ts + Z.BARS * sec       # the barrier, at worst BARS later
     rng = np.random.default_rng(17)
     ysh = y.copy()
     for s_ in d["sym"].unique():
@@ -152,20 +175,21 @@ def main() -> None:
     print("target: the 3-bar forward move, in ATR")
     for name, mk in regressors().items():
         t0 = time.time()
-        rows.append(report(name, prequential(mk, X, y), y, day))
+        rows.append(report(name, prequential(mk, X, y, ts, ready_y), y, day))
         rows[-1] |= {"target": "y", "secs": round(time.time() - t0, 1)}
     rows.append(report("linear SGD, y shuffled",
-                       prequential(regressors()["linear SGD"], X, ysh), y, day))
+                       prequential(regressors()["linear SGD"], X, ysh, ts, ready_y), y, day))
     rows[-1] |= {"target": "y shuffled"}
 
     ok = np.isfinite(hit)
     Xh = [x for x, k in zip(X, ok) if k]
-    yh, dayh = hit[ok], day[ok]
+    yh, dayh, tsh, readyh = hit[ok], day[ok], ts[ok], ready_h[ok]
     base = float(yh.mean())
     print(f"\ntarget: +-1 ATR within 12 bars, ties to the stop (base rate {base:.1%})")
     for name, mk in classifiers().items():
         t0 = time.time()
-        rows.append(report(name, prequential(mk, Xh, yh, clf=True), yh, dayh, clf=True, base=base))
+        rows.append(report(name, prequential(mk, Xh, yh, tsh, readyh, clf=True),
+                           yh, dayh, clf=True, base=base))
         rows[-1] |= {"target": "hit", "secs": round(time.time() - t0, 1)}
 
     OUT.mkdir(parents=True, exist_ok=True)

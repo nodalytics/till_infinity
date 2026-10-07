@@ -70,6 +70,63 @@ traced four independent ways to stops sitting inside the instrument's own noise;
 a signal that shifts the mean without shifting the touch probability is precisely
 a signal that dies at the stop.
 
+## The head to head, after the fact
+
+The comparison above was unfair in one direction and the one in
+`zscore-variants.md` was unfair in the other: the hand rules were scored on the
+conditional mean and the model on the barrier. So both were put through the
+barrier on the same bars and the same test period
+([`zscore_barrier.py`](../ideas/zscore_barrier.py)):
+
+| rule | n | win rate | 90% interval | at 1:1 |
+|---|---:|---:|---|---:|
+| **base rate** | 64,290 | **48.6%** | [47.9%, 49.3%] | -0.028 R |
+| `\|z\| >= 2` | 5,452 | 47.1% | [45.7%, 48.6%] | -0.058 R |
+| `\|z\| >= 2` and body >= 70% | 2,727 | 48.4% | [46.5%, 50.1%] | -0.033 R |
+| normalised `\|z\| >= 0.8` | 1,056 | **46.4%** | [43.4%, 49.5%] | -0.072 R |
+| term structure aligned | 3,372 | 47.5% | [45.4%, 49.5%] | -0.050 R |
+| model (corner), top 1% | 650 | 48.9% | [44.1%, 53.2%] | -0.022 R |
+| model (barrier), top 1% | 644 | 46.1% | [41.7%, 50.7%] | -0.078 R |
+
+**Not one rule beats the base rate, and the ranking inverts.** The cell with the
+largest mean-move spread in the whole study - normalised `|z| >= 0.8`, 0.250 ATR
+with both tails clear of zero - has the second-worst win rate in the table. The
+hand rules won the metric that does not convert and lost the one that does; the
+corner-trained model is the least bad row here.
+
+Mechanically: these rules select bars that just moved a long way, so realised
+volatility sits above the trailing ATR that sets the barrier, more bars span both
+barriers, and every one of those is a loss under the tie convention. Part of the
+gap is therefore the tie rule, and tick resolution would soften it - but that is
+the desk's own engine convention, so it is the right one for a decision.
+
+## Online learners see the same nothing
+
+Production's structures models are online, so a result only a batch fit can see
+does not transfer. [`zscore_online.py`](../ideas/zscore_online.py) runs the same
+features **prequentially** - predict, then learn, with each label withheld until
+its own window has elapsed.
+
+| model | forward-move IC | barrier, top decile |
+|---|---:|---:|
+| linear SGD | +0.0047 | - |
+| passive aggressive | +0.0035 | - |
+| Hoeffding adaptive tree | -0.0006 | 49.3% |
+| adaptive random forest | +0.0014 | - |
+| logistic | - | 49.7% |
+| *base rate* | - | *49.0%* |
+
+Nothing, online or batch.
+
+**The first version of that file reported an IC of +0.30** - a hundredfold jump -
+because it learned from each bar as it arrived. The label is a move over the next
+three bars, so that handed the model the answer for every overlapping window. A
+bar now enters a queue when it closes and is learned from only once its label's
+own window has elapsed, keyed on timestamp rather than position because bars are
+interleaved across sixteen instruments. It is also the only version a live desk
+could run: the outcome of a trade opened now is not a training example until it
+is over.
+
 ## What the model was using
 
 Permutation importance on the test set, as the drop in the decile spread:
