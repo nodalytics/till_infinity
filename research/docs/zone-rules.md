@@ -175,6 +175,8 @@ reaction window, a property of the zone rather than of any trade - and against
 the R actually earned, so a feature that sorts holds but not money shows up as
 that. [`zone_approach.py`](../ideas/zone_approach.py), with a within-symbol
 shuffle of the feature as the null and Benjamini-Hochberg across the lot.
+**Answered in [`zone-approach.md`](zone-approach.md): no, and at 1d the sign is
+the other way round.**
 
 ## What is given and what is fitted
 

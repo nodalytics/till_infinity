@@ -74,16 +74,43 @@ def spread(g: pd.DataFrame, feat: str, col: str) -> float:
 
 
 def shuffled_p(g: pd.DataFrame, feat: str, col: str, draws=1000, seed=3) -> float:
-    """P(a shuffle of the feature reaches this spread), two-sided on |spread|."""
+    """P(a shuffle of the feature reaches this spread), two-sided on |spread|.
+
+    **Shuffled within symbol.** A permutation across the whole sample breaks the
+    pairing *and* the symbol: if one instrument happens to carry both a high
+    feature and a high outcome, a global shuffle destroys that too and reports
+    the cross-sectional difference between instruments as if it were a property
+    of the feature. The first run of this file did exactly that, and the one
+    cell that passed is the reason it is worth being careful about.
+    """
     want = spread(g, feat, col)
     if not np.isfinite(want):
         return np.nan
     rng = np.random.default_rng(seed)
+    idx = [np.flatnonzero(g["sym"].to_numpy() == s_) for s_ in g["sym"].unique()]
     x = g[feat].to_numpy()
     got = np.empty(draws)
     for k in range(draws):
-        got[k] = spread(g.assign(**{feat: rng.permutation(x)}), feat, col)
+        y = x.copy()
+        for w in idx:
+            y[w] = rng.permutation(x[w])
+        got[k] = spread(g.assign(**{feat: y}), feat, col)
     return float((np.abs(got) >= abs(want)).mean())
+
+
+def per_symbol(g: pd.DataFrame, feat: str, col: str) -> str:
+    """In how many instruments does the top tercile beat the bottom, on that
+    instrument's own terciles? A pooled spread carried by two symbols is not the
+    same claim as one that shows up in twelve."""
+    wins = tot = 0
+    for _, h in g.groupby("sym"):
+        if len(h) < 12:
+            continue
+        d = spread(h, feat, col)
+        if np.isfinite(d):
+            tot += 1
+            wins += d > 0
+    return f"{wins}/{tot}"
 
 
 def main() -> None:
@@ -116,7 +143,8 @@ def main() -> None:
                                  bottom=m_lo, bottom_lo=l_lo, bottom_hi=h_lo,
                                  middle=float(mid[col].mean()) if len(mid) else np.nan,
                                  top=m_hi, top_lo=l_hi, top_hi=h_hi,
-                                 spread=m_hi - m_lo, p=shuffled_p(gg, feat, col)))
+                                 spread=m_hi - m_lo, syms=per_symbol(gg, feat, col),
+                                 p=shuffled_p(gg, feat, col)))
     out = pd.DataFrame(rows)
     if out.empty:
         print("nothing to score")
