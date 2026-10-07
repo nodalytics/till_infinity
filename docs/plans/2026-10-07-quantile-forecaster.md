@@ -12,6 +12,27 @@ recommendation that has not been built:
 This is that work. It is a promotion and a gate, not a research project: the
 model is already measured and it already wins.
 
+**Corrected 2026-10-07, after starting it.** This plan was written believing the
+forecaster was unbuilt. It is not: `models/envelope_train.py`,
+`retrain._envelope_contest` and `run_envelope5/20/50` already train quantile
+boosting, score it against the history envelope and the champion, and ship
+`envelope_fx15m_{5,20,50}.json`. Reading the code first would have caught that,
+and the plan is left standing with this note rather than quietly rewritten.
+
+The two real gaps, both still true:
+
+1. **`ENVELOPE_GATES` is entirely relative** - `beats_empirical`, `vs_champion`,
+   `slice_points` are all comparisons. A model badly calibrated *in company*
+   clears all three: if the history envelope's worst window is poor too, a
+   challenger covering 78% while quoting 90% promotes. There is no floor.
+2. **The contest is FX-only** - `_envelope_contest` filters on `ro.is_fx`, and
+   `envelope.model_applies` is `interval == "15m" and is_fx(feed)`. So metals
+   was never in the contest, which is why its 78.1% could never have been
+   caught by it.
+
+So the order below becomes: the absolute floor first (it protects the FX model
+that ships today), then the families.
+
 ## What is already known
 
 - Quantile boosting on the volatility features has **the lowest pinball of every
