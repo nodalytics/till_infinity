@@ -115,8 +115,21 @@ import prims as P  # noqa: E402
 
 OUT = Path(os.environ.get("OUT", ".data/zones"))
 LR, MAXLEG, MINLEG, FVG_MIN, WINDOW, NEAR, EXPIRE = 3, 10, 3.0, 0.2, 12, 0.25, 300
+# **The reaction need not be immediate.** Asked for 2026-10-07: "the play might not happen
+# immediately, it might happen later, even days ahead". `WINDOW` is the bars allowed for a
+# reaction after the return and was fixed at 12 - two days at 4h - which decides the answer
+# for a setup that takes longer. `EXPIRE` (300 bars, 50 days at 4h) already allows a late
+# return; this is the other half of the same point.
+WINDOW = int(os.environ.get("WINDOW", WINDOW))
 BUF = float(os.environ.get("BUF", 0.1))  # the stop past the zone, in ATR (0.3 / 0.5 / 1 tried after a wick stopped one)
 HOLD_BARS, FOLLOW = 3, 1.0  # a strong break: no close back through it for 3 bars, 1 ATR beyond it within 5
+OB_MINLEG = float(os.environ.get("OB_MINLEG", 1.5))  # `ob_zones`' leg floor, in ATR
+#: Bars the break of structure looks back over. A close above the highest high
+#: of this window is the break, with no swing high and so no pivot definition
+#: anywhere in `ob_zones`. Twenty is a working month at 4h and a trading month at
+#: 1d; it is not measured, and it is the one number here that replaced a rule
+#: rather than a threshold.
+OB_LOOKBACK = int(os.environ.get("OB_LOOKBACK", 20))
 TRIGGERS = ("touch", "touch_mid", "touch_far", "touch_deep", "pin", "engulf", "star", "inside", "reclaim", "cisd",
             "sweep", "double", "ifvg", "choch", "rsi_div", "displace", "tweezer", "outside", "climax")
 SEC = {"1h": 3600, "4h": 14400, "1d": 86400}
@@ -134,6 +147,10 @@ class Zone:
     live: int  # first bar it is known
     leg_extreme: float
     clean: bool = False  # the leg's candles were strong (see `strong_leg`)
+    push: bool = False  # two consecutive candles left it, the second closing past the first's close
+    push_hi: bool = False  # ... past the first's high: the stronger form (`sequential_push`)
+    ob: bool = False  # the origin was the last candle against the move, with a body (`strong_origin`)
+    line: float = float("nan")  # the level inside the zone: the origin's close = the push bar's open
     ret: int = -1  # first return
     dead: int = -1  # the bar it failed (closed through), or expired
     parts: tuple = ()  # for a level: the (bar, low, high) of each gap that made it
@@ -187,7 +204,17 @@ def long_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
         top = max(o[p], c[p])
         top = min(max(top, low + 0.2 * a[p]), low + 1.5 * a[p])
         z = Zone(side, p, low, top, b, level, gaps[0], max(known, strong, gaps[0]), ext,
-                 strong_leg(o, h, l, c, a[p], p, b))
+                 strong_leg(o, h, l, c, a[p], p, b),
+                 sequential_push(o, h, l, c, p, side, strong=False),
+                 sequential_push(o, h, l, c, p, 1, strong=True),
+                 strong_origin(o, h, l, c, p, side),
+                 # **The level inside the zone**, asked for 2026-10-07: where the
+                 # last candle against the move closed, which in a continuous
+                 # market is where the first displacement candle opened. On a
+                 # demand zone that is the bearish origin's close - below its
+                 # body top, so an entry there is deeper than the zone's near
+                 # edge and carries a different stop.
+                 float(c[p]))
         # The DAX mentorship's tests, asked of this origin (`dax_smc.py` has the method in full):
         # PROTECTED - the origin swept the last swing low of the 40 bars before it (one nothing had
         # broken) and closed back above it within two bars; MAJOR - the high it broke was a lower
@@ -208,6 +235,86 @@ def long_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
     return out
 
 
+#: The least of its own range a candle's body must be before it counts as a push
+#: rather than a stall. "Fairly okay or big", as the desk put it; a doji that
+#: happens to close higher is not two candles leaving a zone.
+#:
+#: **0.45, set by the desk on 2026-10-07 after a first run at 0.50.** That is two
+#: values tried, and the second was chosen with the first one's result already
+#: visible - so any figure from it carries one degree of freedom that the first
+#: did not. Recorded here rather than left in a commit message, because a
+#: threshold's history is the difference between a frozen rule and a swept one.
+PUSH_BODY = float(os.environ.get("PUSH_BODY", 0.45))
+
+
+#: How many consecutive candles must leave the zone. Two was the desk's first
+#: shape; `PUSH_N` generalises it on request, 2026-10-07. Each extra candle is
+#: another value tried, and the count belongs beside the result.
+PUSH_N = int(os.environ.get("PUSH_N", 2))
+
+
+def sequential_push(o, h, l, c, p, side: int, strong: bool, n: int | None = None) -> bool:
+    """`n` **consecutive** candles leaving the zone, each making progress on the last.
+
+    Asked for 2026-10-07, and it is not `strong_leg`. That one is an aggregate
+    over the whole leg - bodies averaging 60% of their range, 70% of bars the
+    right way - which a leg can pass while its second bar closes back inside the
+    first's range. This is pairwise and ordered:
+
+    * both bars the zone's colour, each body at least `PUSH_BODY` of its range
+    * **weak**: `close[2] > close[1]` - the second made progress on the first
+    * **strong**: `close[2] > high[1]` - it closed above the first's whole range,
+      which is a commitment the desk expects to carry a higher probability
+
+    Mirrored for a supply zone. The bars are those **after** the origin bar,
+    matching `strong_leg`'s `slice(p + 1, b + 1)`: the origin bar is the zone,
+    and the leg is what leaves it.
+
+    With `n` above two the condition is applied to every adjacent pair, so each
+    candle must clear the one before it - not merely the first. A run that
+    stalls in the middle is not a longer push, it is a push and then a pause.
+    """
+    n = PUSH_N if n is None else n
+    if n < 2:
+        raise ValueError("a push needs at least two candles")
+    k = list(range(p + 1, p + 1 + n))
+    if k[-1] >= len(c):
+        return False
+    bodies = [c[i] - o[i] for i in k]
+    ranges = [max(h[i] - l[i], 1e-12) for i in k]
+    if any(abs(b) / r < PUSH_BODY for b, r in zip(bodies, ranges)):
+        return False
+    if side > 0:
+        if not all(b > 0 for b in bodies):
+            return False
+        return all(c[k[m + 1]] > (h[k[m]] if strong else c[k[m]]) for m in range(n - 1))
+    if not all(b < 0 for b in bodies):
+        return False
+    return all(c[k[m + 1]] < (l[k[m]] if strong else c[k[m]]) for m in range(n - 1))
+
+
+def strong_origin(o, h, l, c, p, side: int) -> bool:
+    """The origin bar is the **last candle against the move**, with a real body.
+
+    The desk's definition, 2026-10-07: "the origin bar is the last candle before
+    the opposite move, often good body ratio for it too means it's strong". That
+    is the order block - for a demand zone, the last *down* candle before the
+    rally leaves.
+
+    It is not what `long_zones` selects. That takes a 3/3 **pivot low**, which is
+    a shape of the bars either side of it and says nothing about the bar's own
+    colour: a hammer that swept the low and closed green is a pivot low and is
+    not an order block. So this is kept apart from `sequential_push` rather than
+    folded into it - the two conditions are different claims and the run should
+    say which of them, if either, carries anything.
+    """
+    body = c[p] - o[p]
+    rng = max(h[p] - l[p], 1e-12)
+    if abs(body) / rng < PUSH_BODY:
+        return False
+    return bool(body < 0) if side > 0 else bool(body > 0)
+
+
 def strong_leg(o, h, l, c, A, p, b) -> bool:
     """The leg out of the zone made of strong candles, not sloppy ones: bodies at least 60% of
     their ranges on average, at least 70% of the bars in the move's direction, and one body of an
@@ -216,6 +323,138 @@ def strong_leg(o, h, l, c, A, p, b) -> bool:
     body = c[k] - o[k]
     rng = np.maximum(h[k] - l[k], 1e-12)
     return bool((np.abs(body) / rng).mean() >= 0.6 and (body > 0).mean() >= 0.7 and body.max() >= A)
+
+
+def ob_zones(df: pd.DataFrame, a: np.ndarray, side: int = 1) -> list[Zone]:
+    """Zones built **on the order block**, not on a pivot low.
+
+    The desk's definition, 2026-10-07: "the origin bar is the last candle before
+    the opposite move". `long_zones` takes a 3/3 pivot low instead - a shape made
+    by the bars either side of it, which says nothing about the origin's own
+    colour. On the first run that mattered: of 274 zones with a two-candle push,
+    only **59 (22%)** had an order-block origin, so the filter was mostly
+    measuring pivot lows that happened to be followed by two good candles.
+
+    So the zone is found from the push backwards:
+
+    1. two consecutive candles leaving, each with a body of `PUSH_BODY`+ of its
+       range and the second closing past the first (`sequential_push`)
+    2. the bar before them is the origin, and must be the **last candle against
+       the move** with a real body (`strong_origin`)
+    3. the band is that candle's low to its body top, and the **line** inside it
+       is where it closed - which in a continuous market is where the first push
+       candle opened
+    4. from there, the same structure break, live bar and return as `long_zones`,
+       so the two are comparable where it counts
+
+    Everything else is deliberately unchanged. If this reads better than
+    `long_zones` it is the origin that did it, and nothing else moved.
+    """
+    o, h, l, c = (df[k].to_numpy() for k in ("open", "high", "low", "close"))
+    n = len(df)
+    out = []
+    for p in range(OB_LOOKBACK, n - PUSH_N - 1):
+        if not a[p] > 0:
+            continue
+        # **Always the long logic, whatever `side` says.** `zones_ob` passes an
+        # already-mirrored frame for the short side, exactly as `zones` does, so
+        # `side` is a tag and not a direction here - `strong_leg` takes no side
+        # argument at all for the same reason.
+        #
+        # Threading `side` in was a bug that cost the short side entirely:
+        # on the flipped frame it hunted a bearish origin and a bearish push on
+        # an already-negated chart, so the zones came out **100% long on daily**
+        # and 96% long at 4h. That made every "flip" result a standing short
+        # rather than a reversed zone, which is a bet on the instrument set and
+        # the period, not a finding.
+        if not strong_origin(o, h, l, c, p, 1):
+            continue
+        if not sequential_push(o, h, l, c, p, 1, strong=False):
+            continue
+        low = l[p]
+        # **The break of structure, without a swing high.** Asked for
+        # 2026-10-07. `long_zones` breaks a 3/3 pivot high, which makes the zone
+        # depend on a shape three bars either side of some earlier bar - and
+        # pivots are sparse, so most displacements have no recent one to break.
+        # The highest high of the last `OB_LOOKBACK` bars is the same claim
+        # without that dependency: price closed above everything it has traded
+        # through in that window.
+        level = float(h[p - OB_LOOKBACK:p].max())
+        if level <= low:
+            continue
+        b = -1
+        for k in range(p + 1, min(n, p + MAXLEG + 1)):
+            if l[k] < low:
+                break
+            if c[k] > level:
+                b = k
+                break
+        if b < 0 or b + HOLD_BARS >= n:
+            continue
+        if c[b + 1:b + 1 + HOLD_BARS].min() <= level or h[b:b + 6].max() < level + FOLLOW * a[p]:
+            continue
+        strong = b + max(HOLD_BARS, int(np.argmax(h[b:b + 6] >= level + FOLLOW * a[p])))
+        ext = h[p:b + 1].max()
+        # **`OB_MINLEG`, not `MINLEG`.** The desk's definition is an order block,
+        # two candles leaving it and a break of structure - it says nothing about
+        # the leg covering three ATR. Carrying `long_zones`' 3.0 over left 16
+        # zones on 13,216 EURUSD bars, because that figure was chosen for legs
+        # out of pivot lows and a two-candle push rarely travels that far by the
+        # break. Stated as its own constant so the difference is visible rather
+        # than inherited.
+        if ext - low < OB_MINLEG * a[p]:
+            continue
+        # **The imbalance is required**, asked for 2026-10-07. It is the natural
+        # partner of a two-candle push rather than an extra condition bolted on:
+        # the first gap this can find is at `k = p + 2`, where `l[p+2] > h[p]` -
+        # the hole between the order block's own high and the second push
+        # candle's low, which is the displacement leaving a gap behind it.
+        # **Over the push as well as the leg.** `long_zones` searches `[p+2, b]`,
+        # which works there because its leg out of a pivot low takes a while to
+        # break. Here the break often lands on the *first* push bar, making that
+        # window empty - so the imbalance could never be found and every
+        # fast-breaking setup was dropped in silence, whatever it did. The gap the
+        # displacement leaves is at `p + 2` (`low[p+2] > high[p]`), the hole over
+        # the order block itself, so the window has to reach at least that far.
+        end_gap = max(b, p + PUSH_N)
+        gaps = [k for k in range(p + 2, end_gap + 1)
+                if k < len(l) and l[k] > h[k - 2] + FVG_MIN * a[p]]
+        if not gaps:
+            continue
+        # The band is the order block's own body, clipped like `long_zones` clips
+        # its own so one enormous candle is not a zone the width of the screen.
+        top = max(o[p], c[p])
+        top = min(max(top, low + 0.2 * a[p]), low + 1.5 * a[p])
+        known = p + PUSH_N  # the push is complete here; nothing earlier could know it
+        z = Zone(
+            side, p, low, top, b, level, gaps[0],
+            max(known, strong, gaps[0]), ext,
+            strong_leg(o, h, l, c, a[p], p, b),
+            True,  # push, by construction
+            sequential_push(o, h, l, c, p, 1, strong=True),
+            True,  # ob, by construction
+            float(c[p]),
+        )
+        # Its first return, exactly as `long_zones` finds one. Left out of the
+        # first draft, which is why that build produced sixteen zones and not
+        # one of them had a return: `ret` defaults to -1 and nothing else fills
+        # it, so every downstream pass skipped them silently.
+        for k in range(z.live + 1, min(n, z.live + EXPIRE)):
+            if l[k] <= z.hi:
+                z.ret = k
+                break
+        out.append(z)
+    return out
+
+
+def zones_ob(df, a):
+    """Both sides of `ob_zones`, in this chart's prices."""
+    zl = ob_zones(df, a, 1)
+    zs = ob_zones(flip(df), a, -1)
+    for z in zs:
+        z.lo, z.hi, z.bos_level, z.leg_extreme = -z.lo, -z.hi, -z.bos_level, -z.leg_extreme
+        z.line = -z.line
+    return zl + zs
 
 
 def zones(df, a):
@@ -535,7 +774,7 @@ def setups(df: pd.DataFrame, a: np.ndarray, zs: list[Zone]) -> pd.DataFrame:
                              expires=t["expires"],
                              stop_px=stop_px, target_px=(z.target if np.isfinite(z.target) and z.side * (z.target - ref) > 0
                                                          else opposite_target(zs, z, t["i"], ref)), zone_p=z.p,
-                             zone_lo=z.lo, zone_hi=z.hi, zone_live=z.live, zone_ret=z.ret, clean=z.clean, age=age, approach=approach,
+                             zone_lo=z.lo, zone_hi=z.hi, zone_live=z.live, zone_ret=z.ret, clean=z.clean, push=z.push, push_hi=z.push_hi, ob=z.ob, age=age, approach=approach,
                              protected=z.protected, dax_major=z.major, has_sl=z.has_sl,
                              inducement=bool(inner.any()), n_gaps=len(z.parts)))
     return pd.DataFrame(rows)
@@ -843,6 +1082,8 @@ elif os.environ.get("ZONES") == "rejection":  # or on the post-break rejection h
     zones = zones_rejection  # noqa: F811
 elif os.environ.get("ZONES") == "fvglevel":  # or on levels where gaps line up (LEVELS=aligned|single|random)
     zones = zones_fvglevel  # noqa: F811
+elif os.environ.get("ZONES") == "ob":  # or on the order block: the last candle against the move
+    zones = zones_ob  # noqa: F811
 
 
 # ------------------------------------------------------------------------------------------ plot
@@ -1002,11 +1243,11 @@ def ltf_setups(dh: pd.DataFrame, ah: np.ndarray, zs: list[Zone], d1: pd.DataFram
                 found["cisd"] = tight
                 found["cisd_z"] = min(lo, low_since) - BUF * A
                 rows += [dict(i=j, side=z.side, trigger=f"{k}@{ltf}", entry=np.nan, limit=0, stop_px=found[k] * z.side,
-                              zone_p=z.p, clean=z.clean) for k in ("cisd", "cisd_z")]
+                              zone_p=z.p, clean=z.clean, push=z.push, push_hi=z.push_hi, ob=z.ob) for k in ("cisd", "cisd_z")]
             if "choch" not in found and j > touch and _choch(ex, c, touch, j):
                 found["choch"] = tight
                 rows.append(dict(i=j, side=z.side, trigger=f"choch@{ltf}", entry=np.nan, limit=0,
-                                 stop_px=tight * z.side, zone_p=z.p, clean=z.clean))
+                                 stop_px=tight * z.side, zone_p=z.p, clean=z.clean, push=z.push, push_hi=z.push_hi, ob=z.ob))
             if len(found) == 3:
                 break
     st = pd.DataFrame(rows)
@@ -1048,7 +1289,11 @@ def _trade_all(sym, iv, book, costs, min_stop, df, a, st, filters, trigs, sec):
                 seed = zlib.crc32(f"{sym}{iv}{trig}{flt}{exit_}".encode())
                 ct = R.trade(book, R.coin(book, t.assign(target_d=tgt, trail_d=trail), a, seed), costs)
                 rt = R.trade(book, random_time(sig, df, a, np.random.default_rng(seed + 1)), costs)
-                for kind, x in (("real", t), ("coin", ct), ("random_time", rt)):
+                mk = t.assign(target_d=tgt, trail_d=trail)
+                ft = R.trade(book, at_market(book, mk, a, flip=True), costs)
+                st_ = R.trade(book, at_market(book, mk, a, flip=False), costs)
+                for kind, x in (("real", t), ("coin", ct), ("random_time", rt),
+                                ("flip", ft), ("straight", st_)):
                     if x.empty:
                         continue
                     out.append(pd.DataFrame({"kind": kind, "sym": sym, "family": R.FAMILY.get(sym, "?"), "iv": iv,
@@ -1056,6 +1301,52 @@ def _trade_all(sym, iv, book, costs, min_stop, df, a, st, filters, trigs, sec):
                                              "side": x["side"].to_numpy(), "entry_ts": x["entry_ts"].to_numpy(),
                                              "sid": sid_of.reindex(x["signal_bar"]).to_numpy() if kind == "real" else ""}))
     return out
+
+
+def at_market(book, t, a, flip: bool):
+    """The same fills, stop and exit, entered **at market** - `flip` reverses the side.
+
+    Both arms exist because `R.coin` enters at market while a real zone trade
+    enters on a limit at the zone, so "real against flip" would mix two changes:
+    the side and the entry. `straight` is the same side at market, and is the
+    only honest comparison for `flip`.
+    """
+    import run as R
+
+    ts = book.bars["ts"].to_numpy()
+    j = np.searchsorted(ts, t["entry_ts"].to_numpy(), side="right") - 1
+    side = t["side"].to_numpy()
+    return pd.DataFrame({
+        "i": np.maximum(j - 1, 0), "side": -side if flip else side,
+        "stop": t["stop_d"].to_numpy(), "target": t.get("target_d", 0.0),
+        "hold": R.MAXHOLD, "trail": t.get("trail_d", 0.0), "entry": np.nan,
+        "limit": 0, "expires": 1, "tag": t["tag"].to_numpy(),
+    })
+
+
+def flipped(book, t, a):
+    """The same fills, the same stop and exit, the **opposite side**.
+
+    `R.coin` is this with a random side; the flip is deterministic. It is the
+    test `walks-and-edge.md` names for a result that sits *below* its walk:
+
+        Real below walk: the market punishes the chart reader's view ... The
+        opposite trade then becomes its own frozen test.
+
+    `origin-zones.md` flipped its zones and found -0.24 to -0.80 everywhere, but
+    those were pivot-low origins - of which only 22% are order blocks - so this
+    is a different population and the question is open again.
+    """
+    import run as R
+
+    ts = book.bars["ts"].to_numpy()
+    j = np.searchsorted(ts, t["entry_ts"].to_numpy(), side="right") - 1
+    return pd.DataFrame({
+        "i": np.maximum(j - 1, 0), "side": -t["side"].to_numpy(),
+        "stop": t["stop_d"].to_numpy(), "target": t.get("target_d", 0.0),
+        "hold": R.MAXHOLD, "trail": t.get("trail_d", 0.0), "entry": np.nan,
+        "limit": 0, "expires": 1, "tag": t["tag"].to_numpy(),
+    })
 
 
 def run_one(job):
@@ -1083,6 +1374,15 @@ def run_one(job):
         a4 = P.atr(d4, 14)
         st["nest"] = st["bias"] & nested(df, d4, a4, zones(d4, a4), st)
     st["strong"] = st["bias"] & st["clean"]
+    # Asked for 2026-10-07, frozen before the run: two consecutive candles
+    # leaving the zone, each making progress on the last. `push` is close past
+    # the previous close, `push_hi` close past its whole range - the desk
+    # expects the second to be the better one, which is itself a prediction.
+    # `push_ob` adds the origin being the last candle against the move with a
+    # real body. Kept apart so the run says which part, if any, carries it.
+    st["push"] = st["bias"] & st["push"]
+    st["push_hi"] = st["bias"] & st["push_hi"]
+    st["push_ob"] = st["push_hi"] & st["ob"]
     # SMC: the 4h dealing range (last known 4h swing high and low) - longs from its discount half,
     # shorts from its premium; London (02-05 New York) and New York (07-10) killzones
     h4, l4 = d4["high"].to_numpy(), d4["low"].to_numpy()
@@ -1125,7 +1425,8 @@ def run_one(job):
     st["zma_stretch"] = st["bias"] & st["zma_st"]
     st["zma_bjorg"] = st["zma_stretch"] & st["bj"]
     st["zma_strong"] = st["strong"] & st["zma_st"]
-    filters = ["none", "bias", "strong", "smc_pd", "smc_idm", "smc_all", "fast_old",
+    filters = ["none", "bias", "strong", "push", "push_hi", "push_ob",
+               "smc_pd", "smc_idm", "smc_all", "fast_old",
                "nogap", "hasgap", "dax", "dax_major", "bjorg", "bjorg_strong", "bjorg_dax",
                "zma", "zma_stretch", "zma_bjorg", "zma_strong"] + \
         (["nest", "smc_kz"] if iv == "1h" else [])
@@ -1150,8 +1451,11 @@ def run_one(job):
         k4l = P.htf_index(d1["ts"].to_numpy(), SEC[lt_iv], d4["ts"].to_numpy(), SEC["4h"])
         lt["bias"] = b4[np.maximum(k4l[lt["i"].to_numpy()], 0)] == lt["side"]
         lt["strong"] = lt["bias"] & lt["clean"]
+        lt["push"] = lt["bias"] & lt["push"]
+        lt["push_hi"] = lt["bias"] & lt["push_hi"]
+        lt["push_ob"] = lt["push_hi"] & lt["ob"]
         lt["sid"] = [f"{sym}|{iv}>{lt_iv}|{k}" for k in range(len(lt))]
-        out += _trade_all(sym, iv, b1, c1, ms1, d1, a1, lt, ["none", "bias", "strong"], trig_here,
+        out += _trade_all(sym, iv, b1, c1, ms1, d1, a1, lt, ["none", "bias", "strong", "push", "push_hi", "push_ob"], trig_here,
                           SEC[lt_iv])
     print(f"  {sym} {iv}: {len(zs)} zones, {len(st)} setups", flush=True)
     return out + [feats.assign(kind="setup")]
