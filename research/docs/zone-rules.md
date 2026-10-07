@@ -151,6 +151,31 @@ rejected the low, and the close-in-the-upper-half test is the rejection claim.
 All of it mirrors for supply: upper wicks, a bearish impulse, a close below the
 20-bar low.
 
+### 7. Open question: does the approach decide whether it holds?
+
+> "the momentum candles with which it comes back to the zone matters before the
+> candlestick pattern - if the candles start becoming choppy as it is getting
+> closer back to the zone ... if it does not slow when getting closer to the
+> zone, the zone might get voided"
+
+Not part of the rule yet - a prediction about it, with a sign, which is what
+makes it testable. Four readings of the approach, all from bars **strictly
+before** the bar that re-enters the band, because the touch entry is a limit
+resting through that bar:
+
+| | |
+|---|---|
+| `app_decel` | the near half's speed over the far half's. Below 1 is slowing into the zone |
+| `app_speed` | ATR a bar over the whole approach |
+| `app_body` | mean body as a share of range: momentum against chop |
+| `app_run` | consecutive bars closing the zone's way at the end |
+
+Scored against the **hold rate** - no close beyond the band's far edge within the
+reaction window, a property of the zone rather than of any trade - and against
+the R actually earned, so a feature that sorts holds but not money shows up as
+that. [`zone_approach.py`](../ideas/zone_approach.py), with a within-symbol
+shuffle of the feature as the null and Benjamini-Hochberg across the lot.
+
 ## What is given and what is fitted
 
 This matters more than any single number. **Given** by the desk and therefore not

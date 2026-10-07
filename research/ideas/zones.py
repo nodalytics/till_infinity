@@ -914,6 +914,63 @@ def opposite_target(zs: list[Zone], z: Zone, i: int, ref: float) -> float:
     return best
 
 
+#: Bars of approach read before the return, split in half to ask whether price
+#: was slowing as it got closer. Asked for 2026-10-07: "if the candles start
+#: becoming choppy as it is getting closer back to the zone ... if it does not
+#: slow when getting closer to the zone, the zone might get voided".
+APPROACH = int(os.environ.get("APPROACH", 6))
+
+
+def approach_shape(frame: pd.DataFrame, a: np.ndarray, r: int, n: int | None = None) -> dict:
+    """How price came back to the zone, read on the long's frame.
+
+    Every bar used is **strictly before** `r`, the bar that re-entered the band,
+    because the touch entry is a limit resting through `r` itself - a feature
+    that read `r`'s own body would be reading the trade it is meant to predict.
+
+    * `app_speed` - ATR a bar, over the whole approach
+    * `app_decel` - the near half's speed over the far half's. Below 1 is price
+      slowing as it closes on the zone; above 1 is accelerating into it
+    * `app_body` - mean body as a share of range: momentum candles against chop
+    * `app_run` - consecutive bars closing the zone's way at the end
+    """
+    n = APPROACH if n is None else n
+    o, h, l, c = (frame[k].to_numpy() for k in ("open", "high", "low", "close"))
+    i0 = max(0, r - n)
+    if r - i0 < 4 or not a[r] > 0:
+        return dict(app_speed=np.nan, app_decel=np.nan, app_body=np.nan, app_run=0)
+    w = slice(i0, r)
+    half = i0 + (r - i0) // 2
+    far = abs(c[half] - c[i0]) / max(half - i0, 1)
+    near = abs(c[r - 1] - c[half]) / max(r - 1 - half, 1)
+    rng = np.maximum(h[w] - l[w], 1e-12)
+    run = 0
+    for k in range(r - 1, i0 - 1, -1):
+        if c[k] < o[k]:  # a down bar, which is the way back to a demand zone
+            run += 1
+        else:
+            break
+    return dict(app_speed=float((far + near) / 2 / a[r]),
+                app_decel=float(near / far) if far > 0 else np.nan,
+                app_body=float(np.mean(np.abs(c[w] - o[w]) / rng)),
+                app_run=int(run))
+
+
+def zone_held(frame: pd.DataFrame, a: np.ndarray, z: Zone, bars: int | None = None) -> bool:
+    """Did the band hold? No close beyond its far edge within the reaction window.
+
+    The same test `triggers` uses to kill a zone (`z.dead`), stated on its own so
+    the hold rate can be measured without reference to any entry or exit - it is
+    a property of the zone, not of a trade in it.
+    """
+    bars = WINDOW if bars is None else bars
+    c = frame["close"].to_numpy()
+    r, A = z.ret, a[z.p]
+    if r < 0 or not A > 0:
+        return False
+    return not bool(np.any(c[r:min(len(c), r + bars)] < z.lo - BUF * A))
+
+
 def setups(df: pd.DataFrame, a: np.ndarray, zs: list[Zone]) -> pd.DataFrame:
     rows = []
     c = df["close"].to_numpy()
@@ -942,6 +999,7 @@ def setups(df: pd.DataFrame, a: np.ndarray, zs: list[Zone]) -> pd.DataFrame:
         age = r - z.live
         approach = (fc[max(r - 5, 0)] - fl_[r]) / a[r] if a[r] > 0 else np.nan
         inner = (ex["pl_at"] > z.bos) & (ex["pl_at"] < r) & (ex["pl_px"] > zz.hi)
+        shape = approach_shape(frame, a, r)
         for t in triggers(frame, a, zz, ex):
             stop_px = t["stop_px"] * z.side
             entry = t["entry"] * z.side if np.isfinite(t["entry"]) else np.nan
@@ -952,7 +1010,8 @@ def setups(df: pd.DataFrame, a: np.ndarray, zs: list[Zone]) -> pd.DataFrame:
                                                          else opposite_target(zs, z, t["i"], ref)), zone_p=z.p,
                              zone_lo=z.lo, zone_hi=z.hi, zone_live=z.live, zone_ret=z.ret, clean=z.clean, push=z.push, push_hi=z.push_hi, ob=z.ob, age=age, approach=approach,
                              protected=z.protected, dax_major=z.major, has_sl=z.has_sl,
-                             inducement=bool(inner.any()), n_gaps=len(z.parts)))
+                             inducement=bool(inner.any()), n_gaps=len(z.parts),
+                             held=zone_held(frame, a, zz), **shape))
     return pd.DataFrame(rows)
 
 
