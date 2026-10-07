@@ -208,7 +208,7 @@ QUIET_SKIP = int(os.environ.get("QUIET_SKIP", 2))
 WICK_MIN = float(os.environ.get("WICK_MIN", 0.40))
 TRIGGERS = ("touch", "touch_mid", "touch_far", "touch_deep", "pin", "wick", "engulf", "star", "inside", "reclaim", "cisd",
             "sweep", "double", "ifvg", "choch", "rsi_div", "displace", "tweezer", "outside", "climax")
-SEC = {"1h": 3600, "4h": 14400, "1d": 86400}
+SEC = {"1h": 3600, "4h": 14400, "1d": 86400, "1w": 604800}
 
 
 @dataclass
@@ -1419,9 +1419,51 @@ def nested(df, d4, a4, zs4, st):
 
 
 LTF_KINDS = ("cisd", "choch", "cisd_z")
-LTFS = {"1h": ("30m", "15m"), "4h": ("1h", "30m", "15m"), "1d": ("1h", "30m", "15m")}
+#: `1w` has no confirmation pass: the lower-timeframe triggers are built from
+#: ("1h", "30m", "15m"), and 1h history starts in 2020 while the weekly series is
+#: resampled from daily back to 2002 - so an LTF pass there would quietly measure
+#: a six-year slice of a twenty-four-year study.
+LTFS = {"1h": ("30m", "15m"), "4h": ("1h", "30m", "15m"), "1d": ("1h", "30m", "15m"), "1w": ()}
 SEC.update({"15m": 900, "30m": 1800})
 LTF_TRIGGERS = tuple(f"{k}@{t}" for t in ("1h", "30m", "15m") for k in LTF_KINDS)
+
+
+def weekly(df: pd.DataFrame) -> pd.DataFrame:
+    """Daily bars folded into weeks, Monday to Monday.
+
+    There are no weekly bars in `mt5bt.db` - 15m, 1h, 4h and 1d only - so the
+    weekly study is a resample of the daily one and is exactly as good as it.
+    The epoch was a Thursday, so the Monday a timestamp belongs to is
+    `day - (day + 3) % 7`; flooring by 604800 would cut the week on a Thursday
+    and split every weekend across two bars.
+    """
+    d = df.copy()
+    day = d["ts"].to_numpy() // 86400
+    d["k"] = (day - (day + 3) % 7) * 86400
+    agg = dict(open=("open", "first"), high=("high", "max"), low=("low", "min"),
+               close=("close", "last"))
+    if "volume" in d:
+        agg["volume"] = ("volume", "sum")
+    if "spread" in d:
+        agg["spread"] = ("spread", "min")
+    w = d.groupby("k").agg(**agg).reset_index().rename(columns={"k": "ts"})
+    return w
+
+
+def book_at(sym, iv):
+    """The book for an interval the broker stores, or a weekly one built here."""
+    from mt5bt import Book
+    from survivors import book_for
+    if iv != "1w":
+        return book_for(sym, iv)
+    got = book_for(sym, "1d")
+    if got is None:
+        return None
+    b, costs, ms = got
+    w = weekly(b.bars)
+    if len(w) < 200:
+        return None
+    return Book(sym, w, b.spec, "1w", feed=sym.lower()), costs, ms
 
 
 def ltf_book(sym, ltf):
@@ -1587,11 +1629,14 @@ def flipped(book, t, a):
 def run_one(job):
     import run as R
     import survivors
-    from survivors import book_for
     sym, iv = job
     R.DB = survivors.DB = os.environ.get("MT5BT_DB")
-    got = book_for(sym, iv)
-    d4 = R.load(sym, "4h")
+    got = book_at(sym, iv)
+    # **The bias frame.** 4h for every interval the desk trades, as before. At 1w
+    # there is nothing above it in the database, so the daily frame stands in -
+    # which makes `bias` a *lower*-timeframe filter there, and the weekly tables
+    # therefore report `filter=none` only.
+    d4 = R.load(sym, "4h" if iv != "1w" else "1d")
     if got is None or d4 is None:
         return []
     book, costs, min_stop = got

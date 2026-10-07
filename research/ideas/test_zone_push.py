@@ -548,3 +548,25 @@ def test_freshness_at_entry_is_already_guaranteed_by_the_first_return():
     l_, h_ = df["low"].to_numpy(), df["high"].to_numpy()
     between = [k for k in range(z.live + 1, z.ret) if l_[k] <= hi and h_[k] >= lo]
     assert between == [], "no bar touched the band between the zone going live and its return"
+
+
+def test_weekly_bars_are_cut_on_monday_not_on_thursday():
+    """There are no weekly bars in the database, so the weekly study resamples
+    the daily one. The epoch was a Thursday: flooring timestamps by 604800 cuts
+    the week on a Thursday and splits every weekend across two bars."""
+    import pandas as pd
+
+    # 2024-01-01 was a Monday; fourteen daily bars is two whole weeks.
+    start = 1704067200
+    ts = np.array([start + k * 86400 for k in range(14)])
+    df = pd.DataFrame({"ts": ts, "open": np.arange(14.0), "high": np.arange(14.0) + 1,
+                       "low": np.arange(14.0) - 1, "close": np.arange(14.0) + 0.5})
+    w = Z.weekly(df)
+    assert len(w) == 2, "two Mondays, two weekly bars"
+    assert list(w["ts"]) == [start, start + 7 * 86400]
+    assert w["open"].iloc[0] == 0.0 and w["close"].iloc[0] == 6.5
+    assert w["high"].iloc[0] == 7.0 and w["low"].iloc[0] == -1.0
+    # every bar lands in the week of the Monday on or before it
+    for t in ts:
+        k = int(t // 86400)
+        assert (k - (k + 3) % 7) * 86400 in list(w["ts"])
