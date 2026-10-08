@@ -330,7 +330,9 @@ EURUSD through Amihud, Kyle and the spread estimators. It says nothing about whi
 
 ## 9. Caveats, and what the tests caught
 
-- **The EURUSD reversal was found here, not confirmed.** It sits where [`physics.md`](physics.md)
+- **The EURUSD reversal was found here, and has since been confirmed** on the six other USD majors
+  at 15m and 1h, rollover masked, without paying a retail spread ([`fx-reversal.md`](fx-reversal.md)).
+  As first written: It sits where [`physics.md`](physics.md)
   put it, so it is a replication of a known effect rather than a new search result. But to trade
   it as a quantum or HMM state on the 4h candle would need a frozen test on unseen data (other
   majors, or forward time) and an execution cost under about 0.5 pip round trip.
