@@ -472,6 +472,19 @@ class Touch(Restorable):
     #: which is the question `min_stop_vol`, `reach_stop_vol` and every
     #: stop-width comparison were trying to answer.
     adverse_vol: float = 0.0
+    #: How far **past** the level the extreme got, in volatility units, and
+    #: zero while it never crossed.
+    #:
+    #: `depth_vol` is the distance at **arrival** and this is the furthest the
+    #: move ever reached on the level's far side, which are different questions
+    #: and separate different outcomes. A touch that never crossed is a reject;
+    #: one that crossed and came back is a trap; one that crossed and stayed is
+    #: a break. Only the first is visible in `depth_vol`.
+    #:
+    #: Measured against the level price rather than the zone edge, with
+    #: `risk_vol` published beside it, so a consumer can compare the two
+    #: instead of being handed a subtraction it cannot inspect.
+    penetration_vol: float = 0.0
 
     #: What the model thought when this touch opened, kept so the resolution
     #: can be scored against it.
@@ -549,6 +562,7 @@ class Touch(Restorable):
             "outcome": str(self.outcome),
             "push_vol": round(self.push_vol, 4),
             "excursion_vol": round(self.excursion_vol, 4),
+            "penetration_vol": round(self.penetration_vol, 4),
             "adverse_vol": round(self.adverse_vol, 4),
             "edge": round(self.edge, 4),
             "probability_up": round(self.probability_up, 4),
@@ -1510,6 +1524,12 @@ class Tracker(Restorable):
         else:
             touch.extreme = max(touch.extreme, reach)
             deeper = price >= (touch.origin or price)
+        # How far through the level the extreme got. `distance_vol` is positive
+        # above, so arriving from above means the far side is negative.
+        through = level.distance_vol(touch.extreme, vol)
+        if side is Side.ABOVE:
+            through = -through
+        touch.penetration_vol = max(touch.penetration_vol, through, 0.0)
         if deeper and not touch.turned:
             touch.origin = price
         elif not touch.turned and touch.origin:

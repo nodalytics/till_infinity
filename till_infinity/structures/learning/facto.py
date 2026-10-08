@@ -106,6 +106,17 @@ NUMERIC: tuple[str, ...] = (
     # Already in [0, 1], so it needs no saturation. The one feature here
     # measured to add anything once `side` is known - see research/features.md.
     "up_rate",
+    # **Features the service computed and this could not see.** `slowing` has
+    # a measured AUC of 0.5237 in band (`force.md`, and it sits in
+    # `context/registry.py`'s roster) and was still not an input here;
+    # `penetration_vol` and `energy` were published for the first time
+    # alongside this change. An FM models how features *combine*, which is
+    # the argument for offering it the ones that describe the same event from
+    # different angles - how hard price arrived, how far through it got, and
+    # how much harder it left.
+    "slowing",
+    "penetration_vol",
+    "energy",
 )
 
 #: Features that are names rather than numbers, one-hot encoded.
@@ -115,7 +126,16 @@ CATEGORICAL: tuple[str, ...] = ("side", "interval")
 #: `strength`, `regime`, `pivot` and `backcheck` already live in [0, 1]; these
 #: three are ratios with a volatility estimate underneath, so a touch arriving
 #: in a dead pocket divides by a small number and arrives arbitrarily large.
-UNBOUNDED: tuple[str, ...] = ("approach_vol", "depth_vol", "run_vol")
+UNBOUNDED: tuple[str, ...] = (
+    "approach_vol",
+    "depth_vol",
+    "run_vol",
+    # Both are ratios over a volatility estimate, so a touch in a dead pocket
+    # divides by a small number and arrives arbitrarily large - the same reason
+    # the three above are here. `slowing` is already bounded and is not.
+    "penetration_vol",
+    "energy",
+)
 
 #: Where the saturating transform puts a typical value. Chosen from what the
 #: journal actually holds - median `approach_vol` sits near 1.7 - so ordinary
