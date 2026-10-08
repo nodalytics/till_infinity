@@ -163,6 +163,171 @@ def test_a_flat_series_has_no_imbalance():
     assert gaps.gaps(highs, lows, warm(flat)) == []
 
 
+# ------------------------------------------------- the rest of the family
+
+
+def bodies(highs, lows, up=True):
+    """Opens and closes filling each bar's range, so bodies are whole bars."""
+    if up:
+        return list(lows), list(highs)
+    return list(highs), list(lows)
+
+
+def test_a_body_gap_inside_overlapping_ranges_is_a_volume_imbalance():
+    """The distinction `fvg` cannot draw: price was quoted here and barely
+    traded, which is a weaker claim than a hole in the range."""
+    bars, base = 60, 4400.0
+    highs = [base + 2.0] * bars
+    lows = [base - 2.0] * bars
+    opens = [base - 1.0] * bars
+    closes = [base + 1.0] * bars
+    at = 20
+    # Bar `at` closes at +12 and the next opens at +30, while their wicks still
+    # overlap - so the ranges touch and the bodies do not.
+    highs[at], lows[at], opens[at], closes[at] = base + 32.0, base - 2.0, base, base + 12.0
+    highs[at + 1], lows[at + 1] = base + 40.0, base + 10.0
+    opens[at + 1], closes[at + 1] = base + 30.0, base + 38.0
+    for i in range(at + 2, bars):
+        highs[i], lows[i] = base + 46.0, base + 40.0
+        opens[i], closes[i] = base + 41.0, base + 45.0
+    found = gaps.volume_imbalances(opens, highs, lows, closes, warm(closes))
+    assert found
+    assert found[0].kind == "vi"
+    assert found[0].up is True
+    # the wicks overlap, which is what makes it a `vi` rather than an `og`
+    assert lows[at + 1] <= highs[at]
+    assert gaps.opening_gaps(highs, lows, warm(closes)) == []
+
+
+def test_bars_that_do_not_touch_at_all_are_an_opening_gap():
+    bars, base = 60, 4400.0
+    highs = [base + 2.0] * bars
+    lows = [base - 2.0] * bars
+    at = 20
+    for i in range(at + 1, bars):
+        highs[i], lows[i] = base + 46.0, base + 40.0
+    found = gaps.opening_gaps(
+        highs, lows, warm([(h + low) / 2 for h, low in zip(highs, lows, strict=True)])
+    )
+    assert found
+    assert found[0].kind == "og"
+    assert found[0].up is True
+    assert found[0].low == highs[at]
+    assert found[0].high == lows[at + 1]
+
+
+def test_a_bar_that_is_nearly_all_body_is_a_void():
+    """The desk's displacement rule as a formation, and its band is the body."""
+    bars, base = 60, 4400.0
+    highs = [base + 2.0] * bars
+    lows = [base - 2.0] * bars
+    opens = [base - 1.0] * bars
+    closes = [base + 1.0] * bars
+    at = 20
+    highs[at], lows[at] = base + 41.0, base - 1.0
+    opens[at], closes[at] = base, base + 40.0
+    for i in range(at + 1, bars):
+        highs[i], lows[i] = base + 46.0, base + 40.0
+        opens[i], closes[i] = base + 41.0, base + 45.0
+    found = gaps.voids(opens, highs, lows, closes, warm(closes))
+    assert found
+    assert found[0].kind == "void"
+    assert found[0].low == opens[at]
+    assert found[0].high == closes[at]
+
+
+def test_a_wick_heavy_bar_is_not_a_void():
+    """Body share is the whole test: the same range, mostly wick."""
+    bars, base = 60, 4400.0
+    highs = [base + 2.0] * bars
+    lows = [base - 2.0] * bars
+    opens = [base - 1.0] * bars
+    closes = [base + 1.0] * bars
+    at = 20
+    highs[at], lows[at] = base + 41.0, base - 1.0
+    opens[at], closes[at] = base + 10.0, base + 20.0  # body is a quarter of the range
+    for i in range(at + 1, bars):
+        highs[i], lows[i] = base + 46.0, base + 40.0
+        opens[i], closes[i] = base + 41.0, base + 45.0
+    assert gaps.voids(opens, highs, lows, closes, warm(closes)) == []
+
+
+def test_a_gap_closed_through_inverts():
+    """`gaps` drops it and `inversions` is the kind that wants it."""
+    highs, lows = gapped()
+    closes = [(h + low) / 2 for h, low in zip(highs, lows, strict=True)]
+    # Price closes back below the gap's low, which breaks it rather than
+    # testing it.
+    closes[-1] = 4300.0
+    lows[-1] = 4295.0
+    vol = warm(closes)
+    assert gaps.gaps(highs, lows, vol) == []
+    found = gaps.inversions(highs, lows, closes, vol)
+    assert found
+    assert found[0].kind == "ifvg"
+    # it was left by a move up and now reads the other way
+    assert found[0].up is False
+
+
+def test_an_untested_gap_does_not_invert():
+    highs, lows = gapped()
+    closes = [(h + low) / 2 for h, low in zip(highs, lows, strict=True)]
+    assert gaps.inversions(highs, lows, closes, warm(closes)) == []
+
+
+def test_opposing_gaps_that_overlap_are_a_balanced_range():
+    bars, base = 80, 4400.0
+    highs = [base + 2.0] * bars
+    lows = [base - 2.0] * bars
+    up_at = 20
+    for i in range(up_at + 1, bars):
+        highs[i], lows[i] = base + 46.0, base + 40.0
+    # and back down through the same band, leaving a gap the other way
+    down_at = 40
+    for i in range(down_at + 1, bars):
+        highs[i], lows[i] = base + 3.0, base - 3.0
+    closes = [(h + low) / 2 for h, low in zip(highs, lows, strict=True)]
+    found = gaps.balanced_ranges(highs, lows, warm(closes))
+    assert found  # or the loop below asserts nothing at all
+    for one in found:
+        assert one.kind == "bpr"
+        assert one.low < one.high
+
+
+def test_the_family_is_one_sorted_list():
+    highs, lows = gapped()
+    closes = [(h + low) / 2 for h, low in zip(highs, lows, strict=True)]
+    opens = list(closes)
+    found = gaps.imbalances(opens, highs, lows, closes, warm(closes))
+    assert [g.index for g in found] == sorted(g.index for g in found)
+    assert {g.kind for g in found} <= set(gaps.KINDS)
+
+
+def test_the_body_kinds_are_skipped_without_opens():
+    """A body inferred from the range is a different object wearing the name."""
+    highs, lows = gapped()
+    closes = [(h + low) / 2 for h, low in zip(highs, lows, strict=True)]
+    times = [float(i) * 300 for i in range(len(closes))]
+    vol = warm(closes)
+    without = gaps.points(times, highs, lows, closes, vol)
+    assert without == gaps.points(
+        times, highs, lows, closes, vol, kinds=("fvg", "og", "ifvg", "bpr")
+    )
+
+
+def test_the_original_three_bar_gap_still_draws_what_it_did():
+    """The `gap` pass is live, so the family must not move the level it drew."""
+    highs, lows = gapped()
+    closes = [(h + low) / 2 for h, low in zip(highs, lows, strict=True)]
+    times = [float(i) * 300 for i in range(len(closes))]
+    vol = warm(closes)
+    only_fvg = gaps.points(times, highs, lows, closes, vol, kinds=("fvg",))
+    assert only_fvg
+    assert [(p.index, p.price) for p in only_fvg] == [
+        (index, (low + high) / 2.0) for index, low, high, _ in gaps.gaps(highs, lows, vol)
+    ]
+
+
 # --------------------------------------------------------- the round number
 
 
