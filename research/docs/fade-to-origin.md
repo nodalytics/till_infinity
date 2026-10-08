@@ -54,6 +54,47 @@ That is the trade moving along a breakeven line, and it is `1/(1+N)` again: ever
 way of taking it buys hit rate and sells reward at close to the fair rate, and
 lands a few points short each time.
 
+### How much body the turn candle needs
+
+`impulse_back` inherited 0.70 from the zone work, but a candle turning a fade is
+not the same object as one starting a leg, so the threshold was swept at 0.45,
+0.50, 0.60 and 0.70. On the first run's sixteen instruments, at pad 0.25:
+
+| iv | body | n | RR | hit | needs | R | gap |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| 1d | 0.45 | 205 | 1.23 | 40.0% | 44.9% | -0.089 | -4.9 |
+| 1d | 0.50 | 201 | 1.19 | 41.3% | 45.7% | -0.056 | -4.4 |
+| 1d | 0.60 | 185 | 1.07 | 45.4% | 48.3% | -0.016 | **-2.9** |
+| 1d | 0.70 | 154 | 0.94 | 48.1% | 51.5% | +0.036 | -3.4 |
+| 1h | 0.45 | 1,087 | 1.37 | 34.9% | 42.1% | -0.095 | -7.2 |
+| 1h | 0.70 | 915 | 1.18 | 37.2% | 45.8% | -0.104 | -8.6 |
+| 4h | 0.45 | 433 | 1.31 | 36.3% | 43.3% | -0.047 | -7.0 |
+| 4h | 0.70 | 343 | 1.03 | 41.1% | 49.4% | -0.022 | -8.3 |
+
+**A stricter turn candle raises the hit rate every time and never pays for
+itself.** The ordering is monotone at all three timeframes - 40.0% to 48.1% at
+1d, 34.9% to 37.2% at 1h, 36.3% to 41.1% at 4h - and so is the fall in RR, 1.23
+to 0.94, 1.37 to 1.18, 1.31 to 1.03. What breakeven asks rises with it. At 1d the
+hit rate rises slightly faster than `needs` (+8.1 points against +6.6); at 1h and
+4h slightly slower. Nothing crosses.
+
+So the threshold behaves exactly like the turn rules themselves, one level down:
+it buys hit rate at close to the fair exchange rate, and which side of fair it
+lands on changes with the timeframe. That is a coin, not a parameter.
+
+### The one positive cell does not survive the instrument set
+
+`impulse_back` at 0.70 on 1d was the only cell of the original sixty with a
+positive mean R, at **+0.036** [-0.093, +0.164]. Rerunning the sweep over a wider
+universe - 29 instruments, adding the indices, the oils and the rest of the
+metals - turns it to **-0.028**, and it is no longer the best cell at its own
+timeframe. **0 of 105 cells are positive in either universe.**
+
+Worth being plain about what that is: the first run's sixteen are FX, metals and
+two crypto, and the subset reproduces exactly, so nothing was mismeasured. A
+result that reverses when thirteen instruments are added was a property of those
+sixteen.
+
 ## 2. Where the 82% goes
 
 The return rate is real and the trade still fails, which is only a contradiction

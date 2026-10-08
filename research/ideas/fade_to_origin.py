@@ -67,7 +67,14 @@ PADS = tuple(float(x) for x in os.environ.get("PADS", "0.25,0.5,1.0,2.0,4.0").sp
 #: act and the dumbest version of the idea, since it sells into a move that is
 #: still going. The rest wait for the move to stop first, which is what a desk
 #: fading a displacement would actually do.
-TURNS = ("live", "close_against", "two_against", "impulse_back")
+#: How much body an `impulse_back` candle needs. 0.70 is the displacement
+#: definition the zone work uses, but a candle turning a fade is not the same
+#: object as one starting a leg, so the bar it has to clear is an open question
+#: rather than a constant to inherit.
+IMPULSES = tuple(float(x) for x in os.environ.get("IMPULSES", "0.45,0.5,0.6,0.7").split(","))
+TURNS = ("live", "close_against", "two_against") + tuple(
+    f"impulse_back:{b:g}" for b in IMPULSES
+)
 
 
 def _turn(o, h, l, c, start, stop_at, side, kind):
@@ -87,9 +94,9 @@ def _turn(o, h, l, c, start, stop_at, side, kind):
             run = run + 1 if against else 0
             if run >= 2:
                 return k
-        if kind == "impulse_back" and against:
+        if kind.startswith("impulse_back") and against:
             body = abs(c[k] - o[k]) / max(h[k] - l[k], 1e-12)
-            if body >= 0.70:
+            if body >= float(kind.split(":")[1]):
                 return k
     return None
 
