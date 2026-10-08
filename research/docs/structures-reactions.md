@@ -330,3 +330,89 @@ being filled by whichever one turned up. The tests missed it
 because they resolve a touch at `when=0.0`, where an age and a
 clock read the same.
 
+
+## `PRIOR_WEIGHT`, estimated rather than chosen (2026-10-08)
+
+`infer` blends a level's own record with its neighbours':
+
+    weight = own.touches / (own.touches + PRIOR_WEIGHT)
+
+`PRIOR_WEIGHT` was 4.0, and its docstring says "roughly: borrowed evidence is
+worth this much of the level's own". Right shape, guessed number - and what a
+guess costs here is not obvious in either direction:
+
+* if levels genuinely differ, the true weight is **smaller** and 4.0
+  **over-shrinks**, averaging real idiosyncrasy away
+* if levels barely differ, the true weight is **larger** and 4.0
+  **under-shrinks**, letting three noisy touches override a pooled estimate
+  built on hundreds
+
+Nobody had checked which, and it is not a matter of taste.
+
+### It is a variance ratio with a closed form
+
+`PRIOR_WEIGHT` is the `K` of a shrinkage estimator. The Bayes weight for a rate
+observed `n` times is `n / (n + K)` with
+
+    K = sigma_within^2 / tau^2
+
+`sigma_within^2` is the noise in one observation - `p(1-p)` for a rate - and
+`tau^2` is the **real** spread of rates between levels. Both halves of the
+intuition fall straight out: levels that really differ give a large `tau^2` and
+a small `K`; levels that do not give `tau^2` near zero and a `K` that says pool
+almost everything.
+
+`tau^2` is estimated by DerSimonian and Laird's method of moments.
+**Subtracting the sampling noise is the method, not a refinement**: the spread
+of observed rates already contains each level's own binomial noise, so the raw
+variance always overstates `tau^2` and cannot tell "levels differ" from "levels
+were counted few times".
+
+### How wrong the naive version is, measured
+
+200 identical levels, counted eight times each - so the true `tau^2` is zero
+and every scrap of observed spread is noise:
+
+| | `tau^2` | implied `K` | reads as |
+|---|---:|---:|---|
+| raw variance of the rates | 0.0370 | **6.7** | "these levels differ" |
+| after subtracting binomial noise | 0.0060 | **41.7** | "these levels are the same" |
+
+The naive route errs in the direction that costs most: it **under-pools**,
+letting a handful of noisy touches override an estimate built on hundreds. The
+binomial noise of a rate counted eight times is 0.0312 - almost the whole of
+the raw spread, which is exactly what the correction removes.
+
+### What it needs, and the caveat taken seriously
+
+`K` needs enough **levels** in a pool, not enough touches in a level - a pool
+of three levels cannot say how much levels differ however often each was
+touched. Below `MIN_LEVELS` it returns the constant unchanged, the same run-in
+shape `conformal.SETTLE` uses and for the same reason, and it is clamped at
+both ends because "indistinguishable" is a claim no finite sample earns
+outright.
+
+The estimator's own noise is visible and pinned by a test: on the same
+identical-level pool the residual `tau^2` is far larger at 60 levels than at
+600. It sharpens with levels, not with touches.
+
+### Why this is not the thing `edge.md` refuted
+
+[`edge.md`](edge.md) found a rolling quantile losing to a matched constant
+**four times out of four**, and a walk-forward adaptive probability floor worse
+than no floor. That is a strong prior against replacing a constant with
+something adaptive, and it is taken seriously rather than waved at.
+
+The difference is what is estimated. Those fitted a **threshold against
+returns** - a free parameter tuned until a number looked good, with no identity
+constraining it. This estimates a **variance ratio with a closed form** from
+the touch counts themselves, with no reference to whether anything made money.
+It is the same arithmetic that says a mean of ten samples is worth ten times
+one sample.
+
+### Still unmeasured
+
+Whether the estimated weight produces better inferences than 4.0 on real
+touches. The fallback means a cold or thin book behaves exactly as before,
+which makes it safe and not right - the same distinction the slope and the
+calibrated zone sit behind.

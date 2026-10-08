@@ -36,7 +36,7 @@ from typing import Any, ClassVar
 from ..logging import get_logger
 from ..shared import effects
 from . import breaks as bk
-from . import conformal, reactions
+from . import conformal, reactions, shrinkage
 from . import cycles as cy
 from . import levels as lv
 from . import rollover as ro
@@ -348,6 +348,12 @@ MAX_LEVELS = 15
 #: default protects against does not apply either: the grid is 2.5 units apart
 #: by construction, which is sparser than anything the other passes produce.
 FORMATION_MIN_SWINGS: dict[str, int] = {"round": 1}
+
+#: How often the estimated `PRIOR_WEIGHT` is recomputed, in seconds. It is a
+#: property of a population of levels and moves slowly; recomputing it per
+#: touch would be a pass over every level on the instrument for a number that
+#: barely changes between them.
+PRIOR_WEIGHT_RECHECK = 900.0
 
 
 def _widen_to_origin(low: float, high: float, origin: dict) -> tuple[float, float]:
@@ -1141,6 +1147,12 @@ class Engine:
         #: again after a restart is correct.
         self._declined: set[tuple[str, str]] = set()
         self._levels: dict[tuple[str, str], list[lv.Level]] = {}
+        #: `(interval, side) -> (when, K)`. How much a neighbour's evidence is
+        #: worth in a level's own touches, estimated from the spread between
+        #: the levels in the book rather than taken as a constant. Cached
+        #: because it is a property of the population and moves slowly; see
+        #: `structures/shrinkage.py`.
+        self._prior_weights: dict[tuple[str, str], tuple[float, float]] = {}
         #: The latest change of character per series. **Derived and not
         #: persisted**, deliberately: it is recomputed from confirmed swings
         #: every time levels reform, and a break restored from before a restart
@@ -2018,6 +2030,34 @@ class Engine:
             made = found if not made else lv.merge(made, found, vol)
         return made
 
+    def _prior_weight(self, interval: str, side: lv.Side, when: float) -> float:
+        """How much a neighbour's evidence is worth here, in own-touches.
+
+        `reactions.PRIOR_WEIGHT` is a guess at a quantity with a closed form -
+        the ratio of a touch's own noise to the real spread between levels -
+        and this measures it from the book instead, per interval and side.
+        It returns the constant unchanged until the pool has enough **levels**
+        to say, which is a different requirement from enough touches.
+
+        Cached for `PRIOR_WEIGHT_RECHECK`: it is a property of a population
+        that moves slowly, and recomputing it per touch would be a pass over
+        every level on the instrument for a number that barely changes.
+        """
+        held = self._prior_weights.get((interval, side))
+        if held is not None and when - held[0] < PRIOR_WEIGHT_RECHECK:
+            return held[1]
+        samples = [
+            (stats.touches, stats.ups)
+            for (_, this_interval), found in self._levels.items()
+            if this_interval == interval
+            for level in found
+            for stats in (level.sides.get(side),)
+            if stats is not None
+        ]
+        estimate = shrinkage.prior_weight(samples, reactions.PRIOR_WEIGHT)
+        self._prior_weights[(interval, side)] = (when, estimate)
+        return estimate
+
     def _points(self, name: str, series: Series, vol: Volatility) -> list[pips.Point]:
         """One pass's turning points.
 
@@ -2738,6 +2778,7 @@ class Engine:
                 vol,
                 price=price,
                 cost_vol=self.cost_of(feed, vol),
+                prior_weight=self._prior_weight(interval, side, when),
             )
             # Kept on the touch so the resolution can be scored against what
             # was believed at the time - including the touches that were never
