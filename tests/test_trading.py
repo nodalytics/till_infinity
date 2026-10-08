@@ -6768,9 +6768,20 @@ def test_the_target_can_be_pulled_short_of_where_it_aimed():
     )
     assert isinstance(got, Intent)
     assert isinstance(plain, Intent)
-    # One volatility unit is 4.40 here, so a quarter of one is 1.10.
+    # One volatility unit is 4.40 here, so a quarter of one is 1.10 - and that
+    # is how far the buffer pulled the target in while `reward_floor` was 1.0.
+    #
+    # **At 1.2 the floor bounds it, and that is the floor working.** The buffer
+    # would put this trade at 1.033 reward-to-risk; the floor will not go below
+    # 1.2, so the target stops there and the pull-in is 0.28 rather than 1.10.
+    # Written as the relation rather than the distance: the buffer still moves
+    # the target in, and the floor decides how far it may go.
     assert got.target < plain.target
-    assert plain.target - got.target == pytest.approx(1.10, abs=0.02)
+    risk = abs(got.entry - got.stop)
+    assert abs(got.target - got.entry) / risk == pytest.approx(engine.reward_floor, abs=0.01)
+    # and the unbuffered trade is above the floor on its own, so it is untouched
+    plain_risk = abs(plain.entry - plain.stop)
+    assert abs(plain.target - plain.entry) / plain_risk > engine.reward_floor
 
 
 def test_the_buffer_never_pulls_the_target_past_the_entry():
