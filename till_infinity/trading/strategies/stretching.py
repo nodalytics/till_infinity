@@ -79,7 +79,7 @@ class CycleTurnScalp(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.0
+    reward_floor: ClassVar[float] = 1.2
     refines: ClassVar[str] = "level-scalp"
     description: ClassVar[str] = (
         "A 1m-to-15m reversion scalp entered at the line a structure broke, "
