@@ -917,6 +917,7 @@ def infer(
     vol: Volatility,
     price: float = 0.0,
     cost_vol: float = 0.0,
+    prior_weight: float = PRIOR_WEIGHT,
 ) -> Inference:
     """Combine the level's own record with its neighbours' into one answer.
 
@@ -931,8 +932,13 @@ def infer(
     # Shrinkage: the level's own history takes over as it accumulates. With no
     # touches this is entirely the neighbours' answer; past CONFIDENT_TOUCHES it
     # is mostly the level's own.
-    weight = own.touches / (own.touches + PRIOR_WEIGHT) if own.touches else 0.0
-    probability = weight * own.probability_up(prior_up, PRIOR_WEIGHT) + (1 - weight) * prior_up
+    # `prior_weight` is `PRIOR_WEIGHT` unless the caller has enough levels in
+    # this pool to have estimated it - see `structures/shrinkage.py`. The
+    # constant is a guess at a quantity with a closed form; the estimate is
+    # that quantity, measured, and it falls back to the guess when it cannot
+    # be measured.
+    weight = own.touches / (own.touches + prior_weight) if own.touches else 0.0
+    probability = weight * own.probability_up(prior_up, prior_weight) + (1 - weight) * prior_up
     push = weight * own.mean_push + (1 - weight) * prior_push
 
     if own.touches >= CONFIDENT_TOUCHES:
