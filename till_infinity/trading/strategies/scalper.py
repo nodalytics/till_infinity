@@ -760,7 +760,7 @@ class CycleScalp(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.25
     refines: ClassVar[str] = "level-scalp"
     reverse_if_better: ClassVar[bool] = True
     description: ClassVar[str] = (
@@ -856,7 +856,7 @@ class LevelScalp(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.1
     description: ClassVar[str] = (
         "Trade a level call in the direction it states, stop beyond the level, "
         "target the expected push. Fast timeframes only. The default."
@@ -885,7 +885,7 @@ class ConfluenceScalp(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.1
     description: ClassVar[str] = (
         "Only calls confirmed by another timeframe, with a wider stop. Fewer trades."
     )
@@ -929,7 +929,7 @@ class MomentumScalp(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.15
     description: ClassVar[str] = (
         "Only calls agreeing with three speeds of recent edge. Misses turns by construction."
     )
@@ -987,7 +987,7 @@ class Snap(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.1
     description: ClassVar[str] = (
         "The level call held for as long as the interaction actually lasts - "
         "the median touch resolves in 18 seconds. Same trade as level-scalp "
@@ -1029,7 +1029,7 @@ class ThesisOnly(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.1
     description: ClassVar[str] = (
         "The level call with the stop moved out of the way - a circuit breaker "
         "rather than a trade decision. Exits on target or on the clock. An "
@@ -1184,6 +1184,41 @@ class SweepAware(LevelStrategy):
 
     name: ClassVar[str] = "sweep-aware"
 
+    #: **Floored at 1.10 from 2026-10-08, ending the exemption.** The exemption
+    #: below was argued on the floor barely touching this strategy, and the live
+    #: record confirms the premise and then overturns the conclusion: of 206
+    #: closed trades at a median reward-to-risk of 2.96, only **11 (5%)** sit
+    #: under 1.10 - and those eleven **win 45% and lose 0.181 R each**, -1.99 R
+    #: in total. The tail the floor would touch is exactly the part that loses.
+    #:
+    #: "Barely touches it" is a reason the change is harmless, not a reason it is
+    #: wrong, and `floored_target` can only move a target out - it never refuses
+    #: a trade - so the whole downside is those eleven trades. Its own
+    #: arithmetic asks for it too: 48.3% wins, shrunk to 47.8%, breaks even at
+    #: 1.09. Keeping one hand-made exception in a table that is otherwise
+    #: derived is how a table starts drifting.
+    #:
+    #: **1.50 rather than its breakeven of 1.09, and this one has a ceiling.**
+    #: Asked for 2026-10-08 - raise it - and the record says how far. By band,
+    #: over 206 closed trades:
+    #:
+    #:   RR 0.0-1.1  n= 11  win 45%  mean R -0.181
+    #:   RR 1.1-1.5  n=  3  win 67%  mean R +0.071
+    #:   RR 1.5-2.0  n= 19  win 63%  mean R +0.193
+    #:   RR 2.0-3.0  n= 74  win 61%  mean R +0.184
+    #:   RR 3.0+     n= 98  win 45%  mean R +0.058
+    #:
+    #: Everything under 1.5 is cumulatively negative - fourteen trades at
+    #: -1.78 R - so 1.5 is the bottom edge of the band this strategy is good in,
+    #: and the floor belongs there. **Above 1.5 it should not go.** 2.0 would
+    #: touch 33 trades currently worth +1.88 R and 3.0 would touch 107 worth
+    #: +15.47 R, pushing their targets out of the 1.5-3.0 band and toward the
+    #: 3.0+ one, where the win rate falls from 61-63% to 45%. A floor that
+    #: raises a target past where a strategy stops being good is not a floor,
+    #: it is a worse strategy.
+    #:
+    #: The original reasoning, kept because the premise in it was right:
+    #:
     #: **No `reward_floor`, and it is the one exception.** This strategy placed
     #: the EURUSD short at 0.22 reward-to-risk that the floor was written for,
     #: so it is not exempt for being blameless - it is exempt because the floor
@@ -1195,6 +1230,7 @@ class SweepAware(LevelStrategy):
     #:
     #: `Strategy.reward_floor` carries the measurement that makes this a real
     #: question rather than caution.
+    reward_floor: ClassVar[float] = 1.50
     #: Every call `level-scalp` takes, minus the ones whose stop sits in front
     #: of resting liquidity. Listed after it, this would never fire.
     refines: ClassVar[str] = "level-scalp"

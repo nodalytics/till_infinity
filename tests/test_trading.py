@@ -4238,7 +4238,7 @@ def test_thesis_only_gives_the_trade_room_and_takes_less_of_it():
     # 0.40 over 361 decisions.
     #
     # So the answer to the docstring is neither: it was the *ratio*. Both
-    # strategies now carry `reward_floor` of 1.2, and a wider stop therefore
+    # strategies now carry a per-strategy `reward_floor`, and a wider stop
     # buys a proportionally further target rather than the same one.
     # Not three times, and the shortfall is the interesting part: `level-scalp`
     # already aimed 1.26 times its own stop here, so the floor never fired for
@@ -4248,10 +4248,14 @@ def test_thesis_only_gives_the_trade_room_and_takes_less_of_it():
         assert got.reward_to_risk >= 1.0 - 1e-6, f"{got.symbol} {got.side}: {got.reward_to_risk}"
     # `thesis-only` lands exactly on the floor, which is what a floor that binds
     # looks like; `level-scalp` is above it on its own merits.
-    # Read off the class rather than written as a literal: the floor moved from
-    # 1.0 to 1.2 on 2026-10-08 and a literal here would have to move with it.
+    # Read off the class rather than written as a literal: the floors have moved
+    # three times in a day and are now per strategy, so a literal would be stale
+    # by the next reading of the broker record.
     assert roomy.reward_to_risk == pytest.approx(td.STRATEGIES["thesis-only"].reward_floor)
-    assert normal.reward_to_risk == pytest.approx(1.257, abs=0.01)
+    # `level-scalp` aims 1.257 of its own stop and its floor is 1.05, so the
+    # floor does not fire and it keeps its own geometry.
+    want = max(1.257, td.STRATEGIES["level-scalp"].reward_floor)
+    assert normal.reward_to_risk == pytest.approx(want, abs=0.01)
 
 
 def test_thesis_only_still_has_a_circuit_breaker():
@@ -9867,12 +9871,36 @@ def test_the_strategies_with_broken_geometry_carry_a_floor():
     no further than the arithmetic supports.
     """
     made = settings()
+    # **Per strategy from 2026-10-08**, each from its own win rate shrunk toward
+    # the desk's. Pinned as the relation rather than a table of literals: every
+    # floor must clear the ratio at which that strategy's own hit rate breaks
+    # even, once the rate is shrunk toward the house figure.
+    desk, prior = 0.467, 150.0
+    live = {
+        "fade-to-value": (118, 0.407),
+        "cycle-scalp": (970, 0.439),
+        "inverse": (116, 0.448),
+        "snap": (57, 0.491),
+        "confluence-scalp": (66, 0.515),
+        "thesis-only": (303, 0.535),
+        "level-scalp": (41, 0.561),
+    }
+    for name, (n, p) in live.items():
+        shrunk = (n * p + prior * desk) / (n + prior)
+        need = (1 - shrunk) / shrunk
+        got = td.STRATEGIES[name](made).reward_floor
+        assert got >= need - 0.05, f"{name}: floor {got} under its breakeven {need:.3f}"
+        # and not wildly over it - a floor is a floor, not a target policy
+        assert got <= need + 0.20, f"{name}: floor {got} far above its breakeven {need:.3f}"
     for name, measured in FLOORED.items():
         engine = td.STRATEGIES[name](made)
-        assert engine.reward_floor == 1.2, f"{name} (median RR {measured})"
+        assert engine.reward_floor > 0.0, f"{name} (median RR {measured})"
     # The desk's own breakeven is what sets it, so pin that relation too: a
     # floor under 1.14 would be a floor that loses at the measured hit rate.
-    assert td.STRATEGIES["thesis-only"](made).reward_floor > (1 - 0.466) / 0.466
+    # `thesis-only` wins 53.5%, so its own breakeven is 0.87 and it is the one
+    # strategy whose floor is *below* the desk's. That is the per-strategy table
+    # working, not a floor that slipped.
+    assert td.STRATEGIES["fade-to-value"](made).reward_floor > (1 - 0.466) / 0.466
 
 
 def test_every_strategy_carries_a_floor_except_the_parameter_space():
@@ -9888,12 +9916,17 @@ def test_every_strategy_carries_a_floor_except_the_parameter_space():
     missing = {
         name: cls(made).reward_floor
         for name, cls in td.STRATEGIES.items()
-        if name not in SHAPED and name != EXEMPT and cls(made).reward_floor <= 0
+        if name not in SHAPED and cls(made).reward_floor <= 0
     }
     assert missing == {}
     for name in SHAPED:
         assert td.STRATEGIES[name](made).reward_floor == 0.0, name
-    assert td.STRATEGIES[EXEMPT](made).reward_floor == 0.0
+    # **`sweep-aware` is no longer exempt**, as of 2026-10-08. The exemption
+    # rested on the floor barely touching it, which the record confirms - 11 of
+    # 206 trades sit under 1.10 - and then overturns, because those eleven win
+    # 45% and lose 0.181 R each. Its own breakeven is 1.09. It is floored like
+    # everything else and the table has no hand-made exception left in it.
+    assert td.STRATEGIES[EXEMPT](made).reward_floor == pytest.approx(1.50)
 
 
 def test_the_unmeasured_floors_are_named_rather_than_quietly_included():
@@ -9902,7 +9935,7 @@ def test_the_unmeasured_floors_are_named_rather_than_quietly_included():
     made = settings()
     for name in FLOORED_UNMEASURED:
         assert name in td.STRATEGIES, name
-        assert td.STRATEGIES[name](made).reward_floor == 1.2, name
+        assert td.STRATEGIES[name](made).reward_floor >= 1.0, name
     assert not set(FLOORED) & set(FLOORED_UNMEASURED)
     assert set(FLOORED) | set(FLOORED_UNMEASURED) | set(SHAPED) | {EXEMPT} == set(td.STRATEGIES)
 
@@ -10118,19 +10151,37 @@ def test_a_magic_resolves_through_strategy_for_and_not_by_hand():
     assert wrong != "sweep-aware"
 
 
-def test_the_exempt_strategy_is_the_profitable_one_and_not_the_blameless_one():
-    """`sweep-aware` placed the 0.22 EURUSD short the floor was written for. It
-    is exempt because it is the only strategy of size that makes money and the
-    floor would bind on 5% of its calls - not because its geometry is clean.
+def test_the_last_exemption_was_ended_by_its_own_premise():
+    """`sweep-aware` was the one strategy without a floor. The exemption was
+    argued on the floor barely touching it - "it would bind on 5% of its calls"
+    - and the live record confirms that premise exactly and then overturns the
+    conclusion drawn from it.
 
-    Worth a test of its own, because "we left the good one alone" is the kind of
-    decision that gets re-read later as "the good one did not need it".
+    Of 206 closed trades at a median reward-to-risk of 2.96, **eleven** sit
+    under 1.10. Those eleven win 45% and lose 0.181 R each, -1.99 R in all. The
+    tail the floor would touch is the part that loses, "barely touches it" is a
+    reason the change is harmless rather than a reason it is wrong, and
+    `floored_target` can only move a target out - so the entire downside is
+    those eleven trades.
+
+    Kept as a test because "we left the good one alone" is the kind of decision
+    that gets re-read later as "the good one did not need it".
     """
     made = settings()
     engine = td.STRATEGIES[EXEMPT](made)
-    assert engine.reward_floor == 0.0
-    # And the machinery is still wired to it, so turning the floor on is a
-    # one-line change rather than a reinstatement.
-    assert engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 99.0) == 99.0
-    engine.reward_floor = 1.0
-    assert engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 99.0) == 90.0
+    assert engine.reward_floor == pytest.approx(1.50)
+    # Its own breakeven at a 48.3% win rate, shrunk toward the desk's, is 1.09,
+    # and it is set above that on purpose: everything under 1.5 is cumulatively
+    # negative for it (14 trades, -1.78 R) while 1.5-3.0 is where it earns.
+    assert engine.reward_floor >= (1 - 0.478) / 0.478
+    # **And it has a ceiling.** Above 1.5 the floor would start pushing
+    # profitable trades out of the 1.5-3.0 band into the 3.0+ one, where its win
+    # rate falls from 61-63% to 45%. 2.0 would touch 33 trades worth +1.88 R.
+    assert engine.reward_floor <= 2.0, "a floor past where the strategy is good"
+
+    # Nothing is exempt now: every strategy either carries a floor or shapes its
+    # own geometry, and none inherits the zero default.
+    bare = [
+        n for n, cls in td.STRATEGIES.items() if n not in SHAPED and cls(made).reward_floor <= 0
+    ]
+    assert bare == [], f"no floor and no shape: {bare}"

@@ -289,6 +289,61 @@ class Strategy(ABC):
     #: inside its own interval: `thesis-only` P(<=0) = 0.43, `inverse` 0.14,
     #: `fade-to-value` 0.56. So nothing here is evidence that the floor earns
     #: money - only that it does what it says to the geometry.
+    #: **Per strategy from 2026-10-08, each from its own measured win rate.**
+    #: A floor's whole job is to keep a trade above the ratio at which its own
+    #: hit rate breaks even, and that ratio is `(1 - p) / p` - so one number for
+    #: every strategy is either too low for the weak ones or too high for the
+    #: strong ones. On this desk it was both: at 1.2, `fade-to-value` (40.7%,
+    #: needs 1.46) was still losing while `thesis-only` (53.5%, needs 0.87) was
+    #: being pushed a third further than it had to be.
+    #:
+    #: **Shrunk toward the desk, not taken raw.** The measured rates spread
+    #: 40.7% to 56.1%, but on 41 to 970 trades most of that spread is sampling
+    #: noise, and a floor built on it would be largest exactly where the evidence
+    #: is thinnest - `level-scalp` has the best rate and the second-fewest
+    #: trades. Each rate is pulled toward the desk's own 46.7% in proportion to
+    #: its sample, `(n*p + K*desk) / (n + K)` with `K = 150` trades, which is the
+    #: number of its own a strategy needs before it moves off the house figure.
+    #: That collapses the rates to 44-51% and the floors to **0.95-1.25**:
+    #:
+    #:   `fade-to-value` 1.25, `cycle-scalp` 1.25, `inverse` 1.20,
+    #:   `snap` 1.10, `confluence-scalp` 1.10, `level-scalp` 1.10,
+    #:   `thesis-only` **1.10**, `sweep-aware` 1.50, and 1.15 for the rest,
+    #:   which have no live record of their own and take the desk's shrunk
+    #:   breakeven. **Nothing is exempt any more** - `sweep-aware` was, on the
+    #:   grounds that a floor would bind on 5% of its calls, and the record
+    #:   confirms the 5% and shows those eleven trades winning 45% and losing
+    #:   0.181 R each. A hand-made exception in a table that is otherwise
+    #:   derived is how the table starts drifting. It is set at 1.50 rather than
+    #:   its breakeven of 1.09 because everything below 1.5 is cumulatively
+    #:   negative for it - and **not higher**, because above 1.5 a floor starts
+    #:   pushing profitable trades out of the 1.5-3.0 band where it earns and
+    #:   toward the 3.0+ one where its win rate falls to 45%.
+    #:
+    #: **`thesis-only` and `level-scalp` are both held at 1.10**, above the
+    #: 0.95 and 1.05 their own arithmetic asks for. Two reasons, both stated
+    #: because neither is a measurement: no floored trade should ship below 1:1,
+    #: which rules out 0.95 on its own; and both numbers rest on the thinnest
+    #: evidence in the table - `level-scalp` has 41 trades and `thesis-only`'s
+    #: 53.5% is the highest rate here, so each is the most likely to fall back
+    #: toward the desk's 46.7% on more data. 1.10 is where they land if they do.
+    #:
+    #: **A uniform 1.5 over-floors every one of them**, which is why that number
+    #: was measured and not shipped. `cycle-scalp` is the only strategy with
+    #: enough trades to move off the house rate at all, and it asks for 1.25.
+    #:
+    #: It also defuses the strongest reading against a floor. Of 120 journalled
+    #: fields tested against the win rate on 1,616 closed positions,
+    #: `reward_to_risk` separates hardest and backwards - **42.3% above the
+    #: median ratio against 50.5% below**, q = 0.00. That is cross-sectional
+    #: rather than causal, since a trade carries a high ratio when its target was
+    #: already far away - but if the elasticity is real, floors of 0.95-1.25 move
+    #: a target far less than 1.5 and there is correspondingly less to lose.
+    #:
+    #: **These are measured at the current geometry and so expire.** Changing a
+    #: floor changes the win rate that set it. Re-derive from the broker record
+    #: rather than treating the table as fixed, and `research/ideas/win_rate.py`
+    #: is what re-derives it.
     reward_floor: ClassVar[float] = 0.0
 
     def floored_target(
