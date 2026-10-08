@@ -2032,8 +2032,11 @@ class Engine:
             "profile": lambda: profile.points(stamps, closes, vol, weights=list(series.volumes)),
             "equal": lambda: equals.points(stamps, closes, vol, count=self.pip_count),
             # An imbalance is a relationship between one bar's high and
-            # another's low, which closes cannot express.
-            "gap": lambda: gaps.points(stamps, highs, lows, closes, vol),
+            # another's low, which closes cannot express - and two of the six
+            # kinds are about where the *body* sits, which needs opens as well.
+            # `gaps.points` skips those two rather than guessing when it is not
+            # given them, so the opens are passed here or they never draw.
+            "gap": lambda: gaps.points(stamps, highs, lows, closes, vol, opens=list(series.opens)),
             "round": lambda: rounds.points(stamps, closes, vol),
             # The only pass drawn from where price actually **reached** rather
             # than where it settled. A swing high is a high; a close series
