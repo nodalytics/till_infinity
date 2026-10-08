@@ -36,9 +36,9 @@ from typing import Any, ClassVar
 from ..logging import get_logger
 from ..shared import effects
 from . import breaks as bk
+from . import conformal, reactions
 from . import cycles as cy
 from . import levels as lv
-from . import reactions
 from . import rollover as ro
 from . import spreadquotes as sq
 from . import zma as zm
@@ -1159,6 +1159,11 @@ class Engine:
         #: no journal and should not grow one - a resolution is a fact about
         #: price, and who wants to record it is not the engine's business.
         self._resolved: list[tuple[lv.Level, reactions.Touch]] = []
+        #: Zone widths, calibrated per (feed, interval, side) against what
+        #: touches actually do. Owned here because it pools across every level
+        #: on an instrument - no single level sees enough resolved touches to
+        #: calibrate its own band. See `structures/conformal.py`.
+        self._zone_widths = conformal.Zones()
         #: Recent quoted spreads per instrument, in basis points - the cost of
         #: taking any edge found here, measured all along and never charged.
         #: A window rather than a running value, so the cost can be a *median*.
@@ -2532,7 +2537,13 @@ class Engine:
         # a fraction beyond the level at a price nobody traded around - while
         # the origin is where the leg in ended and the leg out began, which is
         # the price the level is actually drawn at.
-        level.observe_touch(done.origin or done.extreme, vol, when)
+        level.observe_touch(
+            done.origin or done.extreme,
+            vol,
+            when,
+            side=done.features.side,
+            calibrator=self._zone_widths,
+        )
         # The wick is the zone's far edge, not noise to discard.
         level.observe_wick(done.features.side, done.origin or done.extreme, done.extreme, vol)
         log.debug("level %s %.5g resolved %s", level.feed, level.price, done.outcome)
