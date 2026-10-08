@@ -60,6 +60,34 @@ from .vol.volatility import Volatility
 #: sense the data can distinguish.
 ZONE_SIGMA = 2.0
 
+#: How many of its own standard deviations a level's slope must clear before
+#: anything is allowed to use it.
+#:
+#: **This is the whole guard against drawing a trendline through noise.** A
+#: constant-velocity filter will happily fit a slope to three scattered
+#: touches, and the only thing that separates a level which is genuinely rising
+#: from one that is not is whether the slope is large against its own
+#: posterior. Three rather than two, because the cost of being wrong here is a
+#: level that walks away from where price actually turns, and the cost of being
+#: slow is a level that behaves exactly as it did before this existed.
+SLOPE_SIGMAS = 3.0
+
+#: How far ahead a slope may be carried, in hours.
+#:
+#: A slope estimated from touches is not a forecast. Extrapolating one a month
+#: out produces a price nobody would defend and a variance to match, so past
+#: this the level is horizontal and only its uncertainty keeps growing - which
+#: is what the one-dimensional filter always did.
+SLOPE_HORIZON_HOURS = 24.0
+
+#: The slope's process noise per hour, as a share of the price's.
+#:
+#: Judgement, stated here rather than buried: a level's *direction* should
+#: wander more slowly than its position, or every quiet stretch would hand the
+#: slope enough variance to forget what it learned. A tenth keeps the slope's
+#: memory roughly an order of magnitude longer than the price's.
+SLOPE_DRIFT_SHARE = 0.1
+
 #: A zone is never narrower than this many volatility units, however confident
 #: the filter becomes. A band tighter than a typical move is a band price
 #: crosses by accident, and every crossing would count as a touch.
@@ -283,22 +311,93 @@ SIGMA_CAP = 20.0
 
 @dataclass(slots=True)
 class Kalman(Restorable):
-    """One-dimensional Kalman filter over a slowly drifting price.
+    """Kalman filter over a slowly drifting price, with a slope it can earn.
 
-    `mean` is where the level is, `variance` how unsure we are. Both are in
+    `mean` is where the level is and `variance` how unsure we are, both in
     price units; callers convert to volatility units at the point of use, since
     the volatility that matters is the one at the moment of the question.
+
+    ## The second dimension, and why it is gated
+
+    The state is `(price, slope)` - a constant-velocity model rather than a
+    random walk - because levels that trend are a thing the one-dimensional
+    version could only ever lag. A rising floor met four times is four
+    observations of a line, and a filter whose only story is "it drifts
+    somewhere" has to be dragged to each new touch by its gain.
+
+    **A velocity state will fit a slope to noise given the chance**, so the
+    slope is used only when it has cleared its own posterior: `trending` asks
+    whether `|slope|` is at least `SLOPE_SIGMAS` of `sqrt(var_slope)`, and
+    while it is not, every projection treats the level as horizontal. A level
+    with three scattered touches therefore behaves exactly as it did before.
+
+    ## Why the slope is not extrapolated forever
+
+    `F P F'` grows the price variance by `dt**2 * var_slope`, which is the
+    honest statement that a line extrapolated further is known less well - and
+    at a month out it is also an absurd one. A slope estimated from touches is
+    not a forecast; past `SLOPE_HORIZON_HOURS` the level is simply horizontal
+    with uncertainty still growing the way it always did. The price process
+    noise stays **linear** in the true elapsed time for the same reason: the
+    textbook continuous white-noise-acceleration `Q` is cubic in `dt`, which is
+    fine over a bar and nonsense over a fortnight.
     """
 
     mean: float
     variance: float
     updated: float = field(default_factory=time.time)
+    #: Price units per hour. Zero until touches say otherwise.
+    slope: float = 0.0
+    #: The slope's own posterior variance. Zero means "no information yet",
+    #: which `trending` reads as not trending rather than as certainty.
+    var_slope: float = 0.0
+    #: The off-diagonal of the covariance, `P01`. Symmetric, so one number.
+    covariance: float = 0.0
+
+    @property
+    def trending(self) -> bool:
+        """Has the slope cleared its own uncertainty?
+
+        The whole guard against replacing horizontal levels with a trendline
+        through every piece of noise.
+        """
+        if self.var_slope <= 0.0:
+            return False
+        return abs(self.slope) >= SLOPE_SIGMAS * math.sqrt(self.var_slope)
+
+    def _span(self, hours: float) -> float:
+        """How far ahead the covariance is propagated, in hours."""
+        return min(max(hours, 0.0), SLOPE_HORIZON_HOURS)
+
+    def _carry(self, hours: float) -> float:
+        """How far the *mean* is allowed to move along the slope.
+
+        Zero until the slope has cleared `SLOPE_SIGMAS`. The covariance is
+        propagated either way - gating that too would be a deadlock, since the
+        off-diagonal it builds is the only thing that lets a slope be learned
+        at all, and a slope that is never learned never clears the gate.
+        """
+        return self._span(hours) if self.trending else 0.0
 
     def predict(self, when: float, drift_per_hour: float) -> None:
-        """Let uncertainty grow with time. A level untested for a month is a
-        guess; one tested a minute ago is not."""
+        """Move the level along its slope and let uncertainty grow with time.
+
+        A level untested for a month is a guess; one tested a minute ago is
+        not. A level that is *going somewhere* is a guess about a different
+        price, which is what the slope term adds.
+        """
         elapsed_hours = max(0.0, (when - self.updated)) / 3600.0
+        span = self._span(elapsed_hours)
+        carry = self._carry(elapsed_hours)
+        if span > 0.0:
+            # F P F' with F = [[1, span], [0, 1]], read before the mean moves
+            # so both see the same state.
+            self.variance += 2.0 * span * self.covariance + span * span * self.var_slope
+            self.covariance += span * self.var_slope
+        if carry > 0.0:
+            self.mean += self.slope * carry
         self.variance += (drift_per_hour**2) * elapsed_hours
+        self.var_slope += ((drift_per_hour * SLOPE_DRIFT_SHARE) ** 2) * elapsed_hours
         self.updated = max(self.updated, when)
 
     def update(self, observation: float, noise: float, when: float) -> float:
@@ -307,14 +406,39 @@ class Kalman(Restorable):
         The gain is returned because it *is* the answer to "how much did this
         touch move the level", which is worth journalling: a gain near 1 means
         the level had no idea where it was, near 0 that it was already sure.
+
+        **The gain returned is the one on the price**, `K[0]`, not the pair.
+        That keeps the journalled number meaning what it has always meant; the
+        slope's share of the same innovation is `K[1]` and is not reported,
+        because nothing downstream has ever asked for it.
         """
         self.predict(when, 0.0)
         noise = max(noise, 1e-12)
-        gain = self.variance / (self.variance + noise)
-        self.mean += gain * (observation - self.mean)
+        innovation = self.variance + noise
+        gain = self.variance / innovation
+        slope_gain = self.covariance / innovation
+        residual = observation - self.mean
+        self.mean += gain * residual
+        self.slope += slope_gain * residual
+        # P <- (I - K H) P, H = [1, 0]. Symmetry survives this form; the old
+        # covariance is needed for the slope row, so it is read before it moves.
+        prior_covariance = self.covariance
         self.variance *= 1.0 - gain
+        self.covariance *= 1.0 - gain
+        self.var_slope = max(0.0, self.var_slope - slope_gain * prior_covariance)
         self.updated = max(self.updated, when)
         return gain
+
+    def at(self, when: float) -> float:
+        """Where the level is at `when`, along its slope if it has earned one."""
+        hours = (when - self.updated) / 3600.0
+        return self.mean + self.slope * self._carry(hours)
+
+    def sigma_at(self, when: float) -> float:
+        """How unsure we are about `at(when)` - wider the further it reaches."""
+        span = self._span((when - self.updated) / 3600.0)
+        spread = self.variance + 2.0 * span * self.covariance + span * span * self.var_slope
+        return math.sqrt(max(spread, 0.0))
 
     @property
     def sigma(self) -> float:
@@ -615,11 +739,27 @@ class Level(Restorable):
         return found
 
     def zone(self, vol: Volatility) -> tuple[float, float]:
-        """The band that counts as touching, in price.
+        """The band that counts as touching, in price, as of the last touch.
 
         See `structures-levels.md` in research/docs.
         """
-        half = self.filter.sigma * ZONE_SIGMA
+        return self.zone_at(self.filter.updated, vol)
+
+    def zone_at(self, when: float, vol: Volatility) -> tuple[float, float]:
+        """The band that counts as touching, in price, at `when`.
+
+        **A band reaching further ahead is known less well.** `zone` is this
+        asked at the last touch, which is what every caller without a clock
+        gets and is exactly what they got before the filter had a slope; a
+        caller that has a timestamp gets the honest widening instead.
+
+        The centre moves with `when` only where the slope has cleared
+        `SLOPE_SIGMAS`. The width grows either way - not knowing which
+        direction a level is going is a reason to be *less* sure about its
+        price later, not more.
+        """
+        centre = self.filter.at(when)
+        half = self.filter.sigma_at(when) * ZONE_SIGMA
         # The floor is whichever binds: a typical move, or enough ticks that
         # the band is wider than the grid price is quoted on. See
         # MIN_ZONE_TICKS - on a coarsely quoted instrument the second is the
@@ -628,8 +768,8 @@ class Level(Restorable):
         # GRID_ZONE_VOL. Unbounded it made a coarsely quoted instrument's zone
         # wider than the distance that resolves a touch, and every arrival
         # inside it became an outcome.
-        grid = min(vol.tick * MIN_ZONE_TICKS, vol.price_units(self.price, GRID_ZONE_VOL))
-        floor = max(vol.price_units(self.price, MIN_ZONE_VOL), grid)
+        grid = min(vol.tick * MIN_ZONE_TICKS, vol.price_units(centre, GRID_ZONE_VOL))
+        floor = max(vol.price_units(centre, MIN_ZONE_VOL), grid)
         # The ceiling still wins if the two cross, and that is deliberate. The
         # tick is *observed* - the smallest change that has actually happened -
         # so an instrument that has not yet printed a single-step move reads as
@@ -638,14 +778,14 @@ class Level(Restorable):
         # over-estimate into a zone many times too wide; clamping bounds it at
         # a number already defined as "so wide the level predicts nothing".
         # The estimate only ever shrinks, so this corrects itself with data.
-        ceiling = vol.price_units(self.price, MAX_ZONE_VOL)
+        ceiling = vol.price_units(centre, MAX_ZONE_VOL)
         half = min(max(half, floor), ceiling)
 
         below = self.sides.get(Side.ABOVE)
         above = self.sides.get(Side.BELOW)
-        down = max(half, vol.price_units(self.price, below.wick_vol) if below else 0.0)
-        up = max(half, vol.price_units(self.price, above.wick_vol) if above else 0.0)
-        return self.price - min(down, ceiling), self.price + min(up, ceiling)
+        down = max(half, vol.price_units(centre, below.wick_vol) if below else 0.0)
+        up = max(half, vol.price_units(centre, above.wick_vol) if above else 0.0)
+        return centre - min(down, ceiling), centre + min(up, ceiling)
 
     def sweep_zone(self, vol: Volatility, sigmas: float) -> tuple[float, float]:
         """The band a **stop** has to clear, which is wider than the touch band.

@@ -2845,3 +2845,94 @@ def test_a_session_period_borrows_the_reference_estimate():
         assert borrowed.warm
         assert borrowed is engine.reference("gold")
         assert not engine.vol.of("gold", period).warm
+
+
+# ------------------------------------------------------------- the slope
+
+
+def _filter_over(steps, *, step, noise=0.01, drift=0.02, start=100.0):
+    """A filter fed one touch an hour, each `step` above the last."""
+    import time as _time
+
+    now = _time.time()
+    k = Kalman(mean=start, variance=1.0)
+    for i in range(steps):
+        when = now + i * 3600
+        k.predict(when, drift)
+        k.update(start + i * step, noise, when)
+    return k, now + (steps - 1) * 3600
+
+
+def test_a_fresh_level_is_not_trending():
+    """Zero slope variance means no information, not certainty."""
+    assert Kalman(mean=100.0, variance=1.0).trending is False
+
+
+def test_a_rising_level_earns_a_slope():
+    k, _ = _filter_over(10, step=0.5)
+    assert k.trending is True
+    assert k.slope > 0.0
+
+
+def test_a_flat_level_earns_none():
+    k, _ = _filter_over(10, step=0.0)
+    assert k.trending is False
+
+
+def test_noise_does_not_buy_a_slope():
+    """The guard that stops this becoming a trendline through every wiggle."""
+    import random
+    import time as _time
+
+    random.seed(7)
+    now = _time.time()
+    k = Kalman(mean=100.0, variance=1.0)
+    for i in range(10):
+        when = now + i * 3600
+        k.predict(when, 0.02)
+        k.update(100.0 + random.gauss(0, 0.3), 0.01, when)
+    assert k.trending is False
+
+
+def test_only_a_trending_level_moves_its_centre():
+    rising, last = _filter_over(10, step=0.5)
+    flat, flat_last = _filter_over(10, step=0.0)
+    assert rising.at(last + 6 * 3600) > rising.mean
+    assert flat.at(flat_last + 6 * 3600) == flat.mean
+
+
+def test_the_band_widens_with_reach_either_way():
+    """Not knowing which way a level is going is a reason to be less sure
+    about its price later, not more - so this holds without a slope."""
+    flat, last = _filter_over(10, step=0.0)
+    assert flat.sigma_at(last + 6 * 3600) > flat.sigma
+
+
+def test_the_slope_is_not_extrapolated_past_its_horizon():
+    from till_infinity.structures.levels import SLOPE_HORIZON_HOURS
+
+    k, last = _filter_over(10, step=0.5)
+    edge = k.at(last + SLOPE_HORIZON_HOURS * 3600)
+    assert k.at(last + SLOPE_HORIZON_HOURS * 10 * 3600) == pytest.approx(edge)
+
+
+def test_the_gain_returned_is_still_the_price_gain():
+    """Journalled as "how much did this touch move the level", and a 2-vector
+    would silently change what that number means."""
+    import time as _time
+
+    now = _time.time()
+    k = Kalman(mean=100.0, variance=1.0)
+    gain = k.update(101.0, 0.01, now)
+    assert 0.0 < gain < 1.0
+    assert k.mean == pytest.approx(100.0 + gain * 1.0)
+
+
+def test_zone_is_zone_at_the_last_touch():
+    """Every caller without a clock must get exactly what it got before."""
+    import time as _time
+
+    now = _time.time()
+    vol = _vol()
+    level = Level("x", "15m", filter=Kalman(mean=100.0, variance=0.05, updated=now))
+    assert level.zone(vol) == level.zone_at(now, vol)
