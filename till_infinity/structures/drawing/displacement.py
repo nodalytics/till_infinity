@@ -21,7 +21,12 @@ Specified over an afternoon and implemented here as given:
   range, all in one direction
 - **the origin** - the bar immediately before them, whatever colour it is.
   Colour was tested and the desk's answer was that it does not matter, which is
-  why nothing here looks at it
+  why nothing here looks at it. Its body must fall between `ORIGIN_BODY_MIN`
+  and `ORIGIN_BODY_MAX` - "normally a small candle", with the desk's own
+  correction that this is normally and not necessarily, a tenth to three
+  fifths. The upper end keeps this from drawing a level at every step of a
+  trend; the lower end rejects the doji, which is not a small candle but an
+  undecided one
 - **the band** - that bar's whole range, high to low
 - **the line** - its *body* edge on the side price would return to: the bottom
   of the body for a demand zone, the top for a supply one. For a green candle
@@ -72,6 +77,26 @@ from .pips import Point, Swing
 #: "two bars agreed". It is the one constant in this module the desk did not
 #: specify, so it is stated here to be argued with rather than buried.
 MIN_LEG_VOL = 1.5
+
+#: The band an origin bar's body must fall in, as a share of its own range.
+#:
+#: **"Normally a small candle", and the desk's correction: normally, not
+#: necessarily - a body anywhere from a tenth to three fifths.** Both ends do
+#: work and they do different work.
+#:
+#: The **upper** end is what keeps this from drawing a level at every step of a
+#: trend. Without it the pass emitted 40 levels on a 1,500-bar walk where `pip`
+#: emitted 12 and `gap` 9 - three to four times every other formation, which is
+#: not a formation but a flood. Every bar in a run is "the bar before two
+#: one-sided bars", so a trending stretch qualifies almost everywhere, and what
+#: separates the ones the desk means is that the origin itself did not travel.
+#:
+#: The **lower** end rejects the doji. A bar with no body is not a small candle,
+#: it is an undecided one: open and close in the same place means the period
+#: resolved nowhere, and the body edge - which is the level this pass emits -
+#: is then an arbitrary point inside a range nobody defended.
+ORIGIN_BODY_MIN = 0.10
+ORIGIN_BODY_MAX = 0.60
 
 #: How many origins one window may contribute, newest kept. A run of trending
 #: bars produces an origin at almost every step, and without a cap a strong
@@ -144,6 +169,7 @@ def displacements(
     body: float = PUSH_BODY,
     run: int = PUSH_N,
     minimum_vol: float = MIN_LEG_VOL,
+    origin_body: tuple[float, float] = (ORIGIN_BODY_MIN, ORIGIN_BODY_MAX),
     keep: int = KEEP,
 ) -> list[Displacement]:
     """Every origin a one-sided push left, oldest first.
@@ -158,7 +184,15 @@ def displacements(
         side = pushed(opens, highs, lows, closes, i + 1, run, body)
         if side == 0:
             continue
+        span = highs[i] - lows[i]
+        if span <= 0:
+            continue
         bottom, top = _body(opens[i], closes[i])
+        # The origin is the bar that did *not* travel, and is not a doji
+        # either. See `ORIGIN_BODY_MIN` / `ORIGIN_BODY_MAX`.
+        share = (top - bottom) / span
+        if not origin_body[0] <= share <= origin_body[1]:
+            continue
         line = bottom if side > 0 else top
         end = i + run
         reach = highs[end] if side > 0 else lows[end]

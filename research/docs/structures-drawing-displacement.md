@@ -45,6 +45,40 @@ reads `displaced` yet - the three shipped envelopes quote on their original six
 features and the retrain that would pick up the thirteen has never run - so
 nothing had been fitted to the old threshold.
 
+## The origin's body is a band: "normally, not necessarily"
+
+The desk described the origin as "normally a small candle", and then corrected
+the reading it got: **normally, not necessarily - a body anywhere from a tenth
+to three fifths of the range.** Both ends do work, and they do different work.
+
+The **upper** end keeps this from drawing a level at every step of a trend.
+Every bar in a run is "the bar before two one-sided bars", so a trending
+stretch qualifies almost everywhere. What separates the ones the desk means is
+that the origin itself did not travel.
+
+The **lower** end rejects the doji. A bar with no body is not a small candle,
+it is an undecided one: open and close in the same place means the period
+resolved nowhere, and the body edge - which is the level this pass emits - is
+then an arbitrary point inside a range nobody defended.
+
+### How it was caught, and what the mechanism actually was
+
+Without any body condition, `test_no_published_feature_is_near_constant`
+failed on `zma_agrees` - 99.0% on one value across 625 rows. A flooded level
+book shifting a published distribution, surfacing as a statistics check rather
+than as anything resembling a level-drawing bug, which is that test earning its
+keep.
+
+**The count alone was not the mechanism, and the first version of this note had
+it wrong.** On a 1,500-bar walk the unconditioned pass qualified 108 origins
+and the band qualifies 47 - but `KEEP` is 40, so *both* emit 40 points. What
+changed is **which** 40. `KEEP` retains the newest, so a qualifying set of 108
+bunches them inside whatever stretch happened to be trending last; 47 spread
+across the window leaves a set that is representative of it. The failure was a
+biased sample, not a large one.
+
+For scale beside the other passes on that walk: `pip` 12, `gap` 9.
+
 ## `MIN_LEG_VOL`, the one constant the desk did not give
 
 Body share says the bars were one-sided and says nothing at all about size, and

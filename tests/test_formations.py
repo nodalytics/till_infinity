@@ -245,8 +245,8 @@ def displaced(bars=60, base=4400.0, body=0.9, run=2, step=30.0):
     highs = [base + 2.0] * bars
     lows = [base - 2.0] * bars
     at = 20
-    # the origin: a small bar, colour irrelevant
-    opens[at], closes[at] = base + 1.0, base - 1.0
+    # the origin: a small bar - body a quarter of its range - colour irrelevant
+    opens[at], closes[at] = base + 0.5, base - 0.5
     highs[at], lows[at] = base + 2.0, base - 2.0
     price = base
     for k in range(1, run + 1):
@@ -282,6 +282,25 @@ def test_the_origin_colour_does_not_matter():
     opens[20], closes[20] = closes[20], opens[20]  # same band, flipped colour
     green = displacement.displacements(opens, highs, lows, closes, warm(closes))
     assert [(g.low, g.high, g.line) for g in red] == [(g.low, g.high, g.line) for g in green]
+
+
+def test_an_origin_that_travelled_is_not_one():
+    """The desk said the origin is "normally a small candle", and without that
+    this pass drew three to four times what every other formation draws."""
+    opens, highs, lows, closes = displaced()
+    at = 20
+    # same range, but now the bar itself travelled most of it
+    opens[at], closes[at] = highs[at] - 0.1, lows[at] + 0.1
+    assert displacement.displacements(opens, highs, lows, closes, warm(closes)) == []
+
+
+def test_a_doji_origin_is_not_a_small_candle():
+    """It is an undecided one - the body edge this pass emits would be an
+    arbitrary point inside a range nobody defended."""
+    opens, highs, lows, closes = displaced()
+    at = 20
+    opens[at] = closes[at] = (highs[at] + lows[at]) / 2.0
+    assert displacement.displacements(opens, highs, lows, closes, warm(closes)) == []
 
 
 def test_a_wicky_push_is_not_a_displacement():
