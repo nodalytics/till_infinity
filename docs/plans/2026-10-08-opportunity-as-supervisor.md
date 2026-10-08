@@ -122,6 +122,90 @@ Conformal prediction is not in it. That is the one place this repo is ahead of
 that literature, because `structures/vol/envelope.py` already runs AgACI with
 measurements, and the zone calibrator now runs a two-tailed version.
 
+## Combining them, and the models that only exist once you do
+
+The borrowings above are separable. These are not - each is a thing that
+exists only because two of them are put together, which is the reason to write
+them down rather than implement the list.
+
+### Black-Litterman with conformal confidence
+
+Black-Litterman's weakest input is `Omega`, the confidence attached to each
+view. In practice it is hand-set, or derived from a heuristic nobody defends,
+and the output is sensitive to it.
+
+Here it does not have to be guessed. **The conformal interval around a
+strategy's edge is a measured confidence**, with a coverage guarantee rather
+than an assumption, and it is exactly the object `Omega` wants. That is a real
+combination rather than a juxtaposition: the book supplies the framework whose
+weakest input this repository already knows how to measure, and conformal
+prediction is the one thing the book does not cover.
+
+### A hierarchical skill filter: one desk state, nine offsets
+
+Instead of nine independent skill estimates, one shared state `G_t` for the
+desk's own condition and a per-strategy offset loading on it. Identical in
+structure to the shared drift factor proposed for levels in
+`research/docs/structures-roadmap.md`, and it earns its place for the same
+reason: it **pools rather than adding per-object dimensions**.
+
+What it buys is a distinction nothing currently makes. When all nine
+deteriorate together that is one fact about the desk, not nine facts about
+strategies - and the per-strategy view would read it as nine simultaneous
+losses of skill and shrink all nine toward a mean that is itself falling.
+
+### Robust location inside the filter
+
+R distributions are heavy-tailed, so a mean R is a poor estimator of anything,
+and one outsized trade moves a Gaussian filter a long way. The book's §3.5 and
+§4.2 combine straightforwardly: Student-t observation noise in the skill state.
+
+The same change is open on the level filter, which already dodges the problem
+upstream by taking the origin rather than the extreme. **One implementation
+would serve both**, and the diagnostic for whether it is needed is already
+being collected in the conformal score pools.
+
+### Risk parity, because the flat case is the likely one
+
+The most probable honest result is that the nine points do not separate - 26
+days and a few thousand positions may simply not distinguish them.
+
+A picker handles that badly: it chooses whichever looks marginally best and
+churns. **Weighting by inverse uncertainty handles it correctly without having
+to detect it first** - where the estimates are indistinguishable the weights go
+flat on their own, and they concentrate only as evidence actually accumulates.
+The method degrades into the null result instead of fighting it, which is worth
+more here than a better optimiser.
+
+## A new model: correct the geometry, because only that is falsifiable
+
+The one genuinely new object, and it comes from an asymmetry nobody has named.
+
+**A geometry correction is testable from the tape. A veto is not.** If the
+supervisor says "this trade's reward should be 1.5, not 1.25", the
+counterfactual is recoverable: same entry, same stop, did price reach 1.5R
+before the stop? That is a barrier question this repo answers routinely. If the
+supervisor instead says "do not take this trade", the trade is never taken and
+the counterfactual is gone forever.
+
+So the supervisor should **not** be modelled as "which strategy is best". It
+should model **the value of a correction**, whose label is computable:
+
+    for each trade: delta = proposed geometry - actual geometry
+                    regret = R(proposed) - R(actual), from the bars
+
+That is a supervised problem with real labels, scoreable over the whole tape
+rather than over the 26-day broker window - because it needs bars, not deals.
+It sidesteps the data constraint that bounds everything else here.
+
+And it composes with the conformal work: build the interval around **regret**
+rather than around edge, and the decision rule falls out with no threshold to
+pick - act only where the regret interval is entirely above zero. A correction
+that might be worth nothing is not made.
+
+**Start here.** It is the only part of the idea that can be shown to have
+helped without being allowed to act first.
+
 ## What to check before building any of it
 
 * **Does it have the data?** Per-strategy outcomes come from the broker deal
