@@ -7309,6 +7309,38 @@ def test_the_adverse_extreme_is_tracked_as_well_as_the_favourable_one():
     assert heat > 0.0
 
 
+def test_a_trade_adopted_mid_flight_says_its_excursion_is_only_a_floor():
+    """The excursion trackers are process memory and nothing restores them, so
+    a position open across a restart is first seen long after it opened and
+    everything before that is gone. `_reach` cannot tell that from a trade that
+    never went in front: both read 0.0.
+
+    The flag is set when the trade is **adopted**, not when it closes, which is
+    the whole point - a reader can drop these without selecting on the outcome,
+    and no filter on `best_r` itself can do that.
+    """
+    trader = Trader(Bus(), settings=settings())
+    # open before this process started marking
+    live = _live(position=position(volume=1.0, opened=trader._marking_since - 600))
+    _heated(trader, live, [4402.0])
+    assert live.position.ticket in trader._partial
+
+
+def test_a_trade_opened_while_marking_is_a_measurement():
+    trader = Trader(Bus(), settings=settings())
+    live = _live(position=position(volume=1.0, opened=trader._marking_since + 1))
+    _heated(trader, live, [4402.0])
+    assert live.position.ticket not in trader._partial
+
+
+def test_the_partial_flag_is_dropped_with_the_rest_of_the_path():
+    trader = Trader(Bus(), settings=settings())
+    live = _live(position=position(volume=1.0, opened=trader._marking_since - 600))
+    _heated(trader, live, [4402.0])
+    trader._forget_path(live.position.ticket)
+    assert live.position.ticket not in trader._partial
+
+
 def test_heat_is_measured_in_units_of_the_trade_s_own_risk():
     """So "was the stop used" reads the same on a 4v stop and a 1v one."""
     trader = Trader(Bus(), settings=settings())

@@ -1204,3 +1204,72 @@ structures consumer needed the same guard for the same reason.
 
 `CancelledError` still propagates: that is shutdown.
 
+
+## `best_r` is a floor on a trade adopted mid-flight (2026-10-08)
+
+Found while building the supervisor's regret model, which needs `best_r` as
+its counterfactual and could not use it.
+
+`_best`, `_worst`, `_best_at` and `_worst_at` are plain dicts on the service,
+keyed by ticket, built in `__init__` and restored by nothing. `_reach` and
+`_heat` return `0.0` for a ticket they cannot find - which `_forget_path`'s own
+docstring already says "is how every close in the book's history once recorded
+`best_r` of exactly 0.000".
+
+So a position open across a restart is first seen by `_mark_best` long after it
+opened, seeded at whatever price was quoted then, and everything before that is
+gone. The number that comes out is a **floor**, and nothing said so.
+
+### What it reads on the live record
+
+Measured over 1,655 trade outcomes in the journal, 35 days:
+
+| | |
+|---|---|
+| `best_r` reads exactly zero | **45.0%** of closes |
+| since 2026-10-05 | **81-94%** per day |
+| of those zeros, closed **positive** | **34.6%** |
+
+A trade cannot finish in front without having been in front, so that third row
+is impossible on its face. `adverse_r` tracks it almost exactly, which is what
+says the cause is one thing and not two.
+
+The history shows it fixed once already - zeros fall from 91% to 23% on
+2026-09-03 - and degrading again through late September to the current state.
+The leading explanation for the recent run is deploy cadence: main auto-deploys
+and the desk restarted repeatedly on 2026-10-05 to 10-08. Supporting it,
+trades whose record is lost are much longer-lived (median 1,632s against 716s
+over the same window), which is what being open across a restart looks like.
+Not proven - quote-stream coverage per symbol would produce a similar pattern
+and has not been ruled out.
+
+### Why it is poison rather than noise
+
+**The damage is correlated with the outcome**, and that is what makes it worse
+than a gap.
+
+A winner that loses its peak is visible - it finishes above its own recorded
+best, which cannot happen. A loser that loses its peak is invisible, because
+`max(0, r_multiple)` is zero for a loser and `best_r` is never below zero.
+
+So every filter written against `best_r` itself selects on winning. Measured on
+this data, dropping the impossible rows drops **51.9% of winners and 0% of
+losers**, and the win rate of what survives falls from 46.1% to 29.2%. The
+regret model, run on that, reported a positive correction for every strategy at
+every reward - which is a bias, not a finding, and was the thing that gave it
+away.
+
+### The fix, and what it does not do
+
+`_partial` records that a trade's excursion began mid-flight, set in
+`_mark_best` when a ticket is first seen and the position was already open
+before `_marking_since`. It is published as `excursion_partial` beside
+`best_r`.
+
+**It does not recover the lost path and does not pretend to.** What it buys is
+that the flag is set at **adopt time, before the trade has a result**, so a
+reader can drop those rows without selecting on the outcome - which is the one
+thing no filter on `best_r` itself can do.
+
+Restoring the trackers across a restart is the fuller fix and is not done here.
+This is the part that makes the record honest about itself.
