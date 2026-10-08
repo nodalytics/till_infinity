@@ -186,7 +186,34 @@ MODEL_LEVELS: tuple[float, ...] = (0.05, 0.1, 0.5, 0.9, 0.95)
 #:
 #: Both come from `touches.base` and carry the zone rule's own numbers, so the
 #: two subsystems mean the same thing by the same word.
-MODEL_NAMES: tuple[str, ...] = ("lvol", "r1", "r5", "r20", "rng", "hour", "body", "displaced")
+#: **The forward readings joined on 2026-10-08 too.** `ensemble_bps`,
+#: `forecast_bps`, `garch_bps` and `vol_stretch` were computed on every bar and
+#: read by nothing - one comment each in `till_infinity/trading/` and no gate
+#: anywhere - while `activity`, the field that beat a same-duty-cycle random
+#: control at p = 0.001, had no reference at all. They are offered to the model
+#: rather than wired into a gate, because a feature that does not help fails
+#: `vs_champion` in the retrain contest and never ships, which is the safer way
+#: to use a reading nobody has traded on yet.
+#:
+#: `sigma_movz` is the construction `transforms.py` found strongest of all - a
+#: level against its own ten-bar spread, 58.3% against a random 50.3% at
+#: p = 0.0005, ahead of the raw level. A standard deviation alone said nothing
+#: (p = 0.844); it earns its place as a denominator and not as a feature.
+MODEL_NAMES: tuple[str, ...] = (
+    "lvol",
+    "r1",
+    "r5",
+    "r20",
+    "rng",
+    "hour",
+    "body",
+    "displaced",
+    "sigma_movz",
+    "ens_ratio",
+    "fc_ratio",
+    "garch_ratio",
+    "vol_stretch",
+)
 #: What changing the meaning of an input requires bumping.
 #: **Bumped with the feature set, and that is the point of it.** `frozen.load`
 #: checks this string and `MODEL_NAMES` against a spec before using it, so a
@@ -195,7 +222,8 @@ MODEL_NAMES: tuple[str, ...] = ("lvol", "r1", "r5", "r20", "rng", "hour", "body"
 #: That is the safe failure and it is deliberate, but it means this change and a
 #: retrain have to land together.
 MODEL_RECIPE = (
-    "2026-10-08 envelope: vol state, moves, range, hour, body, displacement (touches.base)"
+    "2026-10-08 envelope: vol state, moves, range, hour, body, displacement, "
+    "forward readings, movz (touches.base)"
 )
 #: Newest first. A model trained on an earlier recipe still loads, and is fed
 #: the features *it* declares - so adding `body` and `displaced` does not strand

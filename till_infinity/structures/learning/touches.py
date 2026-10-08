@@ -38,6 +38,7 @@ from __future__ import annotations
 
 import math
 from collections import deque
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from ...shared import frozen
@@ -97,6 +98,10 @@ class Series(Restorable):
     #: rule needs and the bound is in the factory so a restore rebuilds it
     #: (`shared/state._deque_bounds`).
     bodies: deque = field(default_factory=lambda: deque(maxlen=3))
+    #: The forward readings the engine already computes and nothing gated on -
+    #: `vol.ensemble_bps`, `forecast_bps`, `garch_bps`, `stretch`. Supplied by
+    #: `advance`, latest only, and empty when the caller offers none.
+    forward: dict = field(default_factory=dict)
     latest: list[float] = field(default_factory=list)
     #: The bar last advanced over, as (when, high, low, close, sigma): what `base` reads.
     bar: list[float] = field(default_factory=list)
@@ -114,6 +119,26 @@ class Series(Restorable):
 #: candles" - and kept identical here so the two subsystems mean the same thing
 #: by the same word.
 PUSH_BODY, PUSH_N = 0.70, 2
+
+#: Bars the `movz` denominator looks back over. Ten, as measured.
+MOVZ = 10
+
+
+def _movz(values, window: int) -> float:
+    """The last value in units of its own recent spread, 0.0 when there is none."""
+    xs = list(values)[-window:]
+    if len(xs) < 3:
+        return 0.0
+    mean = sum(xs) / len(xs)
+    var = sum((v - mean) ** 2 for v in xs) / (len(xs) - 1)
+    sd = math.sqrt(var)
+    return (xs[-1] - mean) / sd if sd > 0 else 0.0
+
+
+def _ratio(bps: float | None, sigma: float) -> float:
+    """A bps reading against the bar's own volatility unit; 0.0 without either."""
+    unit = sigma * 10_000.0
+    return float(bps) / unit if bps and unit > 0 else 0.0
 
 
 def base(
@@ -137,6 +162,7 @@ def base(
     )
     closes = list(s.closes)
     bodies = list(s.bodies)
+    fwd = s.forward or {}
 
     def move(bars: int) -> float:
         return math.log(close / closes[-1 - bars]) / sigma
@@ -165,6 +191,19 @@ def base(
         # body roughly tripled the separation at every window and threshold -
         # which is why they are offered to a volatility model rather than only
         # to the zone scan.
+        # **The level against its own recent spread**, which `transforms.py`
+        # measured as the best single gate of the lot - `movz` of `activity`
+        # won 58.3% against a same-duty random 50.3%, p = 0.0005, ahead of the
+        # raw level. A standard deviation on its own said nothing (p = 0.844);
+        # it earns its place as a denominator. Here on the volatility unit,
+        # which this series already keeps.
+        "sigma_movz": _movz(s.sigmas, MOVZ),
+        # The forward readings the engine computes and nothing gated on, each
+        # against the bar's own unit so it means the same on gold as on BTC.
+        "ens_ratio": _ratio(fwd.get("ensemble_bps"), sigma),
+        "fc_ratio": _ratio(fwd.get("forecast_bps"), sigma),
+        "garch_ratio": _ratio(fwd.get("garch_bps"), sigma),
+        "vol_stretch": fwd.get("vol_stretch", 0.0),
         "body": abs(bodies[-1]) if bodies else 0.0,
         "displaced": float(
             len(bodies) >= PUSH_N
@@ -222,6 +261,7 @@ class Touches(Restorable):
         low: float,
         close: float,
         sigma: float,
+        forward: Mapping[str, float] | None = None,
     ) -> bool:
         """Fold one closed bar into the series' history. Returns whether it was taken.
 
@@ -243,6 +283,10 @@ class Touches(Restorable):
         # body is the close-to-close travel over the bar's own range, signed.
         if s.prev_close > 0 and high > low:
             s.bodies.append((close - s.prev_close) / (high - low))
+        if forward:
+            # NaN-free: a reading that is not yet warm comes through as NaN and
+            # would poison every feature derived from it.
+            s.forward = {k: float(v) for k, v in forward.items() if not math.isnan(float(v))}
         s.sigmas.append(sigma)
         s.log_sigmas.append(math.log(sigma))
         s.closes.append(close)
