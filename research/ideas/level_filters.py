@@ -80,6 +80,12 @@ PARTICLES = int(os.environ.get("PARTICLES", 400))
 NU = float(os.environ.get("NU", 3.0))
 #: Where the Huber loss switches from square to linear, in sigmas.
 HUBER_C = float(os.environ.get("HUBER_C", 1.5))
+#: How much a fully-wick turn is distrusted, as a multiple of the base noise.
+#: One means a bar that is all wick at the turn is given twice the observation
+#: noise of one that closed at its extreme. A guess, and the sweep that would
+#: justify it has not been run - it is here as a constant so that is visible.
+WICK_PENALTY = float(os.environ.get("WICK_PENALTY", 1.0))
+
 #: Process noise per touch, in volatility units, shared by every arm so the
 #: comparison is of the update and not of the tuning.
 DRIFT = float(os.environ.get("DRIFT", 0.05))
@@ -88,27 +94,52 @@ NOISE = float(os.environ.get("NOISE", 0.5))
 BAND = 0.90
 
 
-def pivots(high: np.ndarray, low: np.ndarray) -> list[tuple[int, float]]:
-    """Three-bar swing highs and lows, as `(index, price)`."""
+def wick_share(open_: float, high: float, low: float, close: float, is_high: bool) -> float:
+    """How much of the bar is wick on the side price turned at, in `[0, 1]`.
+
+    One is a bar that is all wick at the turn - price went there and did not
+    stay, which is the definition of a probe. Zero is a bar that closed at its
+    extreme, so the turn is where trade actually happened.
+
+    **This is the continuous form of a judgement the repo already makes.**
+    `observe_touch` takes `done.origin` over `done.extreme` because "the
+    extreme is a wick - liquidity taken a fraction beyond the level at a price
+    nobody traded around". That is the same statement as a threshold.
+    """
+    span = high - low
+    if span <= 0:
+        return 0.0
+    body_top, body_bottom = max(open_, close), min(open_, close)
+    tail = (high - body_top) if is_high else (body_bottom - low)
+    return min(max(tail / span, 0.0), 1.0)
+
+
+def pivots(
+    open_: np.ndarray, high: np.ndarray, low: np.ndarray, close: np.ndarray
+) -> list[tuple[int, float, float]]:
+    """Three-bar swing highs and lows, as `(index, price, wick share)`."""
     out = []
     for i in range(1, len(high) - 1):
         if high[i] >= high[i - 1] and high[i] >= high[i + 1]:
-            out.append((i, float(high[i])))
+            out.append((i, float(high[i]), wick_share(open_[i], high[i], low[i], close[i], True)))
         elif low[i] <= low[i - 1] and low[i] <= low[i + 1]:
-            out.append((i, float(low[i])))
+            out.append((i, float(low[i]), wick_share(open_[i], high[i], low[i], close[i], False)))
     return out
 
 
-def cluster(points: list[tuple[int, float]], unit: float) -> list[list[tuple[int, float]]]:
+def cluster(
+    points: list[tuple[int, float, float]], unit: float
+) -> list[list[tuple[int, float, float]]]:
     """Group pivots that sit within `CLUSTER_VOL` units of their running mean."""
     if unit <= 0:
         return []
-    groups: list[list[tuple[int, float]]] = []
-    for i, price in sorted(points, key=lambda p: p[1]):
-        if groups and abs(price - np.mean([p for _, p in groups[-1]])) <= CLUSTER_VOL * unit:
-            groups[-1].append((i, price))
+    groups: list[list[tuple[int, float, float]]] = []
+    for point in sorted(points, key=lambda p: p[1]):
+        price = point[1]
+        if groups and abs(price - np.mean([p for _, p, _ in groups[-1]])) <= CLUSTER_VOL * unit:
+            groups[-1].append(point)
         else:
-            groups.append([(i, price)])
+            groups.append([point])
     return [sorted(g) for g in groups if len(g) >= MIN_TOUCHES]
 
 
@@ -190,25 +221,65 @@ class Particle:
             self.w = np.full(PARTICLES, 1.0 / PARTICLES)
 
 
-ARMS = (Kalman, Robust, Particle)
+class Adaptive(Kalman):
+    """The Kalman, told how much to trust each observation **before** it lands.
+
+    `observe_touch` in production gives every touch the same observation noise,
+    `(0.5v)**2`, whether it was a decisive rejection or a chaotic probe. This
+    scales that by how much of the turning bar was wick:
+
+        R = (NOISE * unit * (1 + WICK_PENALTY * wick_share)) ** 2
+
+    **The distinction from `robust` is the whole point of running both.**
+    `robust` discounts an observation for landing far from the prediction,
+    which is a function of the observation itself - it can only ever say "that
+    disagreed, so trust it less", which is circular in a way that flatters the
+    filter. This discounts it for **looking** unreliable, from the shape of the
+    bar, before anything is known about whether it agrees.
+
+    One is a robust loss; the other is an honest prior on measurement quality.
+    Only the second could be computed live without peeking at the residual.
+    """
+
+    name = "adaptive"
+
+    def __init__(self, price: float, unit: float):
+        super().__init__(price, unit)
+        self.quality = 0.0
+
+    def update(self, price: float) -> None:
+        noise = (NOISE * self.unit * (1.0 + WICK_PENALTY * self.quality)) ** 2
+        gain = self.var / (self.var + noise)
+        self.mean += gain * (price - self.mean)
+        self.var *= 1.0 - gain
+
+
+ARMS = (Kalman, Robust, Particle, Adaptive)
 #: The multiplier on the predicted spread that a 90% band wants if the spread
 #: were Gaussian. Each arm is given the same one, so the coverage column says
 #: which arm's spread is honest.
 Z90 = 1.6449
 
 
-def score(touches: list[float], unit: float) -> list[dict]:
-    """One level's touches through every arm, scored on the next touch."""
+def score(touches: list[tuple[float, float]], unit: float) -> list[dict]:
+    """One level's touches through every arm, scored on the next touch.
+
+    `touches` is `(price, wick share)`, oldest first. Only `adaptive` reads the
+    second element; the rest are given the identical sequence, so any
+    difference between them is the update and not the data.
+    """
     rows = []
     for arm in ARMS:
-        filt = arm(touches[0], unit)
+        filt = arm(touches[0][0], unit)
         errs, inside, widths = [], [], []
-        for price in touches[1:]:
+        for price, quality in touches[1:]:
             centre, spread = filt.predict()
             half = Z90 * spread
             errs.append(abs(price - centre) / unit)
             inside.append(abs(price - centre) <= half)
             widths.append(2.0 * half / unit)
+            if isinstance(filt, Adaptive):
+                filt.quality = quality
             filt.update(price)
         rows.append(
             {
@@ -249,10 +320,18 @@ def main() -> None:
             unit = vol.price_units(float(close[-1]), 1.0)
             if not unit or unit <= 0:
                 continue
-            found = cluster(pivots(df["high"].to_numpy(float), df["low"].to_numpy(float)), unit)
+            found = cluster(
+                pivots(
+                    df["open"].to_numpy(float),
+                    df["high"].to_numpy(float),
+                    df["low"].to_numpy(float),
+                    close,
+                ),
+                unit,
+            )
             for group in found:
                 levels += 1
-                for row in score([p for _, p in group], unit):
+                for row in score([(p, w) for _, p, w in group], unit):
                     key = (iv, row["arm"])
                     got_bag = bag.setdefault(key, {"err": [], "inside": [], "width": []})
                     for k in ("err", "inside", "width"):
