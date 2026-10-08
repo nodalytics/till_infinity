@@ -2901,11 +2901,56 @@ def test_only_a_trending_level_moves_its_centre():
     assert flat.at(flat_last + 6 * 3600) == flat.mean
 
 
-def test_the_band_widens_with_reach_either_way():
-    """Not knowing which way a level is going is a reason to be less sure
-    about its price later, not more - so this holds without a slope."""
-    flat, last = _filter_over(10, step=0.0)
-    assert flat.sigma_at(last + 6 * 3600) > flat.sigma
+def test_only_a_trending_level_widens_with_reach():
+    """A line reaching further is known less well - but only a level that has
+    *earned* a slope gets that treatment.
+
+    The first version widened every band, including levels with no slope at
+    all, on the reasoning that not knowing which way a level is going is a
+    reason to be less sure about its price later. That is defensible and it
+    was still wrong to ship: it moved every zone in the book, and it surfaced
+    as a published feature going near-constant rather than as anything that
+    looked like a filter change. A level that never trends must be what it
+    was before.
+    """
+    rising, up_last = _filter_over(10, step=0.5)
+    flat, flat_last = _filter_over(10, step=0.0)
+    assert rising.sigma_at(up_last + 6 * 3600) > rising.sigma
+    assert flat.sigma_at(flat_last + 6 * 3600) == flat.sigma
+
+
+def test_a_level_that_never_trends_is_the_old_filter_exactly():
+    """Not "close to" - the same numbers. This is what makes the change safe."""
+
+    class OneD:
+        """`levels.Kalman` as it was before the slope, verbatim."""
+
+        def __init__(self, mean, variance, updated):
+            self.mean, self.variance, self.updated = mean, variance, updated
+
+        def predict(self, when, drift):
+            hours = max(0.0, when - self.updated) / 3600.0
+            self.variance += drift**2 * hours
+            self.updated = max(self.updated, when)
+
+        def update(self, obs, noise, when):
+            self.predict(when, 0.0)
+            gain = self.variance / (self.variance + max(noise, 1e-12))
+            self.mean += gain * (obs - self.mean)
+            self.variance *= 1.0 - gain
+            self.updated = max(self.updated, when)
+
+    started = 1_000_000.0
+    new = Kalman(mean=100.0, variance=1.0, updated=started)
+    old = OneD(100.0, 1.0, started)
+    for i in range(12):
+        when = started + i * 3600
+        for filt in (new, old):
+            filt.predict(when, 0.02)
+            filt.update(100.0, 0.01, when)
+    assert new.trending is False
+    assert new.mean == old.mean
+    assert new.variance == old.variance
 
 
 def test_the_slope_is_not_extrapolated_past_its_horizon():

@@ -331,6 +331,21 @@ class Kalman(Restorable):
     while it is not, every projection treats the level as horizontal. A level
     with three scattered touches therefore behaves exactly as it did before.
 
+    ## A level that never earns a slope is unchanged, to the bit
+
+    The slope terms enter `variance` only once `trending`, so a level that
+    stays horizontal follows **exactly** the variance path it followed before
+    any of this existed, and quotes exactly the band it quoted. That is not
+    tidiness: the first version let the `F P F'` terms through ungated, which
+    widened every zone in the book including levels with no slope at all, and
+    it showed up as a published feature going near-constant rather than as
+    anything that looked like a filter change.
+
+    The price of that is a small inconsistency - the covariance keeps
+    propagating while the variance does not - and it is taken deliberately.
+    Learnability needs the off-diagonal; production does not need its bands
+    moved by a slope no level has earned.
+
     ## Why the slope is not extrapolated forever
 
     `F P F'` grows the price variance by `dt**2 * var_slope`, which is the
@@ -389,13 +404,15 @@ class Kalman(Restorable):
         elapsed_hours = max(0.0, (when - self.updated)) / 3600.0
         span = self._span(elapsed_hours)
         carry = self._carry(elapsed_hours)
-        if span > 0.0:
-            # F P F' with F = [[1, span], [0, 1]], read before the mean moves
-            # so both see the same state.
-            self.variance += 2.0 * span * self.covariance + span * span * self.var_slope
-            self.covariance += span * self.var_slope
         if carry > 0.0:
+            # F P F' with F = [[1, carry], [0, 1]], read before the mean moves
+            # so both see the same state.
+            self.variance += 2.0 * carry * self.covariance + carry * carry * self.var_slope
             self.mean += self.slope * carry
+        if span > 0.0:
+            # Ungated, and it must be: the off-diagonal is the only thing that
+            # lets a slope be learned, so gating it is a deadlock.
+            self.covariance += span * self.var_slope
         self.variance += (drift_per_hour**2) * elapsed_hours
         self.var_slope += ((drift_per_hour * SLOPE_DRIFT_SHARE) ** 2) * elapsed_hours
         self.updated = max(self.updated, when)
@@ -436,8 +453,8 @@ class Kalman(Restorable):
 
     def sigma_at(self, when: float) -> float:
         """How unsure we are about `at(when)` - wider the further it reaches."""
-        span = self._span((when - self.updated) / 3600.0)
-        spread = self.variance + 2.0 * span * self.covariance + span * span * self.var_slope
+        carry = self._carry((when - self.updated) / 3600.0)
+        spread = self.variance + 2.0 * carry * self.covariance + carry * carry * self.var_slope
         return math.sqrt(max(spread, 0.0))
 
     @property

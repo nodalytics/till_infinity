@@ -173,6 +173,28 @@ seconds - a float near `1.7e9` - so the arithmetic cannot be exact, and a test
 asserting equality to the bit would be asserting something about the clock
 rather than about the filter.
 
+### A level that never earns a slope is unchanged, to the bit
+
+The slope terms enter `variance` only once `trending`, so a level that stays
+horizontal follows **exactly** the variance path it followed before any of this
+existed and quotes exactly the band it quoted - not "close to", the same
+numbers, which a test pins against a verbatim copy of the old filter.
+
+That was not the first version. The first let the `F P F'` terms through
+ungated, on the reasoning that not knowing which way a level is going is a
+reason to be less sure about its price later. The reasoning is defensible and
+shipping it would still have been wrong: it widened **every** zone in the book
+including levels with no slope at all, and it surfaced as `zma_agrees` going
+near-constant in `test_no_published_feature_is_near_constant` rather than as
+anything that looked like a filter change. The same test caught the same class
+of error twice in one day - once here and once on the `displace` formation -
+which is the best argument for it there is.
+
+The price of the fix is a small inconsistency: the covariance keeps propagating
+while the variance does not. It is taken deliberately. Learnability needs the
+off-diagonal; production does not need its bands moved by a slope no level has
+earned.
+
 ### Why the slope is not extrapolated forever
 
 `F P F'` grows the price variance by `dt**2 * var_slope`, which is the honest
