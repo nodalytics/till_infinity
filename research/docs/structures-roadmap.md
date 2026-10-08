@@ -44,15 +44,22 @@ each tool on the problem it is valid for.
 ### Why not a 6- or 8-dimensional state
 
 Arithmetic, not taste. **You cannot estimate more latent states than your
-observations identify.** `CONFIDENT_TOUCHES` is 5; a level sees a handful of
-scalar observations in its life. An 8-dimensional state fed one scalar at a
-time is unidentifiable - the unobserved directions do not converge, they track
-whatever the prior said, and the filter then reports confident numbers for
-quantities the data never constrained. That failure is silent, which is the
-worst kind here.
+observations identify.** A level sees a handful of scalar observations in its
+life - one price per touch. An 8-dimensional state fed one scalar at a time is
+unidentifiable: the unobserved directions do not converge, they track whatever
+the prior said, and the filter then reports confident numbers for quantities
+the data never constrained. That failure is silent, which is the worst kind
+here.
 
-The 2D filter is already near that edge at five touches, which is exactly why
-the slope is gated at three sigmas of its own posterior.
+The 2D filter is already near that edge, which is exactly why the slope is
+gated at three sigmas of its own posterior.
+
+An earlier draft of this cited `CONFIDENT_TOUCHES = 5` as the bound. **That
+constant does not do what the name suggests** - it appears in one `if` that
+chooses between "5.2 prior touches from above" and "1.0 own touches, 40 similar
+elsewhere", and affects no number. The shrinkage is `PRIOR_WEIGHT = 4.0`, with
+`BASE_WEIGHT = 20.0` for base rates, deliberately slower because "a base rate
+is the reference everything else is measured against".
 
 **The rule that follows: per-level state stays small; anything richer is
 pooled.** That is the same shrinkage `reactions` already does between a level's
@@ -123,7 +130,34 @@ conformity-score pools are a direct measurement of whether the residuals are
 heavy-tailed**, so for once the question can be settled before the change is
 made rather than after.
 
-**4. A shared drift factor.** `v_i = beta_i * G_t + eta_i`, where `G_t` is an
+**4. Estimate `PRIOR_WEIGHT` instead of choosing it.** It is the `K` of a
+shrinkage estimator and `K` is not a taste parameter - it has a closed form,
+`K = sigma_within^2 / sigma_between^2`, the ratio of noise within one level to
+real spread between levels. Both components are estimable from what the engine
+already collects: the spread of per-level push-up rates across a pool, against
+the binomial noise `p(1-p)/n` at each level's own touch count.
+
+That makes the current value checkable rather than arbitrary. `PRIOR_WEIGHT =
+4.0` asserts that borrowed evidence is worth four of a level's own touches. If
+levels genuinely differ, true `K` is smaller and 4.0 **over-shrinks**, erasing
+idiosyncrasy; if they barely differ, true `K` is larger and 4.0
+**under-shrinks**, letting three noisy touches override a good pooled estimate.
+Nobody has checked which.
+
+Two things make it tractable here. The grouping it needs is the one the
+conformal calibrator already maintains, so the pooling machinery exists. And
+the same hand-picked `K` appears elsewhere - the per-strategy reward floors
+shrink each win rate toward the desk's 46.7% with `K = 150` - so one estimator
+would serve both.
+
+The caveat is that `K` needs enough **levels** per pool rather than enough
+touches per level, so it wants a run-in and a fallback to the constant, the
+same shape as the conformal `SETTLE`. And `edge.md`'s four nulls are a standing
+warning about adaptive parameters replacing constants - the difference is that
+this estimates a variance ratio with a closed form rather than fitting a
+threshold to returns.
+
+**5. A shared drift factor.** `v_i = beta_i * G_t + eta_i`, where `G_t` is an
 instrument-wide latent drift. Defensible precisely because it does not add
 per-level dimensions - it pools them. If five zones all begin drifting together
 that is a market-state transition rather than five coincidences, and nothing in
