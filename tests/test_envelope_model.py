@@ -461,3 +461,58 @@ def test_a_missing_coverage_figure_is_refused_rather_than_assumed():
         assert any(level in r for r in rt.envelope_gate(missing))
     nan = rt.envelope_gate({**GOOD, "worst_window": float("nan")})
     assert any("floor" in r for r in nan)
+
+
+# ------------------------------------------------ how much of the path went somewhere
+
+
+def test_a_straight_move_is_perfectly_efficient():
+    """One is a move that went straight there."""
+    assert tc._efficiency(list(range(11)), 10) == 1.0
+
+
+def test_a_path_that_arrives_nowhere_is_zero():
+    """Zero is ground covered to no end - the same answer a flat series gives,
+    and the right one: no distance travelled is no evidence about direction."""
+    assert tc._efficiency([1, 2] * 5 + [1], 10) == 0.0
+    assert tc._efficiency([3.0] * 11, 10) == 0.0
+
+
+def test_it_is_bounded_in_zero_to_one():
+    """By the triangle inequality, which is why it needs no scaling and
+    compares across instruments as it stands."""
+    rng = random.Random(5)
+    for _ in range(200):
+        walk = [rng.gauss(0, 1) for _ in range(12)]
+        assert 0.0 <= tc._efficiency(walk, 10) <= 1.0
+
+
+def test_direction_does_not_change_it():
+    """It is `|net| / path`, so a fall as straight as a rise reads the same.
+
+    Deliberate. Direction is already carried by `r1`, `r5` and `r20`, and the
+    one positive result of the z-score line was that **stripping the sign**
+    took IC from +0.0024 to +0.0782 (`zscore-magnitude.md`). Efficiency being
+    unsigned is that finding applied, not an oversight.
+    """
+    up = list(range(11))
+    assert tc._efficiency(up, 10) == tc._efficiency(up[::-1], 10)
+
+
+def test_too_short_a_path_is_not_measured():
+    assert tc._efficiency([1.0, 2.0], 10) == 0.0
+    assert tc._efficiency([], 10) == 0.0
+
+
+def test_efficiency_is_in_the_feature_contract():
+    """A feature the model cannot see is a feature that cannot be judged."""
+    assert "efficiency" in ev.MODEL_NAMES
+
+
+def test_the_recipe_was_bumped_with_the_feature_set():
+    """`frozen.load` checks the recipe, so a shipped model trained without
+    `efficiency` must be refused rather than fed an input it never saw - and
+    the older recipes stay listed so those models still load on their own."""
+    assert "efficiency" in ev.MODEL_RECIPE
+    assert ev.MODEL_RECIPES[0] == ev.MODEL_RECIPE
+    assert any("efficiency" not in r for r in ev.MODEL_RECIPES[1:])

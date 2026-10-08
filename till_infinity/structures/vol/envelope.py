@@ -208,6 +208,7 @@ MODEL_NAMES: tuple[str, ...] = (
     "hour",
     "body",
     "displaced",
+    "efficiency",
     "sigma_movz",
     "ens_ratio",
     "fc_ratio",
@@ -222,14 +223,16 @@ MODEL_NAMES: tuple[str, ...] = (
 #: That is the safe failure and it is deliberate, but it means this change and a
 #: retrain have to land together.
 MODEL_RECIPE = (
-    "2026-10-08 envelope: vol state, moves, range, hour, body, displacement, "
-    "forward readings, movz (touches.base)"
+    "2026-10-08b envelope: vol state, moves, range, hour, body, displacement, "
+    "efficiency, forward readings, movz (touches.base)"
 )
 #: Newest first. A model trained on an earlier recipe still loads, and is fed
 #: the features *it* declares - so adding `body` and `displaced` does not strand
 #: the three FX models already in service while they wait to be retrained.
 MODEL_RECIPES: tuple[str, ...] = (
     MODEL_RECIPE,
+    "2026-10-08 envelope: vol state, moves, range, hour, body, displacement, "
+    "forward readings, movz (touches.base)",
     "2026-09-29 envelope: vol state, moves, range, hour (touches.base)",
 )
 

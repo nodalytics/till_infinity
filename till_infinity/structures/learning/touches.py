@@ -36,6 +36,7 @@ published on the calls and printed on the cards.
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections import deque
 from collections.abc import Mapping
@@ -123,6 +124,11 @@ PUSH_BODY, PUSH_N = 0.65, 2
 #: Bars the `movz` denominator looks back over. Ten, as measured.
 MOVZ = 10
 
+#: Bars `efficiency` measures its path over. Ten, matching `MOVZ`, because
+#: nothing yet says which window is right and two unexplained constants are
+#: worse than one.
+EFFICIENCY_N = 10
+
 
 def _movz(values, window: int) -> float:
     """The last value in units of its own recent spread, 0.0 when there is none."""
@@ -133,6 +139,33 @@ def _movz(values, window: int) -> float:
     var = sum((v - mean) ** 2 for v in xs) / (len(xs) - 1)
     sd = math.sqrt(var)
     return (xs[-1] - mean) / sd if sd > 0 else 0.0
+
+
+def _efficiency(values, window: int) -> float:
+    """How much of the distance travelled went somewhere. Kaufman's ratio.
+
+        |last - first| / sum(|step|)
+
+    One is a move that went straight there; zero is a path that covered ground
+    and arrived nowhere. Bounded in [0, 1] by the triangle inequality, which is
+    why it needs no scaling and compares across instruments as it stands.
+
+    **This is the distinction `origins` and `displacement` keep circling, said
+    continuously.** One asks whether a move was *large* and the other whether
+    it was *one-sided*, they agree only 59-78% of the time
+    (`structures-drawing-displacement.md`), and both answer with a threshold.
+    Efficiency is the second question without the threshold, so a model can
+    find its own cut instead of being handed `PUSH_BODY`.
+
+    Zero when there is not enough path to measure, which is the same answer a
+    flat series gives and is the right one: no distance travelled is no
+    evidence about direction.
+    """
+    xs = list(values)[-(window + 1) :]
+    if len(xs) < 3:
+        return 0.0
+    path = sum(abs(b - a) for a, b in itertools.pairwise(xs))
+    return abs(xs[-1] - xs[0]) / path if path > 0 else 0.0
 
 
 def _ratio(bps: float | None, sigma: float) -> float:
@@ -210,6 +243,11 @@ def base(
         "fc_ratio": _ratio(fwd.get("forecast_bps"), sigma),
         "garch_ratio": _ratio(fwd.get("garch_bps"), sigma),
         "vol_stretch": fwd.get("vol_stretch", 0.0),
+        # **How much of the path went somewhere**, over `EFFICIENCY_N` bars.
+        # `body` and `displaced` ask the same question of one bar and of two,
+        # with a threshold each; this asks it of the run and lets the model
+        # pick its own cut. See `_efficiency`.
+        "efficiency": _efficiency(closes, EFFICIENCY_N),
         "body": abs(bodies[-1]) if bodies else 0.0,
         "displaced": float(
             len(bodies) >= PUSH_N
