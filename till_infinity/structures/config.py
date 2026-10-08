@@ -69,7 +69,15 @@ DEFAULT_NEWS_DB = ".data/news/news.db"
 #:
 #: `pip` stays first because `Engine.swings` - and so `_record_shape` - reads
 #: `passes[0]` rather than the merge.
-DEFAULT_FORMATION = "pip,run,origin,profile,wick,vwap,gap,round"
+#: `displace` joins on 2026-10-08. It is the desk's supply/demand rule - two
+#: bars of `PUSH_BODY`+ body and the bar before them - and it draws a different object
+#: from `origin`, which judges a move by size rather than by one-sidedness.
+#: Included rather than held back for exactly the reason stated above: the one
+#: thing certain about a pass outside this string is that it stays unproven.
+#: `research/docs/fade-to-origin.md` already measured the *trade* and found
+#: nothing; whether the **level** is respected is the question this makes
+#: answerable, and it is a different one.
+DEFAULT_FORMATION = "pip,run,origin,profile,wick,vwap,gap,round,displace"
 
 #: Only fast data. Above five minutes a "cross-venue disagreement" is mostly
 #: different bar boundaries, not different opinions about the price.

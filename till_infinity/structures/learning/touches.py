@@ -118,7 +118,7 @@ class Series(Restorable):
 #: total candle range" and "the impulsive move must have at least 2 momentum
 #: candles" - and kept identical here so the two subsystems mean the same thing
 #: by the same word.
-PUSH_BODY, PUSH_N = 0.70, 2
+PUSH_BODY, PUSH_N = 0.65, 2
 
 #: Bars the `movz` denominator looks back over. Ten, as measured.
 MOVZ = 10
@@ -184,10 +184,16 @@ def base(
         # The UTC hour as a whole number, the boosted envelope's clock (`gbmenvelope.py`).
         "hour": float(int(hour)),
         # **The candle's own character**, asked for 2026-10-08 and carried over
-        # from the zone rule, where `PUSH_BODY` is the same 0.70: a bar that is
+        # from the zone rule, where `PUSH_BODY` is the same 0.65: a bar that is
         # nearly all body is a bar that travelled, and two of them in a row the
         # same way is a displacement. `zscore-window.md` measured the first of
         # these as worth more than the z-score it was meant to support - a 70%
+        # body roughly tripled the separation at every window and threshold.
+        # **The threshold moved to 0.65 on 2026-10-08**, on the desk's call.
+        # It was free to move: no model in the tree reads `displaced` yet -
+        # the three shipped envelopes quote on their original six features
+        # and the retrain that would pick up the thirteen has never run -
+        # so nothing was fitted to the old number.
         # body roughly tripled the separation at every window and threshold -
         # which is why they are offered to a volatility model rather than only
         # to the zone scan.

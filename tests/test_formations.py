@@ -12,7 +12,7 @@ import random
 import pytest
 
 from till_infinity.structures import levels as lv
-from till_infinity.structures.drawing import equals, gaps, pips, rounds
+from till_infinity.structures.drawing import displacement, equals, gaps, pips, rounds
 from till_infinity.structures.drawing.pips import Point, Swing
 from till_infinity.structures.engine import Engine
 from till_infinity.structures.vol.volatility import Volatility
@@ -233,3 +233,109 @@ def test_each_formation_returns_points_form_can_take():
         found = (equals if name == "equal" else rounds).points(times, prices, vol)
         made = lv.form("gold", "5m", pips.turns(found), vol, origin=name)
         assert isinstance(made, list)
+
+
+# ------------------------------------------------------- the displacement
+
+
+def displaced(bars=60, base=4400.0, body=0.9, run=2, step=30.0):
+    """An origin bar, then `run` one-sided bars away from it."""
+    opens = [base - 1.0] * bars
+    closes = [base + 1.0] * bars
+    highs = [base + 2.0] * bars
+    lows = [base - 2.0] * bars
+    at = 20
+    # the origin: a small bar, colour irrelevant
+    opens[at], closes[at] = base + 1.0, base - 1.0
+    highs[at], lows[at] = base + 2.0, base - 2.0
+    price = base
+    for k in range(1, run + 1):
+        i = at + k
+        opens[i] = price
+        closes[i] = price + step
+        pad = step * (1.0 - body) / 2.0
+        lows[i], highs[i] = price - pad, price + step + pad
+        price += step
+    for i in range(at + run + 1, bars):
+        opens[i], closes[i] = price, price + 1.0
+        lows[i], highs[i] = price - 1.0, price + 2.0
+    return opens, highs, lows, closes
+
+
+def test_two_one_sided_bars_leave_an_origin():
+    opens, highs, lows, closes = displaced()
+    found = displacement.displacements(opens, highs, lows, closes, warm(closes))
+    assert found
+    one = found[0]
+    assert one.up is True
+    # the band is the origin bar's whole range
+    assert one.low == lows[20]
+    assert one.high == highs[20]
+    # and the line is the body's bottom, which for this red origin is its close
+    assert one.line == closes[20]
+
+
+def test_the_origin_colour_does_not_matter():
+    """The desk tested it and said it does not, so nothing may look at it."""
+    opens, highs, lows, closes = displaced()
+    red = displacement.displacements(opens, highs, lows, closes, warm(closes))
+    opens[20], closes[20] = closes[20], opens[20]  # same band, flipped colour
+    green = displacement.displacements(opens, highs, lows, closes, warm(closes))
+    assert [(g.low, g.high, g.line) for g in red] == [(g.low, g.high, g.line) for g in green]
+
+
+def test_a_wicky_push_is_not_a_displacement():
+    opens, highs, lows, closes = displaced(body=0.4)
+    assert displacement.displacements(opens, highs, lows, closes, warm(closes)) == []
+
+
+def test_one_bar_is_not_a_push():
+    """`PUSH_N` is two, and one decisive bar is a common and ordinary shape."""
+    opens, highs, lows, closes = displaced(run=1)
+    assert displacement.displacements(opens, highs, lows, closes, warm(closes)) == []
+
+
+def test_the_leg_floor_is_what_makes_it_mean_a_move_started():
+    """Body share says the bars were one-sided and nothing at all about size,
+    so `MIN_LEG_VOL` is the constant carrying that half of the claim."""
+    opens, highs, lows, closes = displaced()
+    vol = warm(closes)
+    assert displacement.displacements(opens, highs, lows, closes, vol)
+    far = displacement.displacements(opens, highs, lows, closes, vol, minimum_vol=1e6)
+    assert far == []
+
+
+def test_bars_of_two_colours_are_not_a_push():
+    opens, highs, lows, closes = displaced(run=2)
+    # flip the second push bar's direction, keeping its body share
+    opens[22], closes[22] = closes[22], opens[22]
+    assert displacement.displacements(opens, highs, lows, closes, warm(closes)) == []
+
+
+def test_an_origin_is_not_knowable_before_its_push_prints():
+    """The whole look-ahead question for this formation."""
+    opens, highs, lows, closes = displaced()
+    times = [float(i) * 300 for i in range(len(closes))]
+    found = displacement.points(times, opens, highs, lows, closes, warm(closes))
+    assert found
+    for point in found:
+        assert point.confirmed > point.time
+
+
+def test_the_point_is_the_body_edge_not_the_middle():
+    opens, highs, lows, closes = displaced()
+    times = [float(i) * 300 for i in range(len(closes))]
+    found = displacement.points(times, opens, highs, lows, closes, warm(closes))
+    assert found
+    middle = (lows[20] + highs[20]) / 2.0
+    assert found[0].price != middle
+    assert found[0].price == closes[20]
+
+
+def test_a_flat_series_has_no_displacement():
+    flat = [4400.0 + (i % 3) for i in range(200)]
+    opens = list(flat)
+    closes = [p + 0.1 for p in flat]
+    highs = [p + 1.0 for p in flat]
+    lows = [p - 1.0 for p in flat]
+    assert displacement.displacements(opens, highs, lows, closes, warm(flat)) == []

@@ -47,6 +47,7 @@ from .context import sessions
 from .context.character import Character
 from .drawing import (
     confluence,
+    displacement,
     equals,
     gaps,
     origin_points,
@@ -1923,6 +1924,9 @@ class Engine:
         # Defined by nothing that happened at all, which is why it is measured
         # rather than assumed.
         "round",
+        # Defined by how a move happened rather than how far it went: bars that
+        # are nearly all body, and the bar they left behind.
+        "displace",
     )
 
     def draw_with(self, formation: str) -> tuple[str, ...]:
@@ -2035,6 +2039,12 @@ class Engine:
             # another's low, which closes cannot express.
             "gap": lambda: gaps.points(stamps, highs, lows, closes, vol),
             "round": lambda: rounds.points(stamps, closes, vol),
+            # The only pass that reads a bar's *shape* - body against range -
+            # so it needs opens, and it emits the body edge rather than a
+            # midpoint. See the module docstring for why those differ.
+            "displace": lambda: displacement.points(
+                stamps, list(series.opens), highs, lows, closes, vol
+            ),
             # The only pass drawn from where price actually **reached** rather
             # than where it settled. A swing high is a high; a close series
             # puts the level wherever the bar happened to finish after being
