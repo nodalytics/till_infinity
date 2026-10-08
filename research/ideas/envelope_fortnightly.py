@@ -48,6 +48,19 @@ CADENCES = tuple(int(c) for c in os.environ.get("CADENCES", "14,28,56").split(",
 DAY = 86400.0
 
 
+#: `retrain.GATES["vs_champion"]`, the relative pinball a challenger may be
+#: worse by and still ship.
+VS_CHAMPION = float(os.environ.get("VS_CHAMPION", 0.01))
+
+
+def et_pinball_rows(y, q_champ, q_chal):
+    """Per-row pinball difference, for the standard error the gate widens by."""
+    from till_infinity.models import envelope_train as et
+    a = et._pinball(np.asarray(y), np.asarray(q_chal))
+    b = et._pinball(np.asarray(y), np.asarray(q_champ))
+    return (a - b) / max(float(np.mean(b)), 1e-12)
+
+
 def pinball(y, q):
     from till_infinity.models import envelope_train as et
     return float(np.mean(et._pinball(np.asarray(y), np.asarray(q))))
@@ -78,11 +91,24 @@ def loop(when, x, y, cadence, mode, train_fn):
         chal_q = quote(chal, x[ho])
         chal_p = pinball(y[ho], chal_q)
         if champion is None:
-            champ_p, promoted = np.nan, True
+            champ_p, promoted, slack = np.nan, True, np.nan
         else:
             champ_p = pinball(y[ho], quote(champion, x[ho]))
-            # lower pinball is better; production's `vs_champion` is a tolerance
-            promoted = bool(chal_p < champ_p)
+            # **Production's gate is a tolerance, not a contest.** `GATES` reads
+            # "not worse than the model in service by more than this or two
+            # standard errors, whichever is wider - two weeks of one family is a
+            # small sample, and noise must not block every promotion". The first
+            # version of this file required the challenger to *win*, which is
+            # much stricter than what runs and understated how often production
+            # promotes. The live report that caught it: a challenger 0.12% worse
+            # than the champion, promoted on `reasons: []`.
+            per = et_pinball_rows(y[ho], quote(champion, x[ho]),
+                                  quote(chal, x[ho]))
+            se = float(np.std(per, ddof=1) / np.sqrt(len(per))) if len(per) > 2 else np.nan
+            slack = max(VS_CHAMPION, 2 * se) if np.isfinite(se) else VS_CHAMPION
+            # relative, lower-is-better: positive means the challenger is worse
+            rel = (chal_p - champ_p) / champ_p if champ_p else np.nan
+            promoted = bool(np.isfinite(rel) and rel <= slack)
         if champion is None or mode == "always_new" or (mode == "gated" and promoted):
             champion = chal
         served = pinball(y[nxt], quote(champion, x[nxt]))
@@ -90,7 +116,7 @@ def loop(when, x, y, cadence, mode, train_fn):
                          date=str(pd.to_datetime(now, unit="s").date()),
                          n_train=int(tr.sum()), n=int(nxt.sum()),
                          chal_pin=chal_p, champ_pin=champ_p, promoted=promoted,
-                         pinball=served))
+                         slack=slack, pinball=served))
         if mode == "never" and k == 0:
             # trained once and then left alone, judged on every later fortnight
             for j, later in enumerate(np.arange(now + cadence * DAY, t1, cadence * DAY)):

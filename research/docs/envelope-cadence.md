@@ -1,4 +1,4 @@
-# Production's own retrain loop, replayed: the gate earns its keep, the cadence does not
+# Production's own retrain loop, replayed: retraining helps a little, the gate decides almost nothing
 
 **Measured 2026-10-08.** [`fortnightly-retrain.md`](fortnightly-retrain.md)
 pointed the champion/challenger protocol at a research model. This points it at
@@ -14,41 +14,62 @@ Nothing here is a reimplementation. The trainer is production's own
 
 ## The result
 
+Pinball loss, lower better. **The gate is production's own rule**, which is a
+**tolerance and not a contest**: `GATES["vs_champion"] = 0.01` promotes a
+challenger that is within 1% of the champion, so it refuses only a clear
+regression.
+
 | cadence | never retrain | always deploy | **gated** (production's rule) | promoted |
 |---|---:|---:|---:|---:|
-| 14d | 1.33768 | 1.32696 | **1.32197** | 6/14 |
-| 28d | 1.34324 | 1.33013 | **1.32513** | 4/7 |
-| 56d | 1.33359 | 1.32047 | **1.31540** | 3/4 |
+| 14d | 1.33431 | 1.32727 | **1.32420** | 12/14 |
+| 28d | 1.34060 | **1.32958** | 1.33001 | 7/7 |
+| 56d | 1.33346 | **1.31900** | 1.31953 | 4/4 |
 
-Retraining against never retraining, as a share of the pinball: **+1.17%** at 14
-days, **+1.35%** at 28, **+1.36%** at 56.
+Retraining against never retraining, as a share of the pinball: **+0.76%** at 14
+days, **+0.79%** at 28, **+1.04%** at 56.
 
-## Retraining helps, by about 1.3%
+### A correction to the first run of this
+
+The first version of this study implemented the gate as **"the challenger must
+beat the champion"**, and on that rule the gate looked like the headline: it won
+at all three cadences and the doc said so. That is not production's rule.
+`retrain.py` promotes on a **1% tolerance**, and rerunning under the real one
+changes the conclusion rather than refining it. The numbers above are the rerun;
+the strict-gate figures are gone rather than kept for comparison, because they
+measure a service the desk does not run.
+
+## Retraining helps, by about 0.8-1.0%
 
 Consistent at every cadence and in the right direction. Real, and small - which
 is worth stating plainly, because a retrain service running every fortnight
 implies a belief that the model goes stale fast, and on this evidence it does
 not go stale fast at all.
 
-## The gate earns its keep, and this is new
+## The gate is a wash, because it almost never fires
 
-**`gated` beats `always deploy` at every cadence** - 1.32197 against 1.32696 at
-14 days, and the same ordering at 28 and 56. Refusing a challenger that lost its
-hold-out is better than shipping the newest fit.
+`gated` wins at 14 days (1.32420 against 1.32727, 0.23%) and **loses** at 28 and
+56 by 0.03% and 0.04%. Three cadences, two of them the wrong way, every
+difference inside a rounding error on four observations.
 
-That is **different from the research model**, where
-[`fortnightly-retrain.md`](fortnightly-retrain.md) found gating exactly neutral:
-identical to four decimals, with the gate acting only as insurance. On the model
-production actually runs, the contest is doing work rather than standing by. It
-should stay.
+The mechanism is plain in the promotion column: **23 of 25 challengers were
+promoted.** A 1% tolerance on a quantity whose whole spread across every arm here
+is about 1.5% is a tolerance that nearly everything clears, so `gated` is
+`always deploy` with two refusals in it and cannot differ from it by much.
 
-The promotion rate also rises as the cadence slows - 43%, 57%, 75% - which is
-what more new data per refit should do.
+This agrees with [`fortnightly-retrain.md`](fortnightly-retrain.md), which found
+gating exactly neutral on the research model. Both now say the same thing: on
+pinball alone **the gate is insurance, not selection.** That is a reasonable
+thing for it to be - it exists to stop a broken export, not to pick a winner -
+but it is not a source of improvement and should not be argued for as one.
+
+The promotion rate is near-total at every cadence, so it carries no signal about
+how much new data a refit wants.
 
 ## The fortnight buys nothing over two months
 
-The *relative* gain over never retraining is flat: +1.17%, +1.35%, +1.36%. A
-refit every 56 days captures what a refit every 14 days captures.
+The *relative* gain over never retraining does not fall as the cadence slows:
++0.76%, +0.79%, +1.04%. A refit every 56 days captures what a refit every 14 days
+captures, and on these numbers slightly more.
 
 So `--every-days 14` could be **four times slower for the same result**: less
 compute, fewer deployment events, and fewer chances to ship a broken export -
@@ -75,8 +96,8 @@ control - it is what is live, and the gap to `gated` is what that costs:
 
 | | pinball |
 |---|---:|
-| **production today** (`never`) | **1.33768** |
-| gated retrain, any cadence | 1.315 - 1.325 |
+| **production today** (`never`) | **1.333 - 1.341** |
+| retrained on any cadence, gated or not | 1.319 - 1.330 |
 
 The plumbing is correct and idle. `frozen.models_dir()` resolves to
 `.data/models`, which is the `~/till-data` bind mount, and `frozen._source()`
@@ -105,8 +126,10 @@ there, and only the JSON travels.
   reproduction guard against a broken export rather than a worse model, so the
   promotion rates above are an **upper bound** on what production would ship.
 
-The honest conclusion is a direction, not a number: **keep the gate, and revisit
-the cadence when there is more 15m history to test it on.** A change to
+The honest conclusion is a direction, not a number: **turn the service on,
+because the gap that matters is `never` against everything else; keep the gate as
+the safety check it is rather than as a source of gain; and revisit the cadence
+when there is more 15m history to test it on.** A change to
 `--every-days` on four observations would be the same mistake as dropping an
 instrument on one window - see [`zone-retest.md`](zone-retest.md) for what that
 looks like when it is measured.
