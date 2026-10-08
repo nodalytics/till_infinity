@@ -298,6 +298,10 @@ it is "does it beat the thing that assumes nothing".
 
 ### Directional efficiency is the genuinely new input
 
+**Built 2026-10-08** - see [`learned-vol.md`](learned-vol.md). It joined
+`MODEL_NAMES` as a feature rather than a gate, so the retrain contest decides
+whether it is worth anything.
+
 Of the four inputs, three are already here in some form - speed is
 `approach_vol`, size is the zone's own width, distance is what
 `probability_within` already takes. **Directional efficiency is not**: nothing
