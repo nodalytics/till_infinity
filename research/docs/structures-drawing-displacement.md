@@ -133,3 +133,41 @@ about this: a pass outside `STRUCTURES_FORMATION` never runs in production,
 never publishes a level, never journals an outcome, and so can never be judged.
 `round` and `vwap` were both broken in ways nobody could see for exactly that
 reason.
+
+## It is not MCFL's `DISPLACE_C`, measured
+
+`mcfl/events.py` already has a rule that claims the same thing in another
+vocabulary - `DISPLACE_C`, "two strong bullish closes in a row". Two detectors
+for one idea in two packages is a thing to resolve, so it was measured rather
+than assumed. Code: [`displace_vs_displace_c.py`](../ideas/displace_vs_displace_c.py).
+
+**131 instrument-timeframes, 2.0M bars:**
+
+| iv | `DISPLACE_C` per 1k bars | `displace` per 1k bars | Jaccard | of `DISPLACE_C` | of `displace` |
+|---|---:|---:|---:|---:|---:|
+| 1d | 21.6 | 18.9 | **0.245** | 36.9% | 42.2% |
+| 4h | 21.9 | 19.9 | **0.264** | 39.9% | 43.9% |
+| 1h | 23.9 | 22.3 | **0.262** | 40.1% | 43.0% |
+
+**They fire at nearly the same rate and disagree about which bars about 60% of
+the time.** That is the answer: not one concept with two spellings, but two
+detectors with similar base rates picking different bars. Importing one's
+threshold into the other - the obvious tidy-up - would have been wrong.
+
+The mechanism is relative against absolute. `DISPLACE_C` grades a body against
+the **last `PERIOD` bars'** bodies and also requires the close in the top
+quarter, so it means *big for lately*. `displace` wants `PUSH_BODY` of the
+bar's **own range**, so it means *decisive in itself*. Those come apart exactly
+where the regime changes, and hardest on thin or gappy instruments - US Oil 1d
+is 0.05 Jaccard, Wall Street 30 1h 0.18.
+
+This is the same shape as `origins` against `displacement` - magnitude against
+one-sidedness, agreeing 59-78% - and worse, at about 40%.
+
+### What follows
+
+Nothing here says either is predictive; both are still unjudged. What it does
+settle is that the two must not be collapsed, and it suggests an object neither
+has: the bars where **both** fire are a stricter subset - 1,219 of 2,892 on 1d -
+and whether that intersection behaves differently from either parent is a
+measurement nobody has run.
