@@ -53,6 +53,32 @@ envelope is the existence proof that it works on this data. Worth stating
 plainly because both look like "a quantile over recent history" to anyone
 reading quickly.
 
+## Two tails, not one width
+
+The band reaches `q-` below the centre and `q+` above, calibrated separately,
+and the first version of this module did not: it scored `|touch - centre|` and
+quoted one number both ways.
+
+That was throwing away the sign of the residual, which is information and not
+noise. **How far price overshoots a floor and how far it undershoots it are
+different quantities.** A level that price routinely spikes through from above
+but drifts gently into from below has a long tail one way and a short one the
+other, and a single width is wrong on both sides at once - too wide where the
+distribution is tight, too narrow where it is not.
+
+One number cannot even hold its coverage there. Forced to a symmetric band, it
+must either over-cover the short side or under-cover the long one; the choice
+is arithmetic rather than preference.
+
+`COVERAGE` stays a statement about the **band**, so each tail is allowed
+`TAIL_MISS` - half the total. Two tails at the full rate would leave twice as
+much outside as asked for, which is the easy mistake here.
+
+This is a different axis from the pooling below. The pool is keyed by the side
+price **arrived from**; the two tails are the two directions the residual can
+point once it has arrived. A level has both: approached from above and from
+below, and in each case price can miss the centre either way.
+
 ## Why it is pooled, and by what
 
 `CONFIDENT_TOUCHES` is 5 and most levels are sparse, so a per-level corrector
@@ -93,6 +119,11 @@ from .state import Restorable
 #: two sigmas is 95.4% of the Gaussian the old width assumed. This is the same
 #: intent restated in a form that does not need the assumption to be true.
 COVERAGE = 0.95
+
+#: What each tail is allowed to miss. Half the total, because a band has two
+#: ends and `COVERAGE` is a statement about the band rather than about either
+#: side of it.
+TAIL_MISS = (1.0 - COVERAGE) / 2.0
 
 #: The correctors' steps, geometrically spaced, as in `envelope.GAMMAS`.
 #:
@@ -145,22 +176,33 @@ def quantile(scores: list[float], level: float) -> float:
 
 
 @dataclass(slots=True)
-class Pool(Restorable):
-    """One `(feed, interval, side)`'s correctors and the scores they read."""
+class Tail(Restorable):
+    """One side of the band, and the correctors that set how far it reaches.
 
-    #: Recent conformity scores, oldest first, trimmed to `WINDOW`.
-    scores: list[float] = field(default_factory=list)
-    #: Each corrector's miscoverage level, one per step in `GAMMAS`.
-    alphas: list[float] = field(default_factory=lambda: [1.0 - COVERAGE] * len(GAMMAS))
+    `sign` is `+1` for the reach above the centre and `-1` for below, and it
+    is the only thing that differs between them: `sign * score` is how far out
+    an observation sits on *this* tail, so every corrector, loss and quantile
+    below is written once and read twice.
+    """
+
+    sign: float = 1.0
+    #: Each corrector's miscoverage level for this tail, one per `GAMMAS`.
+    alphas: list[float] = field(default_factory=lambda: [TAIL_MISS] * len(GAMMAS))
     #: BOA's linearised regret per corrector, and its square.
     regret: list[float] = field(default_factory=lambda: [0.0] * len(GAMMAS))
     regret_sq: list[float] = field(default_factory=lambda: [0.0] * len(GAMMAS))
-    #: Resolved touches folded in. The run-in is counted against this.
-    seen: int = 0
 
-    def each(self) -> list[float]:
-        """What every corrector would quote, in sigmas."""
-        return [quantile(self.scores, 1.0 - a) for a in self.alphas]
+    def each(self, scores: list[float]) -> list[float]:
+        """What every corrector would reach, in sigmas. Never negative.
+
+        A tail whose quantile falls on the wrong side of the centre - every
+        touch in the window was on the other side - is asking for a negative
+        reach, which is not a band, so it floors at zero and the clamp in
+        `reach` takes it from there.
+        """
+        if self.sign > 0:
+            return [max(0.0, quantile(scores, 1.0 - a)) for a in self.alphas]
+        return [max(0.0, -quantile(scores, a)) for a in self.alphas]
 
     def weights(self) -> list[float]:
         """Bernstein Online Aggregation's weights, each corrector its own rate.
@@ -178,28 +220,66 @@ class Pool(Restorable):
         total = sum(weighted)
         return [v / total for v in weighted]
 
-    def sigmas(self, default: float) -> float:
-        """The calibrated half-width in sigmas, or `default` during the run-in."""
-        if self.seen < SETTLE or not self.scores:
+    def reach(self, scores: list[float], settled: bool, default: float) -> float:
+        """How far this side of the band reaches, or `default` during the run-in."""
+        if not settled or not scores:
             return default
-        quoted = sum(w * q for w, q in zip(self.weights(), self.each(), strict=True))
+        quoted = sum(w * q for w, q in zip(self.weights(), self.each(scores), strict=True))
         return min(max(quoted, MIN_SIGMAS), MAX_SIGMAS)
 
-    def observe(self, score: float, default: float) -> None:
-        """Fold in one resolved touch: step every corrector, charge each its loss."""
-        quoted = self.sigmas(default)
-        each = self.each()
-        miss = 1.0 - COVERAGE
-        # The interval score's gradient in the half-width: widening always costs
-        # one, and failing to cover costs `2 / miss`. Same linearised regret as
-        # the envelope charges against pinball.
-        grad = 1.0 - (2.0 / miss if score > quoted else 0.0)
+    def observe(self, scores: list[float], score: float, settled: bool, default: float) -> None:
+        """Step every corrector on this tail and charge each its share of the loss.
+
+        `scores` is the history **before** `score` joins it, so each corrector
+        is scored on the reach it would actually have quoted.
+        """
+        quoted = self.reach(scores, settled, default)
+        each = self.each(scores)
+        excess = self.sign * score
+        # The interval score's gradient in the half-width: widening always
+        # costs one, and failing to cover costs `2 / TAIL_MISS`. Same
+        # linearised regret as the envelope charges against pinball.
+        grad = 1.0 - (2.0 / TAIL_MISS if excess > quoted else 0.0)
         for k, gamma in enumerate(GAMMAS):
-            outside = 1.0 if score > each[k] else 0.0
-            self.alphas[k] = min(max(self.alphas[k] + gamma * (miss - outside), FLOOR), CEILING)
+            outside = 1.0 if excess > each[k] else 0.0
+            self.alphas[k] = min(
+                max(self.alphas[k] + gamma * (TAIL_MISS - outside), FLOOR), CEILING
+            )
             loss = grad * (each[k] - quoted)
             self.regret[k] += loss
             self.regret_sq[k] += loss * loss
+
+
+@dataclass(slots=True)
+class Pool(Restorable):
+    """One `(feed, interval, side)`'s signed scores and its two tails."""
+
+    #: Recent **signed** conformity scores, oldest first, trimmed to `WINDOW`.
+    #: Signed because that is the whole point: how far price overshoots a floor
+    #: and how far it undershoots it are different quantities, and the version
+    #: of this that took `abs` was averaging them.
+    scores: list[float] = field(default_factory=list)
+    above: Tail = field(default_factory=lambda: Tail(1.0))
+    below: Tail = field(default_factory=lambda: Tail(-1.0))
+    #: Resolved touches folded in. The run-in is counted against this.
+    seen: int = 0
+
+    @property
+    def settled(self) -> bool:
+        return self.seen >= SETTLE and bool(self.scores)
+
+    def reach(self, default: float) -> tuple[float, float]:
+        """`(down, up)` in sigmas - how far the band reaches on each side."""
+        return (
+            self.below.reach(self.scores, self.settled, default),
+            self.above.reach(self.scores, self.settled, default),
+        )
+
+    def observe(self, score: float, default: float) -> None:
+        """Fold in one resolved touch, signed, on both tails."""
+        settled = self.settled
+        self.above.observe(self.scores, score, settled, default)
+        self.below.observe(self.scores, score, settled, default)
         self.scores.append(float(score))
         if len(self.scores) > WINDOW:
             # Trimmed by hand; see `WINDOW` for why this is not a deque.
@@ -207,15 +287,25 @@ class Pool(Restorable):
         self.seen += 1
 
     def coverage(self) -> float:
-        """What share of the kept scores the current width would have covered.
+        """What share of the kept scores the current band would have covered.
 
         Reported rather than used. A calibrator that cannot be asked whether it
         is calibrated is the same kind of claim this module exists to stop.
         """
         if not self.scores:
             return 0.0
-        quoted = self.sigmas(float("inf"))
-        return sum(1.0 for s in self.scores if s <= quoted) / len(self.scores)
+        down, up = self.reach(float("inf"))
+        return sum(1.0 for s in self.scores if -down <= s <= up) / len(self.scores)
+
+    def skew(self) -> float:
+        """How asymmetric the band is: `up - down`, in sigmas.
+
+        Zero says the two tails agree and the `abs` version was losing nothing
+        here. It is published so that claim can be checked per instrument
+        rather than assumed either way.
+        """
+        down, up = self.reach(0.0)
+        return up - down
 
 
 @dataclass(slots=True)
@@ -235,12 +325,14 @@ class Zones(Restorable):
             found = self.pools[name] = Pool()
         return found
 
-    def sigmas(self, feed: str, interval: str, side: str, default: float) -> float:
-        """The half-width to use, in sigmas, or `default` during the run-in."""
-        return self.pool(feed, interval, side).sigmas(default)
+    def sigmas(self, feed: str, interval: str, side: str, default: float) -> tuple[float, float]:
+        """`(down, up)` in sigmas, or `default` on both during the run-in."""
+        return self.pool(feed, interval, side).reach(default)
 
-    def observe(self, feed: str, interval: str, side: str, score: float, default: float) -> float:
-        """Fold in one resolved touch and return the width that now applies."""
+    def observe(
+        self, feed: str, interval: str, side: str, score: float, default: float
+    ) -> tuple[float, float]:
+        """Fold in one resolved **signed** touch and return the band that now applies."""
         pool = self.pool(feed, interval, side)
         pool.observe(score, default)
-        return pool.sigmas(default)
+        return pool.reach(default)
