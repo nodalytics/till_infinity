@@ -351,7 +351,7 @@ class CouncilStrategy(Strategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.15
     description: ClassVar[str] = (
         "Four agents with different reasoning modes decide independently, discuss "
         "once, then need a quorum. Costs a model call per voice per round."

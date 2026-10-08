@@ -64,7 +64,7 @@ class ApproachScalp(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.15
 
     #: Forty-five minutes, longer than `max_hold`. A swing wearing a
     #: scalp's name - the name is historical, the hold is what decides.
@@ -251,7 +251,7 @@ class Runner(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.15
     #: Its thesis is duration. See `Strategy.stale_exempt`.
     stale_exempt: ClassVar[bool] = True
 
@@ -362,7 +362,7 @@ class SwingLevel(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.15
     #: Its thesis is duration. See `Strategy.stale_exempt`.
     stale_exempt: ClassVar[bool] = True
 
@@ -657,7 +657,7 @@ class OriginSwing(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.15
     #: Its thesis is duration. See `Strategy.stale_exempt`.
     stale_exempt: ClassVar[bool] = True
     style: ClassVar[str] = "swing"
@@ -910,7 +910,7 @@ class FadeToValue(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.25
     #: Its thesis is duration. See `Strategy.stale_exempt`.
     stale_exempt: ClassVar[bool] = True
 

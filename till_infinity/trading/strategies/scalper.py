@@ -760,7 +760,7 @@ class CycleScalp(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.25
     refines: ClassVar[str] = "level-scalp"
     reverse_if_better: ClassVar[bool] = True
     description: ClassVar[str] = (
@@ -856,7 +856,7 @@ class LevelScalp(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.05
     description: ClassVar[str] = (
         "Trade a level call in the direction it states, stop beyond the level, "
         "target the expected push. Fast timeframes only. The default."
@@ -885,7 +885,7 @@ class ConfluenceScalp(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.1
     description: ClassVar[str] = (
         "Only calls confirmed by another timeframe, with a wider stop. Fewer trades."
     )
@@ -929,7 +929,7 @@ class MomentumScalp(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.15
     description: ClassVar[str] = (
         "Only calls agreeing with three speeds of recent edge. Misses turns by construction."
     )
@@ -987,7 +987,7 @@ class Snap(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.1
     description: ClassVar[str] = (
         "The level call held for as long as the interaction actually lasts - "
         "the median touch resolves in 18 seconds. Same trade as level-scalp "
@@ -1029,7 +1029,7 @@ class ThesisOnly(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.2
+    reward_floor: ClassVar[float] = 1.0
     description: ClassVar[str] = (
         "The level call with the stop moved out of the way - a circuit breaker "
         "rather than a trade decision. Exits on target or on the clock. An "

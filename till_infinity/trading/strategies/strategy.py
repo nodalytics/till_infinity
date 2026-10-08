@@ -289,6 +289,50 @@ class Strategy(ABC):
     #: inside its own interval: `thesis-only` P(<=0) = 0.43, `inverse` 0.14,
     #: `fade-to-value` 0.56. So nothing here is evidence that the floor earns
     #: money - only that it does what it says to the geometry.
+    #: **Per strategy from 2026-10-08, each from its own measured win rate.**
+    #: A floor's whole job is to keep a trade above the ratio at which its own
+    #: hit rate breaks even, and that ratio is `(1 - p) / p` - so one number for
+    #: every strategy is either too low for the weak ones or too high for the
+    #: strong ones. On this desk it was both: at 1.2, `fade-to-value` (40.7%,
+    #: needs 1.46) was still losing while `thesis-only` (53.5%, needs 0.87) was
+    #: being pushed a third further than it had to be.
+    #:
+    #: **Shrunk toward the desk, not taken raw.** The measured rates spread
+    #: 40.7% to 56.1%, but on 41 to 970 trades most of that spread is sampling
+    #: noise, and a floor built on it would be largest exactly where the evidence
+    #: is thinnest - `level-scalp` has the best rate and the second-fewest
+    #: trades. Each rate is pulled toward the desk's own 46.7% in proportion to
+    #: its sample, `(n*p + K*desk) / (n + K)` with `K = 150` trades, which is the
+    #: number of its own a strategy needs before it moves off the house figure.
+    #: That collapses the rates to 44-51% and the floors to **0.95-1.25**:
+    #:
+    #:   `fade-to-value` 1.25, `cycle-scalp` 1.25, `inverse` 1.20,
+    #:   `snap` 1.10, `confluence-scalp` 1.10, `level-scalp` 1.05,
+    #:   `thesis-only` **1.00**, and 1.15 for the rest, which have no live
+    #:   record of their own and take the desk's shrunk breakeven.
+    #:
+    #: `thesis-only` is the one rounded against its own number: it asks for
+    #: 0.953 and is given 1.00, because no floored trade should ship below 1:1
+    #: and five hundredths is not worth breaking that for. It is the only entry
+    #: in the table set by judgement rather than by the arithmetic, and it is
+    #: conservative in the direction the arithmetic cares about.
+    #:
+    #: **A uniform 1.5 over-floors every one of them**, which is why that number
+    #: was measured and not shipped. `cycle-scalp` is the only strategy with
+    #: enough trades to move off the house rate at all, and it asks for 1.25.
+    #:
+    #: It also defuses the strongest reading against a floor. Of 120 journalled
+    #: fields tested against the win rate on 1,616 closed positions,
+    #: `reward_to_risk` separates hardest and backwards - **42.3% above the
+    #: median ratio against 50.5% below**, q = 0.00. That is cross-sectional
+    #: rather than causal, since a trade carries a high ratio when its target was
+    #: already far away - but if the elasticity is real, floors of 0.95-1.25 move
+    #: a target far less than 1.5 and there is correspondingly less to lose.
+    #:
+    #: **These are measured at the current geometry and so expire.** Changing a
+    #: floor changes the win rate that set it. Re-derive from the broker record
+    #: rather than treating the table as fixed, and `research/ideas/win_rate.py`
+    #: is what re-derives it.
     reward_floor: ClassVar[float] = 0.0
 
     def floored_target(
