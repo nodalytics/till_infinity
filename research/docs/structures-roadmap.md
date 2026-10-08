@@ -262,6 +262,76 @@ one with the thinnest data: `fade-to-value` publishes `origin_*` on 5 of 75
 closed trades, so it needs a bar-level replay rather than a read of the live
 record.
 
+## The zone-fill model in `research/papers/state-space.md`
+
+A note recording someone else's approach: a probability that a zone gets
+**filled**, built "on the same principle as particle physics", taking tick
+speed, directional efficiency, zone size and distance to the zone, channelled
+through a function with hand-tuned weights, trading when the probability
+reaches 1.
+
+### It is a different object from the filter above, and that matters
+
+The filter asks **where is this level**. This asks **will price get there**.
+Both are legitimate and they are not alternatives - the wave-collapse analogy
+is a distribution over where *price* will be, which is a particle filter over
+the price path, not over the level. The particle-filter work in
+[`level-filters.md`](level-filters.md) answers the first question and says
+nothing about this one.
+
+### The repo already has a free null for it
+
+`structures/context/timing.py` has `probability_within(distance_vol, bars)` -
+the chance of touching something that far away within that many bars, from the
+**reflection principle**: a walk that would end beyond the point must have
+touched it, and so must half of those that end short.
+
+That is the same quantity, with **no weights to tune**, and it is already in
+the tree. So the note's model does not need its weights fitted and then
+admired; it needs to beat a closed-form random-walk baseline that costs
+nothing. Anything it adds over that is the contribution, and anything it does
+not add is the measurement.
+
+This is the same shape as the placebo level in `imbalance.md` and the
+duty-cycle control everywhere else: the question is never "does it look right",
+it is "does it beat the thing that assumes nothing".
+
+### Directional efficiency is the genuinely new input
+
+Of the four inputs, three are already here in some form - speed is
+`approach_vol`, size is the zone's own width, distance is what
+`probability_within` already takes. **Directional efficiency is not**: nothing
+in `structures` computes net move over path length, and `run_vol`,
+`approach_vol` and `slowing` are not it.
+
+That is worth building regardless of the rest of the model, because it is
+exactly the distinction `origins` and `displacement` keep circling - one says a
+move was **large**, the other says it was **one-sided**, and they agree only
+59-78% of the time. Efficiency is that second idea stated continuously instead
+of as a threshold, and it would apply to both.
+
+### One thing to be careful about
+
+"It trades once a zone has a probability of 1 meaning certainty." A probability
+of exactly one is either a scale that is not a probability or a model that has
+stopped being calibrated - and in the closed form here, `probability_within`
+returns exactly 1.0 when the distance is under `MIN_DISTANCE_VOL`, which is to
+say **when price is already there**. That is not a signal, it is an arrival.
+
+The repo's standing habit answers this without argument: report the
+**base rate** beside every conditional. A fill probability that reads 1 where
+the unconditional rate also reads 1 has said nothing, however confident the
+number looks.
+
+### How to test it
+
+The note names the instruments - EURUSD and Deriv Volatility 75 - and they are
+a good pair for the reason it probably did not intend: one has a book and the
+other is generated, so an effect that appears on both is **price geometry**
+rather than order flow, which `imbalance.md` has already had to reason through
+once. Keep that framing: replicating on the synthetic is not an artifact, it is
+an answer about which of the two kinds of thing is being measured.
+
 ## What is measured, and what is a story
 
 Being explicit, because most of the above is a story.
