@@ -665,6 +665,31 @@ class Trader:
         #: wrote it down. That made "how much heat does a winner take" - the
         #: number that sizes a stop - unanswerable from our own record.
         self._worst, self._best_at, self._worst_at = {}, {}, {}
+        #: Tickets whose excursion record starts mid-trade, so `best_r` and
+        #: `adverse_r` are **floors rather than measurements**.
+        #:
+        #: `_best` and the three beside it are process memory and nothing
+        #: restores them, so a position open across a restart is first seen by
+        #: `_mark_best` long after it opened, seeded at whatever price was
+        #: quoted then, and everything before that is gone. `_reach` cannot
+        #: tell that from a trade that never went in front: both read 0.0.
+        #:
+        #: **Measured 2026-10-08**: `best_r` reads exactly zero on 45% of
+        #: closes in the journal and 85-94% of them since 2026-10-05, and 34.6%
+        #: of those closed *positive*, which no trade can do without having
+        #: been in front. The damage is correlated with the outcome, which is
+        #: what makes it poison rather than noise - a winner's lost peak is
+        #: visible as an impossible row, a loser's is not, so every filter
+        #: written against it selects on winning.
+        #:
+        #: This does not recover the lost path. It records that it is lost, at
+        #: **adopt time**, which is before the trade's result exists - so a
+        #: reader can drop these without selecting on the outcome, which is the
+        #: one thing no filter on `best_r` itself can do.
+        self._partial: set[int] = set()
+        #: When this process began marking. A position older than this was
+        #: already running when it started.
+        self._marking_since = time.time()
         #: feed -> a signal parked until price comes back. One per instrument,
         #: because the per-instrument position limit would refuse the second
         #: anyway and holding several would only decide which to drop later.
@@ -2965,6 +2990,14 @@ class Trader:
             price = bid if live.position.side is Side.BUY else ask
             buying = live.position.side is Side.BUY
             seen = self._best.get(ticket)
+            if (
+                seen is None
+                and live.position.opened
+                and (live.position.opened < self._marking_since)
+            ):
+                # Open before this process was: whatever it did before now is
+                # not recoverable, and the record has to say so.
+                self._partial.add(ticket)
             if seen is None or (max(seen, price) if buying else min(seen, price)) != seen:
                 self._best[ticket] = price
                 # **When the high came, not only how high.** A break-even stop
@@ -4162,6 +4195,7 @@ class Trader:
         self._best_at.pop(ticket, None)
         self._worst_at.pop(ticket, None)
         self._bank_due.discard(ticket)
+        self._partial.discard(ticket)
 
     def _unattributed_context(self, live: Live, price: float, why: str) -> dict[str, Any]:
         """What a close knows about itself when no decision is on record.
@@ -4188,6 +4222,11 @@ class Trader:
             "target": round(live.intent.target, 8) if live.intent.target else 0.0,
             "r_multiple": _r_multiple(live.intent, price),
             "best_r": round(self._reach(live), 3),
+            # **Whether the number above is a measurement or a floor.**
+            # Set when the trade was adopted, not when it closed, so
+            # a reader can drop these without selecting on the
+            # outcome. See `_partial`.
+            "excursion_partial": live.position.ticket in self._partial,
             # What the turn model's exit would have made on this same path,
             # beside what the trade actually made. Acts on nothing - see
             # `trading/turning.py` for why this counterfactual is honest where
@@ -4328,6 +4367,11 @@ class Trader:
                     # measure afterwards. Above 1 means a trade that was a
                     # winner by its own risk and did not end as one.
                     "best_r": round(self._reach(live), 3),
+                    # **Whether the number above is a measurement or a floor.**
+                    # Set when the trade was adopted, not when it closed, so
+                    # a reader can drop these without selecting on the
+                    # outcome. See `_partial`.
+                    "excursion_partial": live.position.ticket in self._partial,
                     # And the other side of the same question, which was never
                     # recorded: how far it went against itself before it got
                     # there. On a winner this is how much of the stop was
