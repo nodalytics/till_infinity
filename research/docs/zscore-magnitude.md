@@ -110,6 +110,17 @@ the odds of touching one barrier before the other. Every table in
   none of which have been run.
 * **`atr_rel` on its own is usable now** and needs no model.
 
+## Superseded by the comparison that matters
+
+[`envelope-vs-magnitude.md`](envelope-vs-magnitude.md): run on the production
+envelope's own bars, features, target and horizons, the **shipped quantile
+forecaster and a direct magnitude fit on its features are within 0.007 IC at
+every horizon** - and the direct fit is worse at two of the three. Predicting
+|move| is volatility forecasting, and this desk already ships a fortnightly
+retrained model that does it. **The result below is an independent rediscovery,
+not an addition**, and no sizing work should be built on it when the envelope's
+quantiles are already fitted, gated and in service.
+
 ## What this does not say
 
 Nothing here predicts direction. The signed IC is +0.0024 and the barrier test
