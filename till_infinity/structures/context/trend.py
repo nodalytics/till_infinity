@@ -44,7 +44,9 @@ actually took.
 
 from __future__ import annotations
 
+import itertools
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from ..state import Restorable
@@ -54,6 +56,30 @@ WINDOW = 12
 #: Below this many, no opinion is offered. Two points is one step, which is
 #: trivially perfectly efficient and says nothing.
 FEWEST = 3
+
+
+def ratio(prices: Sequence[float]) -> float | None:
+    """How much of the distance travelled went somewhere. Kaufman's ratio.
+
+        |last - first| / sum(|step|)
+
+    One is a move that went straight there; zero is ground covered to no end.
+    Bounded in `[0, 1]` by the triangle inequality, which is why it needs no
+    scaling and compares across instruments as it stands. `None` where there
+    was no path to measure - which is not the same answer as zero, and the
+    callers want to tell them apart.
+
+    **A module-level function because two things ask it of two different
+    series.** `Trend` asks it of recent *level prices*, to scale sizing;
+    `touches.base` asks it of recent *bar closes*, as a model feature. Same
+    statistic, different input, and one copy - the second copy was written and
+    deleted before it shipped.
+    """
+    xs = list(prices)
+    if len(xs) < 2:
+        return None
+    travelled = sum(abs(b - a) for a, b in itertools.pairwise(xs))
+    return abs(xs[-1] - xs[0]) / travelled if travelled > 0 else None
 
 
 @dataclass(slots=True)
@@ -84,12 +110,7 @@ class Trend(Restorable):
         """0 ranges, 1 trends, None when there is not enough to say."""
         if len(self.seen) < FEWEST:
             return None
-        prices = list(self.seen)
-        steps = [prices[i + 1] - prices[i] for i in range(len(prices) - 1)]
-        travelled = sum(abs(s) for s in steps)
-        if travelled <= 0:
-            return None
-        return abs(sum(steps)) / travelled
+        return ratio(self.seen)
 
     def scale(self, span: float) -> float:
         """A sizing multiplier from the trend context, centred on 1.

@@ -36,7 +36,6 @@ published on the calls and printed on the cards.
 
 from __future__ import annotations
 
-import itertools
 import math
 from collections import deque
 from collections.abc import Mapping
@@ -44,6 +43,7 @@ from dataclasses import dataclass, field
 
 from ...shared import frozen
 from .. import rollover as ro
+from ..context import trend
 from ..state import Restorable
 
 #: The bars ahead the touch is forecast for: the card's envelope horizon.
@@ -142,30 +142,25 @@ def _movz(values, window: int) -> float:
 
 
 def _efficiency(values, window: int) -> float:
-    """How much of the distance travelled went somewhere. Kaufman's ratio.
+    """`trend.ratio` over the last `window` steps, 0.0 where there is none.
 
-        |last - first| / sum(|step|)
+    **The statistic already existed and this nearly shipped a second copy of
+    it.** `context/trend.py` runs the same ratio over recent *level prices* to
+    scale sizing; this runs it over recent *bar closes* as a model feature.
+    Same arithmetic, different series, one definition - see `trend.ratio` for
+    what it means and why it needs no scaling.
 
-    One is a move that went straight there; zero is a path that covered ground
-    and arrived nowhere. Bounded in [0, 1] by the triangle inequality, which is
-    why it needs no scaling and compares across instruments as it stands.
-
-    **This is the distinction `origins` and `displacement` keep circling, said
-    continuously.** One asks whether a move was *large* and the other whether
-    it was *one-sided*, they agree only 59-78% of the time
-    (`structures-drawing-displacement.md`), and both answer with a threshold.
-    Efficiency is the second question without the threshold, so a model can
-    find its own cut instead of being handed `PUSH_BODY`.
-
-    Zero when there is not enough path to measure, which is the same answer a
-    flat series gives and is the right one: no distance travelled is no
-    evidence about direction.
+    Zero rather than `None` here, because a model feature has to be a number
+    and "no path to measure" and "a path that arrived nowhere" are the same
+    thing to a learner: no evidence about direction.
     """
     xs = list(values)[-(window + 1) :]
-    if len(xs) < 3:
+    # `trend.FEWEST`, for the reason that constant exists: two points are
+    # trivially perfectly efficient and say nothing.
+    if len(xs) < trend.FEWEST:
         return 0.0
-    path = sum(abs(b - a) for a, b in itertools.pairwise(xs))
-    return abs(xs[-1] - xs[0]) / path if path > 0 else 0.0
+    got = trend.ratio(xs)
+    return 0.0 if got is None else got
 
 
 def _ratio(bps: float | None, sigma: float) -> float:

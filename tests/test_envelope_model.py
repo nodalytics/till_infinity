@@ -500,6 +500,9 @@ def test_direction_does_not_change_it():
 
 
 def test_too_short_a_path_is_not_measured():
+    """Two points are trivially perfectly efficient and say nothing, which is
+    the reason `trend.FEWEST` exists - this uses the same constant rather than
+    picking its own."""
     assert tc._efficiency([1.0, 2.0], 10) == 0.0
     assert tc._efficiency([], 10) == 0.0
 

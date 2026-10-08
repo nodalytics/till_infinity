@@ -53,15 +53,49 @@ that way. Nothing was discarded.
 
 `research/papers/state-space.md` records someone else's zone-fill model, whose
 inputs are tick speed, zone size, distance to the zone and **directional
-efficiency**. Checked against the tree, three of the four were already here in
-some form and the fourth was not: nothing in `structures` computed net move
-over path length.
+efficiency**.
+
+**A correction to the first version of this note.** It claimed nothing in
+`structures` computed net move over path length. That was wrong:
+`context/trend.py` already had it, as `Trend.efficiency`, and the formula is
+identical - `abs(sum(steps)) / sum(abs(steps))` is `|last - first| / path`.
+
+What is actually new is the **series it is asked of**. `Trend` runs the ratio
+over recent *level prices*, to scale sizing. This runs it over recent *bar
+closes*, as a model feature. Same statistic, different input, different
+purpose - and now **one definition**: `trend.ratio`, which both call.
 
     efficiency = |last - first| / sum(|step|)
 
 Kaufman's ratio. One is a move that went straight there; zero is ground covered
 to no end. Bounded in `[0, 1]` by the triangle inequality, which is why it
 needs no scaling and compares across instruments as it stands.
+
+Below `trend.FEWEST` points it reads zero, using that constant rather than
+inventing a second one - two points are trivially perfectly efficient and say
+nothing, which is why it exists. Collapsing the two copies into one changed
+that behaviour and a test caught it, which is the argument for having written
+the test before noticing the duplication.
+
+### What else of that family already exists
+
+Checked, because the first claim here was wrong and the same mistake is cheap
+to repeat. Most of the physics-flavoured vocabulary is already in the tree:
+
+| | where | measured? |
+|---|---|---|
+| efficiency | `context/trend.py` `Trend.efficiency` | used for sizing |
+| **energy** | `reactions.py` `Touch.energy` - `departure_vol / approach_vol`, "how much harder it left than it arrived" | published per touch |
+| **force** | [`force.md`](force.md) - `approach_vol` AUC **0.5429** in band, `slowing` **0.5237**, `depth_vol` **0.4180** read inverted | yes, 10,871 touches |
+| velocity | `reactions.py` `velocity_r` | published |
+| momentum | `context/cusum.py`, an accumulating sum rather than a fixed lookback | published |
+| **penetration** | nothing | **absent** |
+
+So "force" is not a gap - it is a question already asked and answered, and the
+answer is in `context/registry.py`'s roster with its AUC beside it. The one
+term with no implementation is **penetration**: how far past a level price got
+before turning. `depth_vol` is close and is not it, since depth is measured
+into the zone rather than beyond it.
 
 ### Why it is worth having on its own
 
