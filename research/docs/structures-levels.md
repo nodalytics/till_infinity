@@ -159,6 +159,20 @@ the gate, and the filter reported `slope = 0.0000` forever while looking
 entirely healthy. The covariance now propagates either way and only the mean's
 carry is gated.
 
+### Flip symmetry
+
+A support that rises and a resistance that falls are the same object with one
+sign flipped, and half the book is the second one. Nothing in the filter has a
+sign preference, and that is pinned rather than left to be inferred from a
+rising fixture: a falling series earns the mirror slope, the mirror mean offset
+and the mirror projection, while `variance` and `var_slope` come out
+**identical** rather than mirrored, because an uncertainty is a width.
+
+The mirroring is exact to about `1e-10`, not to the bit. `updated` is epoch
+seconds - a float near `1.7e9` - so the arithmetic cannot be exact, and a test
+asserting equality to the bit would be asserting something about the clock
+rather than about the filter.
+
 ### Why the slope is not extrapolated forever
 
 `F P F'` grows the price variance by `dt**2 * var_slope`, which is the honest

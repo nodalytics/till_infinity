@@ -2936,3 +2936,35 @@ def test_zone_is_zone_at_the_last_touch():
     vol = _vol()
     level = Level("x", "15m", filter=Kalman(mean=100.0, variance=0.05, updated=now))
     assert level.zone(vol) == level.zone_at(now, vol)
+
+
+def test_a_falling_level_earns_the_mirror_slope():
+    """Flip symmetry. Nothing in the filter has a sign preference and a test
+    should say so rather than leave it to be inferred from a rising fixture -
+    a support that rises and a resistance that falls are the same object with
+    one sign flipped, and half the book is the second one.
+    """
+    rising, up_last = _filter_over(10, step=0.5)
+    falling, down_last = _filter_over(10, step=-0.5)
+
+    assert falling.trending is True
+    assert falling.slope < 0.0
+    # mirrored to floating point - `updated` is epoch seconds, a ~1.7e9 float,
+    # so the arithmetic cannot be exact and the residual is ~1e-10
+    assert falling.slope == pytest.approx(-rising.slope, abs=1e-8)
+    assert falling.mean - 100.0 == pytest.approx(-(rising.mean - 100.0), abs=1e-8)
+    # uncertainty is a width, so it is identical rather than mirrored
+    assert falling.variance == pytest.approx(rising.variance, rel=1e-9)
+    assert falling.var_slope == pytest.approx(rising.var_slope, rel=1e-9)
+    # and the projection mirrors too
+    assert falling.at(down_last + 6 * 3600) - 100.0 == pytest.approx(
+        -(rising.at(up_last + 6 * 3600) - 100.0), abs=1e-8
+    )
+
+
+def test_a_falling_level_widens_its_band_the_same_way():
+    rising, up_last = _filter_over(10, step=0.5)
+    falling, down_last = _filter_over(10, step=-0.5)
+    assert falling.sigma_at(down_last + 6 * 3600) == pytest.approx(
+        rising.sigma_at(up_last + 6 * 3600), rel=1e-9
+    )
