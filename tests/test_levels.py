@@ -3013,3 +3013,144 @@ def test_a_falling_level_widens_its_band_the_same_way():
     assert falling.sigma_at(down_last + 6 * 3600) == pytest.approx(
         rising.sigma_at(up_last + 6 * 3600), rel=1e-9
     )
+
+
+# ------------------------------------------------------- how far it got through
+
+
+def test_a_touch_that_never_crossed_has_no_penetration():
+    """`depth_vol` is the distance at arrival and sees this as a touch like any
+    other; penetration is what says price never got to the far side."""
+    vol = _vol()
+    tracker = reactions.Tracker(horizon_bars=24, trap_bars=12)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+
+    # approached from below, turned away without ever getting above the level
+    done = _walk(tracker, level, Side.BELOW, [-5, -3, -2, -8, -20, -40, -60], vol)
+
+    assert done is not None
+    assert done.penetration_vol == 0.0
+
+
+def test_a_trap_penetrated_before_it_came_back():
+    """The distinction penetration exists for: a trap and a reject can arrive
+    at the same depth and only one of them got through."""
+    vol = _vol()
+    tracker = reactions.Tracker(horizon_bars=24, trap_bars=12)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+
+    done = _walk(tracker, level, Side.BELOW, [10, 20, 30, 20, 5, -10, -20], vol)
+
+    assert done is not None
+    assert done.outcome is Outcome.TRAP
+    assert done.penetration_vol > 0.0
+
+
+def test_penetration_keeps_the_furthest_not_the_last():
+    """It is a high-water mark - price coming back does not un-cross a level."""
+    vol = _vol()
+    tracker = reactions.Tracker(horizon_bars=24, trap_bars=12)
+    level = Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5))
+
+    far = _walk(tracker, level, Side.BELOW, [10, 40, 30, 20, 5, -10, -20], vol)
+    near = _walk(
+        reactions.Tracker(horizon_bars=24, trap_bars=12),
+        Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5)),
+        Side.BELOW,
+        [10, 15, 30, 20, 5, -10, -20],
+        vol,
+    )
+    assert far is not None
+    assert near is not None
+    assert far.penetration_vol > near.penetration_vol
+
+
+def test_penetration_reads_the_same_from_either_side():
+    """Flip symmetry: a floor broken downward and a ceiling broken upward are
+    the same event with one sign changed."""
+    vol = _vol()
+    up = _walk(
+        reactions.Tracker(horizon_bars=24, trap_bars=12),
+        Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5)),
+        Side.BELOW,
+        [10, 30, 20, 5, -10, -20],
+        vol,
+    )
+    down = _walk(
+        reactions.Tracker(horizon_bars=24, trap_bars=12),
+        Level(feed="g", interval="5m", filter=Kalman(mean=4400.0, variance=0.5)),
+        Side.ABOVE,
+        [-10, -30, -20, -5, 10, 20],
+        vol,
+    )
+    assert up is not None
+    assert down is not None
+    assert up.penetration_vol == pytest.approx(down.penetration_vol, rel=0.05)
+
+
+def test_the_learner_can_see_what_the_service_computes():
+    """The point of publishing it. `slowing` had a measured AUC and was still
+    not an input; `energy` was computed and never journalled at all."""
+    from till_infinity.structures.learning import facto
+
+    for name in ("slowing", "penetration_vol", "energy"):
+        assert name in facto.NUMERIC
+
+
+# ------------------------------------------------------------ merging a level
+
+
+def test_merging_a_level_keeps_every_statistic():
+    """The regression guard. `dedupe` merged seven of fifteen fields and
+    dropped backchecks, traps, the four wick statistics and both symmetric
+    counts - and did it silently, because nothing compared the two objects.
+
+    Written against `dataclasses.fields` rather than a list, so a field added
+    later is covered by this test on the day it is added.
+    """
+    import dataclasses
+
+    from till_infinity.structures.levels import SideStats
+
+    into, other = SideStats(), SideStats()
+    for field in dataclasses.fields(SideStats):
+        setattr(into, field.name, 2.0)
+        setattr(other, field.name, 3.0)
+    into.merge(other)
+    untouched = [f.name for f in dataclasses.fields(SideStats) if getattr(into, f.name) == 2.0]
+    assert untouched == []
+
+
+def test_a_merge_keeps_touches_and_outcomes_in_step():
+    """The reason the loss was worse than a loss: `touches` was merged while
+    `traps` was not, so a merged level claimed more touches than it had
+    resolutions and `traps / touches` came out biased downward."""
+    from till_infinity.structures.levels import SideStats
+
+    into = SideStats(touches=10.0, traps=2.0, backchecks=1.0)
+    other = SideStats(touches=10.0, traps=5.0, backchecks=3.0)
+    before = into.traps / into.touches
+    into.merge(other)
+    assert into.touches == 20.0
+    assert into.traps == 7.0
+    assert into.backchecks == 4.0
+    assert into.traps / into.touches > before  # and not diluted to 2/20
+
+
+def test_a_merged_wick_depth_is_a_depth_and_not_a_sum():
+    """`wick_vol` is an exponential mean. Adding two means gives a number that
+    is not a depth at all, and it sizes stops."""
+    from till_infinity.structures.levels import SideStats
+
+    into = SideStats(wick_vol=1.0, wick_n=10.0)
+    other = SideStats(wick_vol=3.0, wick_n=10.0)
+    into.merge(other)
+    assert 1.0 <= into.wick_vol <= 3.0
+
+
+def test_a_merge_into_an_empty_side_adopts_its_wick_depth():
+    from till_infinity.structures.levels import SideStats
+
+    into, other = SideStats(), SideStats(wick_vol=2.5, wick_n=4.0)
+    into.merge(other)
+    assert into.wick_vol == 2.5

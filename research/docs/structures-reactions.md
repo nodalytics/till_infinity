@@ -416,3 +416,74 @@ Whether the estimated weight produces better inferences than 4.0 on real
 touches. The fallback means a cold or thin book behaves exactly as before,
 which makes it safe and not right - the same distinction the slope and the
 calibrated zone sit behind.
+
+## Penetration, and the features the learner could not see (2026-10-08)
+
+Asked what else of the physics-flavoured family - energy, force, velocity,
+momentum - was missing. Almost none of it was. The survey is in
+[`learned-vol.md`](learned-vol.md); the one term with no implementation was
+**penetration**, and chasing it turned up a second problem.
+
+### What penetration is, and why `depth_vol` is not it
+
+    penetration_vol = how far past the level the extreme got, in vol units
+
+`depth_vol` is `abs(level.distance_vol(price, vol))` at **arrival** - where
+price was when the touch opened. Penetration is the furthest the move ever
+reached on the level's **far side**, kept as a high-water mark.
+
+They separate outcomes arrival cannot:
+
+| | never crossed | crossed, came back | crossed, stayed |
+|---|---|---|---|
+| outcome | reject | **trap** | break |
+| `depth_vol` | can be identical | can be identical | can be identical |
+| `penetration_vol` | **0** | **> 0** | **> 0** |
+
+A reject and a trap can arrive at exactly the same depth, and only one of them
+got through. That is the whole case for the feature, and the tests are written
+as that comparison rather than as a number.
+
+Measured against the level **price** rather than the zone edge, with `risk_vol`
+published beside it, so a consumer can compare the two instead of being handed
+a subtraction it cannot inspect.
+
+### The second problem: `Touch.to_dict` is not what gets journalled
+
+`Touch.energy` - `departure_vol / approach_vol`, "how much harder it left than
+it arrived" - has been computed since it was written and read by **nothing**.
+It appears once in `structures` (its own definition) and zero times in
+`trading`.
+
+The reason is not that nobody wanted it. The outcome context in
+`service.record_outcomes` is **hand-assembled**, field by field, and it is not
+`Touch.to_dict()`. A property can be added to the touch, published in its
+`to_dict`, and still never reach the journal - which is what happened. Both
+are now written into that dict explicitly.
+
+### And `slowing` was measured but not an input
+
+`force.md` gave `slowing` an **AUC of 0.5237 in band** over 10,871 resolved
+touches, and it sits in `context/registry.py`'s roster with that number beside
+it. It was not in `facto.NUMERIC`, so the factorisation machine learning from
+level outcomes could not see it.
+
+That is the same shape as the envelope features in October: computed,
+published, invisible to the thing that learns. `slowing`, `penetration_vol` and
+`energy` now join the FM's inputs - and an FM is the right consumer for them
+specifically because it models how features **combine**. How hard price
+arrived, how far through it got, and how much harder it left are three angles
+on one event, and an additive model cannot say that a hard arrival which
+penetrated and left slowly is different from the sum of those three.
+
+`penetration_vol` and `energy` are saturated like `approach_vol` and the rest -
+both are ratios over a volatility estimate, so a touch in a dead pocket divides
+by a small number and arrives arbitrarily large. `slowing` is already bounded
+and is not.
+
+### Unmeasured
+
+Whether any of the three adds anything. They are offered to a supervised model
+that reports `model_mae` against `baseline_mae` and `levels_mae`, so a feature
+that does not help will show up as not helping - which is the reason to put
+them there rather than into a hand-written gate.

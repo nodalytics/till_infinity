@@ -1439,6 +1439,18 @@ class Watcher:
                     "probability_up": round(touch.probability_up, 4),
                     "base_rate_up": round(touch.base_rate_up, 4),
                     "actionable": touch.actionable,
+                    # **How far past the level the extreme got.** `depth_vol`
+                    # below is the distance at *arrival*; this is the furthest
+                    # the move ever reached on the far side, which separates
+                    # outcomes that arrival cannot: never crossed is a reject,
+                    # crossed and came back is a trap, crossed and stayed is a
+                    # break.
+                    "penetration_vol": round(touch.penetration_vol, 4),
+                    # And how much harder it left than it arrived. `Touch`
+                    # has computed this since it was written and nothing has
+                    # ever read it, because `Touch.to_dict` is not what gets
+                    # journalled - this dict is, and it never carried it.
+                    "energy": round(touch.energy, 4),
                     **touch.features.to_dict(),
                 },
             )

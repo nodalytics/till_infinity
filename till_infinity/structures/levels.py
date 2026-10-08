@@ -545,6 +545,55 @@ class SideStats(Restorable):
         self.sym_held *= factor
         self.sym_failed *= factor
 
+    def merge(self, other: SideStats) -> None:
+        """Fold another side's record into this one. **Every** statistic.
+
+        `dedupe` used to do this inline and merged seven of the fifteen
+        fields, dropping `backchecks`, `traps`, the four wick statistics and
+        both symmetric-race counts every time two levels were deduplicated.
+
+        That was worse than losing them. `touches` was merged while the
+        outcomes it should account for were not, so a merged level claimed
+        more touches than it had resolutions - and `traps / touches`, the rate
+        that says the obvious trade loses here, came out biased **downward**
+        by exactly the touches merged in. The wick statistics size stops
+        (`wick_deep_vol`, `sweep_zone`) and the symmetric counts are the
+        benchmark everything directional is scored against, so the loss
+        reached three separate consumers without showing up in any of them.
+
+        A method rather than a loop at the call site, so a field added to this
+        class is merged by whoever adds it and not by whoever remembers.
+        """
+        for name in (
+            "touches",
+            "rejects",
+            "backchecks",
+            "breaks",
+            "traps",
+            "chops",
+            "wick_sum",
+            "wick_sq",
+            "wick_n",
+            "push_sum",
+            "push_sq",
+            "ups",
+            "sym_held",
+            "sym_failed",
+        ):
+            setattr(self, name, getattr(self, name) + getattr(other, name))
+        # Not summed: `wick_vol` is an exponential **mean**, not a count, and
+        # adding two means gives a number that is not a depth at all. Weighted
+        # by how much evidence each side brought, which is what the sums
+        # beside it already measure.
+        if other.wick_vol > 0.0:
+            if self.wick_vol <= 0.0:
+                self.wick_vol = other.wick_vol
+            else:
+                mine, theirs = max(self.wick_n - other.wick_n, 0.0), other.wick_n
+                total = mine + theirs
+                if total > 0:
+                    self.wick_vol = (self.wick_vol * mine + other.wick_vol * theirs) / total
+
     def observe_wick(self, depth_vol: float) -> None:
         """Fold in how far the wick ran past the origin, exponentially."""
         depth_vol = max(0.0, depth_vol)
@@ -1182,14 +1231,7 @@ def dedupe(levels: Sequence[Level], vol: Volatility) -> list[Level]:
         winner.filter.update(loser.price, vol.price_units(loser.price, 0.5) ** 2, loser.created)
         winner.swings += loser.swings
         for side, stats in loser.sides.items():
-            into = winner.stats(side)
-            into.touches += stats.touches
-            into.rejects += stats.rejects
-            into.breaks += stats.breaks
-            into.chops += stats.chops
-            into.push_sum += stats.push_sum
-            into.push_sq += stats.push_sq
-            into.ups += stats.ups
+            winner.stats(side).merge(stats)
         winner.last_touch = max(winner.last_touch, loser.last_touch)
         kept[-1] = winner
     return kept
