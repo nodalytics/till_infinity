@@ -370,3 +370,96 @@ class TestActing:
         monkeypatch.setattr(cy, "CYCLES_ACT", True)
         series = self.taught(skill=0.9, depth=0.1)
         assert series.capped_push(9.0) == (9.0, "")
+
+
+# ------------------------------------------------------- the sliding periodogram
+
+
+def test_a_planted_cycle_is_found_at_its_own_period():
+    import math
+
+    from till_infinity.structures.cycles import Spectral
+
+    sp = Spectral()
+    for i in range(400):
+        sp.observe(math.sin(2 * math.pi * i / 16) + random.Random(i).gauss(0, 0.6))
+    assert sp.found
+    assert sp.period == pytest.approx(16.0, abs=1.0)
+
+
+def test_white_noise_fires_about_as_often_as_the_test_allows():
+    """The null, and the reason the harmonics are not a free choice.
+
+    A first version tracked a comfortable-looking set of periods - 4, 6, 8,
+    12, 16, 24, 32, 48 - which are not integer bins of a 128-bar window. They
+    leaked into each other, Fisher's g lost the independence it assumes, and
+    **white noise fired 30.2% of the time against a 5% test**. At true Fourier
+    frequencies it fires near 5%, which is what a null is for.
+    """
+    from till_infinity.structures.cycles import SPECTRAL_P, Spectral
+
+    fired = 0
+    trials = 200
+    for t in range(trials):
+        rng = random.Random(t)
+        sp = Spectral()
+        for _ in range(400):
+            sp.observe(rng.gauss(0, 1))
+        fired += sp.found
+    assert fired / trials < SPECTRAL_P * 3
+
+
+def test_fed_price_it_reports_the_longest_period_it_knows():
+    """Pinned as a **misuse**, not a feature. A random walk's periodogram is
+    1/f**2, so all the power sits at the longest period in the window and this
+    reports a cycle on almost every pure-noise walk. It is why `Stream` feeds
+    it the absolute return and why the docstring says so."""
+    import itertools
+
+    from till_infinity.structures.cycles import Spectral
+
+    rng = random.Random(1)
+    sp = Spectral()
+    for price in itertools.accumulate(rng.gauss(0, 1) for _ in range(400)):
+        sp.observe(price)
+    assert sp.found
+    assert sp.period == max(sp.window / k for k in sp.harmonics)
+
+
+def test_a_cycle_in_volatility_is_found_through_a_stream():
+    """The real case: price is a walk, its *volatility* has a period."""
+    import math
+
+    from till_infinity.structures.cycles import Stream
+
+    rng = random.Random(4)
+    stream = Stream()
+    price = 100.0
+    for i in range(600):
+        unit = 0.004 * (1.0 + 0.8 * math.sin(2 * math.pi * i / 16))
+        price *= math.exp(rng.gauss(0, unit))
+        stream.push(price)
+    assert stream.spectral.found
+    assert stream.spectral.period == pytest.approx(16.0, abs=1.0)
+
+
+def test_flat_volatility_reports_no_cycle():
+    import math
+
+    from till_infinity.structures.cycles import Stream
+
+    rng = random.Random(9)
+    stream = Stream()
+    price = 100.0
+    for _ in range(600):
+        price *= math.exp(rng.gauss(0, 0.004))
+        stream.push(price)
+    assert not stream.spectral.found
+    assert stream.spectral.to_dict()["cycle_period"] == 0.0
+
+
+def test_the_g_test_knows_a_peak_from_a_flat_spectrum():
+    from till_infinity.structures.cycles import fisher_p
+
+    assert fisher_p(0.9, 8) < 1e-4  # one bin holds nearly all the power
+    assert fisher_p(1.0 / 8, 8) == pytest.approx(1.0)  # perfectly flat
