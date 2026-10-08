@@ -176,9 +176,34 @@ MODELS: dict[tuple[str, int], str] = {
     (fam, n): f"envelope_{fam}15m_{n}" for fam in MODEL_FAMILIES for n in HORIZONS
 }
 MODEL_LEVELS: tuple[float, ...] = (0.05, 0.1, 0.5, 0.9, 0.95)
-MODEL_NAMES: tuple[str, ...] = ("lvol", "r1", "r5", "r20", "rng", "hour")
+#: **`body` and `displaced` added 2026-10-08.** Asked for directly - put the
+#: 70%-body candle and the two-candle displacement into the volatility models -
+#: and the measurement behind it is `research/docs/zscore-window.md`: on 220,301
+#: 4h bars a 70% body roughly **tripled** the separation of a z-score threshold
+#: at every window, and the ordering held everywhere - plain bars, then 70%
+#: body, then a 1-ATR displacement, then both. A feature worth more than the
+#: statistic it was meant to support belongs in the model that forecasts size.
+#:
+#: Both come from `touches.base` and carry the zone rule's own numbers, so the
+#: two subsystems mean the same thing by the same word.
+MODEL_NAMES: tuple[str, ...] = ("lvol", "r1", "r5", "r20", "rng", "hour", "body", "displaced")
 #: What changing the meaning of an input requires bumping.
-MODEL_RECIPE = "2026-09-29 envelope: vol state, moves, range, hour (touches.base)"
+#: **Bumped with the feature set, and that is the point of it.** `frozen.load`
+#: checks this string and `MODEL_NAMES` against a spec before using it, so a
+#: shipped six-feature model is *refused* rather than fed eight inputs - the
+#: engine falls back to the history envelope until a retrained model arrives.
+#: That is the safe failure and it is deliberate, but it means this change and a
+#: retrain have to land together.
+MODEL_RECIPE = (
+    "2026-10-08 envelope: vol state, moves, range, hour, body, displacement (touches.base)"
+)
+#: Newest first. A model trained on an earlier recipe still loads, and is fed
+#: the features *it* declares - so adding `body` and `displaced` does not strand
+#: the three FX models already in service while they wait to be retrained.
+MODEL_RECIPES: tuple[str, ...] = (
+    MODEL_RECIPE,
+    "2026-09-29 envelope: vol state, moves, range, hour (touches.base)",
+)
 
 
 def model_family(feed: str) -> str | None:
@@ -217,12 +242,19 @@ def model_quantiles(
             return None
         from ...shared import frozen
 
-        spec = frozen.load(MODELS[(family, horizon)], recipe=MODEL_RECIPE, names=MODEL_NAMES)
+        spec = frozen.load(MODELS[(family, horizon)], recipe=MODEL_RECIPES, names=MODEL_NAMES)
         if spec is None:
             return None
     from ...shared.frozen import Quantiles
 
-    got = Quantiles(spec).predict([float(features[name]) for name in MODEL_NAMES])
+    # **The spec's own names, in the spec's order.** A model is fed what it was
+    # trained on, not what this module currently believes the recipe to be -
+    # otherwise adding a feature silently feeds every shipped model the wrong
+    # vector, or `frozen.load` has to reject them all to prevent it.
+    wanted = tuple(spec.get("names") or MODEL_NAMES)
+    if any(name not in features for name in wanted):
+        return None
+    got = Quantiles(spec).predict([float(features[name]) for name in wanted])
     return got if all(math.isfinite(v) for v in got) else None
 
 

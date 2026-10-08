@@ -92,6 +92,11 @@ class Series(Restorable):
     true_ranges: deque = field(default_factory=lambda: deque(maxlen=NORM))
     sigmas: deque = field(default_factory=lambda: deque(maxlen=NORM))
     log_sigmas: deque = field(default_factory=lambda: deque(maxlen=VOV))
+    #: The last few bars' **signed body ratio** - how much of each bar's range
+    #: was net directional travel, positive up. Three is all the displacement
+    #: rule needs and the bound is in the factory so a restore rebuilds it
+    #: (`shared/state._deque_bounds`).
+    bodies: deque = field(default_factory=lambda: deque(maxlen=3))
     latest: list[float] = field(default_factory=list)
     #: The bar last advanced over, as (when, high, low, close, sigma): what `base` reads.
     bar: list[float] = field(default_factory=list)
@@ -99,6 +104,16 @@ class Series(Restorable):
     @property
     def warm(self) -> bool:
         return len(self.sigmas) >= WARM and len(self.closes) > 20
+
+
+#: A bar counts as impulsive when this much of its range is body, and a
+#: displacement is `PUSH_N` of them in a row the same way. Both are the zone
+#: rule's own numbers (`research/ideas/zones.py`), given by the desk on
+#: 2026-10-07 - "for the impulsive candles make the body at least 70% of the
+#: total candle range" and "the impulsive move must have at least 2 momentum
+#: candles" - and kept identical here so the two subsystems mean the same thing
+#: by the same word.
+PUSH_BODY, PUSH_N = 0.70, 2
 
 
 def base(
@@ -121,6 +136,7 @@ def base(
         else 0.0
     )
     closes = list(s.closes)
+    bodies = list(s.bodies)
 
     def move(bars: int) -> float:
         return math.log(close / closes[-1 - bars]) / sigma
@@ -141,6 +157,20 @@ def base(
         "to_weekend": (4 * 24 + 21 - week_hour) % 168,
         # The UTC hour as a whole number, the boosted envelope's clock (`gbmenvelope.py`).
         "hour": float(int(hour)),
+        # **The candle's own character**, asked for 2026-10-08 and carried over
+        # from the zone rule, where `PUSH_BODY` is the same 0.70: a bar that is
+        # nearly all body is a bar that travelled, and two of them in a row the
+        # same way is a displacement. `zscore-window.md` measured the first of
+        # these as worth more than the z-score it was meant to support - a 70%
+        # body roughly tripled the separation at every window and threshold -
+        # which is why they are offered to a volatility model rather than only
+        # to the zone scan.
+        "body": abs(bodies[-1]) if bodies else 0.0,
+        "displaced": float(
+            len(bodies) >= PUSH_N
+            and all(abs(b) >= PUSH_BODY for b in list(bodies)[-PUSH_N:])
+            and len({b > 0 for b in list(bodies)[-PUSH_N:]}) == 1
+        ),
     }
 
 
@@ -206,6 +236,13 @@ class Touches(Restorable):
             s.true_ranges.append(
                 max(high - low, abs(high - s.prev_close), abs(low - s.prev_close)) / s.prev_close
             )
+        # **The body, without an open.** `advance` is never given one, and it does
+        # not need one: in a continuous market a bar opens where the last closed,
+        # which is the identity the zone rule is built on - "that bearish candle
+        # close and the 1st displacement candle open, that is the level". So the
+        # body is the close-to-close travel over the bar's own range, signed.
+        if s.prev_close > 0 and high > low:
+            s.bodies.append((close - s.prev_close) / (high - low))
         s.sigmas.append(sigma)
         s.log_sigmas.append(math.log(sigma))
         s.closes.append(close)

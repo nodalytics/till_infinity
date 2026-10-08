@@ -30,6 +30,7 @@ import json
 import math
 import os
 import time
+from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
@@ -56,11 +57,32 @@ def _source(name: str) -> Path | None:
 
 
 def load(
-    name: str, *, recipe: str, names: tuple[str, ...] | list[str], now: float | None = None
+    name: str,
+    *,
+    recipe: str | Sequence[str],
+    names: tuple[str, ...] | list[str],
+    now: float | None = None,
 ) -> dict | None:
-    """The model called `name`, or None if there is none trained on `recipe` with `names`.
+    """The model called `name`, or None if there is none this caller can feed.
 
     Cached, and re-read when its file changes (checked at most every `RECHECK` seconds).
+
+    **The names check is a subset, not an equality, and that is the point.** The
+    safety property is "never feed a model an input it was not trained on" -
+    which is satisfied as long as every name the spec declares is one the caller
+    can supply. Demanding *equality* adds nothing to that and costs a great deal:
+    it means adding one feature to a recipe rejects every model already in
+    service, so the engine falls back to its history envelope until a retrain
+    lands. A model that needs fewer inputs than are on offer is a perfectly good
+    model; a model that needs one we do not have is the only unsafe case, and a
+    subset check is exactly the test for it.
+
+    Callers must therefore build the feature vector from **the spec's own
+    `names`**, in the spec's order, rather than from their module constant -
+    `envelope.model_quantiles` is the worked example.
+
+    `recipe` may be several, newest first, so a recipe can be superseded without
+    stranding the models trained on the one before it.
     """
     now = time.time() if now is None else now
     held = _cache.get(name)
@@ -78,8 +100,11 @@ def load(
         spec = json.loads(path.read_text())
     except (OSError, ValueError):
         spec = None
+    allowed = (recipe,) if isinstance(recipe, str) else tuple(recipe)
     if spec is not None and (
-        spec.get("recipe") != recipe or list(spec.get("names", [])) != list(names)
+        spec.get("recipe") not in allowed
+        or not set(spec.get("names") or ()) <= set(names)
+        or not spec.get("names")
     ):
         spec = None
     _cache[name] = (now, mtime, str(path), spec)
