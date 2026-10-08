@@ -34,7 +34,7 @@ trade cannot finish in front without having been in front.
 over the live record:
 
 ```python
-assert (d.best_r >= d.r_multiple.clip(lower=0)).all()   # it failed
+assert (d.best_r >= d.r_multiple.clip(lower=0)).all()  # it failed
 ```
 
 Write these as *data* tests, not unit tests. The unit tests all passed.
@@ -54,7 +54,7 @@ from 46.1% to 29.2%.
 **The check.** Any time you drop rows, print the drop rate **by outcome**:
 
 ```python
-d.groupby(d.r_multiple > 0).dropped.mean()   # must be flat
+d.groupby(d.r_multiple > 0).dropped.mean()  # must be flat
 ```
 
 If it is not flat, the filter is part of the result.
@@ -82,9 +82,11 @@ type has:
 
 ```python
 import dataclasses
+
 a, b = T(), T()
 for f in dataclasses.fields(T):
-    setattr(a, f.name, 2.0); setattr(b, f.name, 3.0)
+    setattr(a, f.name, 2.0)
+    setattr(b, f.name, 3.0)
 a.merge(b)
 assert [f.name for f in dataclasses.fields(T) if getattr(a, f.name) == 2.0] == []
 ```
