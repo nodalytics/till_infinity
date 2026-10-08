@@ -206,6 +206,85 @@ that might be worth nothing is not made.
 **Start here.** It is the only part of the idea that can be shown to have
 helped without being allowed to act first.
 
+## The same alternatives, and why the ranking inverts here
+
+`research/docs/structures-roadmap.md` assesses particle filters, HMM/HSMM,
+change-point detection, Gaussian processes, robust filters, multi-object
+tracking and RFS/PHD against the **level** problem. The same list applies here
+and **comes out in almost the opposite order**, for one reason worth stating
+before any of it:
+
+| | levels | the supervisor |
+|---|---|---|
+| objects | hundreds | **17 named, ~6 that trade** |
+| observations each | ~5 touches | **992 for `ride`, 325 for `sweep-aware`** |
+| object set | changes constantly | **fixed and known** |
+
+Levels are many objects with almost no data each. Strategies are a handful of
+objects with a lot of data each. Every method whose cost is per-object gets
+cheaper here, and every method whose job is to work out *which objects exist*
+becomes pointless.
+
+### Fits the supervisor better than it fits levels
+
+**HSMM, and it may be the best fit of anything here.** For levels the blocker
+was labels - the lifecycle vocabulary does not exist yet. For strategies the
+states are obvious and already in the desk's language: *working*, *degrading*,
+*broken*. And the data is there: a two-state model with a duration distribution
+is a reasonable ask of 992 observations, where it would be absurd on five
+touches.
+
+Duration is the part that earns it. "How long does a working regime last"
+cannot be expressed by any shrinkage weight, static or dynamic, and it is
+precisely what the desk needs to know before acting on a run of losses.
+
+**Bayesian online change-point detection.** "Did this strategy's edge just
+break" is a change-point question stated plainly, and the run-length posterior
+answers the one thing a drifting Kalman cannot: *how long has this regime
+held*. Partly here already - `prims.focus_series` is a FOCuS detector and the
+MCFL roadmap plans `FOCUS_UP`/`FOCUS_DOWN` as grammar words - so it is a
+component looking for this application rather than a new dependency.
+
+**Quantile / distribution tracking.** What the desk cares about is the R
+*distribution*, not its mean, and R is heavy-tailed enough that the mean is a
+poor summary. Tracking conditional quantiles sidesteps the question of what
+distribution it is, and it composes directly with the conformal work already
+built.
+
+**Conformal tracking with no state-space model at all.** A robust centre plus a
+calibrated interval, assuming nothing about how skill evolves. Worth building
+**as the benchmark**, because every richer model here has to beat it, and the
+cheapest way to discover that skill does not evolve smoothly is to find that
+the model which assumes nothing does just as well.
+
+### Fits worse here than it fits levels
+
+**Multi-object tracking and RFS/PHD - the one I would investigate hardest for
+levels is irrelevant here.** Their whole value is handling an object set whose
+membership and cardinality are unknown. The strategy set is seventeen names in
+an environment variable. There is no birth, no death and no data association
+problem to solve.
+
+**Particle filters and Gaussian mixtures.** Their value is multimodality, and a
+strategy's skill is a scalar. "This level is at 100.2 or at 101.0" is a real
+state; "this strategy's edge is +0.1R or -0.3R" is a bimodality that would mean
+two regimes - which is an HSMM, stated better.
+
+### What neither list covers: the supervisor has no record of its own
+
+`opportunity` has taken **zero positions in 40 days** - it sits at position ten
+of seventeen in `TRADING_STRATEGIES` and never fires. So it cannot learn from
+its own outcomes the way every method above assumes; it has none.
+
+It has to learn from **other strategies' trades**, which is exactly why the
+regret model below is the right first object: the counterfactual is recovered
+from bars, so the supervisor can be scored on trades it never took. No filter,
+HSMM or change-point model over its own record can start, because the record is
+empty.
+
+It also means removing `opportunity` from `TRADING_STRATEGIES` costs nothing
+measurable. It is already trading nothing.
+
 ## What to check before building any of it
 
 * **Does it have the data?** Per-strategy outcomes come from the broker deal
