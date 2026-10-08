@@ -740,14 +740,19 @@ class Level(Restorable):
     #: the published signal is a float dict and a string would be invalid there.
     high_structure: str = ""
     low_structure: str = ""
-    #: The half-width this level's zone uses, in sigmas.
+    #: How far the zone reaches **below** the centre, in sigmas, and above.
     #:
-    #: `ZONE_SIGMA` until the pool this level belongs to has resolved
-    #: `conformal.SETTLE` touches, after which it is whatever width actually
-    #: held `conformal.COVERAGE` of them. Stored on the level rather than
-    #: looked up in `zone_at`, because `zone` is called from ten places that
-    #: have no calibrator to hand and no business acquiring one.
-    zone_sigmas: float = ZONE_SIGMA
+    #: `ZONE_SIGMA` on both until the pool this level belongs to has resolved
+    #: `conformal.SETTLE` touches, after which each side is whatever reach
+    #: actually held its share of them. Two numbers rather than one because
+    #: how far price overshoots a floor and how far it undershoots it are
+    #: different quantities, and a single `abs` was averaging them.
+    #:
+    #: Stored on the level rather than looked up in `zone_at`, because `zone`
+    #: is called from ten places that have no calibrator to hand and no
+    #: business acquiring one.
+    zone_sigmas_down: float = ZONE_SIGMA
+    zone_sigmas_up: float = ZONE_SIGMA
 
     @property
     def price(self) -> float:
@@ -785,7 +790,9 @@ class Level(Restorable):
         price later, not more.
         """
         centre = self.filter.at(when)
-        half = self.filter.sigma_at(when) * self.zone_sigmas
+        spread = self.filter.sigma_at(when)
+        half_down = spread * self.zone_sigmas_down
+        half_up = spread * self.zone_sigmas_up
         # The floor is whichever binds: a typical move, or enough ticks that
         # the band is wider than the grid price is quoted on. See
         # MIN_ZONE_TICKS - on a coarsely quoted instrument the second is the
@@ -805,12 +812,13 @@ class Level(Restorable):
         # a number already defined as "so wide the level predicts nothing".
         # The estimate only ever shrinks, so this corrects itself with data.
         ceiling = vol.price_units(centre, MAX_ZONE_VOL)
-        half = min(max(half, floor), ceiling)
+        half_down = min(max(half_down, floor), ceiling)
+        half_up = min(max(half_up, floor), ceiling)
 
         below = self.sides.get(Side.ABOVE)
         above = self.sides.get(Side.BELOW)
-        down = max(half, vol.price_units(centre, below.wick_vol) if below else 0.0)
-        up = max(half, vol.price_units(centre, above.wick_vol) if above else 0.0)
+        down = max(half_down, vol.price_units(centre, below.wick_vol) if below else 0.0)
+        up = max(half_up, vol.price_units(centre, above.wick_vol) if above else 0.0)
         return centre - min(down, ceiling), centre + min(up, ceiling)
 
     def sweep_zone(self, vol: Volatility, sigmas: float) -> tuple[float, float]:
@@ -935,11 +943,13 @@ class Level(Restorable):
         if calibrator is not None and side is not None:
             spread = self.filter.sigma_at(when)
             if spread > 0:
-                self.zone_sigmas = calibrator.observe(
+                # **Signed**, not absolute. Which way price missed the centre
+                # is the information the two tails exist to keep.
+                self.zone_sigmas_down, self.zone_sigmas_up = calibrator.observe(
                     self.feed,
                     self.interval,
                     str(side),
-                    abs(extreme - self.filter.at(when)) / spread,
+                    (extreme - self.filter.at(when)) / spread,
                     ZONE_SIGMA,
                 )
         noise = vol.price_units(self.price, 0.5) ** 2

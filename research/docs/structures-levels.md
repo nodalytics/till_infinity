@@ -275,6 +275,34 @@ an interval, not a quantile, so the **interval score** stands in for pinball.
 Its gradient has the same linearised form, which is why the weighting reads
 like `envelope._weights`.
 
+### Two tails, not one width
+
+The band reaches `q-` below the centre and `q+` above, calibrated separately.
+The first version scored `|touch - centre|` and quoted one number both ways,
+which threw away the sign of the residual - information, not noise.
+
+**How far price overshoots a floor and how far it undershoots it are different
+quantities.** A level price spikes through from above but drifts gently into
+from below has a long tail one way and a short one the other, and a single
+width is wrong on both sides at once: too wide where the distribution is tight,
+too narrow where it is not. Forced to be symmetric it cannot even hold its
+coverage - it must over-cover the short side or under-cover the long one, and
+that is arithmetic rather than preference.
+
+`COVERAGE` stays a statement about the band, so each tail gets `TAIL_MISS`,
+half the total. Two tails at the full rate would leave twice as much outside as
+asked for.
+
+Measured on synthetic pools: a pool with a long lower tail and a short upper
+one reaches **more than twice as far down as up**; a symmetric pool comes out
+with the two within 0.35 sigmas and a `skew` of zero, which is the check that
+says the `abs` version was losing nothing *there*; and the skewed band still
+holds coverage within 0.04 of its 0.95 target, which a symmetric band cannot.
+
+This is a different axis from the pooling. The pool is keyed by the side price
+**arrived from**; the tails are the two directions the residual can point once
+it has arrived. A level has both.
+
 ### Pooled by `(feed, interval, side)`
 
 `CONFIDENT_TOUCHES` is 5 and most levels are sparse, so a per-level corrector
