@@ -50,6 +50,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from .conformal import Zones
 from .drawing.pips import Point, Swing
 from .drawing.pips import structure as pips_structure
 from .state import Restorable
@@ -739,6 +740,14 @@ class Level(Restorable):
     #: the published signal is a float dict and a string would be invalid there.
     high_structure: str = ""
     low_structure: str = ""
+    #: The half-width this level's zone uses, in sigmas.
+    #:
+    #: `ZONE_SIGMA` until the pool this level belongs to has resolved
+    #: `conformal.SETTLE` touches, after which it is whatever width actually
+    #: held `conformal.COVERAGE` of them. Stored on the level rather than
+    #: looked up in `zone_at`, because `zone` is called from ten places that
+    #: have no calibrator to hand and no business acquiring one.
+    zone_sigmas: float = ZONE_SIGMA
 
     @property
     def price(self) -> float:
@@ -776,7 +785,7 @@ class Level(Restorable):
         price later, not more.
         """
         centre = self.filter.at(when)
-        half = self.filter.sigma_at(when) * ZONE_SIGMA
+        half = self.filter.sigma_at(when) * self.zone_sigmas
         # The floor is whichever binds: a typical move, or enough ticks that
         # the band is wider than the grid price is quoted on. See
         # MIN_ZONE_TICKS - on a coarsely quoted instrument the second is the
@@ -901,14 +910,38 @@ class Level(Restorable):
         depth = abs((wick - origin) / origin * 10_000) / vol.bps
         self.stats(side).observe_wick(depth)
 
-    def observe_touch(self, extreme: float, vol: Volatility, when: float) -> float:
+    def observe_touch(
+        self,
+        extreme: float,
+        vol: Volatility,
+        when: float,
+        *,
+        side: Side | None = None,
+        calibrator: Zones | None = None,
+    ) -> float:
         """Fold a touch into the level's position. Returns the Kalman gain.
 
         Observation noise scales with volatility: in a violent market the price
         at which price turned says less about where the level is, and the
         filter should - and now does - believe it less.
+
+        **The conformity score is taken before the update**, and that ordering
+        is the whole validity argument for the calibrated zone. A score
+        measured after the fold would be scored against a centre that had
+        already moved toward it - a residual being admired rather than a
+        prediction interval being tested.
         """
         self.filter.predict(when, vol.price_units(self.price, DRIFT_VOL_PER_HOUR))
+        if calibrator is not None and side is not None:
+            spread = self.filter.sigma_at(when)
+            if spread > 0:
+                self.zone_sigmas = calibrator.observe(
+                    self.feed,
+                    self.interval,
+                    str(side),
+                    abs(extreme - self.filter.at(when)) / spread,
+                    ZONE_SIGMA,
+                )
         noise = vol.price_units(self.price, 0.5) ** 2
         gain = self.filter.update(extreme, noise, when)
         self.last_touch = when

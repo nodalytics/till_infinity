@@ -239,3 +239,93 @@ Nothing here has been measured against outcomes yet. The gate makes the change
 conservative - a level that has not earned a slope behaves as it always did -
 but "conservative" is not "better", and whether a trending level predicts its
 own next touch more accurately is a replay question nobody has run.
+
+## The zone's width, calibrated rather than assumed (2026-10-08)
+
+`ZONE_SIGMA` is two, and the docstring said the band was wide enough that
+"price inside this band is touching the level in any sense the data can
+distinguish". That is a **coverage claim** and it was made without a coverage
+measurement: two sigmas is 95.4% of a Gaussian, and nothing had checked that
+touches are Gaussian around a level or that the observation noise handed to the
+filter is the right one. Either being wrong makes the band confidently the
+wrong width, in a direction nobody can see.
+
+`structures/conformal.py` replaces the constant with a width that holds its
+target coverage by construction.
+
+### Why not a width dimension in the filter
+
+The obvious alternative, and it fails on the observation model rather than the
+arithmetic: **width is not observed.** What is observed is a hit or a miss,
+which is Bernoulli, and `|touch - centre|`, which is half-normal at best. A
+linear-Gaussian filter over width would assume exactly the thing the band
+exists to stop assuming. Kalman for the centre, conformal for the width - each
+tool on the problem it is valid for.
+
+### It is the machinery the envelope already proved
+
+`vol/envelope.py` runs AgACI over the volatility envelope and
+[`conformal.md`](conformal.md) measures it: at 50 bars **89.1-89.6%** across FX,
+metals, crypto and Deriv against one-step ACI's 87.8-88.1%, and **2-9%
+narrower** with better pinball in every cell. Narrower *and* better calibrated
+is the pair of properties a zone wants.
+
+Same correctors, same Bernstein Online Aggregation, one substitution: a zone is
+an interval, not a quantile, so the **interval score** stands in for pinball.
+Its gradient has the same linearised form, which is why the weighting reads
+like `envelope._weights`.
+
+### Pooled by `(feed, interval, side)`
+
+`CONFIDENT_TOUCHES` is 5 and most levels are sparse, so a per-level corrector
+would calibrate on single digits of feedback and mostly report its prior back.
+Pooling is not an optimisation here, it is what makes the estimate exist.
+
+**Side** because the premise of this module is that a price met from below and
+the same price met from above are two different objects, and there is no reason
+their touch dispersion should match. **Feed and interval** because the score is
+already normalised by the level's own sigma, so what is left to pool is exactly
+the instrument-and-timeframe-shaped part.
+
+That is the shrinkage argument `reactions` makes between a level's own record
+and kNN over similar levels, applied to the interval instead of the probability.
+
+### The score is out of sample
+
+`|touch - centre| / sigma`, taken **before** the touch is folded into the
+filter. After the fold it would be scored against a centre that had already
+moved toward it - a residual being admired rather than a prediction interval
+being tested. That ordering is the whole validity argument and it is pinned by
+a test.
+
+### What it measures, on synthetic pools
+
+- a Gaussian pool lands at **1.96** sigmas, agreeing with the old constant
+  where the old assumption was right - which is the only way to trust it
+  elsewhere
+- a heavy-tailed pool (a normal mixture, 15% at four times the dispersion)
+  **widens past two**, which is the case the Gaussian band gets wrong
+- a tight pool **narrows below two**, the other direction, where a band wider
+  than it needs to be reads every passing wick as a touch
+- coverage comes out within **0.04** of the 0.95 target on the heavy-tailed
+  pool
+
+### What it is not
+
+[`edge.md`](edge.md) found a rolling quantile losing to a matched constant four
+times out of four, and a walk-forward adaptive floor worse than no floor. Three
+nulls is a strong prior and this would be a fourth if it were the same thing.
+
+It is not. Those measured a rolling quantile as an **edge gate** - a statistic
+predicting returns, where normalising per cell destroyed a comparability the
+raw number already had. This calibrates an interval's **coverage**, a property
+of the interval rather than a claim about direction. Worth saying plainly,
+because both look like "a quantile over recent history" read quickly.
+
+### Still unmeasured
+
+Everything above is synthetic pools and unit tests. Whether a calibrated zone
+changes outcomes on real touches - whether the levels it widens stop producing
+spurious resolutions, and whether the ones it narrows produce more - is a
+replay question nobody has run. The run-in means a cold service behaves exactly
+as it did before, which makes the change safe and does not make it right.
