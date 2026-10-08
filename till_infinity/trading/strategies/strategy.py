@@ -308,8 +308,13 @@ class Strategy(ABC):
     #:
     #:   `fade-to-value` 1.25, `cycle-scalp` 1.25, `inverse` 1.20,
     #:   `snap` 1.10, `confluence-scalp` 1.10, `level-scalp` 1.05,
-    #:   `thesis-only` **1.00**, and 1.15 for the rest, which have no live
-    #:   record of their own and take the desk's shrunk breakeven.
+    #:   `thesis-only` **1.00**, `sweep-aware` 1.10, and 1.15 for the rest,
+    #:   which have no live record of their own and take the desk's shrunk
+    #:   breakeven. **Nothing is exempt any more** - `sweep-aware` was, on the
+    #:   grounds that a floor would bind on 5% of its calls, and the record
+    #:   confirms the 5% and shows those eleven trades winning 45% and losing
+    #:   0.181 R each. A hand-made exception in a table that is otherwise
+    #:   derived is how the table starts drifting.
     #:
     #: `thesis-only` is the one rounded against its own number: it asks for
     #: 0.953 and is given 1.00, because no floored trade should ship below 1:1

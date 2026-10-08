@@ -1184,6 +1184,22 @@ class SweepAware(LevelStrategy):
 
     name: ClassVar[str] = "sweep-aware"
 
+    #: **Floored at 1.10 from 2026-10-08, ending the exemption.** The exemption
+    #: below was argued on the floor barely touching this strategy, and the live
+    #: record confirms the premise and then overturns the conclusion: of 206
+    #: closed trades at a median reward-to-risk of 2.96, only **11 (5%)** sit
+    #: under 1.10 - and those eleven **win 45% and lose 0.181 R each**, -1.99 R
+    #: in total. The tail the floor would touch is exactly the part that loses.
+    #:
+    #: "Barely touches it" is a reason the change is harmless, not a reason it is
+    #: wrong, and `floored_target` can only move a target out - it never refuses
+    #: a trade - so the whole downside is those eleven trades. Its own
+    #: arithmetic asks for it too: 48.3% wins, shrunk to 47.8%, breaks even at
+    #: 1.09. Keeping one hand-made exception in a table that is otherwise
+    #: derived is how a table starts drifting.
+    #:
+    #: The original reasoning, kept because the premise in it was right:
+    #:
     #: **No `reward_floor`, and it is the one exception.** This strategy placed
     #: the EURUSD short at 0.22 reward-to-risk that the floor was written for,
     #: so it is not exempt for being blameless - it is exempt because the floor
@@ -1195,6 +1211,7 @@ class SweepAware(LevelStrategy):
     #:
     #: `Strategy.reward_floor` carries the measurement that makes this a real
     #: question rather than caution.
+    reward_floor: ClassVar[float] = 1.10
     #: Every call `level-scalp` takes, minus the ones whose stop sits in front
     #: of resting liquidity. Listed after it, this would never fire.
     refines: ClassVar[str] = "level-scalp"

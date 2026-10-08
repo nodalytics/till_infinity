@@ -9911,12 +9911,17 @@ def test_every_strategy_carries_a_floor_except_the_parameter_space():
     missing = {
         name: cls(made).reward_floor
         for name, cls in td.STRATEGIES.items()
-        if name not in SHAPED and name != EXEMPT and cls(made).reward_floor <= 0
+        if name not in SHAPED and cls(made).reward_floor <= 0
     }
     assert missing == {}
     for name in SHAPED:
         assert td.STRATEGIES[name](made).reward_floor == 0.0, name
-    assert td.STRATEGIES[EXEMPT](made).reward_floor == 0.0
+    # **`sweep-aware` is no longer exempt**, as of 2026-10-08. The exemption
+    # rested on the floor barely touching it, which the record confirms - 11 of
+    # 206 trades sit under 1.10 - and then overturns, because those eleven win
+    # 45% and lose 0.181 R each. Its own breakeven is 1.09. It is floored like
+    # everything else and the table has no hand-made exception left in it.
+    assert td.STRATEGIES[EXEMPT](made).reward_floor == pytest.approx(1.10)
 
 
 def test_the_unmeasured_floors_are_named_rather_than_quietly_included():
@@ -10141,19 +10146,29 @@ def test_a_magic_resolves_through_strategy_for_and_not_by_hand():
     assert wrong != "sweep-aware"
 
 
-def test_the_exempt_strategy_is_the_profitable_one_and_not_the_blameless_one():
-    """`sweep-aware` placed the 0.22 EURUSD short the floor was written for. It
-    is exempt because it is the only strategy of size that makes money and the
-    floor would bind on 5% of its calls - not because its geometry is clean.
+def test_the_last_exemption_was_ended_by_its_own_premise():
+    """`sweep-aware` was the one strategy without a floor. The exemption was
+    argued on the floor barely touching it - "it would bind on 5% of its calls"
+    - and the live record confirms that premise exactly and then overturns the
+    conclusion drawn from it.
 
-    Worth a test of its own, because "we left the good one alone" is the kind of
-    decision that gets re-read later as "the good one did not need it".
+    Of 206 closed trades at a median reward-to-risk of 2.96, **eleven** sit
+    under 1.10. Those eleven win 45% and lose 0.181 R each, -1.99 R in all. The
+    tail the floor would touch is the part that loses, "barely touches it" is a
+    reason the change is harmless rather than a reason it is wrong, and
+    `floored_target` can only move a target out - so the entire downside is
+    those eleven trades.
+
+    Kept as a test because "we left the good one alone" is the kind of decision
+    that gets re-read later as "the good one did not need it".
     """
     made = settings()
     engine = td.STRATEGIES[EXEMPT](made)
-    assert engine.reward_floor == 0.0
-    # And the machinery is still wired to it, so turning the floor on is a
-    # one-line change rather than a reinstatement.
-    assert engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 99.0) == 99.0
-    engine.reward_floor = 1.0
-    assert engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 99.0) == 90.0
+    assert engine.reward_floor == pytest.approx(1.10)
+    # Its own breakeven at a 48.3% win rate, shrunk toward the desk's, is 1.09.
+    assert engine.reward_floor >= (1 - 0.478) / 0.478
+    # Nothing is exempt now: every strategy either carries a floor or shapes its
+    # own geometry, and none inherits the zero default.
+    bare = [n for n, cls in td.STRATEGIES.items()
+            if n not in SHAPED and cls(made).reward_floor <= 0]
+    assert bare == [], f"no floor and no shape: {bare}"
