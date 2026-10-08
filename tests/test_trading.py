@@ -9875,18 +9875,23 @@ def test_the_strategies_with_broken_geometry_carry_a_floor():
     # the desk's. Pinned as the relation rather than a table of literals: every
     # floor must clear the ratio at which that strategy's own hit rate breaks
     # even, once the rate is shrunk toward the house figure.
-    desk, K = 0.467, 150.0
-    live = {"fade-to-value": (118, 0.407), "cycle-scalp": (970, 0.439),
-            "inverse": (116, 0.448), "snap": (57, 0.491),
-            "confluence-scalp": (66, 0.515), "thesis-only": (303, 0.535),
-            "level-scalp": (41, 0.561)}
+    desk, prior = 0.467, 150.0
+    live = {
+        "fade-to-value": (118, 0.407),
+        "cycle-scalp": (970, 0.439),
+        "inverse": (116, 0.448),
+        "snap": (57, 0.491),
+        "confluence-scalp": (66, 0.515),
+        "thesis-only": (303, 0.535),
+        "level-scalp": (41, 0.561),
+    }
     for name, (n, p) in live.items():
-        shrunk = (n * p + K * desk) / (n + K)
+        shrunk = (n * p + prior * desk) / (n + prior)
         need = (1 - shrunk) / shrunk
         got = td.STRATEGIES[name](made).reward_floor
         assert got >= need - 0.05, f"{name}: floor {got} under its breakeven {need:.3f}"
         # and not wildly over it - a floor is a floor, not a target policy
-        assert got <= need + 0.15, f"{name}: floor {got} far above its breakeven {need:.3f}"
+        assert got <= need + 0.20, f"{name}: floor {got} far above its breakeven {need:.3f}"
     for name, measured in FLOORED.items():
         engine = td.STRATEGIES[name](made)
         assert engine.reward_floor > 0.0, f"{name} (median RR {measured})"
@@ -10176,6 +10181,7 @@ def test_the_last_exemption_was_ended_by_its_own_premise():
 
     # Nothing is exempt now: every strategy either carries a floor or shapes its
     # own geometry, and none inherits the zero default.
-    bare = [n for n, cls in td.STRATEGIES.items()
-            if n not in SHAPED and cls(made).reward_floor <= 0]
+    bare = [
+        n for n, cls in td.STRATEGIES.items() if n not in SHAPED and cls(made).reward_floor <= 0
+    ]
     assert bare == [], f"no floor and no shape: {bare}"

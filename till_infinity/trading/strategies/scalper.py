@@ -856,7 +856,7 @@ class LevelScalp(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.05
+    reward_floor: ClassVar[float] = 1.1
     description: ClassVar[str] = (
         "Trade a level call in the direction it states, stop beyond the level, "
         "target the expected push. Fast timeframes only. The default."
@@ -1029,7 +1029,7 @@ class ThesisOnly(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.0
+    reward_floor: ClassVar[float] = 1.1
     description: ClassVar[str] = (
         "The level call with the stop moved out of the way - a circuit breaker "
         "rather than a trade decision. Exits on target or on the clock. An "

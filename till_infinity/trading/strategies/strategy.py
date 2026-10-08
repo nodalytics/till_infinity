@@ -307,8 +307,8 @@ class Strategy(ABC):
     #: That collapses the rates to 44-51% and the floors to **0.95-1.25**:
     #:
     #:   `fade-to-value` 1.25, `cycle-scalp` 1.25, `inverse` 1.20,
-    #:   `snap` 1.10, `confluence-scalp` 1.10, `level-scalp` 1.05,
-    #:   `thesis-only` **1.00**, `sweep-aware` 1.50, and 1.15 for the rest,
+    #:   `snap` 1.10, `confluence-scalp` 1.10, `level-scalp` 1.10,
+    #:   `thesis-only` **1.10**, `sweep-aware` 1.50, and 1.15 for the rest,
     #:   which have no live record of their own and take the desk's shrunk
     #:   breakeven. **Nothing is exempt any more** - `sweep-aware` was, on the
     #:   grounds that a floor would bind on 5% of its calls, and the record
@@ -320,11 +320,13 @@ class Strategy(ABC):
     #:   pushing profitable trades out of the 1.5-3.0 band where it earns and
     #:   toward the 3.0+ one where its win rate falls to 45%.
     #:
-    #: `thesis-only` is the one rounded against its own number: it asks for
-    #: 0.953 and is given 1.00, because no floored trade should ship below 1:1
-    #: and five hundredths is not worth breaking that for. It is the only entry
-    #: in the table set by judgement rather than by the arithmetic, and it is
-    #: conservative in the direction the arithmetic cares about.
+    #: **`thesis-only` and `level-scalp` are both held at 1.10**, above the
+    #: 0.95 and 1.05 their own arithmetic asks for. Two reasons, both stated
+    #: because neither is a measurement: no floored trade should ship below 1:1,
+    #: which rules out 0.95 on its own; and both numbers rest on the thinnest
+    #: evidence in the table - `level-scalp` has 41 trades and `thesis-only`'s
+    #: 53.5% is the highest rate here, so each is the most likely to fall back
+    #: toward the desk's 46.7% on more data. 1.10 is where they land if they do.
     #:
     #: **A uniform 1.5 over-floors every one of them**, which is why that number
     #: was measured and not shipped. `cycle-scalp` is the only strategy with
