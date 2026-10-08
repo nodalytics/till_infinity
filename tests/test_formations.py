@@ -189,7 +189,7 @@ def test_a_body_gap_inside_overlapping_ranges_is_a_volume_imbalance():
     opens[at + 1], closes[at + 1] = base + 30.0, base + 38.0
     for i in range(at + 2, bars):
         highs[i], lows[i] = base + 46.0, base + 40.0
-        opens[i], closes[i] = base + 41.0, base + 45.0
+        opens[i], closes[i] = base + 42.5, base + 43.5
     found = gaps.volume_imbalances(opens, highs, lows, closes, warm(closes))
     assert found
     assert found[0].kind == "vi"
@@ -228,7 +228,7 @@ def test_a_bar_that_is_nearly_all_body_is_a_void():
     opens[at], closes[at] = base, base + 40.0
     for i in range(at + 1, bars):
         highs[i], lows[i] = base + 46.0, base + 40.0
-        opens[i], closes[i] = base + 41.0, base + 45.0
+        opens[i], closes[i] = base + 42.5, base + 43.5
     found = gaps.voids(opens, highs, lows, closes, warm(closes))
     assert found
     assert found[0].kind == "void"
@@ -237,7 +237,14 @@ def test_a_bar_that_is_nearly_all_body_is_a_void():
 
 
 def test_a_wick_heavy_bar_is_not_a_void():
-    """Body share is the whole test: the same range, mostly wick."""
+    """Body share is the whole test: the same range, mostly wick.
+
+    The filler bars are deliberately small-bodied. An earlier version gave
+    them a 4-in-6 body, which is 66.7% - between `VOID_BODY` when this was
+    written (0.70) and what it became when the desk moved `PUSH_BODY` to 0.65
+    hours later. Both changes were green on their own branch and broke main
+    together, which is the one failure mode a per-PR check cannot see.
+    """
     bars, base = 60, 4400.0
     highs = [base + 2.0] * bars
     lows = [base - 2.0] * bars
@@ -248,7 +255,7 @@ def test_a_wick_heavy_bar_is_not_a_void():
     opens[at], closes[at] = base + 10.0, base + 20.0  # body is a quarter of the range
     for i in range(at + 1, bars):
         highs[i], lows[i] = base + 46.0, base + 40.0
-        opens[i], closes[i] = base + 41.0, base + 45.0
+        opens[i], closes[i] = base + 42.5, base + 43.5
     assert gaps.voids(opens, highs, lows, closes, warm(closes)) == []
 
 
