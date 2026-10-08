@@ -2845,3 +2845,171 @@ def test_a_session_period_borrows_the_reference_estimate():
         assert borrowed.warm
         assert borrowed is engine.reference("gold")
         assert not engine.vol.of("gold", period).warm
+
+
+# ------------------------------------------------------------- the slope
+
+
+def _filter_over(steps, *, step, noise=0.01, drift=0.02, start=100.0):
+    """A filter fed one touch an hour, each `step` above the last."""
+    import time as _time
+
+    now = _time.time()
+    k = Kalman(mean=start, variance=1.0)
+    for i in range(steps):
+        when = now + i * 3600
+        k.predict(when, drift)
+        k.update(start + i * step, noise, when)
+    return k, now + (steps - 1) * 3600
+
+
+def test_a_fresh_level_is_not_trending():
+    """Zero slope variance means no information, not certainty."""
+    assert Kalman(mean=100.0, variance=1.0).trending is False
+
+
+def test_a_rising_level_earns_a_slope():
+    k, _ = _filter_over(10, step=0.5)
+    assert k.trending is True
+    assert k.slope > 0.0
+
+
+def test_a_flat_level_earns_none():
+    k, _ = _filter_over(10, step=0.0)
+    assert k.trending is False
+
+
+def test_noise_does_not_buy_a_slope():
+    """The guard that stops this becoming a trendline through every wiggle."""
+    import random
+    import time as _time
+
+    random.seed(7)
+    now = _time.time()
+    k = Kalman(mean=100.0, variance=1.0)
+    for i in range(10):
+        when = now + i * 3600
+        k.predict(when, 0.02)
+        k.update(100.0 + random.gauss(0, 0.3), 0.01, when)
+    assert k.trending is False
+
+
+def test_only_a_trending_level_moves_its_centre():
+    rising, last = _filter_over(10, step=0.5)
+    flat, flat_last = _filter_over(10, step=0.0)
+    assert rising.at(last + 6 * 3600) > rising.mean
+    assert flat.at(flat_last + 6 * 3600) == flat.mean
+
+
+def test_only_a_trending_level_widens_with_reach():
+    """A line reaching further is known less well - but only a level that has
+    *earned* a slope gets that treatment.
+
+    The first version widened every band, including levels with no slope at
+    all, on the reasoning that not knowing which way a level is going is a
+    reason to be less sure about its price later. That is defensible and it
+    was still wrong to ship: it moved every zone in the book, and it surfaced
+    as a published feature going near-constant rather than as anything that
+    looked like a filter change. A level that never trends must be what it
+    was before.
+    """
+    rising, up_last = _filter_over(10, step=0.5)
+    flat, flat_last = _filter_over(10, step=0.0)
+    assert rising.sigma_at(up_last + 6 * 3600) > rising.sigma
+    assert flat.sigma_at(flat_last + 6 * 3600) == flat.sigma
+
+
+def test_a_level_that_never_trends_is_the_old_filter_exactly():
+    """Not "close to" - the same numbers. This is what makes the change safe."""
+
+    class OneD:
+        """`levels.Kalman` as it was before the slope, verbatim."""
+
+        def __init__(self, mean, variance, updated):
+            self.mean, self.variance, self.updated = mean, variance, updated
+
+        def predict(self, when, drift):
+            hours = max(0.0, when - self.updated) / 3600.0
+            self.variance += drift**2 * hours
+            self.updated = max(self.updated, when)
+
+        def update(self, obs, noise, when):
+            self.predict(when, 0.0)
+            gain = self.variance / (self.variance + max(noise, 1e-12))
+            self.mean += gain * (obs - self.mean)
+            self.variance *= 1.0 - gain
+            self.updated = max(self.updated, when)
+
+    started = 1_000_000.0
+    new = Kalman(mean=100.0, variance=1.0, updated=started)
+    old = OneD(100.0, 1.0, started)
+    for i in range(12):
+        when = started + i * 3600
+        for filt in (new, old):
+            filt.predict(when, 0.02)
+            filt.update(100.0, 0.01, when)
+    assert new.trending is False
+    assert new.mean == old.mean
+    assert new.variance == old.variance
+
+
+def test_the_slope_is_not_extrapolated_past_its_horizon():
+    from till_infinity.structures.levels import SLOPE_HORIZON_HOURS
+
+    k, last = _filter_over(10, step=0.5)
+    edge = k.at(last + SLOPE_HORIZON_HOURS * 3600)
+    assert k.at(last + SLOPE_HORIZON_HOURS * 10 * 3600) == pytest.approx(edge)
+
+
+def test_the_gain_returned_is_still_the_price_gain():
+    """Journalled as "how much did this touch move the level", and a 2-vector
+    would silently change what that number means."""
+    import time as _time
+
+    now = _time.time()
+    k = Kalman(mean=100.0, variance=1.0)
+    gain = k.update(101.0, 0.01, now)
+    assert 0.0 < gain < 1.0
+    assert k.mean == pytest.approx(100.0 + gain * 1.0)
+
+
+def test_zone_is_zone_at_the_last_touch():
+    """Every caller without a clock must get exactly what it got before."""
+    import time as _time
+
+    now = _time.time()
+    vol = _vol()
+    level = Level("x", "15m", filter=Kalman(mean=100.0, variance=0.05, updated=now))
+    assert level.zone(vol) == level.zone_at(now, vol)
+
+
+def test_a_falling_level_earns_the_mirror_slope():
+    """Flip symmetry. Nothing in the filter has a sign preference and a test
+    should say so rather than leave it to be inferred from a rising fixture -
+    a support that rises and a resistance that falls are the same object with
+    one sign flipped, and half the book is the second one.
+    """
+    rising, up_last = _filter_over(10, step=0.5)
+    falling, down_last = _filter_over(10, step=-0.5)
+
+    assert falling.trending is True
+    assert falling.slope < 0.0
+    # mirrored to floating point - `updated` is epoch seconds, a ~1.7e9 float,
+    # so the arithmetic cannot be exact and the residual is ~1e-10
+    assert falling.slope == pytest.approx(-rising.slope, abs=1e-8)
+    assert falling.mean - 100.0 == pytest.approx(-(rising.mean - 100.0), abs=1e-8)
+    # uncertainty is a width, so it is identical rather than mirrored
+    assert falling.variance == pytest.approx(rising.variance, rel=1e-9)
+    assert falling.var_slope == pytest.approx(rising.var_slope, rel=1e-9)
+    # and the projection mirrors too
+    assert falling.at(down_last + 6 * 3600) - 100.0 == pytest.approx(
+        -(rising.at(up_last + 6 * 3600) - 100.0), abs=1e-8
+    )
+
+
+def test_a_falling_level_widens_its_band_the_same_way():
+    rising, up_last = _filter_over(10, step=0.5)
+    falling, down_last = _filter_over(10, step=-0.5)
+    assert falling.sigma_at(down_last + 6 * 3600) == pytest.approx(
+        rising.sigma_at(up_last + 6 * 3600), rel=1e-9
+    )

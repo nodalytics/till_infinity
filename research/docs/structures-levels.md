@@ -123,3 +123,119 @@ that way. Nothing was discarded.
     fact about the code rather than about the level.
 
 
+
+## The second dimension, added 2026-10-08
+
+The filter's state is `(price, slope)` rather than price alone - a
+constant-velocity model instead of a random walk.
+
+The reason is that levels which trend were a thing the one-dimensional version
+could only ever **lag**. A rising floor met four times is four observations of
+a line, and a filter whose only story is "it drifts somewhere" has to be
+dragged to each new touch by its gain. It never anticipates, because nothing in
+its state can.
+
+### The gate is the whole design
+
+A velocity state will fit a slope to noise given the chance - three scattered
+touches are enough to produce a confident-looking trend. So the slope is used
+only once it has cleared its own posterior: `trending` asks whether `|slope|`
+is at least `SLOPE_SIGMAS` of `sqrt(var_slope)`, and until it is, every
+projection treats the level as horizontal.
+
+Three sigmas rather than two, because the costs are asymmetric. Being wrong
+means a level that walks away from where price actually turns; being slow means
+a level that behaves exactly as it did before this existed. Measured on a
+10-touch walk: a series rising 0.5 a bar earns `+0.044/hour` and reads
+`trending`; a flat one and a Gaussian-noise one both read not-trending, which
+is the test that matters.
+
+### The deadlock that nearly shipped
+
+The first version gated the **covariance** propagation on `trending` as well as
+the mean's. That cannot work: the off-diagonal `P01` is the only thing that
+lets a slope be learned at all, so a slope gated out of existence never clears
+the gate, and the filter reported `slope = 0.0000` forever while looking
+entirely healthy. The covariance now propagates either way and only the mean's
+carry is gated.
+
+### Flip symmetry
+
+A support that rises and a resistance that falls are the same object with one
+sign flipped, and half the book is the second one. Nothing in the filter has a
+sign preference, and that is pinned rather than left to be inferred from a
+rising fixture: a falling series earns the mirror slope, the mirror mean offset
+and the mirror projection, while `variance` and `var_slope` come out
+**identical** rather than mirrored, because an uncertainty is a width.
+
+The mirroring is exact to about `1e-10`, not to the bit. `updated` is epoch
+seconds - a float near `1.7e9` - so the arithmetic cannot be exact, and a test
+asserting equality to the bit would be asserting something about the clock
+rather than about the filter.
+
+### A level that never earns a slope is unchanged, to the bit
+
+The slope terms enter `variance` only once `trending`, so a level that stays
+horizontal follows **exactly** the variance path it followed before any of this
+existed and quotes exactly the band it quoted - not "close to", the same
+numbers, which a test pins against a verbatim copy of the old filter.
+
+That was not the first version. The first let the `F P F'` terms through
+ungated, on the reasoning that not knowing which way a level is going is a
+reason to be less sure about its price later. The reasoning is defensible and
+shipping it would still have been wrong: it widened **every** zone in the book
+including levels with no slope at all, and it surfaced as `zma_agrees` going
+near-constant in `test_no_published_feature_is_near_constant` rather than as
+anything that looked like a filter change. The same test caught the same class
+of error twice in one day - once here and once on the `displace` formation -
+which is the best argument for it there is.
+
+The price of the fix is a small inconsistency: the covariance keeps propagating
+while the variance does not. It is taken deliberately. Learnability needs the
+off-diagonal; production does not need its bands moved by a slope no level has
+earned.
+
+### Why the slope is not extrapolated forever
+
+`F P F'` grows the price variance by `dt**2 * var_slope`, which is the honest
+statement that a line reaching further is known less well - and at a month out
+it is also an absurd one. Past `SLOPE_HORIZON_HOURS` the level is simply
+horizontal with uncertainty still growing the way it always did.
+
+The price process noise stays **linear** in the true elapsed time for the same
+reason. The textbook continuous white-noise-acceleration `Q` is cubic in `dt`,
+which is fine over a bar and nonsense over a fortnight: a level untested for a
+month would come back with a zone the width of the range.
+
+### `zone_at`, and what did not change
+
+`zone` is now `zone_at(filter.updated, vol)` - the band as of the last touch,
+which is exactly what every existing caller got before the filter had a slope.
+That matters because `.price` is read 71 times and `.zone()` called from 10
+places across the engine, confluence and levels itself; redefining either to be
+time-dependent would have been a change to the core of a live desk dressed as
+an improvement.
+
+A caller that *has* a timestamp gets `zone_at(when, vol)` and the honest
+widening instead. The centre moves with `when` only where the slope has cleared
+the gate; the width grows either way, because not knowing which direction a
+level is going is a reason to be **less** sure about its price later, not more.
+
+### The gain stays a scalar
+
+`update` returns `K[0]`, the gain on the price, not the pair. That number is
+journalled as "how much did this touch move the level" and a 2-vector would
+have changed what it means without anything downstream noticing. The slope's
+share of the same innovation is `K[1]` and is not reported, because nothing has
+ever asked for it.
+
+### What this is not
+
+It is not a trendline detector and it is not a regression channel, though it is
+the same object a channel approximates: a channel is fitted to closes, this is
+estimated from touches, and only the second one is evidence about a level.
+
+Nothing here has been measured against outcomes yet. The gate makes the change
+conservative - a level that has not earned a slope behaves as it always did -
+but "conservative" is not "better", and whether a trending level predicts its
+own next touch more accurately is a replay question nobody has run.
