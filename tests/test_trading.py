@@ -9921,7 +9921,7 @@ def test_every_strategy_carries_a_floor_except_the_parameter_space():
     # 206 trades sit under 1.10 - and then overturns, because those eleven win
     # 45% and lose 0.181 R each. Its own breakeven is 1.09. It is floored like
     # everything else and the table has no hand-made exception left in it.
-    assert td.STRATEGIES[EXEMPT](made).reward_floor == pytest.approx(1.10)
+    assert td.STRATEGIES[EXEMPT](made).reward_floor == pytest.approx(1.50)
 
 
 def test_the_unmeasured_floors_are_named_rather_than_quietly_included():
@@ -10164,9 +10164,16 @@ def test_the_last_exemption_was_ended_by_its_own_premise():
     """
     made = settings()
     engine = td.STRATEGIES[EXEMPT](made)
-    assert engine.reward_floor == pytest.approx(1.10)
-    # Its own breakeven at a 48.3% win rate, shrunk toward the desk's, is 1.09.
+    assert engine.reward_floor == pytest.approx(1.50)
+    # Its own breakeven at a 48.3% win rate, shrunk toward the desk's, is 1.09,
+    # and it is set above that on purpose: everything under 1.5 is cumulatively
+    # negative for it (14 trades, -1.78 R) while 1.5-3.0 is where it earns.
     assert engine.reward_floor >= (1 - 0.478) / 0.478
+    # **And it has a ceiling.** Above 1.5 the floor would start pushing
+    # profitable trades out of the 1.5-3.0 band into the 3.0+ one, where its win
+    # rate falls from 61-63% to 45%. 2.0 would touch 33 trades worth +1.88 R.
+    assert engine.reward_floor <= 2.0, "a floor past where the strategy is good"
+
     # Nothing is exempt now: every strategy either carries a floor or shapes its
     # own geometry, and none inherits the zero default.
     bare = [n for n, cls in td.STRATEGIES.items()

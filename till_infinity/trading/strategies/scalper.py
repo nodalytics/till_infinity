@@ -1198,6 +1198,25 @@ class SweepAware(LevelStrategy):
     #: 1.09. Keeping one hand-made exception in a table that is otherwise
     #: derived is how a table starts drifting.
     #:
+    #: **1.50 rather than its breakeven of 1.09, and this one has a ceiling.**
+    #: Asked for 2026-10-08 - raise it - and the record says how far. By band,
+    #: over 206 closed trades:
+    #:
+    #:   RR 0.0-1.1  n= 11  win 45%  mean R -0.181
+    #:   RR 1.1-1.5  n=  3  win 67%  mean R +0.071
+    #:   RR 1.5-2.0  n= 19  win 63%  mean R +0.193
+    #:   RR 2.0-3.0  n= 74  win 61%  mean R +0.184
+    #:   RR 3.0+     n= 98  win 45%  mean R +0.058
+    #:
+    #: Everything under 1.5 is cumulatively negative - fourteen trades at
+    #: -1.78 R - so 1.5 is the bottom edge of the band this strategy is good in,
+    #: and the floor belongs there. **Above 1.5 it should not go.** 2.0 would
+    #: touch 33 trades currently worth +1.88 R and 3.0 would touch 107 worth
+    #: +15.47 R, pushing their targets out of the 1.5-3.0 band and toward the
+    #: 3.0+ one, where the win rate falls from 61-63% to 45%. A floor that
+    #: raises a target past where a strategy stops being good is not a floor,
+    #: it is a worse strategy.
+    #:
     #: The original reasoning, kept because the premise in it was right:
     #:
     #: **No `reward_floor`, and it is the one exception.** This strategy placed
@@ -1211,7 +1230,7 @@ class SweepAware(LevelStrategy):
     #:
     #: `Strategy.reward_floor` carries the measurement that makes this a real
     #: question rather than caution.
-    reward_floor: ClassVar[float] = 1.10
+    reward_floor: ClassVar[float] = 1.50
     #: Every call `level-scalp` takes, minus the ones whose stop sits in front
     #: of resting liquidity. Listed after it, this would never fire.
     refines: ClassVar[str] = "level-scalp"
