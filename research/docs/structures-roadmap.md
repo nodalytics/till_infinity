@@ -163,6 +163,54 @@ per-level dimensions - it pools them. If five zones all begin drifting together
 that is a market-state transition rather than five coincidences, and nothing in
 the codebase can currently say so.
 
+**6. Autocorrelated observation noise, and seasonal noise.** Two more state-space
+extensions with real dynamical models, unlike acceleration.
+
+**Autocorrelation first, because it is a defect rather than a feature.** The
+filter assumes white observation noise. Touches of one level are plausibly
+*not* independent - consecutive touches happen in the same regime, with the
+same participants - and if they are correlated the filter is **overconfident**:
+it treats correlated evidence as fresh evidence and shrinks its variance too
+fast. The textbook fix is to model the noise as AR(1) and augment the state
+with it, `x = [price, slope, e]` with `e_t = phi * e_{t-1} + eta`, which is a
+third dimension that **earns** its place in a way acceleration does not.
+
+The reason to put it near the top is that it is already measurable with no new
+machinery: the conformal pools are time-ordered residuals, so their lag-1
+autocorrelation is a direct test of whether the whiteness assumption holds. If
+it does not, the zone is mis-sized for a reason nobody has looked at.
+
+**And there is a trap worth naming.** Adaptive conformal would *absorb* an
+autocorrelated-noise problem - it would widen the band until coverage came
+right - without fixing or revealing the cause. The calibrator repairs the
+symptom. Only looking at the autocorrelation of the scores finds the disease.
+That is an argument for measuring it, not against the calibrator.
+
+Precedent for the measurement and a warning with it: lag-1 autocorrelations of
+per-strategy daily P&L came out between -0.47 and +0.17 and **all inside their
+own standard error** at 8-18 observations. Autocorrelation is easy to see and
+hard to establish, so this wants a proper sample before it changes anything.
+
+**Seasonality second, and not where it first sounds.** The basic structural
+model adds a seasonal block - `m - 1` states constrained to sum to zero - and
+for a daily or hourly cycle it is entirely standard. But a level's *price* is
+not seasonal: a floor is not higher at 3pm. What plausibly is seasonal is the
+**noise around it** - a touch during the Asia session and one at the New York
+open are not equally informative about where the level sits.
+
+So the honest version is a seasonal `R_t`, time-varying observation noise,
+rather than a seasonal component in the state. That is cheaper, it is where the
+effect actually lives, and the repo already half-believes it: `hour` is a
+feature of the envelope model, `to_weekend` beside it, and `rollover.py` masks
+a window around the New York rollover outright. All of that says time-of-day
+matters and none of it reaches the level filter, which weighs a 3am touch
+exactly like a 3pm one.
+
+Per-level seasonality would be hopeless - `m - 1` extra states from a handful
+of touches, straight back into the identifiability problem. Per **instrument**
+it is very estimable, which is the same pooling conclusion everything else here
+reaches.
+
 ### Interesting, and not next
 
 **Particle filters / Gaussian mixtures.** The honest argument for them is
