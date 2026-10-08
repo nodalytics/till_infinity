@@ -248,6 +248,47 @@ class Strategy(ABC):
     #: `momentum-scalp` 0.61/88%, `snap` 0.94/53%, `fade-to-value` 1.27/42%
     #: against `sweep-aware` 2.71/5% - which is the only strategy of size that
     #: makes money. That is the argument for this number in one line.
+    #: **Raised 1.0 -> 1.2 on 2026-10-08, from the live record rather than from
+    #: the arithmetic that set it.** The floor fired: over 4,183 decisions taken
+    #: between 2026-09-07 and 10-08, the share at reward-to-risk >= 1.0 went from
+    #: **54.9% to 88.6%** when it landed, and the strategies that carried it now
+    #: sit at a median of exactly 1.000 - `thesis-only` 0.452 -> 1.000,
+    #: `inverse` 0.580 -> 1.000, `level-scalp` 0.516 -> 1.000, `approach-scalp`
+    #: 0.492 -> 1.000, `momentum-scalp` 0.590 -> 1.000, `snap` 0.845 -> 1.001.
+    #: `sweep-aware` is unmoved at 2.6, which is the exemption working.
+    #:
+    #: Risk per trade did not change with it - median risk_money 34.77 -> 34.62,
+    #: p90 37.85 -> 35.76 - so the floor moved the target and nothing else, which
+    #: is what it was supposed to do.
+    #:
+    #: **And 1.0 is below this desk's own breakeven.** Over 2,014 closed
+    #: positions in that window the win rate is **46.6%**, which needs
+    #: **RR 1.14** to break even. Per strategy: `fade-to-value` 40.7% needs 1.46,
+    #: `cycle-scalp` 43.9% needs 1.28, `inverse` 44.8% needs 1.23, `sweep-aware`
+    #: 48.3% needs 1.07, `thesis-only` 53.5% needs 0.87. The floor was binding on
+    #: most trades and pinning them at a number that loses.
+    #:
+    #: 1.2 clears 1.14 with a little margin and goes no further on purpose. The
+    #: table above holds the win rate fixed, and **pushing a target out lowers
+    #: it** - this file already records that live RR buckets are flat in R from
+    #: 0-0.5 to 6+, which is that elasticity cancelling the arithmetic. So this
+    #: is a bounded step justified by breakeven, not a measured improvement, and
+    #: the next reading of the record should say whether the win rate held.
+    #:
+    #: **What this number did not cause, and what the record cannot separate.**
+    #: The only improvement in that window distinguishable from zero is
+    #: `cycle-scalp`: -0.799 -> +2.781 a trade, day-block P(<=0) = 0.005. Two
+    #: things changed for it at once and the record cannot tell them apart - its
+    #: median reward-to-risk rose 1.092 -> 1.457, and its instrument mix moved
+    #: sharply away from the Deriv synthetics it had been losing in (Jump 25
+    #: Index 91 -> 6 trades, Volatility 10 (1s) 44 -> 3, BTCUSD 47 -> 4). The
+    #: second is the larger change and the one with an obvious mechanism, but
+    #: this is a confound, not an attribution.
+    #:
+    #: Every other floored strategy moved the right way and every one sits
+    #: inside its own interval: `thesis-only` P(<=0) = 0.43, `inverse` 0.14,
+    #: `fade-to-value` 0.56. So nothing here is evidence that the floor earns
+    #: money - only that it does what it says to the geometry.
     reward_floor: ClassVar[float] = 0.0
 
     def floored_target(

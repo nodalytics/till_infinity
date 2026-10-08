@@ -4238,7 +4238,7 @@ def test_thesis_only_gives_the_trade_room_and_takes_less_of_it():
     # 0.40 over 361 decisions.
     #
     # So the answer to the docstring is neither: it was the *ratio*. Both
-    # strategies now carry `reward_floor` of 1.0, and a wider stop therefore
+    # strategies now carry `reward_floor` of 1.2, and a wider stop therefore
     # buys a proportionally further target rather than the same one.
     # Not three times, and the shortfall is the interesting part: `level-scalp`
     # already aimed 1.26 times its own stop here, so the floor never fired for
@@ -4248,7 +4248,9 @@ def test_thesis_only_gives_the_trade_room_and_takes_less_of_it():
         assert got.reward_to_risk >= 1.0 - 1e-6, f"{got.symbol} {got.side}: {got.reward_to_risk}"
     # `thesis-only` lands exactly on the floor, which is what a floor that binds
     # looks like; `level-scalp` is above it on its own merits.
-    assert roomy.reward_to_risk == pytest.approx(1.0)
+    # Read off the class rather than written as a literal: the floor moved from
+    # 1.0 to 1.2 on 2026-10-08 and a literal here would have to move with it.
+    assert roomy.reward_to_risk == pytest.approx(td.STRATEGIES["thesis-only"].reward_floor)
     assert normal.reward_to_risk == pytest.approx(1.257, abs=0.01)
 
 
@@ -9841,10 +9843,25 @@ def test_the_reward_floor_is_declared_rather_than_guessed_at():
 
 
 def test_the_strategies_with_broken_geometry_carry_a_floor():
+    """**1.2 since 2026-10-08, and the number is not arbitrary.** Over 2,014
+    closed positions from 2026-09-07 the desk wins 46.6%, which needs a
+    reward-to-risk of **1.14** to break even - so the old floor of 1.0 was
+    binding on most trades and pinning them at a ratio that loses. The live
+    record shows it binding: the share of decisions at RR >= 1.0 went 54.9% to
+    88.6% when the floor landed, and the floored strategies sit at a median of
+    exactly 1.000.
+
+    It stops at 1.2 deliberately. The breakeven table holds the win rate fixed
+    and a further target lowers it, so this clears 1.14 with a margin and goes
+    no further than the arithmetic supports.
+    """
     made = settings()
     for name, measured in FLOORED.items():
         engine = td.STRATEGIES[name](made)
-        assert engine.reward_floor == 1.0, f"{name} (median RR {measured})"
+        assert engine.reward_floor == 1.2, f"{name} (median RR {measured})"
+    # The desk's own breakeven is what sets it, so pin that relation too: a
+    # floor under 1.14 would be a floor that loses at the measured hit rate.
+    assert td.STRATEGIES["thesis-only"](made).reward_floor > (1 - 0.466) / 0.466
 
 
 def test_every_strategy_carries_a_floor_except_the_parameter_space():
@@ -9874,7 +9891,7 @@ def test_the_unmeasured_floors_are_named_rather_than_quietly_included():
     made = settings()
     for name in FLOORED_UNMEASURED:
         assert name in td.STRATEGIES, name
-        assert td.STRATEGIES[name](made).reward_floor == 1.0, name
+        assert td.STRATEGIES[name](made).reward_floor == 1.2, name
     assert not set(FLOORED) & set(FLOORED_UNMEASURED)
     assert set(FLOORED) | set(FLOORED_UNMEASURED) | set(SHAPED) | {EXEMPT} == set(td.STRATEGIES)
 
@@ -9882,11 +9899,14 @@ def test_the_unmeasured_floors_are_named_rather_than_quietly_included():
 def test_a_floor_moves_the_target_out_to_meet_the_real_risk():
     engine = strategy("fade-to-value")
     # A sell: entry 100, stop 110, so the risk is 10 whatever was proposed.
+    # Risk 10, floor 1.2, so the target lands 12 away - not 10. Written off the
+    # declared floor so it moves with it rather than pinning a stale literal.
+    floor = engine.reward_floor
     got = engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 98.0)
-    assert got == 90.0
+    assert got == pytest.approx(100.0 - 10.0 * floor)
     # And a buy, the other way.
     got = engine.floored_target(GOLD, td.Side.BUY, 100.0, 90.0, 102.0)
-    assert got == 110.0
+    assert got == pytest.approx(100.0 + 10.0 * floor)
 
 
 def test_a_floor_never_pulls_a_target_in():
@@ -9919,9 +9939,11 @@ def test_a_floor_measures_risk_from_the_fill_and_not_the_proposed_stop():
     entry, stop, target = 1.11870, 1.12311, 1.11772
     assert abs(target - entry) / abs(entry - stop) == pytest.approx(0.222, abs=0.001)
     got = engine.floored_target(EURGBP, td.Side.SELL, entry, stop, target)
-    assert abs(got - entry) / abs(entry - stop) == pytest.approx(1.0, abs=0.001)
-    # Which is 1.11429 - below the old target, because this is a sell.
-    assert got == pytest.approx(1.11429, abs=1e-5)
+    floor = engine.reward_floor
+    assert abs(got - entry) / abs(entry - stop) == pytest.approx(floor, abs=0.001)
+    # Below the old target, because this is a sell.
+    assert got == pytest.approx(entry - abs(entry - stop) * floor, abs=1e-5)
+    assert got < target
 
 
 def test_a_zero_risk_geometry_is_left_alone_rather_than_divided_by():
