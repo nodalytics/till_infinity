@@ -43,6 +43,7 @@ from dataclasses import dataclass, field
 
 from ...shared import frozen
 from .. import rollover as ro
+from ..context import trend
 from ..state import Restorable
 
 #: The bars ahead the touch is forecast for: the card's envelope horizon.
@@ -123,6 +124,11 @@ PUSH_BODY, PUSH_N = 0.65, 2
 #: Bars the `movz` denominator looks back over. Ten, as measured.
 MOVZ = 10
 
+#: Bars `efficiency` measures its path over. Ten, matching `MOVZ`, because
+#: nothing yet says which window is right and two unexplained constants are
+#: worse than one.
+EFFICIENCY_N = 10
+
 
 def _movz(values, window: int) -> float:
     """The last value in units of its own recent spread, 0.0 when there is none."""
@@ -133,6 +139,28 @@ def _movz(values, window: int) -> float:
     var = sum((v - mean) ** 2 for v in xs) / (len(xs) - 1)
     sd = math.sqrt(var)
     return (xs[-1] - mean) / sd if sd > 0 else 0.0
+
+
+def _efficiency(values, window: int) -> float:
+    """`trend.ratio` over the last `window` steps, 0.0 where there is none.
+
+    **The statistic already existed and this nearly shipped a second copy of
+    it.** `context/trend.py` runs the same ratio over recent *level prices* to
+    scale sizing; this runs it over recent *bar closes* as a model feature.
+    Same arithmetic, different series, one definition - see `trend.ratio` for
+    what it means and why it needs no scaling.
+
+    Zero rather than `None` here, because a model feature has to be a number
+    and "no path to measure" and "a path that arrived nowhere" are the same
+    thing to a learner: no evidence about direction.
+    """
+    xs = list(values)[-(window + 1) :]
+    # `trend.FEWEST`, for the reason that constant exists: two points are
+    # trivially perfectly efficient and say nothing.
+    if len(xs) < trend.FEWEST:
+        return 0.0
+    got = trend.ratio(xs)
+    return 0.0 if got is None else got
 
 
 def _ratio(bps: float | None, sigma: float) -> float:
@@ -210,6 +238,11 @@ def base(
         "fc_ratio": _ratio(fwd.get("forecast_bps"), sigma),
         "garch_ratio": _ratio(fwd.get("garch_bps"), sigma),
         "vol_stretch": fwd.get("vol_stretch", 0.0),
+        # **How much of the path went somewhere**, over `EFFICIENCY_N` bars.
+        # `body` and `displaced` ask the same question of one bar and of two,
+        # with a threshold each; this asks it of the run and lets the model
+        # pick its own cut. See `_efficiency`.
+        "efficiency": _efficiency(closes, EFFICIENCY_N),
         "body": abs(bodies[-1]) if bodies else 0.0,
         "displaced": float(
             len(bodies) >= PUSH_N
