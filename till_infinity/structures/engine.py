@@ -1574,7 +1574,29 @@ class Engine:
                 # quoted (`learning/touches.py`).
                 fx = touches.applies(feed, interval)
                 taken = fx and self._touches().advance(
-                    feed, interval, opened, high, low, close, sigma
+                    feed,
+                    interval,
+                    opened,
+                    high,
+                    low,
+                    close,
+                    sigma,
+                    # **The forward readings, handed to the model that forecasts
+                    # size.** This method's own docstring called them "the
+                    # forward readings nobody gates on", and that was measured
+                    # true on 2026-10-08: `ensemble_bps`, `forecast_bps` and
+                    # `garch_bps` appear in `till_infinity/trading/` once each,
+                    # in comments. They are not gated on here either - they go
+                    # into the envelope's features, where the retrain contest
+                    # decides whether they earn a place. A feature that does not
+                    # help fails `vs_champion` and never ships, which is a safer
+                    # way to use a reading than a hand-written gate.
+                    {
+                        "ensemble_bps": vol.ensemble_bps,
+                        "forecast_bps": vol.forecast_bps,
+                        "garch_bps": vol.garch_bps,
+                        "vol_stretch": vol.stretch,
+                    },
                 )
                 features = self._touches().base(feed, interval) if taken else None
                 self._envelopes().observe(

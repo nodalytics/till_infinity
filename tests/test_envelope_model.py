@@ -275,7 +275,7 @@ def test_the_shipped_models_load_and_match_the_features(monkeypatch):
     frozen.forget_cache()
     shipped = 0
     for (family, horizon), name in ev.MODELS.items():
-        spec = frozen.load(name, recipe=ev.MODEL_RECIPE, names=ev.MODEL_NAMES)
+        spec = frozen.load(name, recipe=ev.MODEL_RECIPES, names=ev.MODEL_NAMES)
         got = ev.model_quantiles(horizon, _features(), family=family)
         if spec is None:
             assert got is None, f"{name} quoted without a model"
@@ -285,6 +285,35 @@ def test_the_shipped_models_load_and_match_the_features(monkeypatch):
         assert spec["horizon"] == horizon
         assert got == sorted(got)
     assert shipped == len(ev.HORIZONS), "FX's three models must still be found"
+
+
+def test_a_model_on_an_older_recipe_still_loads_and_is_fed_its_own_names(monkeypatch):
+    """**Adding a feature must not strand the models already in service.**
+
+    `body` and `displaced` joined `MODEL_NAMES` on 2026-10-08, and the three FX
+    models in the tree were trained on the six before them. Under an equality
+    check every one of them is refused and the engine falls back to its history
+    envelope until a retrain lands - for no safety gained, because the only
+    unsafe case is a model needing an input the caller cannot supply.
+
+    So the check is a subset, the recipe is a list newest-first, and the vector
+    is built from the spec's own `names`. A six-feature model keeps quoting.
+    """
+    monkeypatch.delenv("TI_MODELS_DIR")
+    frozen.forget_cache()
+    spec = frozen.load(ev.MODELS[("fx", 20)], recipe=ev.MODEL_RECIPES, names=ev.MODEL_NAMES)
+    assert spec is not None, "the shipped model must still load"
+    assert spec["recipe"] != ev.MODEL_RECIPE, "this is the older recipe, by construction"
+    assert set(spec["names"]) < set(ev.MODEL_NAMES), "fewer names than the recipe now offers"
+    # and it quotes, fed the six it declares out of the eight on offer
+    got = ev.model_quantiles(20, _features(), family="fx")
+    assert got is not None
+    assert got == sorted(got)
+
+
+def test_a_model_needing_a_feature_we_cannot_supply_is_still_refused():
+    """The one case a subset check must still catch."""
+    assert frozen.load(ev.MODELS[("fx", 20)], recipe=ev.MODEL_RECIPES, names=("lvol", "r1")) is None
 
 
 GOOD = {
