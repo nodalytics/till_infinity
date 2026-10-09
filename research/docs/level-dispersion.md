@@ -138,3 +138,59 @@ the floor in the same window would confound the one change whose size is
 already known, and the measurement to run after it deploys is the one above
 repeated: if the median half-width lands near 0.65-0.70v and realised coverage
 falls to about 95%, the loop is closed and nothing further is needed.
+
+### Why daily zones are five times the dispersion
+
+Asked after the measurement above. Three answers, and only the last is a
+question about the model rather than about the measurement.
+
+**First: half of all published zones are not the filter's zone.**
+`engine._widen_to_origin` unions the band with the origin box whenever the
+level sits in one, so `zone_low` and `zone_high` as published are the filter's
+estimate *or* the origin, whichever is wider. Splitting on `in_origin`:
+
+| | n | median half-width |
+| --- | ---: | ---: |
+| not in an origin - the filter's own zone | 954 | **0.805** |
+| in an origin - widened to it | 790 | **1.456** |
+
+Widening nearly doubles it, and it applies to **45% of published zones**. That
+is by design, but it means a consumer reading `zone_high` is reading a union of
+two objects with different meanings, and any measurement of "how wide is a
+zone" has to split on it first. The one above did not, and overstated the
+median by about 20%.
+
+**Second: the growth with touch count mostly survives the split, and is
+weaker than it looked.** On the filter's own zone, 1m runs 0.67 at no touches
+to 1.02 at six or more, 3m runs 0.54 to 0.74. A Kalman update can only shrink
+variance, so a level that has been touched more and is wider must have spent
+longer accumulating process noise between those touches than the touches
+removed. That is the drift constant beating the evidence, which is a real
+statement about `DRIFT_VOL_PER_HOUR` and not about the filter.
+
+**Third: daily is not origin widening at all** - no daily zone in the sample
+was in an origin - and it does not match the filter's own arithmetic either.
+Simulated at a 24-hour touch gap and twenty touches, the model gives a
+half-width of **0.372** flat and **0.506** trending. Production's daily median
+is **2.05**, four to five times that.
+
+The gap is elapsed time. `predict` grows the variance by
+`DRIFT_VOL_PER_HOUR**2 * hours`, and at 0.02 that reaches a variance of 1.0 -
+a one-volatility-unit sigma, a two-unit half-width - after about **2,500
+hours, or 104 days**. A daily level untested for three months is exactly that,
+so the width is the model being internally consistent rather than broken.
+
+**Which turns the question into whether 0.02 is right, and that has never been
+measured.** It is a constant chosen per *hour* and applied identically at every
+timeframe, so a daily level accumulates twenty-four times the drift variance
+per bar that an hourly one does. Whether a level's position really decays that
+way is answerable with the same variance-components fit as **I10** - how far
+does a level actually move between touches, as a function of the elapsed time
+between them - and it is the price-state twin of the question I10 asks about
+the slope. Both constants are a tenth-of-the-other guess with no measurement
+behind them.
+
+Until that is run, nothing here is a defect. `TOUCH_NOISE_VOL` moving to 0.40
+narrows every one of these numbers by about a fifth, and that change is merged
+and undeployed, so the measurement to repeat afterwards is this one split by
+`in_origin`.
