@@ -581,6 +581,66 @@ improvement on that list with a visible path to P&L, which makes it the easiest
 to talk oneself into, and it is only as good as the per-side statistics
 underneath it - most of which are still outside the state vector.
 
+## An instrument against its own kind, and whether the gap says anything
+
+Every reading so far is about an instrument on its own: where *its* volatility
+turned, how *its* drift is moving, how busy *it* is. There is a second axis.
+Gold sits in a family with silver, platinum and copper; BTC sits with the
+majors. Most of what any of them does on a given day is what the family did.
+What is left over - the part that is **this** instrument and not its peers - is
+a different quantity, and the question is whether it carries information the
+instrument's own history does not.
+
+It is a fair question and it has a name: factor out the common movement, and
+what remains is the residual. The attraction is that the residual is cleaner
+than the price - the family's shared move is exactly the part no single-name
+reading can explain.
+
+**It has been measured here, twice, and both results are discouraging.**
+
+[`pca-residuals.md`](../research/docs/pca-residuals.md) is this idea executed
+properly: PCA over a trailing window, each name regressed on the
+eigenportfolios, the residual fitted as an Ornstein-Uhlenbeck process and
+traded when stretched. Frozen rule, discovery and confirmation split, 12 coins
+then 131 more never seen in discovery. The result:
+
+| book | gross Sharpe | **net Sharpe** |
+| --- | ---: | ---: |
+| fresh coins, real | +0.27 | **-0.97** [-1.59, -0.30] |
+| fresh coins, **OU control** | +11.94 | **+10.47** |
+| fresh coins, iid null | -0.49 | -1.94 |
+
+The control is the line that settles it. On a simulated panel whose residuals
+*do* revert, the same machinery returns a Sharpe over ten - so the method works
+and is implemented correctly. On the real panel the gross edge is +0.27 and
+fees take 20% a year. **The residuals do not revert enough to pay for the
+hedge.** [`peering.md`](../research/docs/peering.md) reached the same place
+from another direction: cross-asset agreement vanished against its control, and
+the *synthetic* control showed a larger effect than the real assets did.
+
+### What is still open, and it is not a small remainder
+
+Two things those studies did not test, and the distinction matters:
+
+**A different family.** Both ran on crypto perpetuals, where the cost structure
+is brutal - 20.2% a year in fees plus funding, against a gross edge of 5.3%.
+Metals are a different proposition: fewer names, a genuinely shared physical
+driver, and a CFD cost structure with no funding leg. A result on BTC against
+the majors is not a result on gold against silver and platinum.
+
+**A different use.** Both tested the residual as a **trade** - a market-neutral
+book that must clear its own hedging costs. That is the expensive way to ask
+the question. The cheap way is to use the deviation as a **reading**: an
+instrument-level state that conditions what the rest of the model already does,
+the way volatility and regime do. A deviation that cannot carry a hedged book
+can still be worth knowing when deciding whether *this* level, on *this*
+instrument, is likely to hold - and it costs nothing to publish and score,
+because the desk already scores every published feature against its own base
+rate before anything is allowed to read it.
+
+That second framing is the one worth taking, and it is specified as **I11** in
+[`2026-10-09-levels-in-one-state-space-design.md`](specs/2026-10-09-levels-in-one-state-space-design.md).
+
 ## And two kinds of evidence, which is where the five parts come from
 
 A directional call is only worth making when the price structure and the

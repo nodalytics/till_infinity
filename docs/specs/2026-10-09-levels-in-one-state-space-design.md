@@ -270,6 +270,7 @@ better place to start.
 | **I8** | **classify the market readings** into state, input and output - and add the one that is missing, price impact, which is the `B` I1 asks for | small to specify, medium to build |
 | **I9** | **two state spaces, coupled with their uncertainty** - the instrument's and the level's. Both exist; only one is modelled as a state space, and the coupling throws away what it knows | small for the fix that matters |
 | **I10** | **measure the slope's own volatility** instead of assuming it is a tenth of the price's | small, same shape as the touch-noise measurement |
+| **I11** | **peer deviation as an instrument state** - how far this market has moved from its own kind, as a reading rather than a trade | medium, and mostly already built |
 
 ### I1. There is no input. `B` and `u` do not exist here
 
@@ -606,6 +607,69 @@ The same question applies one derivative up to `ACCEL_DRIFT_SHARE`, which is a
 tenth again, but that one should wait for I5: if the observability Gramian says
 the data carries almost no information about acceleration, fitting its process
 noise is fitting noise to noise.
+
+### I11. How far an instrument has moved from its own kind
+
+I8 drew the line between instrument states and level states. Everything on the
+instrument side so far is an instrument against **itself** - its volatility,
+its trendiness, its busyness. There is a second axis: gold against silver and
+platinum, BTC against the majors. Most of what any name does is what its family
+did, and the part left over is a quantity nothing here currently holds.
+
+**It has been measured twice and failed twice, and the failures are specific
+rather than general.** [`pca-residuals.md`](../../research/docs/pca-residuals.md)
+ran Avellaneda-Lee properly - frozen rule, discovery and confirmation split,
+131 coins never seen in discovery - and returned a net Sharpe of **-0.97**
+against an **OU control of +10.47**. The control is what makes it conclusive:
+the machinery finds reversion where reversion exists, and crypto residuals do
+not revert enough to pay for the hedge. [`peering.md`](../../research/docs/peering.md)
+killed cross-asset agreement the same way, with the synthetic control showing a
+*larger* effect than the real assets.
+
+Two things neither tested:
+
+**A different family.** Both ran on crypto perpetuals at 20.2% a year in fees
+plus funding against a 5.3% gross edge. Metals have fewer names, a shared
+physical driver, and no funding leg. A null on BTC against the majors is not a
+null on gold against silver.
+
+**A different use, and this is the one that changes the economics.** Both
+tested the residual as a *market-neutral book*, which must clear its own
+hedging costs - the expensive way to ask. As an instrument **state** it carries
+no hedge, no turnover and no funding: it conditions what the model already
+does, the way `vol_stretch` and `regime` do, and the desk's existing discipline
+scores every published feature against its base rate before anything reads it.
+
+#### The shape of it
+
+One number per instrument per timeframe:
+
+```
+peer_deviation = (this instrument's move - its family's move) / its own vol
+peer_n         = how many peers the number rests on
+```
+
+The family comes from `clock.family`, which `vol/envelope.py` already uses to
+decide which boosted model a feed may read - so the grouping is not a new
+judgement and is not fitted to this question.
+
+#### The null, named first
+
+**A random peer group of the same size**, drawn from instruments in other
+families. If deviation from unrelated instruments predicts as well as deviation
+from actual peers, the number is measuring the market's common move and not
+this instrument's idiosyncrasy - which is precisely how `peering.md` died.
+
+Secondary, and cheaper: does `peer_deviation` add anything over `vol_stretch`?
+Both say "this instrument is doing something unusual", and if they correlate
+above about 0.8 there is one reading here wearing two names.
+
+#### Why it is sequenced where it is
+
+It is an instrument state, so it belongs with I8 - but unlike the rest of that
+group it has two prior nulls against it. It should be published and scored
+before it is read by anything, which the desk does by default and is the whole
+reason that default exists.
 
 ### Where these sit against the phases above
 
