@@ -689,6 +689,16 @@ The three together are the ranking. None of them is new machinery: a dynamic
 factor model produces the loading, the standardised deviation and the
 reversion speed as part of the same fit.
 
+The most famous practitioner of this idea is worth reading for the part that
+is documented rather than the part that is folklore, and
+[`medallion.md`](../research/docs/medallion.md) does that: the same firm's
+*public* funds, same researchers and methods, trail its private one by 17 to 19
+points a year and are "relatively mundane". Whatever that fund has did not
+transfer eighty feet down its own corridor, which says the edge is
+capacity-constrained and cost-sensitive rather than methodological - and a
+tiny edge compounds only where cost per trade is below edge per trade. This
+desk's own attempt at it had a gross Sharpe of +0.27 and a net of -0.97.
+
 That second framing is the one worth taking, and it is specified as **I11** in
 [`2026-10-09-levels-in-one-state-space-design.md`](specs/2026-10-09-levels-in-one-state-space-design.md).
 
