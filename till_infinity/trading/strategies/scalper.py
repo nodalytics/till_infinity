@@ -870,6 +870,27 @@ class LevelScalp(LevelStrategy):
     #: better 5m call; one without is still a call, and refusing it is
     #: `confluence-scalp`'s job rather than this one's.
     context: ClassVar[tuple[str, ...]] = ("15m", "1h", "4h")
+    #: **Protect faster than the deployment, because this is not a half-hour
+    #: thesis.** Declared here from 2026-10-08, where it previously declared
+    #: nothing and took whatever was configured - which in production is
+    #: `TRADING_BREAK_EVEN_AT=1.0` and `TRADING_TRAIL_VOL=2.0`, the numbers
+    #: `Snap` says outright are "built for a half-hour thesis". This strategy's
+    #: median hold is **470 seconds**.
+    #:
+    #: The case is the comparison with `snap`, which is this same call on a
+    #: shorter clock. Over 60 days of broker record they resolve identically
+    #: where the entry decides - target 35% each, stopped 22% each - and differ
+    #: where the ending does: `snap` goes stale 2% of the time against this
+    #: one's 8%, and its win-to-loss size ratio is **0.86 against 0.54**. This
+    #: strategy **wins 56% of its trades and still loses money**, because the
+    #: average loss is 1.8x the average win. That is not an entry that needs
+    #: fixing.
+    #:
+    #: Between `snap`'s 0.5/0.75 and the deployment's 1.0/2.0, because this
+    #: does hold longer than `snap` and a trail inside the noise closes winners
+    #: early - `TRAIL_SHARE` exists for that failure in the other direction.
+    break_even_at: ClassVar[float] = 0.6
+    trail_vol: ClassVar[float] = 1.0
 
 
 @register
@@ -1029,7 +1050,25 @@ class ThesisOnly(LevelStrategy):
     #:
     #: 1.0 rather than something braver, following the one precedent in this
     #: repository: a repair, not a claim that the strategy works.
-    reward_floor: ClassVar[float] = 1.1
+    #: **Lowered from 1.1 to 1.0 on 2026-10-08, and it is the only one that
+    #: moved.** The question asked was to drop floors wherever they could go,
+    #: with 1.0 as the floor of floors; this is the single strategy whose own
+    #: arithmetic allows it.
+    #:
+    #: It wins 53.5% over 303 positions - the largest sample of the
+    #: high-hit-rate group - which shrinks to 51.25% toward the desk's 46.7%
+    #: and breaks even at a reward of **0.951**. A floor of 1.1 sat 15% above
+    #: what it needs and was rejecting setups it wins.
+    #:
+    #: `level-scalp` (1.053), `confluence-scalp` (1.076) and `snap` (1.111)
+    #: were all checked against the same arithmetic and **none of them can
+    #: reach 1.0**. Their raw rates look high enough - 56%, 56%, 53% - and
+    #: shrinkage is the reason: 41 trades at 56% is thin evidence against the
+    #: house figure. Estimating the shrinkage weight rather than assuming it
+    #: (`structures/shrinkage.py`, DerSimonian-Laird over the seven strategies)
+    #: returns **K = 155** against the table's hand-picked 150, which moves
+    #: every breakeven *up* rather than down.
+    reward_floor: ClassVar[float] = 1.0
     description: ClassVar[str] = (
         "The level call with the stop moved out of the way - a circuit breaker "
         "rather than a trade decision. Exits on target or on the clock. An "

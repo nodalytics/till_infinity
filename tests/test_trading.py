@@ -4320,9 +4320,19 @@ def test_a_fast_strategy_protects_faster_than_a_slow_one():
 
     assert Snap.break_even_at < 1.0
     assert Snap.trail_vol < 2.0
-    # level-scalp states none, so it uses whatever the deployment configured.
-    assert LevelScalp.break_even_at == 0.0
-    assert LevelScalp.trail_vol == 0.0
+    # **`level-scalp` declared none until 2026-10-08**, taking whatever the
+    # deployment configured - which in production is 1.0R and 2v, the numbers
+    # this test's own docstring calls "built for a half-hour thesis", against a
+    # median hold of 470 seconds. It won 56% of its trades and lost money
+    # anyway, because its average loss was 1.8x its average win.
+    #
+    # So it declares them now, and the ordering is what is pinned: faster than
+    # the deployment default, slower than `snap`, which is the same call on a
+    # shorter clock and should still be the quickest to protect.
+    assert 0.0 < LevelScalp.break_even_at < 1.0
+    assert 0.0 < LevelScalp.trail_vol < 2.0
+    assert Snap.break_even_at < LevelScalp.break_even_at
+    assert Snap.trail_vol < LevelScalp.trail_vol
 
     quick = take("snap")
     assert isinstance(quick, Intent)
@@ -4336,7 +4346,12 @@ def test_a_fast_strategy_protects_faster_than_a_slow_one():
     slow = take("level-scalp")
     assert isinstance(slow, Intent)
     assert 0 < quick.trail_vol <= Snap.trail_vol * 3.0
-    assert quick.trail_vol < slow.trail_vol or slow.trail_vol == 0.0
+    # `<=`, not `<`, and the reason is `TRAIL_SHARE`. Both trails are capped
+    # against the move they protect, so at an ordinary expected push the two
+    # declared values - 0.75 and 1.0 - are capped to the *same* number and the
+    # declared gap does nothing. It bites only where the push is large enough
+    # that the cap does not bind, which is the case the trail exists for.
+    assert quick.trail_vol <= slow.trail_vol or slow.trail_vol == 0.0
 
 
 def test_the_strategys_own_numbers_beat_the_global_ones():
@@ -5866,11 +5881,17 @@ def test_the_trail_stays_inside_the_move_it_protects():
     distribution has a median of 2.24v and a p90 of 4.93v. A trail further
     from price than the entire move can never beat the stop already in place,
     so `manage.advance` never applies it - the protection is absent, silently.
+
+    Driven through `momentum-scalp` rather than `level-scalp` from 2026-10-08.
+    The vehicle has to be a strategy that declares **no** trail of its own, so
+    that the `trail_vol` passed here is the one being scaled; `level-scalp`
+    now declares 1.0 and overrides it, which would make this a test of that
+    constant rather than of the arithmetic.
     """
-    uncapped = _trail("level-scalp", 0.0)
+    uncapped = _trail("momentum-scalp", 0.0)
     assert uncapped == pytest.approx(6.0)
-    assert _trail("level-scalp", 1.3) < 1.3
-    assert _trail("level-scalp", 2.24) < 2.24
+    assert _trail("momentum-scalp", 1.3) < 1.3
+    assert _trail("momentum-scalp", 2.24) < 2.24
 
 
 def test_a_bigger_expected_move_earns_a_wider_trail():
