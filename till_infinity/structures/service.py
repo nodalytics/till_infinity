@@ -851,7 +851,10 @@ class Watcher:
         self._seeded.update(feeds)
         try:
             replayed = self.engine.seed(
-                self.settings.prices_db, feeds=feeds, on_progress=on_progress
+                self.settings.prices_db,
+                feeds=feeds,
+                quotes=self.settings.seed_quotes,
+                on_progress=on_progress,
             )
             self._decline_unsupported()
             return replayed
@@ -867,7 +870,11 @@ class Watcher:
         if not self.settings.warm:
             return 0
         try:
-            replayed = self.engine.seed(self.settings.prices_db, on_progress=on_progress)
+            replayed = self.engine.seed(
+                self.settings.prices_db,
+                quotes=self.settings.seed_quotes,
+                on_progress=on_progress,
+            )
             # Warming forms levels for every pair it has bars for, including
             # the ones whose grid cannot carry one. Decline them here rather
             # than waiting for each series to come due for a reform.

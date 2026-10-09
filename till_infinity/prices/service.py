@@ -475,6 +475,20 @@ async def collect(
             except Exception:
                 log.exception("prices: could not trim quotes - collecting anyway")
 
+            # And bars, on the same clock and with the same contract. Separate
+            # `try` rather than one around both: the bar trim ranks every
+            # series and is the likelier of the two to be slow or to fail, and
+            # it must not be able to take the quote trim - the one that has
+            # been holding this file down - with it.
+            keep = settings.retain_bars
+            if keep > 0:
+                try:
+                    cut = await asyncio.to_thread(store.prune_bars_sync, keep)
+                    if cut:
+                        log.info("prices: trimmed %d bars beyond the newest %d a series", cut, keep)
+                except Exception:
+                    log.exception("prices: could not trim bars - collecting anyway")
+
         cycle += 1
         if on_cycle is not None:
             on_cycle(cycle, summary)

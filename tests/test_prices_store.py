@@ -284,3 +284,54 @@ async def test_vacuum_survives_the_quote_prune_being_skipped(tmp_path):
         result = await store.prune(1, vacuum=True)
         assert result.vacuumed is True
         assert result.deleted == 1
+
+
+# ------------------------------------------------------------------ the periodic bar trim
+
+
+@pytest.mark.asyncio
+async def test_the_periodic_bar_trim_keeps_the_recent_end_per_series(tmp_path):
+    """Same contract as `prune`, in bites the collector loop can afford.
+
+    `prune` brackets its delete with two `COUNT(*)` scans of the whole table to
+    report what it did. On the production file each of those is the expensive
+    part of the operation, which is a large part of why bar retention was left
+    to a CLI nobody ran.
+    """
+    other = SeriesKey("tradingview", "btc", Symbol("BINANCE", "BTCUSDT"), "1m")
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(*range(60, 60 * 21, 60)), MINUTE)  # 20 bars
+        await store.write(other, bars(*range(60, 60 * 6, 60)), MINUTE)  # 5 bars
+
+        assert store.prune_bars_sync(keep=5) == 15
+
+        assert [b.time for b in await store.bars(KEY)] == [960, 1020, 1080, 1140, 1200]
+        assert len(await store.bars(other)) == 5
+        # Idempotent: a second pass over a trimmed file does nothing.
+        assert store.prune_bars_sync(keep=5) == 0
+
+
+@pytest.mark.asyncio
+async def test_the_bar_trim_takes_a_bounded_bite_and_leaves(tmp_path):
+    """A backlog is worked off over cycles, not in one transaction.
+
+    The unbounded version ranks every series before deleting a row, so on a
+    large file it is exactly the kind of long write that grew a 10.5 GB
+    write-ahead log and took the desk out.
+    """
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(*range(60, 60 * 41, 60)), MINUTE)  # 40 bars
+
+        assert store.prune_bars_sync(keep=5, limit=10) == 10
+        assert len(await store.bars(KEY)) == 30
+        assert store.prune_bars_sync(keep=5, limit=10) == 10
+        assert len(await store.bars(KEY)) == 20
+
+
+@pytest.mark.asyncio
+async def test_the_bar_trim_refuses_to_empty_the_table(tmp_path):
+    async with SqliteStore(tmp_path / "p.db") as store:
+        await store.write(KEY, bars(60, 120, 180), MINUTE)
+        with pytest.raises(ValueError, match="does not empty the table"):
+            store.prune_bars_sync(keep=0)
+        assert len(await store.bars(KEY)) == 3

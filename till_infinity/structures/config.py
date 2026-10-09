@@ -114,6 +114,18 @@ class Settings(Restorable):
     #: `prices_db`: the collector owns the file and this reads it.
     news_db: Path = field(default_factory=lambda: Path(DEFAULT_NEWS_DB))
     warm: bool = True
+    #: Stored quotes replayed per venue series when the windows are warmed,
+    #: merged into the bar stream in time order. **Off by default.**
+    #:
+    #: A quote is what resolves a touch in time to matter, so warming without
+    #: them starts every level with a filter that has seen only the touches
+    #: landing on a bar boundary. Warming *with* them is the long pole of a
+    #: restart: the warm is already the window in which this service produces
+    #: nothing, production's store holds far more quotes than bars, and the
+    #: whole of it is replayed before the bus is subscribed to. So the depth is
+    #: a number somebody chooses against a measured file rather than a default
+    #: that silently triples a cold start.
+    seed_quotes: int = 0
     journalling: bool = True
     warmup: int = 60
     quantile: float = 0.999
@@ -220,6 +232,7 @@ class Settings(Restorable):
             prices_db=Path(os.environ.get("PRICES_DB") or DEFAULT_PRICES_DB),
             news_db=Path(os.environ.get("NEWS_DB") or DEFAULT_NEWS_DB),
             warm=os.environ.get("STRUCTURES_WARM", "1") not in ("0", "false", "no"),
+            seed_quotes=_int("STRUCTURES_SEED_QUOTES", 0),
             journalling=os.environ.get("JOURNAL", "1") not in ("0", "false", "no"),
             warmup=_int("STRUCTURES_WARMUP", 60),
             quantile=_float("STRUCTURES_QUANTILE", 0.999),
