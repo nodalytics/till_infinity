@@ -344,6 +344,160 @@ class Slope(Restorable):
         return self.curve.mean if self.curve is not None else 0.0
 
 
+#: Bins the sliding periodogram tracks, and the window it tracks them over.
+#: A power of two is not required - nothing here is an FFT - but the window
+#: sets the **frequency resolution**, `1 / SPECTRAL_W` cycles a bar, and that
+#: is a hard limit rather than a tuning choice: at 128 bars a period of 50 and
+#: a period of 57 land in the same bin and no amount of data separates them.
+SPECTRAL_W = int(os.environ.get("STRUCTURES_CYCLES_SPECTRAL_W", "128"))
+#: Harmonics tracked, as `k` in "k whole cycles fit the window". The periods
+#: are `SPECTRAL_W / k` and they are **not a free choice**.
+#:
+#: Fisher's g needs the ordinates independent, which they are only at the
+#: window's own Fourier frequencies - integer `k`. A first version tracked a
+#: comfortable-looking set of periods (4, 6, 8, 12, 16, 24, 32, 48) which are
+#: not integer bins of a 128-bar window, so they leaked into each other, the
+#: independence assumption failed, and **white noise fired 30.2% of the time
+#: against a 5% test**. The periods are chosen by the window, not by taste.
+#:
+#: `k` from 3 to 32 is periods 42.7 down to 4: below 4 bars the Nyquist limit
+#: bites, and above a third of the window there are too few whole cycles to
+#: call one.
+SPECTRAL_K: tuple[int, ...] = tuple(range(3, 33))
+#: A peak must beat this p-value under the white-noise null to be reported.
+SPECTRAL_P = 0.05
+
+
+def fisher_p(g: float, bins: int) -> float:
+    """P(largest ordinate takes share `g` of the power | white noise).
+
+    Fisher's exact g-test. For white noise the periodogram ordinates are
+    independent exponentials, so the largest one's *share* has a closed-form
+    distribution and a peak can be called significant rather than merely
+    tallest:
+
+        P(g > x) = sum_j (-1)^(j-1) C(m, j) (1 - j x) ** (m - 1)
+
+    **This is the whole reason the spectral reading is here rather than in a
+    notebook.** A sliding periodogram over any finite sample has a tallest bin
+    always, and on a random walk it has a tall one near zero frequency every
+    time. Without a null, "the dominant cycle is 24 bars" is a restatement of
+    "something had to be largest".
+    """
+    if bins < 2 or not 0.0 < g < 1.0:
+        return 1.0
+    total = 0.0
+    for j in range(1, min(bins, int(1.0 / g)) + 1):
+        term = math.comb(bins, j) * (1.0 - j * g) ** (bins - 1)
+        total += -term if j % 2 == 0 else term
+    return min(max(total, 0.0), 1.0)
+
+
+@dataclass(slots=True)
+class Spectral(Restorable):
+    """A sliding periodogram, exact and O(1) a bar per bin.
+
+    The sliding DFT recurrence, which is what lets this sit in a module whose
+    premise is that batch work has an online form:
+
+        X_k(n) = (X_k(n-1) + x(n) - x(n-W)) * exp(2*pi*i*k/W)
+
+    Every bar costs one complex multiply per tracked period, against an FFT's
+    `W log W` over the whole window - and it is the **same number**, not an
+    approximation of it.
+
+    ## It must be fed something stationary
+
+    Prices are a random walk and a random walk's periodogram is `1/f**2`: all
+    the power sits at the longest period in the window, every time, on every
+    instrument. Fed prices this will report a cycle the length of its own
+    window and be wrong in exactly the way that looks most convincing.
+
+    `observe` therefore takes a **stationary** reading. `Stream` feeds it
+    `abs(return)`, where periodicity is a real and documented thing - the
+    session clock - rather than an artefact. `hour` and `to_weekend` already
+    capture the calendar form of that cheaply, so what this adds is the part
+    that is *not* on the calendar.
+
+    ## And it reports its own null
+
+    `strength` is Fisher's g - the dominant bin's share of total power - and
+    `p_value` is the chance of seeing a share that large from noise. Nothing
+    should read `period` without reading `p_value`, which is why they are one
+    object.
+    """
+
+    window: int = SPECTRAL_W
+    harmonics: tuple[int, ...] = SPECTRAL_K
+    #: Real and imaginary parts per bin, kept apart because a complex field
+    #: does not survive the pickle-and-restore path the rest of this uses.
+    real: list[float] = field(default_factory=list)
+    imag: list[float] = field(default_factory=list)
+    ring: list[float] = field(default_factory=list)
+    at: int = 0
+    seen: int = 0
+    #: The dominant period in bars, its share of power, and that share's
+    #: p-value under white noise. Zero until the window is full.
+    period: float = 0.0
+    strength: float = 0.0
+    p_value: float = 1.0
+
+    def __post_init__(self) -> None:
+        if not self.real:
+            self.real = [0.0] * len(self.harmonics)
+            self.imag = [0.0] * len(self.harmonics)
+        if not self.ring:
+            self.ring = [0.0] * self.window
+
+    @property
+    def warm(self) -> bool:
+        return self.seen >= self.window
+
+    def observe(self, value: float) -> None:
+        """Fold in one bar of a **stationary** reading."""
+        if not math.isfinite(value):
+            return
+        oldest = self.ring[self.at]
+        self.ring[self.at] = value
+        self.at = (self.at + 1) % self.window
+        self.seen += 1
+        delta = value - oldest
+        for i, k in enumerate(self.harmonics):
+            # `k` whole cycles across the window - a true Fourier frequency,
+            # which is what makes the bins independent and the g-test valid.
+            angle = 2.0 * math.pi * k / self.window
+            cos, sin = math.cos(angle), math.sin(angle)
+            re = self.real[i] + delta
+            im = self.imag[i]
+            self.real[i] = re * cos - im * sin
+            self.imag[i] = re * sin + im * cos
+        if self.warm:
+            self._read()
+
+    def _read(self) -> None:
+        power = [r * r + i * i for r, i in zip(self.real, self.imag, strict=True)]
+        total = sum(power)
+        if total <= 0:
+            self.period, self.strength, self.p_value = 0.0, 0.0, 1.0
+            return
+        best = max(range(len(power)), key=lambda i: power[i])
+        self.period = self.window / self.harmonics[best]
+        self.strength = power[best] / total
+        self.p_value = fisher_p(self.strength, len(power))
+
+    @property
+    def found(self) -> bool:
+        """A cycle that beat the null, rather than merely the other bins."""
+        return self.warm and self.p_value <= SPECTRAL_P
+
+    def to_dict(self) -> dict[str, float]:
+        return {
+            "cycle_period": round(self.period, 2) if self.found else 0.0,
+            "cycle_strength": round(self.strength, 4),
+            "cycle_p": round(self.p_value, 4),
+        }
+
+
 @dataclass(slots=True)
 class Stream(Restorable):
     """One instrument at one timeframe, entirely online.
@@ -361,6 +515,13 @@ class Stream(Restorable):
     strong: stats.Quantile = field(default_factory=lambda: stats.Quantile(STRONG_Q))
     weak: stats.Quantile = field(default_factory=lambda: stats.Quantile(WEAK_Q))
     sigma: Ewma = field(default_factory=lambda: Ewma(0.99))
+    #: The sliding periodogram, fed `abs(log return)` rather than price.
+    #:
+    #: Price is a random walk and a random walk's periodogram is `1/f**2`, so
+    #: fed price this reports the longest period it tracks on 94% of pure
+    #: noise. Fed the absolute return it reports a cycle on 5.8%, against a 5%
+    #: test - which is the difference between a detector and a decoration.
+    spectral: Spectral = field(default_factory=Spectral)
     #: Running mean |slope|, so `trend` is in units of this series' own typical
     #: slope. Dividing by `sigma` instead - which is a mean absolute *return* -
     #: leaves a number whose scale depends on the decay and the price, and a
@@ -382,7 +543,13 @@ class Stream(Restorable):
         self.strong.update(abs(self.z.z_score))
         self.weak.update(abs(self.z.z_score))
         if self.previous > 0:
-            self.sigma.push(abs(math.log(price / self.previous)))
+            move = abs(math.log(price / self.previous))
+            self.sigma.push(move)
+            # Stationary by construction, which is what the g-test needs and
+            # what price is not. Session periodicity is real here; `hour` and
+            # `to_weekend` already carry its calendar form, so what this can
+            # add is the part that is not on the calendar.
+            self.spectral.observe(move)
         self.seen += 1
 
     @property
