@@ -266,6 +266,7 @@ better place to start.
 | **I4** | an **`A` that depends on regime** - linear time-varying, which the general form already allows | medium |
 | **I5** | compute the **observability Gramian** for the third state and set `ACCEL_SIGMAS` from it | small, do first |
 | **I6** | every rate **per unit time, not per bar** - the filter complies, the published regression slope does not | small |
+| **I7** | **two barriers out of one model** - the wall above and the wall below, each with its own uncertainty and a race between them | medium |
 
 ### I1. There is no input. `B` and `u` do not exist here
 
@@ -396,6 +397,61 @@ the same kind of quantity, which they currently are not.
 sit in the same decision context; one is per bar and one is per hour, and
 nothing in the names says so.
 
+### I7. Two barriers, from one model instead of three
+
+A trade needs a price to be wrong at and a price to be right at. Both are
+statements about structure - where the wall below is, where the wall above is -
+and the model that estimates levels is the thing that should produce them.
+
+**Three quarters of this already exists, in three places:**
+
+| piece | where | filtered? |
+| --- | --- | --- |
+| the two zones price sits between | `drawing/level_range.py`, `room_up_vol` / `room_down_vol` | no |
+| which wall is reached first | `learning/racing.py`, `up_first` | its own model |
+| how far past a level a stop must sit | `Level.sweep_zone`, from per-side wick depth | **yes**, since 2026-10-09 |
+
+`racing.py` says the purpose outright - *"an answer to that is directly an
+entry and a target: go toward the bound price is likely to reach, put the
+target at the far one, and trail"*. So the intent is already written down; what
+is missing is that the three are assembled by a consumer rather than emitted
+together, and only the third carries an uncertainty derived from evidence.
+
+**What one model should emit, per instrument:**
+
+```
+barrier_down = (price, sigma)      the wall below, with its own uncertainty
+barrier_up   = (price, sigma)      the wall above
+p_up_first                          the race between them
+```
+
+Each barrier is a level's `at(when)` and `sigma_at(when)` - the states this
+document has already said survive - widened on the side a stop has to clear by
+the filtered wick depth. So it is **assembly, not new estimation**: every
+input exists and two of the three are already state-space quantities.
+
+**What this is not, and the thesis is explicit about it.** These are not a stop
+and a target. [`idea.md`](../idea.md) draws that line deliberately:
+
+> So the valuation is the input and never the trade. What makes it a trade is
+> everything that comes after: whether the distance is worth the cost of
+> crossing the spread, whether the stop has structure to lean on, how big the
+> position is against a loss limit...
+
+Two barriers with uncertainties are a **measurement** - where the structure is
+on each side and which gives way first. Turning them into a stop and a target
+is the trading layer's job, and it needs cost, size and the loss limit, none of
+which belong in a level model. The improvement is that the trading layer would
+be placing stops against *one* estimate with a stated uncertainty, rather than
+reassembling three.
+
+**Why it is listed after the rest.** I7 is the only one of the seven that has a
+visible path to P&L, which makes it the most tempting and the easiest to fool
+oneself about. It also depends on I2: the barriers are only as good as the wick
+depth and the side statistics underneath them, and most of those are still
+outside the state vector. Doing I7 first would dress three unfiltered
+quantities in a single confident-looking interval.
+
 ### Where these sit against the phases above
 
 Nothing in I1-I5 argues for the random-finite-set rewrite. I1, I2 and I4
@@ -403,7 +459,8 @@ improve the model already here; I5 is a test of something that shipped on
 2026-10-09. They are individually measurable, which the rewrite is not, and
 none of them needs agreement about formation first.
 
-**Suggested order, ahead of phase 1:** I6, then I5, then I2, then I1. I6 goes
+**Suggested order, ahead of phase 1:** I6, then I5, then I2, then I1, with I7
+last of the cheap ones because it rests on I2. I6 goes
 first because it is mechanical, it is wrong today rather than merely absent,
 and it makes two published features comparable that currently are not. I3 is a research
 question - does a level's drift revert - and belongs with the turning-point
