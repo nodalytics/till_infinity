@@ -677,9 +677,59 @@ family average", `k > 1` separates a market factor from a sector one, and a
 single pair is the degenerate case with one peer. The same filter covers all
 three, so "pair or panel" stops being an architectural choice.
 
-The family comes from `clock.family`, which `vol/envelope.py` already uses to
-decide which boosted model a feed may read - so the grouping is not a new
-judgement and is not fitted to this question.
+#### One universe, not one per sector
+
+The obvious grouping is `clock.family` - gold with silver, BTC with the
+majors - and it is the wrong one, for a reason worth stating before anybody
+builds it.
+
+**A model fitted per sector cannot see rotation between sectors.** Money
+leaving crypto and arriving in metals is the clearest cross-asset signal there
+is, and inside each sector it looks like everything falling together and then
+everything rising together - which is precisely what that sector's own common
+factor absorbs. Partitioning first makes the phenomenon invisible by
+construction, and then reports that nothing was found.
+
+So: **one panel over metals, indices, equities, crypto and FX**, and let the
+loadings say what the groups are. If the sectors are real they will appear as
+block structure in `L`; if what actually moves is liquidity between them, only
+an undivided panel could have shown it. The grouping becomes an output instead
+of an assumption that was never tested.
+
+This also removes a judgement from the design rather than adding one.
+`clock.family` exists to decide which boosted envelope a feed may read, which
+is a different question, and borrowing it here would import a partition fitted
+for something else.
+
+The cost is that `k` matters more. With one universe the first factor is
+"everything", the second is likely risk-on against risk-off, and the sector
+structure appears further down - so `k` must be chosen by fit rather than set
+to one, and the number of factors becomes a result in itself.
+
+#### Which leg, and when
+
+A panel of deviations is a list of candidates, not a trade. Three quantities
+rank them, and the point of a factor model is that all three come out of one
+fit, each with its own uncertainty:
+
+| | what it says | why it matters |
+| --- | --- | --- |
+| **loading strength** `L_i`, and the variance it explains | is this name still moving with the panel | a large deviation from a relationship that has stopped holding is not a deviation - it is a name that has left the group |
+| **standardised deviation** `d_i / sd(d_i)` | how far it has gone, in its own units | the same gap means different things on a quiet name and a violent one |
+| **reversion speed** of `d_i` | how fast it comes back | a wide, slow deviation is a position held through cost until the thesis is forgotten |
+
+The third is the one usually left out and it is where the cost lives. It is a
+parameter of the deviation's own state equation, so a factor model estimates it
+alongside the gap rather than assuming it - and a narrower, faster deviation
+should rank above a wider, slower one.
+
+**This is also what makes the prior null worth re-reading rather than
+re-running.** `pca-residuals.md` traded `s`-score alone, with a half-life
+filter as a *gate* (`hl_max` of 10 or 20 bars) rather than as part of the
+ranking, and it did not condition on loading strength at all. Whether ranking
+on all three changes the answer is exactly the sort of thing that sounds like
+it should and usually does not - so it needs the same OU control, which will
+say whether the ranking is finding reversion or finding the search.
 
 #### Does this reopen the prior nulls?
 
