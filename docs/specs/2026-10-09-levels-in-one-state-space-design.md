@@ -228,3 +228,112 @@ pays, and in both cases the null is the system currently shipping.
 * Phase 1 and phase 2 share a hierarchy. Is the pool defined by the drawing
   pass that made the level - and if formation moves into the filter, what
   defines it then?
+
+## What the control-theory form says this model is missing
+
+Read against the standard state-space form - MIT 16.30 Topic #5, which states
+it as `ẋ = Ax + Bu`, `y = Cx + Du` - five gaps show up, and they are more
+specific than "use a bigger filter". Three of them are cheap to act on.
+
+### 1. There is no input. `B` and `u` do not exist here
+
+The level model is `ẋ = Ax + w`: dynamics plus process noise, and nothing else.
+A state-space model has an **input** term, and things plainly act on a level
+from outside it.
+
+**`Engine.regime_changed` is already that input, implemented as a side effect.**
+When the drift detector fires, every level on the instrument has its evidence
+discounted by a severity. That is an exogenous impulse applied to the state - a
+`Bu` - written as a method that reaches in and multiplies things. Volatility is
+the same story from the other side: it enters as a scale on the process noise
+rather than as an input, so a market that has doubled in volatility is modelled
+as a level we are *less sure of* rather than one that is *being moved*.
+
+The cheap version of this is not a rewrite. It is writing down what `u` is -
+regime severity, volatility change, session boundary, policy surprise - and
+making the impulse part of the state equation, so its effect on the covariance
+is derived rather than applied.
+
+### 2. The state is the memory of the system, and this one leaks
+
+The lecture's definition is the useful one:
+
+> Future output depends on past input only through current state. State
+> summarises effect of past inputs on future output - like the memory of the
+> system.
+
+By that definition a `Level`'s state is not `(price, slope, accel)`. It is also
+every `SideStats` counter, the wick EWMA and its sums, `zone_sigmas_up` and
+`zone_sigmas_down`, `last_touch`, `broke_at`, `waiting` and the `State` enum.
+All of them are memory, all are updated by observations, all change future
+output - and **none are in the state vector**.
+
+What that costs is concrete: the parts inside get gains derived from
+uncertainty, and the parts outside get hand-chosen constants. `wick_vol` used a
+fixed `0.8/0.2` until this was noticed; the side counters decay on a half-life;
+the conformal sigmas settle on a count. Each is a filter with its rate picked
+rather than derived, which is exactly what `levels.md` §3 says the Kalman exists
+to avoid.
+
+**This is the most actionable gap in the list**, because it is separable: any
+one of those quantities can be moved into a filtered state on its own and
+measured, the way the sweep edge just was.
+
+### 3. The dynamics are marginally stable, and the horizon cap is the patch
+
+With `F = [[1, carry], [0, 1]]` both eigenvalues are at 1 - a double
+integrator. The lecture's stability test is `Re λ(A) ≤ 0` **with every
+eigenvalue on the boundary having a Jordan block of order one**, and a repeated
+eigenvalue at 1 does not satisfy it. The position variance grows without bound
+under extrapolation, which is not a bug but is worth naming as what it is.
+
+`SLOPE_HORIZON_HOURS = 24` exists because of this: past a day the level is
+forced horizontal and only its uncertainty grows. That is a cap on an unstable
+mode, chosen by judgement. Adding acceleration makes it a triple integrator and
+`ACCEL_HORIZON_HOURS = 6` is the same patch one order up.
+
+Naming it does not fix it, but it does say what a fix would look like: a
+mean-reverting slope - `F[1][1] < 1` - is stable, has a stationary variance,
+and needs no horizon constant at all. Whether a level's drift actually reverts
+is measurable.
+
+### 4. `A` should change with the operating point, and this one never does
+
+The lecture linearises about an equilibrium and is explicit that the result is
+local: the aircraft example derives a different `A` for each flight condition,
+and the nonlinear-spring example gives `A₀` and `A₁` at two equilibria of the
+same system.
+
+This desk uses one `A` for every instrument, every timeframe and every regime -
+and it *has* a regime classifier whose output is already published as a
+feature. The analogue of "trim condition" is sitting there unused by the
+dynamics. An `A` that depends on regime is a linear time-varying model, which
+the lecture's general form already covers (`A(t)`, `B(t)`), and it is a smaller
+step than the random-finite-set rewrite above.
+
+### 5. Observability is the real argument about acceleration
+
+Only price is measured: `C = [1, 0, 0]`. Slope and acceleration are never
+observed, only inferred. For a constant-acceleration model with position-only
+measurement the pair `(A, C)` is observable **in principle** - but observability
+is a matter of degree, and the observability Gramian over irregular, sparse
+touches is badly conditioned for the third state.
+
+That is a better justification for `ACCEL_SIGMAS = 4.0` than the judgement
+currently written beside it, and it is computable: the Gramian over a level's
+actual touch times says how much evidence the data can carry about the third
+state at all. **If it says "almost none", the gate is not conservative, it is a
+polite way of switching the state off** - and that is worth knowing before the
+feature is trusted.
+
+### What this changes about the plan
+
+Nothing above argues for the random-finite-set rewrite; items 1, 2 and 4 are
+improvements to the model that is already here, and item 5 is a test of
+something that shipped this morning. They are also individually measurable,
+which the rewrite is not.
+
+**Suggested order, ahead of phase 1:** compute the observability Gramian for
+the third state (5), then move one leaked state into the filter and measure it
+(2), then write down `u` (1). Item 3 is a research question - does a level's
+drift revert - and belongs with the turning-point study.
