@@ -208,3 +208,44 @@ def test_repair_does_not_disturb_an_unnamed_feed(stated_on):
     assert gold._har.feed == "gold"
     assert gold._har.published() is None
     assert book.of("gold", "1h") is gold
+
+
+def test_a_non_finite_reading_is_refused_rather_than_learned():
+    """**`nan <= 0` is False**, so the old guard let one through.
+
+    It cost more than a bar. A non-finite reading landed in `_history`, which
+    `predict` returns directly when the model is not warm, and went into
+    `learn_one` as `log(nan)` - which does not spoil one fit, it makes every
+    later weight `nan` too. Downstream, `learned.features` receives that as
+    `har_bps`, and `vol/learned.py::_finite` records the sixteen days of failed
+    saves that followed.
+    """
+    import math
+
+    from till_infinity.structures.vol.har import Har
+
+    har = Har()
+    for good in (12.0, 13.0, 11.5):
+        har.observe(good)
+    before = list(har._history)
+    assert before
+    assert all(math.isfinite(v) for v in before)
+
+    for bad in (float("nan"), float("inf"), float("-inf"), 0.0, -1.0):
+        har.observe(bad)
+
+    assert list(har._history) == before, "a reading it cannot use must not be recorded"
+    assert math.isfinite(har.predict()), "predict must always answer with a number"
+    assert math.isfinite(har.ratio)
+
+
+def test_a_history_restored_with_a_nan_still_predicts_a_number():
+    """State written before the guard existed can still carry one, and a
+    restore must not hand that straight back out as a forecast."""
+    import math
+
+    from till_infinity.structures.vol.har import Har
+
+    har = Har()
+    har._history.append(float("nan"))
+    assert math.isfinite(har.predict())

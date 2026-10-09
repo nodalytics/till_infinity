@@ -107,6 +107,12 @@ TOPICS: tuple[str, ...] = (QUOTES, BARS, MACRO)
 #: twenty live bars each while the store held 2,700 apiece.
 WARM_MIN_BARS = 100
 
+#: Consecutive failed saves before the line becomes an ERROR. Three rather than
+#: one, because a single miss is survivable and routine - a slow disk, a
+#: container stopping mid-write - while three in a row at the save cadence means
+#: the state on disk is now measurably behind the process. See `save_failures`.
+SAVE_FAILURES_LOUD = 3
+
 #: Shapes that never need a model or a calendar to be worth sending.
 UNAMBIGUOUS: frozenset[Shape] = frozenset({Shape.STALE})
 
@@ -602,6 +608,18 @@ class Watcher:
         self._seeded: set[str] = set()
         self.outcomes = 0
         self._saved = 0.0
+        #: Consecutive failed saves, and when one last succeeded. **Both exist
+        #: because of a sixteen-day outage.** From 2026-09-23 11:53 to
+        #: 2026-10-09 every save raised `RecursionError` and said so at
+        #: WARNING, once every five minutes, among thousands of INFO lines
+        #: about dislocations. Nothing counted them, nothing escalated, and
+        #: nothing reported how old the last good state was - so the desk
+        #: restored a fortnight-stale file on every restart and re-warmed
+        #: twenty feeds for an hour each time, and the cause of *that* was
+        #: looked for in the warm. A failure that repeats is a different event
+        #: from a failure that happens, and it has to read differently.
+        self.save_failures = 0
+        self._saved_ok = 0.0
         #: When the implied quote was last re-read. Separate from `_saved`
         #: because a quote that is daily and a state that is 206MB want very
         #: different cadences.
@@ -921,6 +939,21 @@ class Watcher:
             self.detector.seen(),
             "+".join(self.engine.passes),
         )
+        # **Repair the damage a non-finite feature did to the vol tree.** See
+        # `vol/learned.py::prune_nonfinite`. Here rather than at save time
+        # because a restore is the moment the state is in hand and nothing else
+        # is touching it, and it is the state on disk that carries the problem.
+        try:
+            went = self.engine.vol.learned.prune_nonfinite()
+            if went.get("splitters"):
+                log.info(
+                    "structures: dropped %d vol splitter(s) holding %d non-finite "
+                    "threshold(s) - they are rebuilt from the next bar",
+                    went["splitters"],
+                    went["nodes"],
+                )
+        except Exception as exc:  # repair must never be able to stop a restore
+            log.warning("structures: could not prune non-finite vol splitters: %s", exc)
         # Restored levels were formed under whatever geometry was current when
         # the state was saved, which is not necessarily this one.
         self._decline_unsupported()
@@ -1143,8 +1176,24 @@ class Watcher:
                 },
                 self.settings.state_dir,
             )
+            self.save_failures = 0
+            self._saved_ok = time.time()
         except Exception as exc:  # losing a save must not stop the watch
-            log.warning("structures: could not save state: %s", exc)
+            self.save_failures += 1
+            stale = (
+                f"{(time.time() - self._saved_ok) / 3600:.1f}h"
+                if self._saved_ok
+                else "this process has never written one"
+            )
+            # One miss is a miss; a run of them means the state on disk is
+            # being left behind, which is the thing that actually hurts.
+            report = log.warning if self.save_failures < SAVE_FAILURES_LOUD else log.error
+            report(
+                "structures: could not save state (%d in a row, last good save %s): %s",
+                self.save_failures,
+                stale,
+                exc,
+            )
         try:
             self.engine.cycles.save()
         except Exception as exc:

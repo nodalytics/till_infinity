@@ -206,3 +206,11 @@ cap was never going to touch it. Three things would:
   comes back with fewer than `WARM_MIN_BARS` closes. **Answering that removes
   the warm rather than trimming it**, and it is the only one of the three worth
   doing first.
+
+**Answered the same day, and not where this section looks for it.** `spx500` was
+not thin in the restored state, it was **absent**: `structures` had not written
+a state file since 2026-09-23, because a `nan` feature had grown a linked list
+inside the volatility tree that `pickle` could not recurse over. Every restart
+restored a nineteen-day-old file holding 31 feeds against a 51-symbol universe,
+and the twenty missing ones re-warmed by definition. The warm was a symptom
+throughout - see [`sixteen-days-without-a-save.md`](sixteen-days-without-a-save.md).

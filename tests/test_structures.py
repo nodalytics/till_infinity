@@ -3455,3 +3455,86 @@ async def test_a_bar_without_volume_carries_the_last_share_forward():
         await watcher.handle(Message(BARS, payload))
 
     assert seen[-1] == seen[-2]
+
+
+# ------------------------------------ a save that fails, and keeps failing
+
+
+def test_a_run_of_failed_saves_escalates_and_says_how_stale_the_state_is(tmp_path, caplog):
+    """**A failure that repeats is a different event from a failure that happens.**
+
+    This existed and was invisible: from 2026-09-23 11:53 to 2026-10-09 every
+    `structures` save raised `RecursionError`, logged one WARNING per attempt
+    among thousands of INFO lines, and nothing counted them or said how old the
+    state on disk had become. The desk restored a fortnight-stale file on every
+    restart, re-warmed twenty feeds for an hour each time, and the re-warm was
+    where the cause was looked for.
+    """
+    import logging
+    from unittest import mock
+
+    from till_infinity.structures import service as sv
+    from till_infinity.structures.config import Settings
+
+    watcher = sv.Watcher(Bus(), settings=Settings(state_dir=tmp_path))
+
+    def explode(*_a, **_k):
+        raise RecursionError("maximum recursion depth exceeded while calling a Python object")
+
+    with caplog.at_level(logging.WARNING):
+        for _ in range(sv.SAVE_FAILURES_LOUD - 1):
+            with mock.patch.object(sv.store, "save", explode):
+                watcher.save()
+        assert watcher.save_failures == sv.SAVE_FAILURES_LOUD - 1
+        assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+        with mock.patch.object(sv.store, "save", explode):
+            watcher.save()
+
+    assert watcher.save_failures == sv.SAVE_FAILURES_LOUD
+    loud = [r for r in caplog.records if r.levelno >= logging.ERROR]
+    assert loud, "a run of failed saves must stop being a warning"
+    said = loud[-1].getMessage()
+    assert "3 in a row" in said
+    assert "never written one" in said, "it has to say how stale the state is"
+
+
+def test_one_failed_save_is_still_only_a_warning(tmp_path, caplog):
+    """A slow disk or a container stopping mid-write is routine. Escalating on
+    the first miss would make the loud line meaningless."""
+    import logging
+    from unittest import mock
+
+    from till_infinity.structures import service as sv
+    from till_infinity.structures.config import Settings
+
+    watcher = sv.Watcher(Bus(), settings=Settings(state_dir=tmp_path))
+    with (
+        caplog.at_level(logging.WARNING),
+        mock.patch.object(sv.store, "save", mock.Mock(side_effect=OSError("disk busy"))),
+    ):
+        watcher.save()
+    assert watcher.save_failures == 1
+    assert not [r for r in caplog.records if r.levelno >= logging.ERROR]
+
+
+def test_a_save_that_works_clears_the_count(tmp_path):
+    """The counter is about a *run* of failures, so success has to reset it."""
+    from unittest import mock
+
+    from till_infinity.structures import service as sv
+    from till_infinity.structures.config import Settings
+
+    watcher = sv.Watcher(Bus(), settings=Settings(state_dir=tmp_path))
+    with mock.patch.object(sv.store, "save", mock.Mock(side_effect=RecursionError("deep"))):
+        watcher.save()
+    assert watcher.save_failures == 1
+
+    # The write itself is stubbed rather than real: this test is about the
+    # counter, and a real `store.save` here would also be asserting that the
+    # engine is picklable in whatever module state the rest of the file left
+    # behind - which is a different test, and one that already fails on main.
+    with mock.patch.object(sv.store, "save", mock.Mock(return_value=tmp_path)):
+        watcher.save()
+    assert watcher.save_failures == 0
+    assert watcher._saved_ok > 0

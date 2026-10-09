@@ -132,9 +132,13 @@ from dataclasses import dataclass, field
 from river import anomaly as river_anomaly
 from river import preprocessing, tree
 
+from ...logging import get_logger
+from ...shared import effects
 from ..state import Restorable
 from .analogue import Analogue
 from .consensus_vol import MAD_TO_SIGMA, Score
+
+log = get_logger(__name__)
 
 #: Bars of realised history kept per series, for the three horizon features.
 #: Matches `har.LONG` so the two forecasters see the same window and any
@@ -243,6 +247,67 @@ MAX_TREE_MB = 32.0
 MEMORY_CHECK_EVERY = 5_000
 
 
+#: What a feature means when it cannot be computed. Every value in a row is
+#: dimensionless and the ratios are centred on one - `rel` already returns 1.0
+#: for "no view" - so a ratio's neutral is 1.0 and everything else's is 0.0.
+NEUTRAL: dict[str, float] = {
+    "accel": 1.0,
+    "garch_rel": 1.0,
+    "har_rel": 1.0,
+    "hour_share": 1.0,
+    "r1": 1.0,
+    "r5": 1.0,
+    "r22": 1.0,
+    "range_rel": 1.0,
+    "stretch": 1.0,
+    "volume_rel": 1.0,
+}
+
+
+def _finite(row: dict[str, float]) -> dict[str, float]:
+    """Replace any non-finite feature with what "no view" means for it.
+
+    **This is the guard whose absence took `structures` off the air**, and the
+    reason it belongs at the row rather than at each producer is that it has to
+    hold for the feature nobody has written yet.
+
+    A `nan` reaching the tree is not a bad number, it is an unbounded data
+    structure. `TEBSTSplitter` bounds itself by rounding its input - `digits=1`,
+    so a finite feature can only ever produce as many nodes as it has distinct
+    rounded values - and `round(nan, 1)` is `nan`, which no comparison matches.
+    Every observation then looks like a value never seen before and appends a
+    node to the same right-hand chain.
+
+    Measured on the last state file the desk managed to write, 2026-09-23: one
+    `har_rel` chain 293 nodes long, **293 of them `nan`**, and 65,689 `nan`
+    nodes across the tree's `har_rel` splitters against 2,489 real ones. Every
+    other feature in the row is clipped or guarded and none exceeded 28. The
+    chain is what `pickle` recurses over, so when it passed Python's 1,000-frame
+    limit every `store.save` began raising `RecursionError` - silently, every
+    five minutes, for sixteen days, during which nothing the desk learned was
+    written down and each restart restored a state that predated the current
+    universe. That is why twenty feeds re-warmed on every boot.
+
+    `tests/test_tree_cap.py` holds both halves: that rounding cannot tame a
+    `nan`, and that 1,200 of them outrun the recursion limit on their own.
+    """
+    bad = [name for name, value in row.items() if not math.isfinite(value)]
+    if not bad:
+        return row
+    effects.fired("structures.learned_nonfinite_feature", len(bad))
+    # Loud, because the substitution below keeps the model running and the
+    # producer still needs fixing. Silence is what made the last one cost a
+    # fortnight.
+    log.warning(
+        "structures: non-finite feature(s) %s - substituting neutral values; "
+        "the producer is wrong, not the model",
+        ", ".join(f"{name}={row[name]}" for name in sorted(bad)),
+    )
+    for name in bad:
+        row[name] = NEUTRAL.get(name, 0.0)
+    return row
+
+
 def _anomaly_model():
     """Joint anomaly score over the whole feature row.
 
@@ -329,6 +394,64 @@ class Learned(Restorable):
             del self._by_key[key]
         return len(gone)
 
+    def prune_nonfinite(self) -> dict[str, int]:
+        """Drop tree splitters built from non-finite values. Returns what went.
+
+        **Repair, not prevention.** `_finite` stops new ones arriving; this
+        clears what sixteen days of them left behind, and it is called on
+        restore because that is the only moment the damage is reachable.
+
+        Measured on the state file of 2026-09-23: 65,689 `nan` nodes across the
+        `har_rel` splitters against 2,489 real ones, one chain 293 long. Left
+        in place the graph restores at depth 333 against a 1,000-frame limit -
+        three times the headroom on a bug that has already cost a fortnight -
+        and the nodes occupy a tree whose whole budget is `MAX_TREE_MB`.
+
+        Deleting the entry is the documented way back: river's
+        `HTLeaf.update_splitters` rebuilds a splitter on `KeyError`, so the
+        feature carries on being observed from the next bar. `disable_attribute`
+        would also drop it and is **not** what this does - that one adds the
+        feature to `_disabled_attrs` and stops observing it for good.
+        """
+        tally = {"splitters": 0, "nodes": 0}
+        try:
+            regressor = self._model[-1]
+            root = getattr(regressor, "_root", None)
+        except Exception:  # a model shape this does not recognise is not damage
+            return tally
+        if root is None:
+            return tally
+
+        def nonfinite_nodes(splitter) -> int:
+            """How many thresholds in this splitter are not finite."""
+            found, stack = 0, [getattr(splitter, "_root", None)]
+            while stack:
+                node = stack.pop()
+                if node is None:
+                    continue
+                value = getattr(node, "att_val", None)
+                if isinstance(value, float) and not math.isfinite(value):
+                    found += 1
+                stack.append(getattr(node, "_left", None))
+                stack.append(getattr(node, "_right", None))
+            return found
+
+        stack = [root]
+        while stack:
+            node = stack.pop()
+            kids = getattr(node, "children", None)
+            if kids:
+                stack.extend(kid for kid in kids if kid is not None)
+                continue
+            splitters = getattr(node, "splitters", None)
+            if not splitters:
+                continue
+            for name in [n for n in splitters if nonfinite_nodes(splitters[n])]:
+                tally["nodes"] += nonfinite_nodes(splitters[name])
+                del splitters[name]
+                tally["splitters"] += 1
+        return tally
+
     def _recent(self, key: str) -> Recent:
         found = self._by_key.get(key)
         if found is None:
@@ -391,7 +514,11 @@ class Learned(Restorable):
         in price units would silently turn this back into a per-series model
         that happens to share its splits with 423 other instruments.
         """
-        if ew_bps <= 0:
+        # **Positive and finite, not merely "not <= 0".** `nan <= 0` is False,
+        # so the old form let a non-finite scale through and every ratio below
+        # divides by it. The whole row is relative to this number; without one
+        # there is nothing to say about this bar.
+        if not (ew_bps > 0 and math.isfinite(ew_bps)):
             return None
         seen = self._recent(key)
         history = list(seen.realised)
@@ -399,7 +526,11 @@ class Learned(Restorable):
             return None
 
         def rel(value: float, sigma: bool = False) -> float:
-            if value <= 0:
+            # `value <= 0` is False for `nan`, which is how a non-finite HAR
+            # forecast became a `nan` feature and then an unbounded chain in
+            # the tree - see `_finite`. 1.0 is already this function's "no
+            # view", so a value it cannot use reads as no view.
+            if not (value > 0 and math.isfinite(value)):
                 return 1.0
             return (value / MAD_TO_SIGMA if sigma else value) / ew_bps
 
@@ -480,8 +611,11 @@ class Learned(Restorable):
         # the anomaly is normal, and it then scores it as normal - the detector
         # quietly trains itself to miss the thing it exists to find. Learning
         # happens in `observe`, one call later.
+        # Before the detector scores it and before the model sees it: a
+        # non-finite value would otherwise reach both.
+        row = _finite(row)
         row["anomaly"] = self._anomaly_pct(row)
-        return row
+        return _finite(row)
 
     def observe(
         self,
@@ -503,7 +637,12 @@ class Learned(Restorable):
         already contains the answer - is the mistake `har.observe` documents,
         and it is the one that makes a backtest look excellent.
         """
-        if realised_bps <= 0 or ew_bps <= 0:
+        # Positive and finite, for the reason `features` states: `nan <= 0` is
+        # False, and a non-finite target is what `learn_one` would fit the
+        # model to.
+        if not (realised_bps > 0 and math.isfinite(realised_bps)):
+            return
+        if not (ew_bps > 0 and math.isfinite(ew_bps)):
             return
         seen = self._recent(key)
 

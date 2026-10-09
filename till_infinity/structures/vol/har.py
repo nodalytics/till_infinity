@@ -205,7 +205,13 @@ class Har(Restorable):
         the post-update window would be fitting to a number that includes the
         answer.
         """
-        if realised_bps <= 0:
+        # **Positive and finite.** `nan <= 0` is False, so the old form let a
+        # non-finite reading through to `_history` - which `predict` returns
+        # directly as `latest` - and into `learn_one` as `log(nan)`, which
+        # poisons an SGD fit permanently rather than for one bar. A non-finite
+        # forecast is then what `learned.features` receives as `har_bps`, and
+        # `vol/learned.py::_finite` sets out what that cost.
+        if not (realised_bps > 0 and math.isfinite(realised_bps)):
             return
         if self._last_features is not None:
             target = realised_bps
@@ -237,6 +243,11 @@ class Har(Restorable):
         if told is not None and told > 0:
             return told
         latest = self._history[-1] if self._history else 0.0
+        if not math.isfinite(latest):
+            # Belt and braces with the guard in `observe`: a `_history`
+            # restored from a state file written before that guard existed can
+            # still hold one.
+            latest = 0.0
         if not self.warm or self._last_features is None:
             return latest
         got = float(self._model.predict_one(self._last_features) or 0.0)
