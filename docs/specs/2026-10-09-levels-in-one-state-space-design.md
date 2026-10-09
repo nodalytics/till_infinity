@@ -268,6 +268,7 @@ better place to start.
 | **I6** | every rate **per unit time, not per bar** - the filter complies, the published regression slope does not | small |
 | **I7** | **two barriers out of one model** - the wall above and the wall below, each with its own uncertainty and a race between them | medium |
 | **I8** | **classify the market readings** into state, input and output - and add the one that is missing, price impact, which is the `B` I1 asks for | small to specify, medium to build |
+| **I9** | **two state spaces, coupled with their uncertainty** - the instrument's and the level's. Both exist; only one is modelled as a state space, and the coupling throws away what it knows | small for the fix that matters |
 
 ### I1. There is no input. `B` and `u` do not exist here
 
@@ -500,6 +501,63 @@ zone width are the level's. The current design has no place to say that, which
 is why instrument-level quantities arrive as features on every level
 separately.
 
+### I9. Two state spaces - and there already are two
+
+I8 ended by observing that some states belong to the instrument and some to the
+level. The natural next question is whether to build two representations. **The
+answer is that both already exist; only one of them is a state space.**
+
+| | what holds it today | is it a state space? |
+| --- | --- | --- |
+| **instrument** - volatility, trendiness, busyness, regime, session | `Volatility.of(feed, interval)`, `regimes`, `cycles`, `zma`, `clock`, `activity` | **no** - EWMAs, counters and classifiers, each with a half-life somebody chose |
+| **level** - position, slope, acceleration, zone width, sweep depth | `Kalman` on each `Level` | yes |
+
+`Volatility` is already keyed per `(feed, interval)`, already persists, already
+evolves, and already parameterises every level update - the observation noise
+is `vol.price_units(price, TOUCH_NOISE_VOL)` and the drift is
+`vol.price_units(price, DRIFT_VOL_PER_HOUR)`. It is an instrument state in
+everything but name. What it lacks is a variance.
+
+**That omission is the defect worth fixing, and it has a name.** The level
+filter uses the volatility estimate as if it were exact - *certainty
+equivalence*. It is not exact: it is an exponentially weighted mean with its
+own sampling error, largest exactly where it matters, on a series that has just
+started moving or has few bars. When volatility is poorly known the level's
+zone should widen for it, and today it does not. The level quotes a band that
+is confident about its own position and silently overconfident about the unit
+that position is measured in.
+
+#### The four ways to couple them
+
+| | what it is | cost | verdict |
+| --- | --- | --- | --- |
+| **A. cascade** | two state spaces, instrument estimated first and fed down, **with its uncertainty added to the level's** | small - it is what exists plus one term | **do this** |
+| **B. joint** | one state vector over the instrument and every level, one covariance | `P` is N² over ~2,000 levels. Not on two cores | no |
+| **C. hierarchical** | the instrument state is a *prior* over its levels, pooling strength across them | moderate | this is phase 1 |
+| **D. Rao-Blackwellised** | particles over the instrument state, levels Kalman-updated conditional on each | high | only if A and C pay |
+
+**A is the answer to the question as asked**, and the reason is that it is not
+really a new architecture - it is the architecture already in place, with the
+one thing it discards put back. Propagating the instrument's variance into the
+level's update is a single additional term, and it makes the zone honest about
+a source of error it currently ignores.
+
+B is the textbook joint filter and is out of reach: the covariance is quadratic
+in the number of levels and this desk carries thousands. C and D are the two
+principled ways of getting part of B's benefit without its cost, and they are
+already on the roadmap above - C *is* phase 1.
+
+#### What it would take to know A is right
+
+The claim is falsifiable: if volatility were known exactly, widening the zone
+for its uncertainty would be noise. So measure the volatility estimator's own
+error - the gap between `ewma_tr_bps` and realised volatility over the next
+window - and see how large it is against `TOUCH_NOISE_VOL`. If it is a small
+fraction, A buys nothing and the cascade can keep treating it as exact. The
+conformal pools give a second reading for free: if zones are *under*-covering
+on young series specifically, that is this defect with a different instrument
+pointed at it.
+
 ### Where these sit against the phases above
 
 Nothing in I1-I5 argues for the random-finite-set rewrite. I1, I2 and I4
@@ -507,8 +565,9 @@ improve the model already here; I5 is a test of something that shipped on
 2026-10-09. They are individually measurable, which the rewrite is not, and
 none of them needs agreement about formation first.
 
-**Suggested order, ahead of phase 1:** I6, then I5, then I2, then I8's
-classification, then I1, with I7 last of the cheap ones because it rests on I2.
+**Suggested order, ahead of phase 1:** I6, then I5, then I9's measurement,
+then I2, then I8's classification, then I1, with I7 last of the cheap ones
+because it rests on I2.
 I8 is split deliberately: deciding what each reading is costs an afternoon and
 makes I1 concrete, where building the impact estimator is its own piece of work. I6 goes
 first because it is mechanical, it is wrong today rather than merely absent,
