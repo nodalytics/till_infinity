@@ -645,6 +645,77 @@ loses money because its average loss is 1.8 times its average win. **The
 binding constraint on this desk is cost per trade against edge per trade, and
 it has been the binding constraint on every question answered this week.**
 
+### N assets, not two - and the pair was always the degenerate case
+
+"Two related assets" is the textbook framing and it is the smallest one. With
+**N** names there can be up to **N - 1** independent relationships that
+mean-revert, not one. You do not get a spread; you get a *space* of
+mean-reverting combinations, and the job becomes choosing the best-conditioned
+direction in it rather than finding a pair.
+
+That is the same object the panel already produces. A factor model on N assets
+with k common factors leaves **N - k** residual directions, and those directions
+*are* the cointegrating space. So nothing new is needed to go from two to many -
+the pair is what the panel degenerates to when N is two and k is one.
+
+Two things genuinely change, and they pull against each other:
+
+* **More legs hedge better.** A basket spreads the idiosyncratic risk that a
+  single hedge leg concentrates, and with more relationships to choose from you
+  can take the one that reverts fastest rather than the only one you have.
+* **More legs cost more.** N legs is N spreads, each rebalanced. On a desk
+  whose binding constraint is measured to be cost per trade, that is the term
+  that decides, and it grows linearly while the diversification benefit does
+  not.
+
+So there is an optimum and it is small. The ranking does not change - loading
+strength, standardised deviation, reversion speed - it is just applied to
+combinations rather than to pairs, with the leg count itself priced in.
+
+### Where N is most interesting: a market whose generator is known
+
+Almost everywhere, the relationship between assets has to be inferred and might
+not exist. The Deriv synthetics are the exception: they are **generated**, with
+published parameters, and `families.md` has already measured several of them
+against their own nulls. The Volatility 10, 25, 50, 75 and 100 indices are, by
+their names, one process at five scales - which makes "are these cointegrated"
+a question about the generator rather than about a market.
+
+**And that question has three answers, two of which are fatal:**
+
+| how they are generated | what the deviation does | tradeable |
+| --- | --- | --- |
+| one shared random stream, different scalings | the indices are deterministic functions of each other, so the deviation is **zero by construction** | no - a perfect hedge with nothing to trade |
+| five independent streams | the deviation between two independent random walks **is itself a random walk** - it diverges and never returns | no - and worse, it looks tradeable until it is not |
+| a shared component **plus** idiosyncratic noise | the deviation reverts to the shared part | **yes** - and this is the only case |
+
+The middle row is the dangerous one. Two independent random walks drift apart,
+and a window short enough will always show them "out of line" and about to
+"snap back". That is the shape of a strategy that backtests beautifully on
+anything, which is why the control here has to be a simulated pair that is
+known to be independent.
+
+**What is already measured bears on this but does not settle it**, and the gap
+is specific: `families.md` tested the synthetics **one at a time**. Boom and
+Crash are memoryless across 300,000 ticks x 29 feeds, max |z| 3.63 against a
+Bonferroni 4.16; every family but one is a martingale over 11.34 million ticks;
+Drift Switch is genuinely predictable and still cannot be traded, clearing only
+0.103 to 0.692 of the quoted spread. All univariate. **Whether any two of them
+share a driver has never been asked**, and a martingale individually says
+nothing about whether a pair of them is cointegrated - two correlated random
+walks are each martingales.
+
+So it is a cheap, open question with a clear test: the correlation and
+cointegration structure across the Volatility family, against a control of
+independently simulated walks with the same scales. One pass answers it, and
+the answer is one of three rows rather than a number needing interpretation.
+
+The honest prior is the middle row, because independent generation is the
+simpler implementation and `families.md` found these processes to be
+structureless wherever it looked. But the cost of asking is a morning, and
+unlike every other market the desk trades, **here the truth is a fact about a
+program rather than about a crowd.**
+
 ### So the version of this worth holding
 
 Not a hedged book. The deviation as a **reading** - an instrument state that

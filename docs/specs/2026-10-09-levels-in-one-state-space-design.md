@@ -776,6 +776,43 @@ recommends between instrument and level, extended up by one - and it inherits
 I9's warning: a layer that feeds the one below must pass its **uncertainty**
 down, or the lower layer is confident about a number that was estimated.
 
+#### N assets, and the synthetics as the one knowable case
+
+"Two related assets" is the smallest version. With N names there can be up to
+**N - 1** independent mean-reverting relationships, and a factor model with k
+factors over N assets leaves exactly **N - k** residual directions - which
+*are* that space. So the panel formulation already covers it, and the pair is
+what it degenerates to at N = 2, k = 1.
+
+The trade-off is explicit and decides the leg count: more legs diversify the
+idiosyncratic risk a single hedge concentrates and give more relationships to
+choose from, while costing N spreads rebalanced. On a desk whose measured
+binding constraint is cost per trade, the second term grows linearly and the
+first does not.
+
+**The Deriv synthetics are the one case where cointegration is a fact about a
+program rather than a market.** They are generated with published parameters,
+and the Volatility 10 through 100 indices are by name one process at five
+scales. Three possible answers, two fatal:
+
+| generation | the deviation | tradeable |
+| --- | --- | --- |
+| one shared stream, different scalings | zero by construction | no - perfect hedge, nothing to trade |
+| independent streams | itself a random walk; diverges | no, and it looks tradeable until it is not |
+| shared component **plus** idiosyncratic noise | reverts to the shared part | **yes**, and only this |
+
+`families.md` has measured these **one at a time** - Boom and Crash memoryless
+across 300,000 ticks on 29 feeds, every family but one a martingale over 11.34
+million ticks, Drift Switch predictable and still unprofitable at 0.103 to
+0.692 of the spread. **All univariate.** Two correlated random walks are each
+martingales, so none of that says whether any two share a driver, and the
+pairwise question has never been asked.
+
+The control is the middle row and it must be built first: independently
+simulated walks at the same scales. Two independent walks always look "out of
+line and about to snap back" over a short enough window, which is the shape of
+a strategy that backtests beautifully on noise.
+
 #### The null, named first
 
 **A random peer group of the same size**, drawn from instruments in other
