@@ -59,6 +59,25 @@ fi
 # Docker never removes the image a running container is using, so the version
 # currently serving is safe. What is lost is a local copy of the *previous* one,
 # and that lives in the registry, which is where a rollback should come from.
+# **Built here instead of pulled.** `LOCAL_IMAGE=1` says the tag already
+# exists on this machine, which is how this box deploys when the registry
+# cannot be reached or CI cannot build - on 2026-10-09 GitHub Actions stopped
+# starting jobs over billing and two merged changes could not reach the desk at
+# all. The instance is aarch64, so it builds its own image natively with no
+# emulation and no registry round trip, which is the shortest path there is.
+#
+# Both steps below have to be skipped together, and the first is the one that
+# bites: `docker image prune -af` removes every image not attached to a running
+# container, which includes the one just built. Skipping only the pull would
+# delete the image and then fail to replace it.
+if [[ "${LOCAL_IMAGE:-0}" == "1" ]]; then
+  if ! docker image inspect "$IMAGE:$TAG" >/dev/null 2>&1; then
+    echo "LOCAL_IMAGE=1 but $IMAGE:$TAG is not on this machine" >&2
+    exit 1
+  fi
+  echo "using the local $IMAGE:${TAG:0:12} - no prune, no pull"
+  df -h / | awk 'NR==2 {print "  " $4 " free of " $2}'
+else
 echo "reclaiming disk before the pull"
 docker container prune -f >/dev/null 2>&1 || true
 docker image prune -af >/dev/null 2>&1 || true
@@ -79,6 +98,7 @@ for attempt in 1 2 3; do
   echo "pull failed, retrying ($attempt of 3)"
   sleep 5
 done
+fi
 
 # **Renamed, not removed** - the old container is the rollback.
 #
