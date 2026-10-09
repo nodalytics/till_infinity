@@ -270,6 +270,7 @@ better place to start.
 | **I8** | **classify the market readings** into state, input and output - and add the one that is missing, price impact, which is the `B` I1 asks for | small to specify, medium to build |
 | **I9** | **two state spaces, coupled with their uncertainty** - the instrument's and the level's. Both exist; only one is modelled as a state space, and the coupling throws away what it knows | small for the fix that matters |
 | **I10** | **measure the slope's own volatility** instead of assuming it is a tenth of the price's | small, same shape as the touch-noise measurement |
+| **I11** | **peer deviation as an instrument state** - how far this market has moved from its own kind, as a reading rather than a trade | medium, and mostly already built |
 
 ### I1. There is no input. `B` and `u` do not exist here
 
@@ -606,6 +607,183 @@ The same question applies one derivative up to `ACCEL_DRIFT_SHARE`, which is a
 tenth again, but that one should wait for I5: if the observability Gramian says
 the data carries almost no information about acceleration, fitting its process
 noise is fitting noise to noise.
+
+### I11. How far an instrument has moved from its own kind
+
+I8 drew the line between instrument states and level states. Everything on the
+instrument side so far is an instrument against **itself** - its volatility,
+its trendiness, its busyness. There is a second axis: gold against silver and
+platinum, BTC against the majors. Most of what any name does is what its family
+did, and the part left over is a quantity nothing here currently holds.
+
+**It has been measured twice and failed twice, and the failures are specific
+rather than general.** [`pca-residuals.md`](../../research/docs/pca-residuals.md)
+ran Avellaneda-Lee properly - frozen rule, discovery and confirmation split,
+131 coins never seen in discovery - and returned a net Sharpe of **-0.97**
+against an **OU control of +10.47**. The control is what makes it conclusive:
+the machinery finds reversion where reversion exists, and crypto residuals do
+not revert enough to pay for the hedge. [`peering.md`](../../research/docs/peering.md)
+killed cross-asset agreement the same way, with the synthetic control showing a
+*larger* effect than the real assets.
+
+Two things neither tested:
+
+**A different family.** Both ran on crypto perpetuals at 20.2% a year in fees
+plus funding against a 5.3% gross edge. Metals have fewer names, a shared
+physical driver, and no funding leg. A null on BTC against the majors is not a
+null on gold against silver.
+
+**A different use, and this is the one that changes the economics.** Both
+tested the residual as a *market-neutral book*, which must clear its own
+hedging costs - the expensive way to ask. As an instrument **state** it carries
+no hedge, no turnover and no funding: it conditions what the model already
+does, the way `vol_stretch` and `regime` do, and the desk's existing discipline
+scores every published feature against its base rate before anything reads it.
+
+#### The shape of it: a dynamic factor model, which is a state space
+
+The obvious version is a subtraction - this instrument's move minus its
+family's average, over its own volatility. That is what a rolling PCA gives
+and it is what both prior studies used.
+
+**The state-space version is different, and the difference is the point of
+doing this at all.** A dynamic factor model says: there are `k` latent common
+factors that *persist and evolve*, each instrument loads on them, and what is
+left is that instrument's own state.
+
+```
+f[t]     = F f[t-1] + w          k common factors, latent, evolving
+r_i[t]   = L_i f[t] + d_i[t] + e  each name loads on them
+d_i[t]   = A_i d[t-1] + v        the deviation, a state in its own right
+```
+
+Three things that buys over a rolling PCA, and each is a defect in the prior
+method rather than a refinement:
+
+* **The factor persists.** Rolling PCA re-fits from scratch every bar over a
+  252-bar window and has no notion that today's market factor is yesterday's.
+  The window length is a chosen constant, and the eigenvectors can flip sign
+  or swap order between bars.
+* **The deviation gets a posterior.** `d_i` is a state with a variance, so the
+  model says how sure it is. The prior studies produced a point residual, then
+  fitted an AR(1) to it in a *second* stage - a two-step estimator whose first
+  step's uncertainty never reaches the second.
+* **Loadings can drift.** `L_i` can itself be a slowly-moving state. Gold's
+  beta to the metals complex is not a constant, and a fixed-window regression
+  can only approximate that by forgetting.
+
+**Multi-peer is the general case, not an extension.** `k = 1` is "against the
+family average", `k > 1` separates a market factor from a sector one, and a
+single pair is the degenerate case with one peer. The same filter covers all
+three, so "pair or panel" stops being an architectural choice.
+
+#### One universe, not one per sector
+
+The obvious grouping is `clock.family` - gold with silver, BTC with the
+majors - and it is the wrong one, for a reason worth stating before anybody
+builds it.
+
+**A model fitted per sector cannot see rotation between sectors.** Money
+leaving crypto and arriving in metals is the clearest cross-asset signal there
+is, and inside each sector it looks like everything falling together and then
+everything rising together - which is precisely what that sector's own common
+factor absorbs. Partitioning first makes the phenomenon invisible by
+construction, and then reports that nothing was found.
+
+So: **one panel over metals, indices, equities, crypto and FX**, and let the
+loadings say what the groups are. If the sectors are real they will appear as
+block structure in `L`; if what actually moves is liquidity between them, only
+an undivided panel could have shown it. The grouping becomes an output instead
+of an assumption that was never tested.
+
+This also removes a judgement from the design rather than adding one.
+`clock.family` exists to decide which boosted envelope a feed may read, which
+is a different question, and borrowing it here would import a partition fitted
+for something else.
+
+The cost is that `k` matters more. With one universe the first factor is
+"everything", the second is likely risk-on against risk-off, and the sector
+structure appears further down - so `k` must be chosen by fit rather than set
+to one, and the number of factors becomes a result in itself.
+
+#### Which leg, and when
+
+A panel of deviations is a list of candidates, not a trade. Three quantities
+rank them, and the point of a factor model is that all three come out of one
+fit, each with its own uncertainty:
+
+| | what it says | why it matters |
+| --- | --- | --- |
+| **loading strength** `L_i`, and the variance it explains | is this name still moving with the panel | a large deviation from a relationship that has stopped holding is not a deviation - it is a name that has left the group |
+| **standardised deviation** `d_i / sd(d_i)` | how far it has gone, in its own units | the same gap means different things on a quiet name and a violent one |
+| **reversion speed** of `d_i` | how fast it comes back | a wide, slow deviation is a position held through cost until the thesis is forgotten |
+
+The third is the one usually left out and it is where the cost lives. It is a
+parameter of the deviation's own state equation, so a factor model estimates it
+alongside the gap rather than assuming it - and a narrower, faster deviation
+should rank above a wider, slower one.
+
+**This is also what makes the prior null worth re-reading rather than
+re-running.** `pca-residuals.md` traded `s`-score alone, with a half-life
+filter as a *gate* (`hl_max` of 10 or 20 bars) rather than as part of the
+ranking, and it did not condition on loading strength at all. Whether ranking
+on all three changes the answer is exactly the sort of thing that sounds like
+it should and usually does not - so it needs the same OU control, which will
+say whether the ranking is finding reversion or finding the search.
+
+#### Does this reopen the prior nulls?
+
+**Partly, and the honest answer is less than it looks.**
+`pca-residuals.md`'s OU control returned **+10.47**, which says the pipeline
+finds reversion wherever reversion exists - so the failure was not the
+estimator being blind. That result stands.
+
+What a dynamic factor model changes is *which residual you get*, which is
+upstream of whether it reverts. A residual contaminated by a window that is too
+long, loadings that cannot drift, or eigenvectors that reorder is a different
+series from one a filter tracks continuously. That is a reason to re-run the
+question, not a reason to expect a different answer - and the re-run inherits
+the same OU control, which is what will say whether the new residual is any
+cleaner than the old one.
+
+#### Where it sits in the layering
+
+I9 described two state spaces, instrument and level. This makes three, and the
+hierarchy is strict:
+
+| layer | states | one per |
+| --- | --- | --- |
+| **panel** | common factors `f`, loadings `L_i` | family |
+| **instrument** | volatility, impact, trendiness, **deviation `d_i`** | feed |
+| **level** | position, slope, acceleration, zone width | level |
+
+Each layer parameterises the one below it. That is the same cascade I9
+recommends between instrument and level, extended up by one - and it inherits
+I9's warning: a layer that feeds the one below must pass its **uncertainty**
+down, or the lower layer is confident about a number that was estimated.
+
+#### The null, named first
+
+**A random peer group of the same size**, drawn from instruments in other
+families. If deviation from unrelated instruments predicts as well as deviation
+from actual peers, the number is measuring the market's common move and not
+this instrument's idiosyncrasy - which is precisely how `peering.md` died.
+
+And the control that settled the last study: **a simulated panel whose
+deviations do revert**. If the dynamic factor model cannot find reversion
+there, it is broken rather than the market being efficient, and nothing else
+it says can be read.
+
+Secondary, and cheaper: does `peer_deviation` add anything over `vol_stretch`?
+Both say "this instrument is doing something unusual", and if they correlate
+above about 0.8 there is one reading here wearing two names.
+
+#### Why it is sequenced where it is
+
+It is an instrument state, so it belongs with I8 - but unlike the rest of that
+group it has two prior nulls against it. It should be published and scored
+before it is read by anything, which the desk does by default and is the whole
+reason that default exists.
 
 ### Where these sit against the phases above
 
