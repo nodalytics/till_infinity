@@ -677,6 +677,20 @@ family average", `k > 1` separates a market factor from a sector one, and a
 single pair is the degenerate case with one peer. The same filter covers all
 three, so "pair or panel" stops being an architectural choice.
 
+#### The method is textbook, which is worth knowing before building it
+
+The state-space formulation of this is not an invention here. Palomar's
+*Portfolio Optimization* (Cambridge, 2025) devotes
+[Chapter 15](https://bookdown.org/palomar/portfoliooptimizationbook/15-pairs-trading.html)
+to pairs trading built on a **Kalman filter**, covering pair screening,
+cointegration, threshold choice and execution - and the reason it is a filter
+rather than a regression is exactly the one given above: **the hedge ratio
+moves**, so a static beta is the thing being replaced.
+
+[`medallion.md`](../../research/docs/medallion.md) reads the other half - what
+the most famous practitioner of this idea says about whether it pays, which is
+mostly a statement about costs rather than about signal.
+
 #### One universe, not one per sector
 
 The obvious grouping is `clock.family` - gold with silver, BTC with the

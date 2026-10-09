@@ -182,6 +182,16 @@ rate of forgetting - one volatility unit on gold is $0.75 on 5m and $52.23 on
 1w. Levels at one price across timeframes combine, the higher carrying
 significance and the lower placement.
 
+The same thesis has a second subject. A level prices *an instrument* against
+where its volatility turned; a **relationship** prices a pair or a panel
+against where it normally sits, and the distance from it is the same kind of
+claim - statistical arbitrage is this thesis with the subject changed, not a
+different one. What changes is the cost: two legs, two spreads, and a
+relationship that can end while still producing a confident deviation. Measured
+here at a **gross Sharpe of +0.27 and a net of −0.97**, so the version held is
+the deviation as a *reading* rather than a hedged book. See
+[`docs/idea.md`](docs/idea.md).
+
 Beyond the single level, it also publishes the **level range** price is sitting
 in - the nearest agreed price above and below - with the room to each in
 volatility units, and a model of **which wall gets reached first**. Those two
