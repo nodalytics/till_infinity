@@ -222,11 +222,27 @@ The test that caught it deletes the `as_of` guard and asserts the suite fails.
 A look-ahead test that still passes with the protection removed is proving
 nothing, which is worth checking for directly rather than assuming.
 
-## 3. The level is a Kalman state, not a line
+## 3. The level is a latent state in a state-space model, not a line
 
 Price turned somewhere near a level a dozen times and never at exactly the same
 place. Each of those turns is one **noisy observation** of where the level
 actually sits, so a level is a latent state with a mean and a variance.
+
+**The state space is the claim; the filter is the implementation.** A
+state-space model says there is a quantity you cannot see, it evolves, and you
+observe it noisily. Which filter you use to do the inference is a separate
+choice - Kalman where the problem is linear and Gaussian, a particle filter
+where it is neither, a hidden Markov model where the state is a regime rather
+than a number, a random-finite-set filter where even the *number* of states is
+unknown.
+
+A level's position is linear and close enough to Gaussian, so this uses the
+cheapest member of the family. That is not an assumption left unchecked: a
+Huberised update turns out identical to the plain one to four decimal places,
+and a particle filter on the same touches
+([`level-filters.md`](../research/docs/level-filters.md)) finds nothing the
+Gaussian misses. **Where that stops being true is the count and the existence
+of levels, which this model does not hold at all** - see the note below.
 
 > **This section describes half of what it claims, and the gap is deliberate
 > enough to be worth naming.** "A latent state inferred from noisy evidence" is

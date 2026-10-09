@@ -57,9 +57,27 @@ about. Reading it as a claim about **value** makes it falsifiable: the level is
 an estimate, each touch is an observation of it, and it can be revised or
 abandoned.
 
-That is why the origin is a Kalman state rather than a line. The filter is not
-decoration; it is what it means to hold an estimate of a quantity you cannot
-observe directly and keep updating it from noisy evidence.
+That is why the origin is a **latent state in a state-space model** rather than
+a line. The model is not decoration; it is what it means to hold an estimate of
+a quantity you cannot observe directly and keep updating it from noisy
+evidence.
+
+**State space is the thesis; a Kalman filter is one way to do it.** The family
+is larger, and which member fits depends on what the state has to express:
+
+| | what it buys | here |
+| --- | --- | --- |
+| **Kalman filter** | linear, Gaussian, exact and cheap | what levels use |
+| **particle filter** | arbitrary distributions, non-linear | measured, [added nothing](../research/docs/level-filters.md) |
+| **hidden Markov model** | a state that is a regime rather than a number | `regimes`, `drift` |
+| **random finite set** (PHD/CPHD) | an unknown and changing *number* of states | not built - see below |
+| **Dirichlet-process mixture** | the same, posed as clustering | not built |
+
+The choice of a Kalman for a level's position is a claim that the position is
+roughly Gaussian around its truth, and that claim has been tested: a Huberised
+update is identical to the plain one to four decimal places, and a particle
+filter finds nothing a Gaussian misses. For *that* state the simplest member of
+the family is the right one.
 
 **Only where the level sits is held that way, and that is an incomplete
 reading of this paragraph rather than a decision.** Whether a level is there at

@@ -64,10 +64,14 @@ Three things follow from the split, and each is a real cost:
 
 ## What the thesis actually requires, precisely
 
-**It is not a Kalman filter**, and this is the one place the origin thesis is
-genuinely underspecified rather than merely unimplemented. A Kalman has fixed state dimension. "Produce the
-levels" means the number of states is unknown and changes - levels are born,
-persist, break, die - and that is a different and well-studied problem.
+**State space is the thesis; the Kalman filter is one member of the family.**
+The thesis is not underspecified here - it says a latent quantity, updated from
+noisy evidence - but it does not say *which* filter, and the one in use cannot
+express the question being asked of it.
+
+A Kalman has fixed state dimension. "Produce the levels" means the
+number of states is itself unknown and changing - levels are born, persist,
+break, die - which is a different and well-studied member of the same family.
 
 The formalism is **multi-target tracking over a random finite set**: a PHD or
 CPHD filter, or equivalently a Dirichlet-process mixture if the same thing is
