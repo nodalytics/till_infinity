@@ -581,6 +581,84 @@ improvement on that list with a visible path to P&L, which makes it the easiest
 to talk oneself into, and it is only as good as the per-side statistics
 underneath it - most of which are still outside the state vector.
 
+## The same thesis, applied to a relationship instead of an instrument
+
+> **Statistical arbitrage.** Look for small, temporary pricing errors across a
+> wide universe - equities, futures, currencies, commodities, crypto. When two
+> related assets go out of line with each other, take the view that they return
+> to their normal relationship.
+
+**This is not a second thesis. It is the first one with a different subject.**
+Everything above prices *an instrument* against where its own volatility turned
+and takes a stance on the distance. Statistical arbitrage prices *a
+relationship* against where it normally sits and takes a stance on the same
+thing. The parts map one to one:
+
+| the desk, on one instrument | the same idea, on a pair or a panel |
+| --- | --- |
+| a level - fair value from where volatility turned | the relationship - fair value from how two names normally sit |
+| the distance from price to the level | the deviation from that relationship |
+| the zone - how wide before the distance means nothing | the deviation's own dispersion |
+| a touch resolving, or not | the deviation closing, or not |
+| the level is a latent state in a state-space model | so is the relationship, and the hedge ratio drifts |
+
+So the machinery is the machinery we already have. A level filter estimates a
+price that cannot be observed directly from noisy evidence; a pairs filter
+estimates a relationship the same way. [`medallion.md`](../research/docs/medallion.md)
+indexes where that is written down properly - Palomar's Chapter 15 builds it on
+a Kalman filter precisely because the hedge ratio moves, which is the same
+reason a level is a filter rather than a line.
+
+### What is genuinely different, and it is the hard part
+
+Three things change when the subject is a relationship, and all three are
+costs rather than signals:
+
+* **Two legs, so two spreads.** A single-instrument trade crosses one spread.
+  A hedged pair crosses two, and rebalances both.
+* **The relationship can end.** A level that stops working stops being touched.
+  A pair that stops being a pair keeps producing a large, confident, wrong
+  deviation - which is why the loading's own strength has to be part of the
+  signal and not an assumption.
+* **The edge is smaller by construction.** "Small, temporary pricing errors" is
+  the premise, not an apology for it. Small edges only compound where cost per
+  trade is smaller still.
+
+### What this desk has measured about exactly this
+
+**The edge was there and the costs took it, four times over.** A proper
+execution of this idea - frozen rule, discovery and confirmation split, 131
+instruments never seen in discovery, an OU control and two nulls - returned a
+**gross Sharpe of +0.27 and a net of -0.97**, with 20.2% a year in fees and
+4.3% in funding against a 5.3% gross return
+([`pca-residuals.md`](../research/docs/pca-residuals.md)).
+
+The control is what makes that a cost result rather than a signal result: on a
+simulated panel whose deviations *do* revert, the same machinery returned a
+Sharpe above ten. **It found reversion wherever reversion existed.** What it
+could not do was pay for the hedge.
+
+That is the same arithmetic as everything else measured here. A 1m level loses
+and a 5m level does not, at the same signal quality, because the same fixed
+cost sits against a smaller stop. `level-scalp` wins 56% of its trades and
+loses money because its average loss is 1.8 times its average win. **The
+binding constraint on this desk is cost per trade against edge per trade, and
+it has been the binding constraint on every question answered this week.**
+
+### So the version of this worth holding
+
+Not a hedged book. The deviation as a **reading** - an instrument state that
+conditions what the rest of the model already does, carrying no hedge, no
+turnover and no funding. A deviation that cannot pay for two legs can still be
+worth knowing when deciding whether *this* level, on *this* instrument, is
+likely to hold.
+
+That costs nothing to publish and nothing to score, and this desk scores every
+published feature against its own base rate before anything is allowed to read
+it. If it turns out to carry a large edge, the hedged version becomes a
+question about execution cost rather than about signal - which is the right
+order to answer them in, and the opposite of the order the attempt above took.
+
 ## An instrument against its own kind, and whether the gap says anything
 
 Every reading so far is about an instrument on its own: where *its* volatility
