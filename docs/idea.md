@@ -645,6 +645,127 @@ loses money because its average loss is 1.8 times its average win. **The
 binding constraint on this desk is cost per trade against edge per trade, and
 it has been the binding constraint on every question answered this week.**
 
+### N assets, not two - and the pair was always the degenerate case
+
+"Two related assets" is the textbook framing and it is the smallest one. With
+**N** names there can be up to **N - 1** independent relationships that
+mean-revert, not one. You do not get a spread; you get a *space* of
+mean-reverting combinations, and the job becomes choosing the best-conditioned
+direction in it rather than finding a pair.
+
+That is the same object the panel already produces. A factor model on N assets
+with k common factors leaves **N - k** residual directions, and those directions
+*are* the cointegrating space. So nothing new is needed to go from two to many -
+the pair is what the panel degenerates to when N is two and k is one.
+
+Two things genuinely change, and they pull against each other:
+
+* **More legs hedge better.** A basket spreads the idiosyncratic risk that a
+  single hedge leg concentrates, and with more relationships to choose from you
+  can take the one that reverts fastest rather than the only one you have.
+* **More legs cost more.** N legs is N spreads, each rebalanced. On a desk
+  whose binding constraint is measured to be cost per trade, that is the term
+  that decides, and it grows linearly while the diversification benefit does
+  not.
+
+So there is an optimum and it is small. The ranking does not change - loading
+strength, standardised deviation, reversion speed - it is just applied to
+combinations rather than to pairs, with the leg count itself priced in.
+
+### The relational path: A to B through C and E
+
+A correlation matrix is usually read as a table - how does A move with B - and
+that reading throws away most of what is in it. The matrix is also a **graph**:
+A may have no direct relationship with B at all, while A relates to C, C to E,
+and E to B. The relationship exists, and it exists *along a path*.
+
+That distinction has a name and a sharp form. The ordinary correlation between
+two names is the **marginal** one, and it is inflated by every route between
+them. The **partial** correlation - what is left after conditioning on
+everything else - is the direct link alone, and it is read off the **inverse**
+covariance matrix rather than the covariance matrix. A zero there means no
+direct edge; the graph of the non-zeros is the relational structure, and a path
+through it is exactly what is being described.
+
+**It matters in both directions, and the second is the one that costs money.**
+
+* **Finding relatives you would miss.** A pairwise scan ranks A against B and
+  sees nothing. A path says they are two steps apart through a chain that is
+  strong at every link. A factor model does not solve this either: factors
+  capture *global* structure, where a chain is **local**, so a panel with few
+  factors can leave a strong A-C-E-B path entirely in the residual.
+* **Rejecting relatives that are not there.** The other half of the same fact.
+  If A and B correlate *only* through C, then hedging A with B is really
+  hedging through two intermediaries - and **it breaks whenever any link
+  breaks**, not only when A or B does. A path-mediated relationship has more
+  ways to fail than a direct one, and the marginal correlation that justified
+  it says nothing about how many.
+
+So the path is not only a way to find more pairs. It is the thing that tells
+you whether a pair you already like is direct or borrowed, and a borrowed one
+should be sized as what it is.
+
+**The control has to come first here, more than anywhere else in this
+document.** A panel of N names has N(N-1)/2 correlations, and in a fully
+connected graph *something* is always two steps from everything. Paths appear
+in pure noise by construction, and a long enough chain can connect any two
+assets in a large enough universe. The null is therefore a shuffled panel with
+the same marginal volatilities: if independent data produces paths of the same
+length and strength, the structure found is the universe's size and not the
+market's.
+
+This is the half of the panel idea that the factor model does not reach, and
+the two are complements rather than alternatives - a factor model for what
+moves everything, a graph for what moves along a chain.
+[`medallion.md`](../research/docs/medallion.md) indexes where this is written
+down: the same book whose Chapter 15 builds pairs trading on a Kalman gives
+Chapter 12 to **graph-based portfolios**, and Part I to the estimation of those
+graphs from returns.
+
+### Where N is most interesting: a market whose generator is known
+
+Almost everywhere, the relationship between assets has to be inferred and might
+not exist. The Deriv synthetics are the exception: they are **generated**, with
+published parameters, and `families.md` has already measured several of them
+against their own nulls. The Volatility 10, 25, 50, 75 and 100 indices are, by
+their names, one process at five scales - which makes "are these cointegrated"
+a question about the generator rather than about a market.
+
+**And that question has three answers, two of which are fatal:**
+
+| how they are generated | what the deviation does | tradeable |
+| --- | --- | --- |
+| one shared random stream, different scalings | the indices are deterministic functions of each other, so the deviation is **zero by construction** | no - a perfect hedge with nothing to trade |
+| five independent streams | the deviation between two independent random walks **is itself a random walk** - it diverges and never returns | no - and worse, it looks tradeable until it is not |
+| a shared component **plus** idiosyncratic noise | the deviation reverts to the shared part | **yes** - and this is the only case |
+
+The middle row is the dangerous one. Two independent random walks drift apart,
+and a window short enough will always show them "out of line" and about to
+"snap back". That is the shape of a strategy that backtests beautifully on
+anything, which is why the control here has to be a simulated pair that is
+known to be independent.
+
+**What is already measured bears on this but does not settle it**, and the gap
+is specific: `families.md` tested the synthetics **one at a time**. Boom and
+Crash are memoryless across 300,000 ticks x 29 feeds, max |z| 3.63 against a
+Bonferroni 4.16; every family but one is a martingale over 11.34 million ticks;
+Drift Switch is genuinely predictable and still cannot be traded, clearing only
+0.103 to 0.692 of the quoted spread. All univariate. **Whether any two of them
+share a driver has never been asked**, and a martingale individually says
+nothing about whether a pair of them is cointegrated - two correlated random
+walks are each martingales.
+
+So it is a cheap, open question with a clear test: the correlation and
+cointegration structure across the Volatility family, against a control of
+independently simulated walks with the same scales. One pass answers it, and
+the answer is one of three rows rather than a number needing interpretation.
+
+The honest prior is the middle row, because independent generation is the
+simpler implementation and `families.md` found these processes to be
+structureless wherever it looked. But the cost of asking is a morning, and
+unlike every other market the desk trades, **here the truth is a fact about a
+program rather than about a crowd.**
+
 ### So the version of this worth holding
 
 Not a hedged book. The deviation as a **reading** - an instrument state that

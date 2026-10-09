@@ -120,6 +120,11 @@ panel layer.
 
 Two things to take from it beyond the method:
 
+* **Chapter 12 is graph-based portfolios**, which is the other half of the
+  panel idea - the relational path, where A relates to B only through C and E.
+  A factor model finds what moves everything; a graph finds what moves along a
+  chain, and the partial correlation read off the inverse covariance is the
+  direct edge with every indirect route conditioned out.
 * **It is explicit that the strategy is market-neutral by construction**,
   targeting the mispricing between two legs rather than direction. That is the
   same separation the thesis makes between a valuation and a trade.
