@@ -58,6 +58,19 @@ PARTICLES = 512
 # ------------------------------------------------------------------ the arms
 
 
+def _floor(r: np.ndarray) -> float:
+    """The `c` in `log(r^2 + c)`, from the series' own scale.
+
+    A thousandth of the mean squared return: small enough to leave an ordinary
+    bar untouched, large enough that a rounded-to-zero one does not become an
+    outlier a hundred standard deviations wide. Derived rather than chosen, so
+    it travels between an FX pair quoted to five decimals and an index quoted
+    to one.
+    """
+    scale = float(np.mean(r**2))
+    return max(scale * 1e-3, 1e-300)
+
+
 def ewma_vol(r: np.ndarray, half_life: float) -> np.ndarray:
     """Predictive sigma for each step, from an EWMA of |r|. The shipped shape.
 
@@ -79,8 +92,22 @@ def kalman_logvol(r: np.ndarray, phi: float, q: float) -> tuple[np.ndarray, np.n
     `log(chi^2_1)` has mean -1.2704 and variance pi^2/2; approximating it by a
     Gaussian with those moments is the standard linearisation, and it is what
     makes this a *cheap* arm rather than a different model.
+
+    **The offset is not cosmetic.** `log(r^2)` goes to minus infinity as a
+    return approaches zero, and real series are full of near-zero returns - a
+    quiet hour on a quoted-to-five-decimals FX pair rounds to no move at all.
+    The first version floored `r^2` at 1e-300, which turns those into `log`
+    values near -690: single observations a hundred standard deviations from
+    the state, which the filter dutifully chases. It reported a negative
+    log-likelihood of **1.15e17** on eurusd, which is a blown-up filter rather
+    than a bad model, and reading it as a result would have been reading an
+    arithmetic failure as evidence about markets.
+
+    The fix is the standard one - `log(r^2 + c)` with `c` a small fraction of
+    the series' own scale - and it is applied to the particle arm's mean too,
+    so both arms see the same data.
     """
-    y = np.log(np.maximum(r**2, 1e-300))
+    y = np.log(r**2 + _floor(r))
     offset, obs_var = -1.270363, (math.pi**2) / 2.0
     h = float(np.mean(y) - offset)
     p = obs_var
@@ -180,7 +207,7 @@ def fit_and_score(r: np.ndarray, label: str) -> list[dict]:
         }
     )
 
-    mu = float(np.mean(np.log(np.maximum(train**2, 1e-300))) + 1.270363)
+    mu = float(np.mean(np.log(train**2 + _floor(train))) + 1.270363)
     phi, q = min(grid, key=lambda g: nll_of(particle_logvol, (*g, mu)))
     h, p = particle_logvol(r, phi, q, mu)
     rows.append(
