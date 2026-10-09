@@ -127,3 +127,62 @@ touches - the synthetic row above says the particle filter would pull ahead and
 by how much. The cheap way to watch for that is not to run both: it is to watch
 whether the Huberised update ever starts firing, which is one counter on a
 filter already running.
+
+## Adaptive observation noise: also nothing (2026-10-09)
+
+The fourth arm, and the one idea from the levels critique I thought worth
+building. `observe_touch` gives every touch the same observation noise,
+`(0.5v)**2`, whether it was a decisive rejection or a chaotic probe. `adaptive`
+scales that by how much of the turning bar was wick:
+
+    R = (NOISE * unit * (1 + WICK_PENALTY * wick_share)) ** 2
+
+**Why it is a different claim from `robust`**, and the reason both are run:
+`robust` discounts an observation for landing far from the prediction, which is
+a function of the observation itself - it can only say "that disagreed, so
+trust it less", which flatters the filter. This discounts it for **looking**
+unreliable, from the shape of the bar, before anything is known about whether
+it agrees. Only the second could be computed live without peeking at the
+residual.
+
+### The mechanism works
+
+Established first, on synthetic pools, or the null below would only mean the
+test was blunt:
+
+| | kalman | robust | particle | **adaptive** |
+|---|---:|---:|---:|---:|
+| wick share predicts noise, median err | 1.1144 | 1.1556 | 1.0909 | **1.0661** |
+| wick share unrelated, median err | 0.7008 | 0.7080 | 0.7021 | **0.6957** |
+
+It gains where the quality signal is real and costs nothing where it is noise,
+which is exactly the property wanted.
+
+### On real touches it finds nothing
+
+604,825 predictions at 1h:
+
+| arm | median err | mean err | p90 err | coverage | width |
+|---|---:|---:|---:|---:|---:|
+| adaptive | 0.3600 | 0.3764 | **0.6945** | 0.9904 | 1.9222 |
+| kalman | **0.3595** | **0.3765** | 0.6964 | 0.9858 | **1.8676** |
+
+Worse on the median, identical on the mean, **0.3% better in the tail**, and it
+needs a wider band for the extra coverage. The same holds at 4h and 1d.
+
+**So wick share does not predict how informative a touch is.** The mechanism is
+sound and the signal is absent, which is a different and more useful negative
+than "it did not work".
+
+### And it is the same reason the particle filter found nothing
+
+`robust` is identical to `kalman` to four decimal places, which says real touch
+residuals almost never exceed its threshold relative to the filter's own
+spread. There is no heavy tail to down-weight - so neither a heavier likelihood
+(`robust`), nor a sample representation (`particle`), nor a prior on
+measurement quality (`adaptive`) has anything to work with.
+
+Three different attacks on the same assumed weakness, all finding it is not
+there. The observation noise being **too wide by about 25%**
+([`level-dispersion.md`](level-dispersion.md)) is a real defect in the same
+constant; its *conditioning* is not.
