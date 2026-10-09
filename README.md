@@ -163,8 +163,15 @@ uv run till-infinity structures levels --at 4405  # what the history says
 uv run till-infinity structures watch             # run it on its own
 ```
 
-A level is tracked as a **Kalman state** rather than a line - each touch is a
-noisy observation of where it sits, so the filter's variance *is* the zone.
+A level is a **latent state in a state-space model** rather than a line - each
+touch is a noisy observation of where it sits, so the model's variance *is* the
+zone. What comes out is a price when the band is tighter than the tick grid and
+a **range** when it is not: the same object at two confidences, from one model
+rather than an estimator with a width rule beside it. The filter doing the
+inference today is a Kalman, which is one member of that family - particle
+filters, hidden Markov models and random-finite-set filters are others, and
+which one fits is a question asked per state. See
+[`docs/levels.md`](docs/levels.md) §3.
 Statistics are kept **per approach side**, because the same price met from
 above and from below are two different objects, and every conditional sits
 beside its base rate: a level whose P(up) matches the unconditional rate has
