@@ -160,3 +160,49 @@ change removes the half of the book that is reliably worse, which is a
 different and smaller claim than fixing it. The costs that the timeframe table
 and the stop overshoot are both measuring are still there at 5m - they are
 just a smaller fraction of a wider stop.
+
+## The warm cap does not bind, measured 2026-10-09
+
+A change shipped that afternoon halved the rows the warm reads per
+`(feed, interval)` - `SEED_NEW_BARS`, 500 against `SEED_BARS`' 1000 - on the
+reasoning that `bars * 8 / 12` venue series lands on the 333 that
+`DEFAULT_RETAIN_BARS` names as the seed's requirement.
+
+**It changed almost nothing, and the measurement is unambiguous:**
+
+| | bars replayed | warm duration |
+| --- | ---: | ---: |
+| cap 8,000 rows per series | 749,590 | 84 min |
+| cap 4,000 rows per series | **747,871** | 56 min |
+
+**0.2%.** 747,871 bars over twenty feeds and about ten intervals is roughly
+3,740 rows per `(feed, interval)` - below both caps. The store never held
+enough bars for either limit to apply, so lowering it could not help.
+
+The arithmetic behind the change was correct and about an inactive mechanism.
+**The error was validating the number without checking whether the limit was
+ever reached**, which is the same mistake as reading a constant-zero feature as
+a judged one, made in production code rather than in a study.
+
+**The duration fell from 84 minutes to 56 and that is not attributable to the
+change.** The 84-minute warm ran on a box recovering from an OOM kill with a
+prune competing for I/O; the 56-minute one ran on a quiet box. Same work,
+different conditions, and the bar count is the controlled quantity.
+
+### Where the time actually goes
+
+747,871 bars in 56 minutes is about **220 bars a second through
+`observe_bar`**. The cost is per row *replayed*, not per row *read*, so a read
+cap was never going to touch it. Three things would:
+
+* **replay fewer intervals.** The warm touches from `1w` down to `1m`; whether
+  a weekly series needs seeding from bars at all is a question nobody has
+  asked.
+* **make `observe_bar` cheaper on the seed path**, where most of what it does -
+  calls, signals, journalling - is discarded.
+* **do not re-warm these feeds.** The same twenty warm on every restart
+  although `_series` is pickled and `__setstate__` restores it, and `spx500`
+  appears in both the restored list and the warm list - so its deepest series
+  comes back with fewer than `WARM_MIN_BARS` closes. **Answering that removes
+  the warm rather than trimming it**, and it is the only one of the three worth
+  doing first.

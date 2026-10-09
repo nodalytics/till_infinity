@@ -3683,17 +3683,19 @@ def test_merging_two_sweep_edges_weights_by_certainty():
 
 
 def test_topping_up_a_restored_engine_reads_half_a_window():
-    """**The warm is the window in which `structures` publishes nothing.**
+    """Half a window, and **measured not to matter**.
 
-    It runs inside `prepare()`, before the watcher subscribes to the bus, so
-    its duration is downtime. On 2026-10-09 one replayed 749,590 bars over 84
-    minutes, and two deploys inside a single warm left the desk without a level
-    for 172. Reading half the rows roughly halves that.
+    `_read_bars` takes `bars * 8` rows per `(feed, interval)`, shared across
+    about a dozen venue-and-source series, so 500 gives each one about 333 -
+    the figure `prices.config.DEFAULT_RETAIN_BARS` names as what the seed
+    needs. That arithmetic is right and was beside the point.
 
-    Half is not a guess. `_read_bars` takes `bars * 8` rows per
-    `(feed, interval)`, shared across about a dozen venue-and-source series, so
-    500 gives each one `500 * 8 / 12` - about 333 - which is the figure
-    `prices.config.DEFAULT_RETAIN_BARS` already names as what the seed needs.
+    **On production the cap does not bind.** The warm read 749,590 bars before
+    the change and 747,871 after, a 0.2% reduction, because 747,871 over twenty
+    feeds and ten intervals is about 3,740 rows per `(feed, interval)` against
+    a limit of 8,000 then 4,000. The store does not hold enough for either to
+    apply, so the constant is kept as correct and harmless rather than as a fix
+    for anything - see `SEED_NEW_BARS`.
     """
     from till_infinity.structures.engine import SEED_BARS, SEED_NEW_BARS
 

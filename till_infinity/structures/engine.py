@@ -224,13 +224,35 @@ SEED_BARS = WINDOW
 #: about **333 bars**, which is the number `prices.config.DEFAULT_RETAIN_BARS`
 #: already names as what the seed needs. A thousand was margin on a margin.
 #:
-#: **What it buys is the only thing wrong with the warm, which is its
-#: duration.** On 2026-10-09 a restart replayed **749,590 bars over 84
-#: minutes**, and `structures` publishes nothing for the whole of it: the warm
-#: runs inside `prepare()`, before `watcher.run()` subscribes to the bus. Two
-#: deploys inside one warm that morning meant the desk produced no level for
-#: 172 minutes, and the second warm was OOM-killed at the sixty-minute mark.
-#: Reading half the rows roughly halves all of that.
+#: **Measured on production 2026-10-09, and it changes almost nothing.** The
+#: warm before this read **749,590 bars**; with the cap halved it read
+#: **747,871** - a 0.2% reduction. The cap was never the binding constraint:
+#: 747,871 bars over twenty feeds and about ten intervals is roughly **3,740
+#: rows per `(feed, interval)`**, against a limit of 8,000 before and 4,000
+#: after. The store does not hold enough bars for either number to apply.
+#:
+#: The arithmetic above is still right and was still beside the point. 333 per
+#: venue series is what the seed needs; the limit that enforced it was simply
+#: never reached, so lowering it could not help. **The error was validating the
+#: number without checking whether the mechanism was active.**
+#:
+#: It is kept rather than reverted because it is correct and costs nothing -
+#: and because a store that grows, or retention that starts working, would make
+#: the cap bind. What it is not is a fix for the warm's duration.
+#:
+#: **Where the time actually goes.** 747,871 bars took 56 minutes end to end,
+#: which is about **220 bars a second through `observe_bar`** - the replay, not
+#: the read. Halving rows read cannot help a cost that is per row replayed, and
+#: the only levers that would are replaying fewer intervals, making
+#: `observe_bar` cheaper, or not re-warming these feeds at all. The last is the
+#: real question: the same twenty feeds warm on every restart even though
+#: `_series` is pickled and restored, and answering that removes the warm
+#: rather than trimming it.
+#:
+#: The duration did fall from 84 minutes to 56, and that is **not** claimed as
+#: this change's doing: the 84-minute warm ran on a box recovering from an OOM
+#: kill with a prune competing for I/O, and this one ran on a quiet box. Same
+#: work, different conditions.
 #:
 #: A cold start keeps `SEED_BARS`. That is the one case with no restored state
 #: to top up, where the window really is being filled from nothing and the
