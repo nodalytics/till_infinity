@@ -2739,7 +2739,7 @@ class Engine:
             calibrator=self._zone_widths,
         )
         # The wick is the zone's far edge, not noise to discard.
-        level.observe_wick(done.features.side, done.origin or done.extreme, done.extreme, vol)
+        level.observe_wick(done.features.side, done.origin or done.extreme, done.extreme, vol, when)
         log.debug("level %s %.5g resolved %s", level.feed, level.price, done.outcome)
         self._resolved.append((level, done))
         # Bounded: a consumer that stops draining must not become a slow memory

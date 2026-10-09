@@ -61,6 +61,22 @@ from .vol.volatility import Volatility
 #: sense the data can distinguish.
 ZONE_SIGMA = 2.0
 
+#: How much a single **wick depth** is believed, in volatility units.
+#:
+#: Wick depth is noisier than a touch price: the origin is where price turned
+#: and is observed twice over, where the extreme is one print that may be one
+#: order deep. Wider than `TOUCH_NOISE_VOL` for that reason, and this one is
+#: judgement rather than measurement - `level-dispersion.md` fitted the spread
+#: of touches around a level, not of wicks past an origin. Stated here so the
+#: study that corrects it knows what it is correcting.
+WICK_NOISE_VOL = 0.6
+
+#: How fast the mean sweep depth is allowed to wander, in volatility units per
+#: hour. A tenth of the level's own `DRIFT_VOL_PER_HOUR`: where price turns can
+#: move with the market, but how far past it liquidity is taken is a property
+#: of the book, which changes more slowly than the price does.
+WICK_DRIFT_VOL_PER_HOUR = 0.002
+
 #: How much a single touch is believed, in volatility units. The filter's `R`.
 #:
 #: **0.40 from 2026-10-09, measured; it was 0.5, chosen.** Two independent
@@ -674,6 +690,21 @@ class SideStats(Restorable):
     #: price turned and the wick is how far it was pushed to get there, so the
     #: level occupies the span between them rather than a band centred on one.
     wick_vol: float = 0.0
+    #: The same depth, **filtered** rather than exponentially smoothed.
+    #:
+    #: `wick_vol` is an EWMA with a fixed 0.2 weight, which has no notion of
+    #: its own uncertainty: a side with two wicks and a side with fifty produce
+    #: equally confident edges, and a stop is placed against both. This gives
+    #: the mean depth a gain that falls as evidence accumulates and a slope it
+    #: can earn, so a level whose sweeps are getting deeper says so instead of
+    #: averaging it away. `None` until the first wick - a filter seeded with a
+    #: zero would start every level claiming sweeps reach nowhere.
+    #:
+    #: **It filters the mean, and the mean is not the quantile.** The variance
+    #: this carries is uncertainty about *where the average sweep ends*, which
+    #: is a different thing from how far sweeps spread around it. Both go into
+    #: `wick_deep_vol`, and conflating them is the one mistake available here.
+    wick_filter: Kalman | None = None
     #: Sum, sum-of-squares and count of wick depth, for its **dispersion**.
     #:
     #: `wick_vol` above is a mean, and a mean is the wrong statistic for the
@@ -774,14 +805,38 @@ class SideStats(Restorable):
                 total = mine + theirs
                 if total > 0:
                     self.wick_vol = (self.wick_vol * mine + other.wick_vol * theirs) / total
+        # And the filtered depth, which is a mean with a variance and so cannot
+        # be summed either. Combined the way two estimates of one quantity are:
+        # inverse-variance weighted, so the side that was more certain counts
+        # for more, and the result is at least as certain as either input.
+        #
+        # This is the field `test_merging_a_level_keeps_every_statistic` exists
+        # to catch - it walks `dataclasses.fields`, so a field added later is
+        # covered on the day it is added, and it caught this one.
+        self.wick_filter = _merge_filters(self.wick_filter, other.wick_filter)
 
-    def observe_wick(self, depth_vol: float) -> None:
-        """Fold in how far the wick ran past the origin, exponentially."""
+    def observe_wick(self, depth_vol: float, when: float = 0.0) -> None:
+        """Fold in how far the wick ran past the origin.
+
+        Both estimates are kept. The EWMA stays because it is what every
+        restored level already carries and what the filter falls back to while
+        cold; the filter is what a settled level is read from.
+        """
         depth_vol = max(0.0, depth_vol)
         self.wick_vol = depth_vol if not self.wick_vol else self.wick_vol * 0.8 + depth_vol * 0.2
         self.wick_sum += depth_vol
         self.wick_sq += depth_vol * depth_vol
         self.wick_n += 1.0
+        if not when:
+            return
+        if self.wick_filter is None:
+            # Seeded on the first observation rather than at zero, and with a
+            # variance equal to the noise: one wick is one wick, and the next
+            # one should move it about halfway.
+            self.wick_filter = Kalman(mean=depth_vol, variance=WICK_NOISE_VOL**2, updated=when)
+            return
+        self.wick_filter.predict(when, WICK_DRIFT_VOL_PER_HOUR)
+        self.wick_filter.update(depth_vol, WICK_NOISE_VOL**2, when)
 
     @property
     def wick_sd_vol(self) -> float:
@@ -804,7 +859,17 @@ class SideStats(Restorable):
         spread = self.wick_sd_vol
         if spread <= 0 or self.wick_n < 2:
             return self.wick_vol
-        return max(self.wick_vol, self.wick_sum / self.wick_n + sigmas * spread)
+        held = self.wick_filter
+        centre = held.mean if held is not None else self.wick_sum / self.wick_n
+        # **Predictive, not just dispersive.** The question is how deep the
+        # *next* sweep reaches, and that is uncertain for two separate reasons:
+        # sweeps vary around their mean, and the mean itself is only estimated.
+        # Adding the variances is the honest combination, and it is what makes
+        # a two-wick side quote a wider edge than a fifty-wick side with the
+        # same spread - which the EWMA could not express at all.
+        uncertainty = held.variance if held is not None else 0.0
+        reach = math.sqrt(spread * spread + max(uncertainty, 0.0))
+        return max(self.wick_vol, centre + sigmas * reach)
 
     def record(self, outcome: Outcome, push_vol: float) -> None:
         self.touches += 1
@@ -1141,12 +1206,19 @@ class Level(Restorable):
             0.4 * evidence + 0.25 * max(0.0, agreement) + 0.2 * recency + 0.15 * breadth, 4
         )
 
-    def observe_wick(self, side: Side, origin: float, wick: float, vol: Volatility) -> None:
-        """Record how far past the origin the wick ran, on the side it came from."""
+    def observe_wick(
+        self, side: Side, origin: float, wick: float, vol: Volatility, when: float = 0.0
+    ) -> None:
+        """Record how far past the origin the wick ran, on the side it came from.
+
+        `when` is what lets the depth be filtered rather than only smoothed -
+        see `SideStats.wick_filter`. Defaulted so a caller that has no clock
+        still records the depth, which is what every existing test does.
+        """
         if not origin:
             return
         depth = abs((wick - origin) / origin * 10_000) / vol.bps
-        self.stats(side).observe_wick(depth)
+        self.stats(side).observe_wick(depth, when or self.last_touch)
 
     def observe_touch(
         self,
@@ -1268,6 +1340,27 @@ class Level(Restorable):
 
 
 # ------------------------------------------------------------------ forming
+
+
+def _merge_filters(into: Kalman | None, other: Kalman | None) -> Kalman | None:
+    """Two estimates of one quantity, combined by inverse variance.
+
+    The precision-weighted mean is the right combination for two independent
+    estimates of the same thing: the more certain side pulls harder, and the
+    result is at least as certain as either input. Falls back to whichever
+    exists when only one does.
+    """
+    if other is None:
+        return into
+    if into is None:
+        return other
+    a = 1.0 / max(into.variance, 1e-12)
+    b = 1.0 / max(other.variance, 1e-12)
+    return Kalman(
+        mean=(into.mean * a + other.mean * b) / (a + b),
+        variance=1.0 / (a + b),
+        updated=max(into.updated, other.updated),
+    )
 
 
 def seed_price(point: Point) -> float:

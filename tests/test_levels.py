@@ -3110,14 +3110,31 @@ def test_merging_a_level_keeps_every_statistic():
     """
     import dataclasses
 
-    from till_infinity.structures.levels import SideStats
+    from till_infinity.structures.levels import Kalman, SideStats
+
+    def distinct(field, which: float):
+        """A value of the right shape, different on each side.
+
+        Typed rather than "set everything to a float", because the class now
+        holds a filter as well as counters - but still derived from
+        `dataclasses.fields`, so a field added later is covered on the day it
+        is added rather than when somebody remembers this list.
+        """
+        if field.type is not float and "Kalman" in str(field.type):
+            return Kalman(mean=which, variance=which, updated=which)
+        return which
 
     into, other = SideStats(), SideStats()
     for field in dataclasses.fields(SideStats):
-        setattr(into, field.name, 2.0)
-        setattr(other, field.name, 3.0)
+        setattr(into, field.name, distinct(field, 2.0))
+        setattr(other, field.name, distinct(field, 3.0))
     into.merge(other)
-    untouched = [f.name for f in dataclasses.fields(SideStats) if getattr(into, f.name) == 2.0]
+
+    def unchanged(field) -> bool:
+        got = getattr(into, field.name)
+        return got.mean == 2.0 if isinstance(got, Kalman) else got == 2.0
+
+    untouched = [f.name for f in dataclasses.fields(SideStats) if unchanged(f)]
     assert untouched == []
 
 
@@ -3599,3 +3616,64 @@ def test_the_slope_learns_faster_for_the_same_reason():
         _kalman_touch(quiet, 100.0 + 0.5 * i, i * HOUR)
     assert quiet.trending
     assert abs(quiet.slope) > 0.0
+
+
+# ------------------------------------------------------------------ the sweep edge
+
+
+def test_the_sweep_edge_widens_when_the_mean_depth_is_barely_known():
+    """**The point of filtering the depth.** The EWMA had no notion of its own
+    uncertainty, so a side with two wicks and a side with fifty produced
+    equally confident edges - and a stop is placed against both."""
+    from till_infinity.structures.levels import SideStats
+
+    thin, thick = SideStats(), SideStats()
+    for i, depth in enumerate(((0.8, 1.2)), start=1):
+        thin.observe_wick(depth, i * HOUR)
+    for i in range(1, 41):
+        thick.observe_wick(0.8 if i % 2 else 1.2, i * HOUR)
+
+    assert thin.wick_filter is not None
+    assert thick.wick_filter is not None
+    assert thick.wick_filter.variance < thin.wick_filter.variance
+    # The same spread of depths, but the thin side knows its centre less well
+    # and must reach further to cover the next sweep.
+    assert thin.wick_deep_vol(2.0) > thick.wick_deep_vol(2.0)
+
+
+def test_the_filtered_depth_tracks_sweeps_getting_deeper():
+    from till_infinity.structures.levels import SideStats
+
+    stats = SideStats()
+    for i in range(1, 31):
+        stats.observe_wick(0.5 + 0.03 * i, i * HOUR)
+    assert stats.wick_filter is not None
+    # Nearer the recent depths than the average of all of them.
+    assert stats.wick_filter.mean > stats.wick_sum / stats.wick_n
+
+
+def test_a_wick_without_a_clock_still_records_the_depth():
+    """Every existing caller and test passes no `when`; none may lose data."""
+    from till_infinity.structures.levels import SideStats
+
+    stats = SideStats()
+    stats.observe_wick(0.9)
+    assert stats.wick_vol > 0.0
+    assert stats.wick_n == 1.0
+    assert stats.wick_filter is None
+
+
+def test_merging_two_sweep_edges_weights_by_certainty():
+    """Two estimates of one quantity combine by inverse variance, so the more
+    certain side pulls harder and the result beats either input."""
+    from till_infinity.structures.levels import SideStats
+
+    sure, unsure = SideStats(), SideStats()
+    for i in range(1, 41):
+        sure.observe_wick(1.0, i * HOUR)
+    unsure.observe_wick(3.0, HOUR)
+    before = sure.wick_filter.variance
+
+    sure.merge(unsure)
+    assert sure.wick_filter.variance <= before
+    assert 1.0 <= sure.wick_filter.mean < 2.0, "the one-wick side pulled too hard"
