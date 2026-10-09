@@ -3383,3 +3383,75 @@ async def test_a_repeat_inside_the_cooldown_is_counted_not_just_skipped():
     assert watcher.deduped == 1
     assert "published 1" in watcher.publish_tally()
     assert "held 1" in watcher.publish_tally()
+
+
+async def test_the_activity_share_describes_the_bar_the_engine_is_handed():
+    """**The fold happens before `observe_bar`, not after.**
+
+    It used to happen after, which left the engine's forecasters unable to see it
+    at all and stamped every call born on a bar with the *previous* bar's share -
+    so a level called on the one unusually busy bar of a session was labelled with
+    how quiet the bar before it had been. A warm book of ordinary bars, then one of
+    four times the volume: the share handed over on it must describe *it*.
+    """
+    from till_infinity.bus import BARS, Message
+    from till_infinity.structures.service import Watcher
+
+    watcher = Watcher(Bus(), settings=sx.Settings(macro=False))
+    seen: list[float | None] = []
+    watcher.engine.observe_bar = lambda payload, busy=None: (seen.append(busy), [])[1]
+
+    volumes = [100.0] * 40 + [400.0]
+    for i, volume in enumerate(volumes):
+        await watcher.handle(
+            Message(
+                BARS,
+                {
+                    "feed": "eurusd",
+                    "venue": "OANDA",
+                    "interval": "15m",
+                    "time": 1_700_000_000 + 900 * i,
+                    "open": 1.1,
+                    "high": 1.101,
+                    "low": 1.099,
+                    "close": 1.1,
+                    "volume": volume,
+                },
+            )
+        )
+
+    assert len(seen) == len(volumes)
+    assert seen[-2] == 1.0, "an ordinary bar should read as ordinary"
+    assert seen[-1] is not None
+    assert seen[-1] > 2.0, (
+        f"the busy bar was handed over as {seen[-1]}, which is the quiet bar before it"
+    )
+
+
+async def test_a_bar_without_volume_carries_the_last_share_forward():
+    """Not knowing is not the same as knowing it was ordinary, so the last
+    reading stands rather than snapping back to 1.0 - which is what the book
+    already did when the fold sat below `observe_bar`."""
+    from till_infinity.bus import BARS, Message
+    from till_infinity.structures.service import Watcher
+
+    watcher = Watcher(Bus(), settings=sx.Settings(macro=False))
+    seen: list[float | None] = []
+    watcher.engine.observe_bar = lambda payload, busy=None: (seen.append(busy), [])[1]
+
+    for i, volume in enumerate([100.0] * 40 + [400.0, None]):
+        payload = {
+            "feed": "eurusd",
+            "venue": "OANDA",
+            "interval": "15m",
+            "time": 1_700_000_000 + 900 * i,
+            "open": 1.1,
+            "high": 1.101,
+            "low": 1.099,
+            "close": 1.1,
+        }
+        if volume is not None:
+            payload["volume"] = volume
+        await watcher.handle(Message(BARS, payload))
+
+    assert seen[-1] == seen[-2]

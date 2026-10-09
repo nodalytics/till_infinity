@@ -26,6 +26,7 @@ import numpy as np
 from ..prices.models import Bar
 from ..shared import frozen
 from ..structures import rollover as ro
+from ..structures.context.activity import Book as ActivityBook
 from ..structures.learning import touches as tc
 from ..structures.vol import envelope as ev
 from ..structures.vol.ranges import Ranges
@@ -54,6 +55,14 @@ def _track(symbol: str, bars: Sequence[Bar]) -> Track:
     expression inside a comprehension: those bind the series name late (`shocks_train._stream`)."""
     feed = symbol.lower()
     ranges, state, out = Ranges(), tc.Touches(), Track()
+    # **The service's activity book, kept here too.** A feature that is constant
+    # in training is a feature the contest cannot judge: it wins no splits, so
+    # `vs_champion` reports no loss from dropping it whatever it would be worth
+    # live. The three bps readings in `MODEL_NAMES` have exactly that defect -
+    # `Ranges` cannot produce them and `advance` is called without them below -
+    # and `research/docs/forward-features.md` records it. `activity` is cheap to
+    # do properly, because the volume it needs is already on the bar.
+    busy = ActivityBook()
     for bar in bars:
         high, low, close = ro.trimmed(
             feed, bar.time, bar.time + SECONDS, bar.open, bar.high, bar.low, bar.close
@@ -64,7 +73,12 @@ def _track(symbol: str, bars: Sequence[Bar]) -> Track:
             continue
         sigma = bps / 10_000
         got = None
-        if state.advance(feed, ev.MODEL_INTERVAL, bar.time, high, low, close, sigma):
+        # Folded in before `advance`, matching the service, where the share
+        # describes the bar being handed over rather than the one before it.
+        share = busy.update(feed, ev.MODEL_INTERVAL, float(bar.volume or 0.0))
+        if state.advance(
+            feed, ev.MODEL_INTERVAL, bar.time, high, low, close, sigma, {"activity": share}
+        ):
             base = state.base(feed, ev.MODEL_INTERVAL)
             got = [float(base[name]) for name in ev.MODEL_NAMES] if base else None
         out.when.append(float(bar.time))

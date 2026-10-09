@@ -1490,25 +1490,36 @@ class Watcher:
             await self._watch_calls(calls)
             return signals + self._level_calls(calls)
         if message.topic == BARS:
-            calls = self.engine.observe_bar(message.payload)
-            await self._watch_calls(calls)
-            signals = self._level_calls(calls)
             feed = str(message.payload.get("feed") or "")
             interval = str(message.payload.get("interval") or "")
+            # **Activity before the engine, not after.** This used to be folded
+            # in below `observe_bar`, which left two readers a bar behind: the
+            # forecasters inside the engine never saw it at all, and the calls
+            # this very bar produced were stamped with the *previous* bar's
+            # share - so a level called on the one unusually busy bar of the
+            # session was labelled with how busy the quiet bar before it was.
+            # Nothing else here depends on the engine having seen the bar, so
+            # the fold moves up and the stale read goes away.
+            busy = self._busy.get((feed, interval), 1.0)
+            if feed and interval:
+                volume = message.payload.get("volume")
+                if isinstance(volume, int | float) and volume > 0:
+                    busy = self._busy[(feed, interval)] = self.activity.update(
+                        feed, interval, float(volume)
+                    )
+            calls = self.engine.observe_bar(message.payload, busy)
+            await self._watch_calls(calls)
+            signals = self._level_calls(calls)
             if feed and interval:
                 # The one time-of-day effect the literature actually supports.
                 # Taken from the volatility estimate rather than recomputed, so
                 # the hour is described in the same units as everything else.
+                # Stays below `observe_bar`: it reads an estimate that must
+                # already have seen this bar, which is why only the fold moved.
                 unit = self.engine.vol.of(feed, interval)
                 when = message.payload.get("time")
                 if unit.warm and isinstance(when, int | float) and when:
                     self.clock.observe_vol(feed, float(when), unit.bps)
-
-                volume = message.payload.get("volume")
-                if isinstance(volume, int | float) and volume > 0:
-                    self._busy[(feed, interval)] = self.activity.update(
-                        feed, interval, float(volume)
-                    )
 
             seen = self.bars.observe(message.payload)
             if seen is not None:
