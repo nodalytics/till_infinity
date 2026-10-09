@@ -86,6 +86,27 @@ posed as nonparametric clustering with an unknown component count.
 | kNN `neighbours` + `K = 150` shrinkage | **hierarchical prior** over level parameters |
 | touch / no touch | measurement vs **clutter** |
 
+**The per-level state survives unchanged, and that is not a concession - it is
+how the formalism works.** A random-finite-set filter does not replace a
+target's state vector; it carries a *set* of targets, each one a state vector
+with its own dynamics, and adds a layer above them. So `(price, slope, accel)`
+stays exactly what it is, with the same `F`, the same gains, and the same
+`trending` / `turning` / `crossed` readings on top:
+
+| layer | what it holds | changes? |
+| --- | --- | --- |
+| **per level** | `(price, slope, accel)`, its covariance, its zone | **no** |
+| **the set** | how many levels, which measurement belongs to which, whether each still exists | this is what is new |
+
+Everything in the table above is about the second row. Nothing there touches
+the first, and the improvements I1-I6 below apply to the first row whichever
+way the second is eventually settled - which is the reason they are worth doing
+before this is decided rather than after.
+
+The one addition at the level itself is **existence probability**, and it sits
+*beside* the mean and the variance rather than replacing anything: three
+numbers where there are two, not a different kind of object.
+
 The output that does not exist today and would: **a probability that a level is
 there at all**, propagating with the same arithmetic as its position and width.
 Every consumer that currently reads `state == BROKEN` would read a number.
