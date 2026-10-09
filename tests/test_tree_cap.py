@@ -80,3 +80,214 @@ def test_the_cap_actually_reduces_the_structure():
             m.learn_one(x, y)
         sizes[label] = getattr(m[-1], "_raw_memory_usage", 0)
     assert sizes["capped"] < sizes["uncapped"], sizes
+
+
+# ---------------------------------------------------------------- depth, not size
+#
+# The cap above bounds the tree's **bytes**. It does not bound the **depth** of
+# the structures inside it, and that is what took `structures` off the air: from
+# 2026-09-23 11:53 until 2026-10-09 every `store.save` raised
+# `RecursionError: maximum recursion depth exceeded`, 16 days in which nothing the
+# desk learned was ever written down. Measured on the last file it managed to
+# write: graph depth 333, of which 332 is one chain under
+# `engine.vol._learned._model`, and 293 of that chain's 293 nodes hold `nan`.
+
+
+def test_round_cannot_tame_a_nan():
+    """Why a non-finite feature is different in kind, not degree.
+
+    `TEBSTSplitter` bounds itself by rounding - `digits=1` - so a finite feature
+    can only ever produce as many nodes as it has distinct rounded values. That
+    bound is the whole reason the splitter is "truncated", and `nan` walks
+    straight through it: rounding does nothing, and no comparison against it is
+    ever true, so every observation is treated as a value never seen before.
+    """
+    import math
+
+    from river.tree.splitter import TEBSTSplitter
+
+    assert math.isnan(round(float("nan"), 1))
+    assert TEBSTSplitter().digits == 1
+
+    def right_spine(splitter) -> int:
+        """Nodes down the right-hand chain, which is what pickle recurses over."""
+        node, n = splitter._root, 0
+        while node is not None:
+            node, n = node._right, n + 1
+        return n
+
+    rng = random.Random(11)
+    values = [rng.uniform(0.0, 5.0) for _ in range(2_000)]
+    distinct = len({round(v, 1) for v in values})
+
+    finite = TEBSTSplitter()
+    for v in values:
+        finite.update(v, 1.0, 1.0)
+    # Bounded by how many distinct rounded values exist, not by how many
+    # observations arrived - 2,000 bars, at most 51 of them can be new.
+    assert distinct <= 51
+    assert right_spine(finite) <= distinct
+
+    poisoned = TEBSTSplitter()
+    for _ in range(2_000):
+        poisoned.update(float("nan"), 1.0, 1.0)
+    assert right_spine(poisoned) == 2_000, "one node per observation, forever"
+
+
+def test_a_non_finite_feature_makes_the_state_unpicklable():
+    """The production failure in miniature, at the default recursion limit.
+
+    This is the whole outage: a linked list one node long per observation, and
+    `pickle` recurses once per node. Nothing here is about how much memory the
+    tree uses, which is why the cap above could be correct and the save still
+    fail every five minutes for a fortnight.
+    """
+    import pickle
+    import sys
+
+    from river.tree.splitter import TEBSTSplitter
+
+    poisoned = TEBSTSplitter()
+    for _ in range(1_200):
+        poisoned.update(float("nan"), 1.0, 1.0)
+
+    assert sys.getrecursionlimit() >= 1_000
+    try:
+        pickle.dumps(poisoned, protocol=pickle.HIGHEST_PROTOCOL)
+    except RecursionError:
+        pass
+    else:  # pragma: no cover - the point of the test is that this raises
+        raise AssertionError("1,200 nan observations should outrun the recursion limit")
+
+
+def _row(**kwargs):
+    """One feature row from a series with just enough history to produce one."""
+    from till_infinity.structures.vol.learned import Learned
+
+    learned = Learned()
+    seen = learned._recent("eurusd|5m")
+    seen.realised.extend([9.0, 11.0, 12.0])
+    seen.close = 1.1000
+    seen.log_volume = 5.0
+    args = {
+        "ew_bps": 10.0,
+        "open_": 1.1000,
+        "high": 1.1020,
+        "low": 1.0990,
+        "close": 1.1005,
+        "hour": 3.0,
+        "weekday": 2.0,
+        "volume": 100.0,
+        "interval_seconds": 300.0,
+    }
+    args.update(kwargs)
+    return learned.features("eurusd|5m", **args)
+
+
+def test_the_feature_row_is_finite_even_when_its_inputs_are_not():
+    """**No non-finite value may reach the model.** The row is the boundary.
+
+    Every clipped feature in `features` already survives this - `stretch`,
+    `hour_share`, `focus_nats` and the guarded ratios. The `rel` family did not,
+    and `har_rel` is the one that took the saves down: a `nan` estimate passed
+    its `value <= 0` guard, because that comparison is false for `nan`.
+    """
+    import math
+
+    for bad in (float("nan"), float("inf"), float("-inf")):
+        for field in ("har_bps", "garch_bps", "range_bps", "stretch", "focus_nats"):
+            row = _row(**{field: bad})
+            assert row is not None, f"{field}={bad} should still produce a row"
+            offenders = {k: v for k, v in row.items() if not math.isfinite(v)}
+            assert not offenders, f"{field}={bad} leaked {offenders}"
+
+
+def test_a_non_finite_scale_produces_no_row_at_all():
+    """`ew_bps` is the denominator of the whole row, so `nan` there is not a
+    feature fault - there is simply nothing to say about this bar."""
+    assert _row(ew_bps=float("nan")) is None
+    assert _row(ew_bps=0.0) is None
+
+
+def test_the_damage_already_in_a_restored_tree_is_pruned():
+    """`_finite` stops new ones; this clears the ones already written down.
+
+    Deleting the entry is the documented way back - river rebuilds a splitter
+    on `KeyError` - so the feature keeps being observed from the next bar. The
+    test checks both halves: the chain is gone, and the model still learns the
+    feature afterwards.
+    """
+    from till_infinity.structures.vol.learned import Learned
+
+    learned = Learned()
+    rng = random.Random(3)
+    for _ in range(600):
+        row = {"har_rel": float("nan"), "noise": rng.random(), "r1": rng.uniform(0.5, 2.0)}
+        learned._model.learn_one(row, rng.uniform(5.0, 15.0))
+
+    reg = learned._model[-1]
+
+    def worst_chain() -> int:
+        deepest, stack = 0, [reg._root]
+        while stack:
+            node = stack.pop()
+            if node is None:
+                continue
+            kids = getattr(node, "children", None)
+            if kids:
+                stack.extend(k for k in kids if k is not None)
+                continue
+            for sp in (getattr(node, "splitters", None) or {}).values():
+                cur, n = getattr(sp, "_root", None), 0
+                while cur is not None:
+                    cur, n = cur._right, n + 1
+                deepest = max(deepest, n)
+        return deepest
+
+    # Well past anything a finite feature can reach - the rounding caps those
+    # at the number of distinct values, which `test_round_cannot_tame_a_nan`
+    # pins under 40. Production's worst chain was 293.
+    before = worst_chain()
+    assert before > 60, f"the fixture should be damaged, chain was {before}"
+
+    went = learned.prune_nonfinite()
+    assert went["splitters"] >= 1
+    assert went["nodes"] >= 60
+    assert worst_chain() < 40, "the non-finite chain should be gone"
+
+    # And the feature is still observed - the splitter comes back.
+    for _ in range(200):
+        learned._model.learn_one(
+            {"har_rel": rng.uniform(0.8, 1.2), "noise": rng.random(), "r1": 1.0},
+            rng.uniform(5.0, 15.0),
+        )
+    rebuilt = any("har_rel" in (getattr(n, "splitters", None) or {}) for n in _every_leaf(reg))
+    assert rebuilt, "deleting the entry must not stop the feature being observed"
+
+
+def _every_leaf(regressor):
+    stack, out = [regressor._root], []
+    while stack:
+        node = stack.pop()
+        if node is None:
+            continue
+        kids = getattr(node, "children", None)
+        if kids:
+            stack.extend(k for k in kids if k is not None)
+        else:
+            out.append(node)
+    return out
+
+
+def test_pruning_a_clean_tree_changes_nothing():
+    """It has to be safe to run on every restore, including the ones with
+    nothing wrong - which, after the fix, is all of them."""
+    from till_infinity.structures.vol.learned import Learned
+
+    learned = Learned()
+    rng = random.Random(5)
+    for _ in range(600):
+        row = {"har_rel": rng.uniform(0.5, 2.0), "noise": rng.random()}
+        learned._model.learn_one(row, rng.uniform(5.0, 15.0))
+
+    assert learned.prune_nonfinite() == {"splitters": 0, "nodes": 0}
