@@ -236,13 +236,18 @@ where it is neither, a hidden Markov model where the state is a regime rather
 than a number, a random-finite-set filter where even the *number* of states is
 unknown.
 
-A level's position is linear and close enough to Gaussian, so this uses the
-cheapest member of the family. That is not an assumption left unchecked: a
-Huberised update turns out identical to the plain one to four decimal places,
-and a particle filter on the same touches
-([`level-filters.md`](../research/docs/level-filters.md)) finds nothing the
-Gaussian misses. **Where that stops being true is the count and the existence
-of levels, which this model does not hold at all** - see the note below.
+Which member fits is a question asked **per state**, not once for the
+repository. Some have been tried here on a level's position and the results are
+in `research/docs/`; that says nothing about what a different member would do
+on a different state, and the one this model does not hold at all is the count
+and the existence of levels - see the note below.
+
+**And what comes out is a level, which may be a point or a range.** The mean
+says where, the variance says how wide: when the filter is confident the band
+can be narrower than the tick grid and the level is effectively a price, and
+when it is not the level is a **zone**. They are the same object at different
+confidences, which is why one model produces both rather than a price estimator
+and a width rule sitting beside each other.
 
 > **This section describes half of what it claims, and the gap is deliberate
 > enough to be worth naming.** "A latent state inferred from noisy evidence" is

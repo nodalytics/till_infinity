@@ -65,19 +65,27 @@ evidence.
 **State space is the thesis; a Kalman filter is one way to do it.** The family
 is larger, and which member fits depends on what the state has to express:
 
-| | what it buys | here |
-| --- | --- | --- |
-| **Kalman filter** | linear, Gaussian, exact and cheap | what levels use |
-| **particle filter** | arbitrary distributions, non-linear | measured, [added nothing](../research/docs/level-filters.md) |
-| **hidden Markov model** | a state that is a regime rather than a number | `regimes`, `drift` |
-| **random finite set** (PHD/CPHD) | an unknown and changing *number* of states | not built - see below |
-| **Dirichlet-process mixture** | the same, posed as clustering | not built |
+| | what it buys |
+| --- | --- |
+| **Kalman filter** | linear, Gaussian, exact and cheap |
+| **particle filter** | arbitrary distributions, non-linear dynamics |
+| **hidden Markov model** | a state that is a regime rather than a number |
+| **random finite set** (PHD/CPHD) | an unknown and changing *number* of states |
+| **Dirichlet-process mixture** | the same, posed as clustering |
 
-The choice of a Kalman for a level's position is a claim that the position is
-roughly Gaussian around its truth, and that claim has been tested: a Huberised
-update is identical to the plain one to four decimal places, and a particle
-filter finds nothing a Gaussian misses. For *that* state the simplest member of
-the family is the right one.
+**Listed as a family rather than a verdict.** Some of these have been tried
+here on one particular state and the results are in `research/docs/`; none of
+that settles what a different member would do on a different state, and a table
+that reads as a scoreboard would close off the thinking this is meant to open.
+Which member fits is a question asked per state, not once.
+
+**What the model outputs is a level, and a level is not necessarily a price.**
+It is an estimate with a width: sometimes a point, when the filter is confident
+enough that the band is narrower than the tick grid, and more often a **range**
+- what this desk calls a *zone*. The point and the zone are the same object at
+different confidences, which is why they come out of one model rather than two:
+the mean says where, the variance says how wide, and the zone is what a
+consumer actually trades against.
 
 **Only where the level sits is held that way, and that is an incomplete
 reading of this paragraph rather than a decision.** Whether a level is there at

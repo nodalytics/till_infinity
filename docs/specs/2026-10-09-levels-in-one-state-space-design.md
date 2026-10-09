@@ -90,6 +90,12 @@ The output that does not exist today and would: **a probability that a level is
 there at all**, propagating with the same arithmetic as its position and width.
 Every consumer that currently reads `state == BROKEN` would read a number.
 
+**And the output stays a level, point or zone.** Nothing here changes what
+comes out - a mean that says where and a variance that says how wide, read as a
+price when the band is tighter than the tick grid and as a zone when it is not.
+The existence probability is a third number beside those two, not a different
+kind of object.
+
 ## What is already measured, and it is not encouraging
 
 This is the part that decides whether the work is worth doing, so it goes
