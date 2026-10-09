@@ -78,3 +78,63 @@ running the case where it might be something. That is the second time in a day:
 the regret model's uniformly-positive cells were the same shape. In both the
 broken version looked *more* interesting than the fixed one, which is the
 whole reason the null case has to come first.
+
+## Are production's zones actually too wide? Measured 2026-10-09: no
+
+The 97.6-98.6% coverage quoted above and in
+[`level-filters.md`](level-filters.md) was measured **in the research harness**,
+where every arm was handed the same nominal 90% band. It is not a measurement
+of production's zones, and the two were conflated repeatedly - including in
+this document - into "the desk's zones are too wide against a 90% target".
+
+Production does not target 90%. `conformal.COVERAGE` is **0.95**, chosen
+because that is what the band already claims: `ZONE_SIGMA` is 2, and a two
+sigma Gaussian band is 95.4%.
+
+So the question was put to production directly. 766 published zones over twelve
+hours, half-width converted to volatility units through each decision's own
+`vol_bps`:
+
+| | half-width, volatility units |
+| --- | ---: |
+| median, upper side | **0.821** |
+| median, lower side | **0.853** |
+| mean | 1.38 |
+| **measured touch dispersion** (this document) | **0.40** |
+
+**A two sigma band on a 0.40v dispersion is a 0.80v half-width.** The median is
+0.82 and 0.85. The zones are doing what the design says they should, and the
+earlier claim that they are too wide does not survive contact with them.
+
+Three things the same measurement shows, none of them the thing that was
+asked:
+
+| interval | median half-width |
+| --- | ---: |
+| 1m | 0.889 |
+| 5m | 1.086 |
+| 3m | 1.112 |
+| 15m | 1.208 |
+| daily | 2.049 |
+
+* **Width grows with timeframe**, which is expected - fewer touches, so a wider
+  posterior - but a daily zone at 2.05v is five times the measured dispersion
+  and worth its own look.
+* **18.4% of zones sit exactly on the `MIN_ZONE_VOL` floor of 0.35.** For
+  roughly one zone in five the filter's own uncertainty is not what sets the
+  width at all; a constant is.
+* **Median asymmetry between the two sides is +0.000.** The conformal
+  calibrator is per-side and exists to find that asymmetry, so at the median it
+  is either unsettled or finding none.
+
+### What this means for the change already merged
+
+`TOUCH_NOISE_VOL` moved from a chosen 0.5 to the measured 0.40 in #130, which
+narrows the filter's variance and so the zones, by roughly a fifth. **That is
+the correction, and it has not reached production yet.**
+
+Which is the argument for changing nothing else now. Adjusting `ZONE_SIGMA` or
+the floor in the same window would confound the one change whose size is
+already known, and the measurement to run after it deploys is the one above
+repeated: if the median half-width lands near 0.65-0.70v and realised coverage
+falls to about 95%, the loop is closed and nothing further is needed.
