@@ -269,6 +269,7 @@ better place to start.
 | **I7** | **two barriers out of one model** - the wall above and the wall below, each with its own uncertainty and a race between them | medium |
 | **I8** | **classify the market readings** into state, input and output - and add the one that is missing, price impact, which is the `B` I1 asks for | small to specify, medium to build |
 | **I9** | **two state spaces, coupled with their uncertainty** - the instrument's and the level's. Both exist; only one is modelled as a state space, and the coupling throws away what it knows | small for the fix that matters |
+| **I10** | **measure the slope's own volatility** instead of assuming it is a tenth of the price's | small, same shape as the touch-noise measurement |
 
 ### I1. There is no input. `B` and `u` do not exist here
 
@@ -558,6 +559,54 @@ conformal pools give a second reading for free: if zones are *under*-covering
 on young series specifically, that is this defect with a different instrument
 pointed at it.
 
+### I10. The slope has a volatility, and it is currently a guess
+
+The thesis now says the valuation is two estimates with two dispersions - where
+the level is and which way it is going, each with its own width
+([`idea.md`](../idea.md)). The model holds both. One of the two widths is
+measured and the other is not.
+
+| | estimate | its dispersion | where that number came from |
+| --- | --- | --- | --- |
+| where the level is | `mean` | `variance`, driven by `TOUCH_NOISE_VOL` | **measured** - 0.40, from 22,402 levels |
+| which way it is going | `slope` | `var_slope`, driven by `SLOPE_DRIFT_SHARE` | **chosen** - a tenth of the price's |
+
+`SLOPE_DRIFT_SHARE = 0.1` encodes a judgement, and its docstring says so
+outright: *"a level's direction should wander more slowly than its position, or
+every quiet stretch would hand the slope enough variance to forget what it
+learned. A tenth keeps the slope's memory roughly an order of magnitude longer
+than the price's."*
+
+That is a reasonable prior and it is still a guess. The relevant precedent is
+immediate: `TOUCH_NOISE_VOL` was 0.5 on the same kind of judgement until it was
+fitted and came back **0.40 - about 25% too wide** - and because `R` is the
+denominator of the gain, the error had been slowing every level's learning on
+both states. A wrong `SLOPE_DRIFT_SHARE` does the same thing to the slope
+alone: too large and a quiet stretch erases a trend the level had earned, too
+small and the slope cannot change when the market does.
+
+**It is measurable the same way `TOUCH_NOISE_VOL` was.** The dispersion study
+fitted how tightly touches cluster around their level; the equivalent here is
+how much a level's fitted slope moves between touches once observation noise is
+accounted for - a variance-components fit over the same 22,402 levels, with the
+same `trigamma` correction that stopped the first dispersion estimator
+reporting `tau = 0.114` on identical inputs.
+
+Two things to watch, both learned from that study:
+
+* **Run the null first.** A slope estimated from few touches wanders because it
+  is badly determined, not because the drift moved. The null is levels whose
+  slope is held fixed by construction; if the estimator reports process noise
+  there, it is measuring its own error.
+* **Expect it to be small and precisely known**, as the dispersion result was,
+  and treat "small" as a finding rather than a disappointment - the useful
+  output is a number with an error bar, not a bigger model.
+
+The same question applies one derivative up to `ACCEL_DRIFT_SHARE`, which is a
+tenth again, but that one should wait for I5: if the observability Gramian says
+the data carries almost no information about acceleration, fitting its process
+noise is fitting noise to noise.
+
 ### Where these sit against the phases above
 
 Nothing in I1-I5 argues for the random-finite-set rewrite. I1, I2 and I4
@@ -565,9 +614,10 @@ improve the model already here; I5 is a test of something that shipped on
 2026-10-09. They are individually measurable, which the rewrite is not, and
 none of them needs agreement about formation first.
 
-**Suggested order, ahead of phase 1:** I6, then I5, then I9's measurement,
-then I2, then I8's classification, then I1, with I7 last of the cheap ones
-because it rests on I2.
+**Suggested order, ahead of phase 1:** I6, then I5, then I9's measurement, then
+I10, then I2, then I8's classification, then I1, with I7 last of the cheap ones
+because it rests on I2. I9 and I10 are both variance-components fits over the
+same population and should be run together - one pass answers both.
 I8 is split deliberately: deciding what each reading is costs an afternoon and
 makes I1 concrete, where building the impact estimator is its own piece of work. I6 goes
 first because it is mechanical, it is wrong today rather than merely absent,

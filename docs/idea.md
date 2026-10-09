@@ -101,6 +101,46 @@ at a price - which needs nothing but bars, works on any instrument, and does
 not depend on a venue willing to sell its tape. Where both can be computed they
 are asking the same question with different evidence.
 
+### And *when the slope turned*, which is the same event seen in time
+
+"Where volatility turned" locates the level on the price axis. It is only half
+of what the turn is, because a turn is also an event in **time**: the level was
+drifting one way, and from some moment it was not.
+
+That second half is a state in its own right and the model holds it. The level's
+drift is `slope`, in price units per hour, and the moment it reverses is
+`crossed`; the moment it begins decaying against its own direction is
+`turning`. A level that trended up for a week and has started to flatten is a
+different object from one that has been flat throughout, and the price axis
+alone cannot tell them apart - both are "a price where volatility turned".
+
+**And the slope has its own volatility.** Price has a volatility because price
+is noisy; so is the drift, and for the same reason. The filter carries it as
+`var_slope`, grows it with elapsed time, and gates every use of the slope on
+it - `trending` asks whether the slope is large against *its own* dispersion
+rather than against zero, which is what stops three scattered touches being
+read as a trend.
+
+So the valuation is two estimates with two dispersions, not one price with one
+band:
+
+| | estimate | its own volatility |
+| --- | --- | --- |
+| **where** the level is | `mean` | `variance` - and this is the zone |
+| **which way** it is going | `slope` | `var_slope` - and this is what `trending` tests against |
+
+The symmetry is not decoration. Every argument this document makes for holding
+a price as a latent state with a width applies unchanged to holding its drift
+that way, and the second one was the part left implicit.
+
+One honesty note, because this is the half that is still assumed rather than
+measured: the slope's volatility is currently set as a fixed share of the
+price's - a tenth, in `SLOPE_DRIFT_SHARE` - on the judgement that a level's
+direction should wander more slowly than its position. That ratio is chosen,
+not fitted, and the observation noise beside it was chosen too until it was
+measured at 0.40 and found 25% too wide. See **I10** in
+[`2026-10-09-levels-in-one-state-space-design.md`](specs/2026-10-09-levels-in-one-state-space-design.md).
+
 ## What "fair value" means here, and what it rests on
 
 The phrase is doing a lot of work, so it is worth saying exactly what is being
