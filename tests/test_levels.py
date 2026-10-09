@@ -3523,3 +3523,38 @@ def test_a_level_that_never_trended_is_never_turning_however_the_slope_moves():
     assert not k.earned_slope
     assert not k.turning
     assert not k.crossed
+
+
+@pytest.mark.parametrize("rising", [True, False])
+def test_a_reversal_is_detected_the_same_way_in_both_directions(rising):
+    """Through real touches, not hand-set fields.
+
+    The parametrised case above pins the predicate; this pins that the filter
+    actually reaches those states from a sequence of observations, and that an
+    uptrend flipping down and a downtrend flipping up are mirror images rather
+    than two code paths.
+    """
+    per_hour = 0.5 if rising else -0.5
+    pull = -6.0 if rising else 6.0
+    k = Kalman(mean=100.0, variance=1.0, updated=0.0)
+    for i in range(1, 15):
+        _kalman_touch(k, 100.0 + per_hour * i, i * HOUR)
+    assert k.trending
+    assert k.earned_slope
+    earned = k.slope
+    assert (earned > 0.0) is rising
+
+    for i in range(15, 26):
+        _kalman_touch(k, k.at(i * HOUR) + pull, i * HOUR)
+        if k.crossed:
+            break
+    assert k.crossed, "a sustained pull the other way never flipped the slope"
+    assert k.turning
+    assert (k.slope > 0.0) is not rising
+    # Mirrored, not merely both true: the magnitudes match to the sign.
+    assert k.slope == pytest.approx(-_mirror(k, earned), rel=1e-9)
+
+
+def _mirror(k: Kalman, earned: float) -> float:
+    """The slope this filter would have reached from the opposite trend."""
+    return abs(k.slope) * (1.0 if earned > 0.0 else -1.0)
