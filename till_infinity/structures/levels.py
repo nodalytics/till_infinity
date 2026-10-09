@@ -89,6 +89,31 @@ SLOPE_HORIZON_HOURS = 24.0
 #: memory roughly an order of magnitude longer than the price's.
 SLOPE_DRIFT_SHARE = 0.1
 
+#: The same guard as `SLOPE_SIGMAS`, one derivative up, and **stricter on
+#: purpose**.
+#:
+#: A velocity state fits a slope to noise given the chance; an acceleration
+#: state fits one to the noise in the *slope*, which is itself an estimate from
+#: a handful of touches. The first version of the slope was ungated and widened
+#: every zone in the book - see `Kalman` - and that failure mode is available
+#: again here with less evidence behind it. Four rather than three, because the
+#: cost of being slow is a level that behaves exactly as it does today.
+ACCEL_SIGMAS = 4.0
+
+#: How far ahead acceleration may be carried, in hours.
+#:
+#: Shorter than `SLOPE_HORIZON_HOURS` and for a sharper version of the same
+#: reason: a quadratic extrapolated is wrong faster than a line extrapolated.
+#: Six hours is the span over which "this level is turning over" is a statement
+#: about now rather than a forecast.
+ACCEL_HORIZON_HOURS = 6.0
+
+#: The acceleration's process noise per hour, as a share of the slope's.
+#:
+#: The same judgement as `SLOPE_DRIFT_SHARE` applied once more: a level's
+#: *change of direction* should wander more slowly than its direction.
+ACCEL_DRIFT_SHARE = 0.1
+
 #: A zone is never narrower than this many volatility units, however confident
 #: the filter becomes. A band tighter than a typical move is a band price
 #: crosses by accident, and every crossing would count as a touch.
@@ -369,6 +394,70 @@ class Kalman(Restorable):
     var_slope: float = 0.0
     #: The off-diagonal of the covariance, `P01`. Symmetric, so one number.
     covariance: float = 0.0
+    #: Price units per hour per hour. The third state - see `accelerating`.
+    accel: float = 0.0
+    #: The acceleration's own posterior variance, `P22`.
+    var_accel: float = 0.0
+    #: `P12`, the slope-acceleration off-diagonal. The one that lets an
+    #: acceleration be learned at all, for the same reason `covariance` is.
+    cov_accel: float = 0.0
+    #: The slope as it stood before the last touch, and whether this level has
+    #: **ever** cleared `SLOPE_SIGMAS`. Both exist for `turning`, and neither
+    #: feeds the filter: they are a record of what the filter did, not an input
+    #: to it, so a level that never earns a slope is still unchanged to the bit.
+    prev_slope: float = 0.0
+    earned_slope: bool = False
+
+    @property
+    def slope_change(self) -> float:
+        """How much the last touch moved the slope. Signed.
+
+        The directly measured quantity, as opposed to `accel`, which is the
+        modelled one. A touch is the only thing that moves a slope - `predict`
+        grows `var_slope` but leaves `slope` alone - so this is stamped to a
+        specific touch and joins cleanly to whatever price did next.
+        """
+        return self.slope - self.prev_slope
+
+    @property
+    def turning(self) -> bool:
+        """**Earned a trend, and is now decaying toward or through zero.**
+
+        Not "the slope is near zero", which is three states wearing one number:
+        a level that decelerated out of a trend, a level that never had a slope
+        (`slope` is initialised to exactly 0.0, which is most of them), and a
+        level with too few touches for `trending` to mean anything. Only the
+        first is a turning point, and selecting on the magnitude alone would
+        measure the base rate of levels instead.
+
+        So this asks three things in order: has this level ever earned a slope,
+        is the slope smaller than it was, and is it moving *against* the
+        direction it had. The third is what separates decelerating from merely
+        wobbling - a slope that shrinks because the touch was noisy is not a
+        level turning over.
+        """
+        if not self.earned_slope or self.prev_slope == 0.0:
+            return False
+        if abs(self.slope) >= abs(self.prev_slope):
+            return False
+        return (self.slope - self.prev_slope) * self.prev_slope < 0.0
+
+    @property
+    def crossed(self) -> bool:
+        """The slope changed sign on the last touch, having earned one."""
+        return self.earned_slope and self.slope * self.prev_slope < 0.0
+
+    @property
+    def accelerating(self) -> bool:
+        """Has the acceleration cleared its own uncertainty?
+
+        The same guard as `trending`, one derivative up and a sigma stricter -
+        see `ACCEL_SIGMAS`. Until it passes, the third state is carried in the
+        covariance and changes nothing a caller can see.
+        """
+        if self.var_accel <= 0.0:
+            return False
+        return abs(self.accel) >= ACCEL_SIGMAS * math.sqrt(self.var_accel)
 
     @property
     def trending(self) -> bool:
@@ -384,6 +473,22 @@ class Kalman(Restorable):
     def _span(self, hours: float) -> float:
         """How far ahead the covariance is propagated, in hours."""
         return min(max(hours, 0.0), SLOPE_HORIZON_HOURS)
+
+    def _accel_span(self, hours: float) -> float:
+        """How far ahead the acceleration is propagated, in hours."""
+        return min(max(hours, 0.0), ACCEL_HORIZON_HOURS)
+
+    def _accel_carry(self, hours: float) -> float:
+        """How far the *slope* is allowed to move along the acceleration.
+
+        Zero until the acceleration has cleared `ACCEL_SIGMAS`, and zero again
+        unless the slope itself is trending: carrying a slope that is not used
+        would be arithmetic nobody reads, and it would let an unearned
+        acceleration leak into `var_slope` and so into the gate on the slope.
+        """
+        if not (self.accelerating and self.trending):
+            return 0.0
+        return self._accel_span(hours)
 
     def _carry(self, hours: float) -> float:
         """How far the *mean* is allowed to move along the slope.
@@ -405,17 +510,39 @@ class Kalman(Restorable):
         elapsed_hours = max(0.0, (when - self.updated)) / 3600.0
         span = self._span(elapsed_hours)
         carry = self._carry(elapsed_hours)
+        # Read before anything moves, so the slope's propagation and the
+        # acceleration's see the same state - the same discipline the price
+        # and slope terms already keep below.
+        accel_carry = self._accel_carry(elapsed_hours)
+        accel_span = self._accel_span(elapsed_hours)
         if carry > 0.0:
             # F P F' with F = [[1, carry], [0, 1]], read before the mean moves
             # so both see the same state.
             self.variance += 2.0 * carry * self.covariance + carry * carry * self.var_slope
             self.mean += self.slope * carry
+        if accel_carry > 0.0:
+            # The third row of the same F, gated the same way: the slope moves
+            # along the acceleration and takes its uncertainty with it. The
+            # price's own `0.5 * accel * dt**2` is deliberately **not** applied
+            # - the mean has already been carried along the pre-move slope
+            # above, and adding the quadratic term as well would advance the
+            # level twice on one elapsed span.
+            self.var_slope += 2.0 * accel_carry * self.cov_accel + (
+                accel_carry * accel_carry * self.var_accel
+            )
+            self.slope += self.accel * accel_carry
         if span > 0.0:
             # Ungated, and it must be: the off-diagonal is the only thing that
             # lets a slope be learned, so gating it is a deadlock.
             self.covariance += span * self.var_slope
+        if accel_span > 0.0:
+            # And ungated for exactly the same reason, one derivative up.
+            self.cov_accel += accel_span * self.var_accel
         self.variance += (drift_per_hour**2) * elapsed_hours
         self.var_slope += ((drift_per_hour * SLOPE_DRIFT_SHARE) ** 2) * elapsed_hours
+        self.var_accel += (
+            (drift_per_hour * SLOPE_DRIFT_SHARE * ACCEL_DRIFT_SHARE) ** 2
+        ) * elapsed_hours
         self.updated = max(self.updated, when)
 
     def update(self, observation: float, noise: float, when: float) -> float:
@@ -435,16 +562,38 @@ class Kalman(Restorable):
         innovation = self.variance + noise
         gain = self.variance / innovation
         slope_gain = self.covariance / innovation
+        # **`P02`, the price-acceleration off-diagonal, is not carried.** A full
+        # constant-acceleration filter keeps six covariance terms; this keeps
+        # four and reaches the third state only through the slope it is
+        # attached to. That is a deliberate approximation and worth naming: the
+        # acceleration is learned from how the slope moves, not from how the
+        # price moves, so an acceleration can only ever be as good as the slope
+        # under it - which is the same thing `_accel_carry` enforces by
+        # refusing to carry one unless the slope is trending.
+        accel_gain = (self.cov_accel / innovation) if self.covariance else 0.0
         residual = observation - self.mean
+        # Recorded before the slope moves, so `slope_change` and `turning`
+        # describe this touch. Not an input to the filter - see the fields.
+        self.prev_slope = self.slope
         self.mean += gain * residual
         self.slope += slope_gain * residual
-        # P <- (I - K H) P, H = [1, 0]. Symmetry survives this form; the old
+        self.accel += accel_gain * residual
+        # P <- (I - K H) P, H = [1, 0, 0]. Symmetry survives this form; the old
         # covariance is needed for the slope row, so it is read before it moves.
         prior_covariance = self.covariance
+        prior_cov_accel = self.cov_accel
         self.variance *= 1.0 - gain
         self.covariance *= 1.0 - gain
+        self.cov_accel = max(0.0, self.cov_accel - accel_gain * prior_covariance)
         self.var_slope = max(0.0, self.var_slope - slope_gain * prior_covariance)
+        self.var_accel = max(0.0, self.var_accel - accel_gain * prior_cov_accel)
         self.updated = max(self.updated, when)
+        # Latched, never cleared: `turning` asks whether this level *has* earned
+        # a trend, and a level that earned one and then flattened is precisely
+        # the case it is for. Clearing it on the first touch that drops below
+        # the gate would delete the state the question is about.
+        if self.trending:
+            self.earned_slope = True
         return gain
 
     def at(self, when: float) -> float:
