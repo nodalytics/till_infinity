@@ -229,13 +229,23 @@ pays, and in both cases the null is the system currently shipping.
   pass that made the level - and if formation moves into the filter, what
   defines it then?
 
-## What the control-theory form says this model is missing
+## Five improvements the control-theory form points at
 
 Read against the standard state-space form - MIT 16.30 Topic #5, which states
-it as `ẋ = Ax + Bu`, `y = Cx + Du` - five gaps show up, and they are more
-specific than "use a bigger filter". Three of them are cheap to act on.
+it as `ẋ = Ax + Bu`, `y = Cx + Du` - five specific improvements fall out, and
+they are more actionable than "use a bigger filter". **Four improve the model
+already shipping and need none of the rewrite above**, which makes them the
+better place to start.
 
-### 1. There is no input. `B` and `u` do not exist here
+| | improvement | cost |
+| --- | --- | --- |
+| **I1** | give the model an **input** `Bu` - regime and volatility act on levels and are applied as side effects | small |
+| **I2** | move **leaked state** into the state vector, one quantity at a time | small, separable |
+| **I3** | a **mean-reverting slope** instead of a horizon cap on an unstable mode | research first |
+| **I4** | an **`A` that depends on regime** - linear time-varying, which the general form already allows | medium |
+| **I5** | compute the **observability Gramian** for the third state and set `ACCEL_SIGMAS` from it | small, do first |
+
+### I1. There is no input. `B` and `u` do not exist here
 
 The level model is `ẋ = Ax + w`: dynamics plus process noise, and nothing else.
 A state-space model has an **input** term, and things plainly act on a level
@@ -254,7 +264,7 @@ regime severity, volatility change, session boundary, policy surprise - and
 making the impulse part of the state equation, so its effect on the covariance
 is derived rather than applied.
 
-### 2. The state is the memory of the system, and this one leaks
+### I2. The state is the memory of the system, and this one leaks
 
 The lecture's definition is the useful one:
 
@@ -279,7 +289,7 @@ to avoid.
 one of those quantities can be moved into a filtered state on its own and
 measured, the way the sweep edge just was.
 
-### 3. The dynamics are marginally stable, and the horizon cap is the patch
+### I3. The dynamics are marginally stable, and the horizon cap is the patch
 
 With `F = [[1, carry], [0, 1]]` both eigenvalues are at 1 - a double
 integrator. The lecture's stability test is `Re λ(A) ≤ 0` **with every
@@ -297,7 +307,7 @@ mean-reverting slope - `F[1][1] < 1` - is stable, has a stationary variance,
 and needs no horizon constant at all. Whether a level's drift actually reverts
 is measurable.
 
-### 4. `A` should change with the operating point, and this one never does
+### I4. `A` should change with the operating point, and this one never does
 
 The lecture linearises about an equilibrium and is explicit that the result is
 local: the aircraft example derives a different `A` for each flight condition,
@@ -311,7 +321,7 @@ dynamics. An `A` that depends on regime is a linear time-varying model, which
 the lecture's general form already covers (`A(t)`, `B(t)`), and it is a smaller
 step than the random-finite-set rewrite above.
 
-### 5. Observability is the real argument about acceleration
+### I5. Observability is the real argument about acceleration
 
 Only price is measured: `C = [1, 0, 0]`. Slope and acceleration are never
 observed, only inferred. For a constant-acceleration model with position-only
@@ -326,14 +336,15 @@ state at all. **If it says "almost none", the gate is not conservative, it is a
 polite way of switching the state off** - and that is worth knowing before the
 feature is trusted.
 
-### What this changes about the plan
+### Where these sit against the phases above
 
-Nothing above argues for the random-finite-set rewrite; items 1, 2 and 4 are
-improvements to the model that is already here, and item 5 is a test of
-something that shipped this morning. They are also individually measurable,
-which the rewrite is not.
+Nothing in I1-I5 argues for the random-finite-set rewrite. I1, I2 and I4
+improve the model already here; I5 is a test of something that shipped on
+2026-10-09. They are individually measurable, which the rewrite is not, and
+none of them needs agreement about formation first.
 
-**Suggested order, ahead of phase 1:** compute the observability Gramian for
-the third state (5), then move one leaked state into the filter and measure it
-(2), then write down `u` (1). Item 3 is a research question - does a level's
-drift revert - and belongs with the turning-point study.
+**Suggested order, ahead of phase 1:** I5, then I2, then I1. I3 is a research
+question - does a level's drift revert - and belongs with the turning-point
+study in [`ideas.md`](../../research/docs/ideas.md). I4 is the largest and
+should wait for I1, because a regime-dependent `A` and a regime input are two
+answers to the same observation and only one is needed.

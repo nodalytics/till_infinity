@@ -263,6 +263,18 @@ and a width rule sitting beside each other.
 > which also carries the evidence arguing against doing it - four attempts to
 > enrich this filter have returned null, the sharpest being that a Huberised
 > update is identical to this one to four decimal places.
+>
+> **Five smaller improvements are listed there too (I1-I5), and four of them
+> need none of that rewrite.** Read against the standard form `ẋ = Ax + Bu`:
+> this model has no input term although regime and volatility plainly act on
+> levels (I1); much of a level's memory - the side counters, the wick sums,
+> both conformal sigmas - sits outside the state vector and so gets
+> hand-chosen rates instead of derived gains (I2); `[[1, carry], [0, 1]]` has
+> both eigenvalues at 1, so `SLOPE_HORIZON_HOURS` is a cap on an unstable mode
+> rather than a modelling choice (I3); `A` is the same for every instrument,
+> timeframe and regime although a regime classifier is already published (I4);
+> and because only price is measured, how much the data can say about the
+> third state is an observability question with a computable answer (I5).
 
 One touch, one update:
 
