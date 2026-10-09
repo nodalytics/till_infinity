@@ -139,7 +139,7 @@ pairs nor the 250 largest.
 
 Off unless a filter says how much to carry, so a deployment that has not opted
 in pays no start-up call. See `.env.example` for the block and
-[research/crypto.md](../research/crypto.md) for what each exchange answers.
+[research/crypto.md](../research/docs/crypto.md) for what each exchange answers.
 
 **Funding rates, open interest and the long/short split are written and not
 wired.** `prices/funding.py` and `prices/positioning.py` are library code with

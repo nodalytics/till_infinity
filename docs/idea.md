@@ -40,7 +40,7 @@ quietly, so those are the parts kept in the record.
 
 The corollary is the uncomfortable half. It means most of what is built here
 will earn nothing, and that has to be discoverable rather than argued about -
-which is what [research/inert.md](../research/inert.md) is: a list of things
+which is what [research/inert.md](../research/docs/inert.md) is: a list of things
 computed correctly and read by nothing, kept because a fix that ships and
 changes no number is the failure mode this desk is most prone to.
 
@@ -57,9 +57,42 @@ about. Reading it as a claim about **value** makes it falsifiable: the level is
 an estimate, each touch is an observation of it, and it can be revised or
 abandoned.
 
-That is why the origin is a Kalman state rather than a line. The filter is not
-decoration; it is what it means to hold an estimate of a quantity you cannot
-observe directly and keep updating it from noisy evidence.
+That is why the origin is a **latent state in a state-space model** rather than
+a line. The model is not decoration; it is what it means to hold an estimate of
+a quantity you cannot observe directly and keep updating it from noisy
+evidence.
+
+**State space is the thesis; a Kalman filter is one way to do it.** The family
+is larger, and which member fits depends on what the state has to express:
+
+| | what it buys |
+| --- | --- |
+| **Kalman filter** | linear, Gaussian, exact and cheap |
+| **particle filter** | arbitrary distributions, non-linear dynamics |
+| **hidden Markov model** | a state that is a regime rather than a number |
+| **random finite set** (PHD/CPHD) | an unknown and changing *number* of states |
+| **Dirichlet-process mixture** | the same, posed as clustering |
+
+**Listed as a family rather than a verdict.** Some of these have been tried
+here on one particular state and the results are in `research/docs/`; none of
+that settles what a different member would do on a different state, and a table
+that reads as a scoreboard would close off the thinking this is meant to open.
+Which member fits is a question asked per state, not once.
+
+**What the model outputs is a level, and a level is not necessarily a price.**
+It is an estimate with a width: sometimes a point, when the filter is confident
+enough that the band is narrower than the tick grid, and more often a **range**
+- what this desk calls a *zone*. The point and the zone are the same object at
+different confidences, which is why they come out of one model rather than two:
+the mean says where, the variance says how wide, and the zone is what a
+consumer actually trades against.
+
+**Only where the level sits is held that way, and that is an incomplete
+reading of this paragraph rather than a decision.** Whether a level is there at
+all, and how many there are, are quantities nobody can observe directly either;
+today they are settled geometrically before the filter sees anything. See
+[`levels.md`](levels.md) §3 and the design that states the correction,
+[`2026-10-09-levels-in-one-state-space-design.md`](specs/2026-10-09-levels-in-one-state-space-design.md).
 
 **The kinship is volume profile**, and the difference is the input. A point of
 control is fair value derived from *where volume traded*. This is fair value
@@ -435,7 +468,7 @@ equally, and the half that failed is the one most systems are built on.
 rate on the arriving side, resolutions separate 59.4% to 92.2% across four
 bands with an AUC of 0.648 - the strongest single signal a level carries, and
 the only one that *strengthened* when a volatility-denominator bug was fixed.
-See [strength.md](../research/strength.md).
+See [strength.md](../research/docs/strength.md).
 
 **Not supported.** Price is not drawn to a level. Across 22,219 evaluation bars
 a level was reached within twenty bars 44.9% of the time against 49.5% for an
@@ -463,6 +496,50 @@ failed.
   measured and did not survive.
 
 See [trading.md](trading.md) for how each is implemented.
+
+## One estimate, but two bounds - because a trade needs a price to be wrong at
+
+Both ways of trading need the same two things: a price that says the reading
+was wrong, and a price that says it was right. Those are not risk-management
+settings bolted on afterwards. They are **statements about structure** - where
+the wall is below, where the wall is above - and the model that estimates
+levels is the thing that should produce them.
+
+So the valuation's output is not a price. It is a pair:
+
+```
+barrier_down = (price, sigma)      the wall below, with its own uncertainty
+barrier_up   = (price, sigma)      the wall above
+p_up_first                          which one gives way first
+```
+
+Each bound is a level in its own right - the same latent state, the same mean
+and variance - widened on the side a stop must clear by how far wicks actually
+run past it there. The asymmetry is the point: how far price overshoots a floor
+and how far it undershoots a ceiling are different quantities, measured
+separately, and a single symmetric band averages them into something neither
+side ever does.
+
+**This does not make them a stop and a target, and the distinction is the same
+one this document opened with.** Two bounds with uncertainties are a
+measurement. A stop is a decision, and it needs what the measurement cannot
+supply: the cost of crossing the spread, the size against a loss limit, whether
+the distance is worth taking at all. The model says where the structure is and
+which side gives way first; the trading layer turns that into orders, or
+declines to.
+
+The practical difference is modest and real. Today a consumer assembles those
+bounds from three separate places - the range the price sits in, the race
+between its walls, and the band a stop has to clear - and only the last of them
+carries an uncertainty derived from evidence. One model emitting both bounds
+means a stop is placed against **one** estimate that states how sure it is,
+rather than three that do not.
+
+`2026-10-09-levels-in-one-state-space-design.md` records this as **I7** with
+what already exists, and with the reason it is sequenced late: it is the only
+improvement on that list with a visible path to P&L, which makes it the easiest
+to talk oneself into, and it is only as good as the per-side statistics
+underneath it - most of which are still outside the state vector.
 
 ## And two kinds of evidence, which is where the five parts come from
 
