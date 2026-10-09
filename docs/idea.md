@@ -61,6 +61,13 @@ That is why the origin is a Kalman state rather than a line. The filter is not
 decoration; it is what it means to hold an estimate of a quantity you cannot
 observe directly and keep updating it from noisy evidence.
 
+**Only where the level sits is held that way, and that is an incomplete
+reading of this paragraph rather than a decision.** Whether a level is there at
+all, and how many there are, are quantities nobody can observe directly either;
+today they are settled geometrically before the filter sees anything. See
+[`levels.md`](levels.md) §3 and the design that states the correction,
+[`2026-10-09-levels-in-one-state-space-design.md`](specs/2026-10-09-levels-in-one-state-space-design.md).
+
 **The kinship is volume profile**, and the difference is the input. A point of
 control is fair value derived from *where volume traded*. This is fair value
 derived from **where volatility turned** - the leg in and the leg out meeting

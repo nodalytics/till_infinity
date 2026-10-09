@@ -228,6 +228,21 @@ Price turned somewhere near a level a dozen times and never at exactly the same
 place. Each of those turns is one **noisy observation** of where the level
 actually sits, so a level is a latent state with a mean and a variance.
 
+> **This section describes half of what it claims, and the gap is deliberate
+> enough to be worth naming.** "A latent state inferred from noisy evidence" is
+> as true of *whether a level exists* and *how many there are* as it is of
+> where one sits - but existence and count are not inferred here. They are
+> decided geometrically by `structures/drawing/`, and the filter is handed the
+> answer. So `State.BROKEN` is a label rather than a probability, and `dedupe`
+> settles data association with a distance constant.
+>
+> That is the thesis applied to one of its three questions. The correction is
+> specified in
+> [`2026-10-09-levels-in-one-state-space-design.md`](specs/2026-10-09-levels-in-one-state-space-design.md),
+> which also carries the evidence arguing against doing it - four attempts to
+> enrich this filter have returned null, the sharpest being that a Huberised
+> update is identical to this one to four decimal places.
+
 One touch, one update:
 
 ```

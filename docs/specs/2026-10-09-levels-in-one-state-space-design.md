@@ -1,18 +1,24 @@
-# Levels in one state space: a design
+# Levels in one state space: the thesis, implemented correctly
 
 Price goes in; levels come out, each with a position, a drift, an existence
-probability, and a prior borrowed from the levels most like it. Formation stops
-being geometry that runs before the filter and becomes part of what the filter
-infers.
+probability, and a prior borrowed from the levels most like it.
 
-Requested 2026-10-09: *"can the price not be an input to the kalman and the
-kalman produces the levels"*, *"the stuffs from drawing folder should be in the
-state space"*, *"we can even add the similarity thing to the state space too"* -
-with the note that this was the origin thesis rather than a new direction.
+**This is not a new direction. It is the one already written down, and what
+ships today is a partial implementation of it** - the estimation half built and
+the formation half left as geometry. This document is the correction, not a
+proposal competing with the current design.
 
-**Status: design only.** Nothing here is built.
+Raised 2026-10-09: *"can the price not be an input to the kalman and the kalman
+produces the levels"*, *"the stuffs from drawing folder should be in the state
+space"*, *"we can even add the similarity thing to the state space too"*, and
+*"that was the intention as first/origin thesis not what we are doing now"*.
 
-## The thesis says this, and the implementation only half does it
+**Status: design only.** Nothing here is built. What follows is the gap between
+the thesis and the code, the formalism the thesis actually requires, and the
+evidence - which argues against doing the work and is placed before the design
+for that reason.
+
+## Where the implementation departs from the thesis
 
 [`idea.md`](../idea.md) is explicit about why the filter exists:
 
@@ -34,8 +40,14 @@ geometrically and hand the filter a seed.
 
 So the current shape is **geometry, then inference**. A swing cluster decides a
 level exists and where it starts; the filter then refines a decision already
-made. The thesis describes the second half of that and is silent on the first,
-which is the deviation this document is about.
+made.
+
+**That is the thesis applied to half the problem.** "An estimate of a quantity
+you cannot observe directly, updated from noisy evidence" is exactly as true of
+*whether a level is there* and *how many there are* as it is of where one sits.
+The code treats the first two as known and only the third as inferred, and
+nothing in the thesis licenses that division - it is an implementation
+convenience that has been in place long enough to read as design.
 
 Three things follow from the split, and each is a real cost:
 
@@ -50,9 +62,10 @@ Three things follow from the split, and each is a real cost:
   with `K = 150` - chosen, then later estimated at **155.3** by
   DerSimonian-Laird. A number the model should infer is a number beside it.
 
-## What the unified version is, precisely
+## What the thesis actually requires, precisely
 
-**It is not a Kalman filter.** A Kalman has fixed state dimension. "Produce the
+**It is not a Kalman filter**, and this is the one place the origin thesis is
+genuinely underspecified rather than merely unimplemented. A Kalman has fixed state dimension. "Produce the
 levels" means the number of states is unknown and changes - levels are born,
 persist, break, die - and that is a different and well-studied problem.
 
@@ -161,6 +174,20 @@ Written down so the result is falsifiable rather than arguable:
 (1) through (3) are measurable before anything is built. (4) is the risk, and
 it is the one that would make a principled model worse than the hand-written
 one it replaces.
+
+## The uncomfortable reading
+
+The thesis also says this, in `idea.md`:
+
+> most of what is built here will earn nothing, and that has to be discoverable
+> rather than argued about
+
+Applied here it cuts both ways. The split between formation and estimation is a
+departure from the stated design and should be recorded as one. It does not
+follow that closing it will earn anything - the evidence above says the filter
+has no unexploited room in it, and "the thesis says so" is not a measurement.
+Both things are true at once, and the phasing below exists so the second can be
+tested before the first is acted on at scale.
 
 ## Cost, stated plainly
 
