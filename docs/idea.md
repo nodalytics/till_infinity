@@ -672,6 +672,56 @@ So there is an optimum and it is small. The ranking does not change - loading
 strength, standardised deviation, reversion speed - it is just applied to
 combinations rather than to pairs, with the leg count itself priced in.
 
+### The relational path: A to B through C and E
+
+A correlation matrix is usually read as a table - how does A move with B - and
+that reading throws away most of what is in it. The matrix is also a **graph**:
+A may have no direct relationship with B at all, while A relates to C, C to E,
+and E to B. The relationship exists, and it exists *along a path*.
+
+That distinction has a name and a sharp form. The ordinary correlation between
+two names is the **marginal** one, and it is inflated by every route between
+them. The **partial** correlation - what is left after conditioning on
+everything else - is the direct link alone, and it is read off the **inverse**
+covariance matrix rather than the covariance matrix. A zero there means no
+direct edge; the graph of the non-zeros is the relational structure, and a path
+through it is exactly what is being described.
+
+**It matters in both directions, and the second is the one that costs money.**
+
+* **Finding relatives you would miss.** A pairwise scan ranks A against B and
+  sees nothing. A path says they are two steps apart through a chain that is
+  strong at every link. A factor model does not solve this either: factors
+  capture *global* structure, where a chain is **local**, so a panel with few
+  factors can leave a strong A-C-E-B path entirely in the residual.
+* **Rejecting relatives that are not there.** The other half of the same fact.
+  If A and B correlate *only* through C, then hedging A with B is really
+  hedging through two intermediaries - and **it breaks whenever any link
+  breaks**, not only when A or B does. A path-mediated relationship has more
+  ways to fail than a direct one, and the marginal correlation that justified
+  it says nothing about how many.
+
+So the path is not only a way to find more pairs. It is the thing that tells
+you whether a pair you already like is direct or borrowed, and a borrowed one
+should be sized as what it is.
+
+**The control has to come first here, more than anywhere else in this
+document.** A panel of N names has N(N-1)/2 correlations, and in a fully
+connected graph *something* is always two steps from everything. Paths appear
+in pure noise by construction, and a long enough chain can connect any two
+assets in a large enough universe. The null is therefore a shuffled panel with
+the same marginal volatilities: if independent data produces paths of the same
+length and strength, the structure found is the universe's size and not the
+market's.
+
+This is the half of the panel idea that the factor model does not reach, and
+the two are complements rather than alternatives - a factor model for what
+moves everything, a graph for what moves along a chain.
+[`medallion.md`](../research/docs/medallion.md) indexes where this is written
+down: the same book whose Chapter 15 builds pairs trading on a Kalman gives
+Chapter 12 to **graph-based portfolios**, and Part I to the estimation of those
+graphs from returns.
+
 ### Where N is most interesting: a market whose generator is known
 
 Almost everywhere, the relationship between assets has to be inferred and might

@@ -776,6 +776,42 @@ recommends between instrument and level, extended up by one - and it inherits
 I9's warning: a layer that feeds the one below must pass its **uncertainty**
 down, or the lower layer is confident about a number that was estimated.
 
+#### The relational path, which the factor model does not reach
+
+A correlation matrix is also a graph. A may have no direct relationship with B
+while relating to C, C to E, and E to B - the relationship exists *along a
+path*. The ordinary correlation is the **marginal** one and is inflated by
+every route between two names; the **partial** correlation, read off the
+**inverse** covariance, is the direct edge with the routes conditioned out.
+
+**A factor model cannot substitute for this.** Factors capture *global*
+structure and a chain is *local*, so a panel with few factors leaves a strong
+A-C-E-B path in the residual. The two are complements: a factor model for what
+moves everything, a graph for what moves along a chain. I11 as specified above
+has only the first.
+
+It cuts both ways, and the second is the expensive one:
+
+* **relatives a pairwise scan misses** - two steps apart through links that are
+  each strong;
+* **relatives that are not there** - if A and B correlate only through C, then
+  hedging A with B is hedging through two intermediaries and **breaks when any
+  link breaks**, not only when A or B does. A path-mediated relationship has
+  more ways to fail than a direct one, and the marginal correlation that
+  justified it says nothing about how many.
+
+**The control matters more here than anywhere else in this document.** N names
+give N(N-1)/2 correlations, and in a dense graph something is always two steps
+from everything - paths appear in pure noise by construction, and a long enough
+chain connects any two assets in a large enough universe. The null is a
+shuffled panel with the same marginal volatilities: if independent data
+produces paths of the same length and strength, what was found is the size of
+the universe rather than the structure of the market.
+
+Palomar gives this its own chapter - **Ch. 12, graph-based portfolios** -
+alongside the Ch. 15 pairs treatment, and Part I to estimating such graphs from
+returns.
+
 #### N assets, and the synthetics as the one knowable case
 
 "Two related assets" is the smallest version. With N names there can be up to
