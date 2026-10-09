@@ -267,6 +267,7 @@ better place to start.
 | **I5** | compute the **observability Gramian** for the third state and set `ACCEL_SIGMAS` from it | small, do first |
 | **I6** | every rate **per unit time, not per bar** - the filter complies, the published regression slope does not | small |
 | **I7** | **two barriers out of one model** - the wall above and the wall below, each with its own uncertainty and a race between them | medium |
+| **I8** | **classify the market readings** into state, input and output - and add the one that is missing, price impact, which is the `B` I1 asks for | small to specify, medium to build |
 
 ### I1. There is no input. `B` and `u` do not exist here
 
@@ -452,6 +453,53 @@ depth and the side statistics underneath them, and most of those are still
 outside the state vector. Doing I7 first would dress three unfiltered
 quantities in a single confident-looking interval.
 
+### I8. State, input or output - the question a feature list never asks
+
+Four readings suggest themselves for the state space: how hard each unit of
+flow pushes price, how directional the motion is, how large the liquidity zone
+is, and how close price is to it.
+
+**Three already exist, and the useful work is not computing them again - it is
+deciding what each one *is*.** A feature list has one slot, so everything lands
+in it. The state-space form has three, and they behave differently: a state
+persists and is estimated, an input acts and is known, an output is read off
+the others and stores nothing.
+
+| reading | exists today | what it actually is |
+| --- | --- | --- |
+| directionality of motion | `efficiency`, and `pressure_vol` | **state** of the instrument - how trending it is now - observed noisily through each bar |
+| size of the liquidity zone | the filter's own variance, plus `liquidity_beyond_vol` | **already a state**, and the one the whole model is built around |
+| distance from price to the zone | `origin_distance_vol`, `room_up_vol` / `room_down_vol` | **output**. A function of the state and the current price; storing it would be storing a subtraction |
+| **how much each tick pushes price** | **nothing** | **the input gain `B`** |
+
+The last row is the one worth building, and it is not a fifth feature - it is
+the piece I1 says is missing.
+
+**Price impact is `B`.** The state-space form is `ẋ = Ax + Bu`, and the
+question "how much does each unit of flow move the price" is precisely the
+coefficient converting an input into a state change. Order flow is `u`: signed,
+observable, and genuinely exogenous to a level. Impact per unit flow is `B`:
+slowly varying, instrument-specific, and estimable from exactly the data the
+desk already stores.
+
+That also makes `activity` - volume against what is typical, wired into the
+features on 2026-10-09 - the natural magnitude of `u` rather than a feature
+competing with it.
+
+**Why the classification matters more than the readings.** Putting all four in
+as states would be wrong in three different ways: distance is a subtraction and
+would duplicate information already held; zone size is the variance and would
+be estimated twice; directionality is a property of the instrument, not of a
+level, so a copy per level would be dozens of filters estimating one quantity
+from a twelfth of the evidence each.
+
+The third of those is the general lesson and it applies beyond this list:
+**some states belong to the instrument and some to the level.** Volatility,
+impact and trendiness are the instrument's; position, slope, acceleration and
+zone width are the level's. The current design has no place to say that, which
+is why instrument-level quantities arrive as features on every level
+separately.
+
 ### Where these sit against the phases above
 
 Nothing in I1-I5 argues for the random-finite-set rewrite. I1, I2 and I4
@@ -459,8 +507,10 @@ improve the model already here; I5 is a test of something that shipped on
 2026-10-09. They are individually measurable, which the rewrite is not, and
 none of them needs agreement about formation first.
 
-**Suggested order, ahead of phase 1:** I6, then I5, then I2, then I1, with I7
-last of the cheap ones because it rests on I2. I6 goes
+**Suggested order, ahead of phase 1:** I6, then I5, then I2, then I8's
+classification, then I1, with I7 last of the cheap ones because it rests on I2.
+I8 is split deliberately: deciding what each reading is costs an afternoon and
+makes I1 concrete, where building the impact estimator is its own piece of work. I6 goes
 first because it is mechanical, it is wrong today rather than merely absent,
 and it makes two published features comparable that currently are not. I3 is a research
 question - does a level's drift revert - and belongs with the turning-point
