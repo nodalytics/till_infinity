@@ -244,6 +244,7 @@ better place to start.
 | **I3** | a **mean-reverting slope** instead of a horizon cap on an unstable mode | research first |
 | **I4** | an **`A` that depends on regime** - linear time-varying, which the general form already allows | medium |
 | **I5** | compute the **observability Gramian** for the third state and set `ACCEL_SIGMAS` from it | small, do first |
+| **I6** | every rate **per unit time, not per bar** - the filter complies, the published regression slope does not | small |
 
 ### I1. There is no input. `B` and `u` do not exist here
 
@@ -336,6 +337,44 @@ state at all. **If it says "almost none", the gate is not conservative, it is a
 polite way of switching the state off** - and that is worth knowing before the
 feature is trusted.
 
+### I6. A rate is per unit time, and a bar is not a unit of time
+
+The state-space form is written in `t`. `ẋ` is a derivative with respect to
+time, and every coefficient in `A` carries units of inverse time - which is
+why the lecture's `A(t)` is a function of `t` and not of sample number.
+
+**The level filter already honours this.** `slope` is price units per *hour*,
+`predict` works in `elapsed_hours`, and `var_slope` grows with elapsed hours -
+so a level untouched across a weekend and one untouched for an hour are handled
+by the same arithmetic rather than by the same number of missing bars.
+
+**The regression slope published beside it does not.** `Engine._slope`
+regresses close against the bar **index**:
+
+```
+rise = sum((i - middle) * x for i, x in enumerate(window))
+# Price per bar -> basis points per bar -> volatility units per bar.
+```
+
+So does `zma`'s. Both treat the sample number as the independent variable,
+which is only equivalent to time when bars arrive uniformly - and on this desk
+they do not:
+
+* sessions close, so an index step can be a minute or three days;
+* venues drop out, and the collector logs `wrote 12 bars and announced 8` often
+  enough that the gap is routine rather than exotic;
+* the synthetics run continuously and the real instruments do not, so a
+  per-bar rate is not comparable between them even at the same interval.
+
+A per-bar rate silently changes meaning across every one of those. The fix is
+mechanical - regress against the bar's timestamp rather than its position, and
+publish the result per hour - and it makes the two slopes in the feature set
+the same kind of quantity, which they currently are not.
+
+**It also matters for anything that reads both.** `slope` and `level_slope_vol`
+sit in the same decision context; one is per bar and one is per hour, and
+nothing in the names says so.
+
 ### Where these sit against the phases above
 
 Nothing in I1-I5 argues for the random-finite-set rewrite. I1, I2 and I4
@@ -343,7 +382,9 @@ improve the model already here; I5 is a test of something that shipped on
 2026-10-09. They are individually measurable, which the rewrite is not, and
 none of them needs agreement about formation first.
 
-**Suggested order, ahead of phase 1:** I5, then I2, then I1. I3 is a research
+**Suggested order, ahead of phase 1:** I6, then I5, then I2, then I1. I6 goes
+first because it is mechanical, it is wrong today rather than merely absent,
+and it makes two published features comparable that currently are not. I3 is a research
 question - does a level's drift revert - and belongs with the turning-point
 study in [`ideas.md`](../../research/docs/ideas.md). I4 is the largest and
 should wait for I1, because a regime-dependent `A` and a regime input are two

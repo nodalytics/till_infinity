@@ -275,6 +275,17 @@ and a width rule sitting beside each other.
 > timeframe and regime although a regime classifier is already published (I4);
 > and because only price is measured, how much the data can say about the
 > third state is an observability question with a computable answer (I5).
+>
+> **A rate is per unit time, not per bar (I6).** The filter above already gets
+> this right - its slope is price units per *hour* and `predict` works in
+> `elapsed_hours`, so a level untouched over a weekend is handled by the same
+> arithmetic as one untouched for an hour. The regression slope published
+> beside it does not: `Engine._slope` regresses close against bar *index* and
+> its own comment says "volatility units per bar". Bars are not uniformly
+> spaced in time - sessions close, venues drop out, and the collector logs
+> "wrote 12 bars and announced 8" often enough to matter - so a per-bar rate
+> silently means different things across a gap, and two instruments with
+> different session coverage are not comparable on it.
 
 One touch, one update:
 
