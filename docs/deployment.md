@@ -693,3 +693,60 @@ it is unhappy.
 healthy container failed this check on 2026-09-15 and was deleted for it. The
 desk loads a 145MB state file at start, so a single sample taken while that
 
+
+## Building on the instance itself
+
+**Added 2026-10-09**, the day GitHub Actions stopped starting jobs over billing
+and two merged changes could not reach the desk at all. It is also the simplest
+path that exists, and it was available the whole time.
+
+**The instance is aarch64, so it builds its own image natively** - no
+emulation, no second machine, no registry round trip. The research machine can
+do it too, but it is x86 and has to emulate arm64 through qemu to produce an
+image this box can run, which is slower and has one more way to go wrong.
+
+```bash
+# from a checkout of the commit you want, on your own machine
+rsync -az --delete --exclude .git --exclude .data --exclude .venv \
+      --exclude .secrets --exclude __pycache__ ./ "$HOST:~/src/"
+
+# on the instance - nice'd so a build cannot crowd the running desk
+ssh "$HOST" 'cd ~/src && nice -n 15 ionice -c3 \
+  docker buildx build --load -t ghcr.io/nodalytics/till_infinity:$SHA .'
+
+ssh "$HOST" "LOCAL_IMAGE=1 IMAGE=ghcr.io/nodalytics/till_infinity TAG=$SHA \
+             bash ~/deploy.sh"
+```
+
+### `LOCAL_IMAGE=1`, and the step that would otherwise delete your build
+
+`deploy.sh` is registry-first: it prunes, pulls, then swaps. Both of the first
+two have to be skipped together for a local image, and **the prune is the one
+that bites** - `docker image prune -af` removes every image not attached to a
+running container, which includes the one just built. Skipping only the pull
+would delete the image and then fail to replace it.
+
+The flag refuses rather than guesses: if the tag is not on the machine it exits
+instead of falling through to a pull.
+
+Everything after that point is unchanged - the rename to `-prev`, the health
+wait, the rollback. Those are the parts worth keeping and they do not care
+where the image came from.
+
+### Two things this box needs that a runner has
+
+* **buildx.** Docker 29 removed the legacy builder, so `--mount=type=cache` in
+  the Dockerfile needs BuildKit, which needs the buildx plugin. It is a single
+  static binary in `~/.docker/cli-plugins/docker-buildx`.
+* **room.** The box has two cores and under 2 GB free with the desk running,
+  and the desk was OOM-killed once on 2026-10-09 already. `nice` and `ionice`
+  keep the build behind the desk for CPU and disk; a `--memory` cap bounds it
+  if one is wanted. The dependencies all have arm64 wheels, so nothing
+  compiles, which is what makes this affordable at all.
+
+### What it does not do
+
+Run the tests. The workflow deploys `needs: test` for a reason and this path
+has no equivalent, so **an image built this way has been checked by nobody**.
+It is for shipping a commit CI already passed on a branch, or recovering a box
+that is behind - not a reason to stop caring whether CI is green.
