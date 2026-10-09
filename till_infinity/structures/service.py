@@ -51,7 +51,7 @@ from .context.releases import Releases, upcoming
 from .context.sessions import Clock
 from .drawing import confluence as cf
 from .drawing.level_range import ANCHOR, between_origins, level_range_of
-from .engine import Engine
+from .engine import SEED_NEW_BARS, Engine
 from .learning import expansion, shocks
 from .learning.anomaly import Detector
 from .learning.baseline import Bench
@@ -853,6 +853,11 @@ class Watcher:
             replayed = self.engine.seed(
                 self.settings.prices_db,
                 feeds=feeds,
+                # **Half a window, not a whole one - see `SEED_NEW_BARS`.**
+                # This path tops up a restored engine, so the margin a cold
+                # start needs is margin nobody is using, and it is paid for in
+                # the minutes this service publishes nothing.
+                bars=SEED_NEW_BARS,
                 quotes=self.settings.seed_quotes,
                 on_progress=on_progress,
             )

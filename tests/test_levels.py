@@ -3677,3 +3677,88 @@ def test_merging_two_sweep_edges_weights_by_certainty():
     sure.merge(unsure)
     assert sure.wick_filter.variance <= before
     assert 1.0 <= sure.wick_filter.mean < 2.0, "the one-wick side pulled too hard"
+
+
+# ------------------------------------------------------------------ the warm's size
+
+
+def test_topping_up_a_restored_engine_reads_half_a_window():
+    """**The warm is the window in which `structures` publishes nothing.**
+
+    It runs inside `prepare()`, before the watcher subscribes to the bus, so
+    its duration is downtime. On 2026-10-09 one replayed 749,590 bars over 84
+    minutes, and two deploys inside a single warm left the desk without a level
+    for 172. Reading half the rows roughly halves that.
+
+    Half is not a guess. `_read_bars` takes `bars * 8` rows per
+    `(feed, interval)`, shared across about a dozen venue-and-source series, so
+    500 gives each one `500 * 8 / 12` - about 333 - which is the figure
+    `prices.config.DEFAULT_RETAIN_BARS` already names as what the seed needs.
+    """
+    from till_infinity.structures.engine import SEED_BARS, SEED_NEW_BARS
+
+    assert SEED_NEW_BARS == SEED_BARS // 2
+    per_venue_series = SEED_NEW_BARS * 8 / 12
+    assert per_venue_series >= 333, "below what the retention constant says the seed needs"
+
+
+def test_a_cold_start_still_reads_a_whole_window(tmp_path, monkeypatch):
+    """The one case with no restored state to top up keeps the margin."""
+    from till_infinity.bus import Bus
+    from till_infinity.structures import config as sx
+    from till_infinity.structures.engine import SEED_BARS, SEED_NEW_BARS
+    from till_infinity.structures.service import Watcher
+
+    seen: list[int] = []
+    watcher = Watcher(Bus(), settings=sx.Settings(macro=False, prices_db=tmp_path / "p.db"))
+    watcher.engine.seed = lambda *a, bars=SEED_BARS, **k: (seen.append(bars), 0)[1]
+
+    watcher.warm()
+    assert seen == [SEED_BARS], "a cold warm should read a whole window"
+
+    seen.clear()
+    monkeypatch.setattr(type(watcher), "unwarmed", lambda self: ("gold",))
+    watcher.warm_new()
+    assert seen == [SEED_NEW_BARS], "topping up should read half"
+
+
+def test_a_shorter_warm_still_forms_levels(tmp_path):
+    """Halving the read must not stop the thing the warm exists for."""
+    import sqlite3
+
+    from till_infinity.structures.engine import SEED_NEW_BARS
+
+    path = tmp_path / "prices.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE bars (source TEXT, feed TEXT, venue TEXT, ticker TEXT, interval TEXT,"
+        " ts INTEGER, open REAL, high REAL, low REAL, close REAL, volume REAL,"
+        " closed INT, updated REAL)"
+    )
+    conn.executemany(
+        "INSERT INTO bars VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                "tv",
+                p["feed"],
+                p["venue"],
+                "X",
+                p["interval"],
+                p["time"],
+                p["close"],
+                p["high"],
+                p["low"],
+                p["close"],
+                0,
+                1,
+                0.0,
+            )
+            for p in _range_bound(300)
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    engine = Engine(intervals=("5m",))
+    assert engine.seed(path, bars=SEED_NEW_BARS) > 0
+    assert engine.levels("gold", "5m"), "a half-window warm drew no levels"

@@ -214,6 +214,29 @@ SPREAD_WINDOW = 128
 #: is all the engine can hold; more would be read and immediately discarded.
 SEED_BARS = WINDOW
 
+#: The same, for a warm that is **topping up a restored engine** rather than
+#: filling an empty one - `Watcher.warm_new`.
+#:
+#: **Half, because half is what the arithmetic already said was needed.**
+#: `_read_bars` takes `bars * 8` rows per `(feed, interval)`, and those are
+#: shared across the dozen venue-and-source series that make up one
+#: instrument's timeframe - so at 500 each venue series gets `500 * 8 / 12`,
+#: about **333 bars**, which is the number `prices.config.DEFAULT_RETAIN_BARS`
+#: already names as what the seed needs. A thousand was margin on a margin.
+#:
+#: **What it buys is the only thing wrong with the warm, which is its
+#: duration.** On 2026-10-09 a restart replayed **749,590 bars over 84
+#: minutes**, and `structures` publishes nothing for the whole of it: the warm
+#: runs inside `prepare()`, before `watcher.run()` subscribes to the bus. Two
+#: deploys inside one warm that morning meant the desk produced no level for
+#: 172 minutes, and the second warm was OOM-killed at the sixty-minute mark.
+#: Reading half the rows roughly halves all of that.
+#:
+#: A cold start keeps `SEED_BARS`. That is the one case with no restored state
+#: to top up, where the window really is being filled from nothing and the
+#: margin is worth its minutes.
+SEED_NEW_BARS = WINDOW // 2
+
 #: The series `_remember_origins` refines against. The finest the engine
 #: carries, because the refinement's whole value is resolution - and it is
 #: named rather than inlined so the one place it is chosen is findable.
