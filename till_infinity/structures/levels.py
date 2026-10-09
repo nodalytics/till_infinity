@@ -61,6 +61,33 @@ from .vol.volatility import Volatility
 #: sense the data can distinguish.
 ZONE_SIGMA = 2.0
 
+#: How much a single touch is believed, in volatility units. The filter's `R`.
+#:
+#: **0.40 from 2026-10-09, measured; it was 0.5, chosen.** Two independent
+#: routes put the old number about 25% too wide:
+#:
+#: * `research/docs/level-dispersion.md` fitted how tightly each level's touches
+#:   actually cluster, over **22,402 levels of five or more touches**. The median
+#:   is **0.40 volatility units on every timeframe** - 1h, 4h and 1d agree, which
+#:   is itself the reason to trust it rather than a per-timeframe number.
+#: * The conformal pools reached it from the other end: **97.6% to 98.6%
+#:   realised coverage against a 90% target**. A band that contains the next
+#:   touch far more often than it was asked to is a band built from an
+#:   overstated noise.
+#:
+#: What being too wide costs is not cosmetic. `R` is the denominator of the
+#: Kalman gain, so an inflated one shrinks `variance / (variance + R)` on every
+#: touch: the level under-corrects toward where price actually turned, and -
+#: because the slope is learned only through `covariance / innovation` - the
+#: slope under-corrects with it. The filter was not merely quoting a wide band,
+#: it was **learning more slowly than its evidence justified**, on both states.
+#:
+#: Narrower noise means larger gains and tighter zones. The conformal
+#: calibrator will absorb part of the width change, since it scores the
+#: standardised residual `(extreme - at(when)) / spread` and `spread` moves
+#: with this - which is the right place for the remaining adjustment to land.
+TOUCH_NOISE_VOL = 0.40
+
 #: How many of its own standard deviations a level's slope must clear before
 #: anything is allowed to use it.
 #:
@@ -1155,7 +1182,7 @@ class Level(Restorable):
                     (extreme - self.filter.at(when)) / spread,
                     ZONE_SIGMA,
                 )
-        noise = vol.price_units(self.price, 0.5) ** 2
+        noise = vol.price_units(self.price, TOUCH_NOISE_VOL) ** 2
         gain = self.filter.update(extreme, noise, when)
         self.last_touch = when
         if self.state is State.FRESH:

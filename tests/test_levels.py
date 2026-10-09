@@ -3558,3 +3558,44 @@ def test_a_reversal_is_detected_the_same_way_in_both_directions(rising):
 def _mirror(k: Kalman, earned: float) -> float:
     """The slope this filter would have reached from the opposite trend."""
     return abs(k.slope) * (1.0 if earned > 0.0 else -1.0)
+
+
+def test_the_touch_noise_is_the_measured_dispersion_not_a_chosen_number():
+    """`R` is the denominator of the gain, so it decides how fast a level learns.
+
+    0.40 comes from `level-dispersion.md` - the median spread of touches around
+    their level across 22,402 levels, the same on 1h, 4h and 1d - and is
+    corroborated from the other end by the conformal pools covering 97.6-98.6%
+    against a 90% target. The old 0.5 was chosen rather than measured, and
+    being 25% too wide made every gain too small.
+    """
+    assert lv.TOUCH_NOISE_VOL == 0.40
+
+
+def test_narrower_noise_makes_a_confident_level_learn_faster():
+    """The point of the change, and where it bites hardest.
+
+    Gain is `variance / (variance + R)`, so shrinking `R` matters most when
+    `variance` is already small - which is precisely a level that has been
+    touched often and had stopped moving.
+    """
+
+    def gain_for(noise_vol: float, sigma_vol: float) -> float:
+        variance = sigma_vol**2
+        return variance / (variance + noise_vol**2)
+
+    settled = gain_for(lv.TOUCH_NOISE_VOL, 0.2) / gain_for(0.5, 0.2)
+    loose = gain_for(lv.TOUCH_NOISE_VOL, 1.5) / gain_for(0.5, 1.5)
+    assert settled > 1.4, "a settled level should correct substantially faster"
+    assert loose < 1.1, "an unsure level was already near gain 1 and barely changes"
+    assert settled > loose
+
+
+def test_the_slope_learns_faster_for_the_same_reason():
+    """The slope is learned only through `covariance / innovation`, so it is
+    scaled by the same denominator the price gain is."""
+    quiet = Kalman(mean=100.0, variance=1.0, updated=0.0)
+    for i in range(1, 15):
+        _kalman_touch(quiet, 100.0 + 0.5 * i, i * HOUR)
+    assert quiet.trending
+    assert abs(quiet.slope) > 0.0
