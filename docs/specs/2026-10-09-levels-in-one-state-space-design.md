@@ -640,18 +640,77 @@ no hedge, no turnover and no funding: it conditions what the model already
 does, the way `vol_stretch` and `regime` do, and the desk's existing discipline
 scores every published feature against its base rate before anything reads it.
 
-#### The shape of it
+#### The shape of it: a dynamic factor model, which is a state space
 
-One number per instrument per timeframe:
+The obvious version is a subtraction - this instrument's move minus its
+family's average, over its own volatility. That is what a rolling PCA gives
+and it is what both prior studies used.
+
+**The state-space version is different, and the difference is the point of
+doing this at all.** A dynamic factor model says: there are `k` latent common
+factors that *persist and evolve*, each instrument loads on them, and what is
+left is that instrument's own state.
 
 ```
-peer_deviation = (this instrument's move - its family's move) / its own vol
-peer_n         = how many peers the number rests on
+f[t]     = F f[t-1] + w          k common factors, latent, evolving
+r_i[t]   = L_i f[t] + d_i[t] + e  each name loads on them
+d_i[t]   = A_i d[t-1] + v        the deviation, a state in its own right
 ```
+
+Three things that buys over a rolling PCA, and each is a defect in the prior
+method rather than a refinement:
+
+* **The factor persists.** Rolling PCA re-fits from scratch every bar over a
+  252-bar window and has no notion that today's market factor is yesterday's.
+  The window length is a chosen constant, and the eigenvectors can flip sign
+  or swap order between bars.
+* **The deviation gets a posterior.** `d_i` is a state with a variance, so the
+  model says how sure it is. The prior studies produced a point residual, then
+  fitted an AR(1) to it in a *second* stage - a two-step estimator whose first
+  step's uncertainty never reaches the second.
+* **Loadings can drift.** `L_i` can itself be a slowly-moving state. Gold's
+  beta to the metals complex is not a constant, and a fixed-window regression
+  can only approximate that by forgetting.
+
+**Multi-peer is the general case, not an extension.** `k = 1` is "against the
+family average", `k > 1` separates a market factor from a sector one, and a
+single pair is the degenerate case with one peer. The same filter covers all
+three, so "pair or panel" stops being an architectural choice.
 
 The family comes from `clock.family`, which `vol/envelope.py` already uses to
 decide which boosted model a feed may read - so the grouping is not a new
 judgement and is not fitted to this question.
+
+#### Does this reopen the prior nulls?
+
+**Partly, and the honest answer is less than it looks.**
+`pca-residuals.md`'s OU control returned **+10.47**, which says the pipeline
+finds reversion wherever reversion exists - so the failure was not the
+estimator being blind. That result stands.
+
+What a dynamic factor model changes is *which residual you get*, which is
+upstream of whether it reverts. A residual contaminated by a window that is too
+long, loadings that cannot drift, or eigenvectors that reorder is a different
+series from one a filter tracks continuously. That is a reason to re-run the
+question, not a reason to expect a different answer - and the re-run inherits
+the same OU control, which is what will say whether the new residual is any
+cleaner than the old one.
+
+#### Where it sits in the layering
+
+I9 described two state spaces, instrument and level. This makes three, and the
+hierarchy is strict:
+
+| layer | states | one per |
+| --- | --- | --- |
+| **panel** | common factors `f`, loadings `L_i` | family |
+| **instrument** | volatility, impact, trendiness, **deviation `d_i`** | feed |
+| **level** | position, slope, acceleration, zone width | level |
+
+Each layer parameterises the one below it. That is the same cascade I9
+recommends between instrument and level, extended up by one - and it inherits
+I9's warning: a layer that feeds the one below must pass its **uncertainty**
+down, or the lower layer is confident about a number that was estimated.
 
 #### The null, named first
 
@@ -659,6 +718,11 @@ judgement and is not fitted to this question.
 families. If deviation from unrelated instruments predicts as well as deviation
 from actual peers, the number is measuring the market's common move and not
 this instrument's idiosyncrasy - which is precisely how `peering.md` died.
+
+And the control that settled the last study: **a simulated panel whose
+deviations do revert**. If the dynamic factor model cannot find reversion
+there, it is broken rather than the market being efficient, and nothing else
+it says can be read.
 
 Secondary, and cheaper: does `peer_deviation` add anything over `vol_stretch`?
 Both say "this instrument is doing something unusual", and if they correlate

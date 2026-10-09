@@ -638,6 +638,20 @@ instrument, is likely to hold - and it costs nothing to publish and score,
 because the desk already scores every published feature against its own base
 rate before anything is allowed to read it.
 
+And the deviation belongs in the state space like everything else, which is
+the second thing those studies did differently. A rolling PCA re-fits from
+scratch every bar over a chosen window; a **dynamic factor model** holds the
+common factors as latent states that persist, lets each instrument's loading
+drift, and gives the leftover its own posterior rather than a point estimate
+handed to a second-stage fit. The same filter covers one peer or a whole
+panel - a pair is the degenerate case - so "pair or family" stops being an
+architectural choice.
+
+That gives three layers rather than two, each parameterising the one below:
+the **family** carries the common factors, the **instrument** carries its
+volatility and its deviation from them, and the **level** carries its position
+and drift.
+
 That second framing is the one worth taking, and it is specified as **I11** in
 [`2026-10-09-levels-in-one-state-space-design.md`](specs/2026-10-09-levels-in-one-state-space-design.md).
 
