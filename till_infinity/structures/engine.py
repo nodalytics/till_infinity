@@ -1575,6 +1575,7 @@ class Engine:
         close: float,
         vol: Volatility,
         volume: float | None = None,
+        busy: float | None = None,
     ) -> None:
         """The forward readings nobody gates on, fed one closed bar.
 
@@ -1605,15 +1606,30 @@ class Engine:
                     # true on 2026-10-08: `ensemble_bps`, `forecast_bps` and
                     # `garch_bps` appear in `till_infinity/trading/` once each,
                     # in comments. They are not gated on here either - they go
-                    # into the envelope's features, where the retrain contest
-                    # decides whether they earn a place. A feature that does not
-                    # help fails `vs_champion` and never ships, which is a safer
-                    # way to use a reading than a hand-written gate.
+                    # into the envelope's features, where the retrain contest is
+                    # meant to decide whether they earn a place.
+                    #
+                    # **For the three bps readings that last sentence is still
+                    # false, and knowingly so.** `models/envelope_train.py`
+                    # replays bars through `Ranges`, which cannot produce them,
+                    # and calls `advance` with no `forward` at all - so they are
+                    # a constant 0.0 in every training row and vary only here,
+                    # in service. A constant column wins no splits, so the
+                    # contest cannot adjudicate what it never sees move. See
+                    # `research/docs/forward-features.md`; the fix is to replay
+                    # the trainer through `Volatility`, which is not this change.
+                    #
+                    # `activity` is the one reading that does not have that
+                    # problem: the trainer keeps its own `ActivityBook` over the
+                    # bar volumes it already has, so this column moves in
+                    # training exactly as it does here, and the contest really
+                    # does get to throw it out.
                     {
                         "ensemble_bps": vol.ensemble_bps,
                         "forecast_bps": vol.forecast_bps,
                         "garch_bps": vol.garch_bps,
                         "vol_stretch": vol.stretch,
+                        "activity": 1.0 if busy is None else float(busy),
                     },
                 )
                 features = self._touches().base(feed, interval) if taken else None
@@ -2321,8 +2337,13 @@ class Engine:
 
         return Engine._eras_from(first)
 
-    def observe_bar(self, payload: dict) -> list[Call]:
+    def observe_bar(self, payload: dict, busy: float | None = None) -> list[Call]:
         """One `prices.bars` message. Returns any calls it produced.
+
+        `busy` is this bar's volume against what is typical for the series, from
+        the service's `ActivityBook` - already folded in, so it describes *this*
+        bar. None where the caller keeps no such book, which reads as 1.0, the
+        same "nothing unusual" the book itself returns while warming.
 
         See `structures-engine.md` in research/docs.
         """
@@ -2427,7 +2448,7 @@ class Engine:
             # The z-score first: the envelope keys its Mondrian buckets by the state at this close.
             self._observe_zma(feed, interval, float(close))
             self._observe_forecasts(
-                feed, interval, when, high, low, float(close), vol, _volume(reported)
+                feed, interval, when, high, low, float(close), vol, _volume(reported), busy
             )
             self._observe_cycles(feed, interval, float(close))
         # Pivots are session structures priced at today's scale, so they use the

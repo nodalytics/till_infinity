@@ -519,3 +519,81 @@ def test_the_recipe_was_bumped_with_the_feature_set():
     assert "efficiency" in ev.MODEL_RECIPE
     assert ev.MODEL_RECIPES[0] == ev.MODEL_RECIPE
     assert any("efficiency" not in r for r in ev.MODEL_RECIPES[1:])
+
+
+# ------------------------------------------------------------------ activity, and what the
+# ------------------------------------------------------------------ contest can actually judge
+
+
+def _volume_bars(n: int = 400, seed: int = 3) -> list:
+    """A 15m series whose bars differ in how busy they are."""
+    from till_infinity.prices.models import Bar
+
+    rng = random.Random(seed)
+    bars, price = [], 1.1
+    for i in range(n):
+        price *= math.exp(rng.gauss(0, 0.001))
+        bars.append(
+            Bar(
+                time=1_700_000_000 + 900 * i,
+                open=price,
+                high=price * 1.001,
+                low=price * 0.999,
+                close=price,
+                volume=100.0 * (1.0 + 4.0 * rng.random()),
+            )
+        )
+    return bars
+
+
+def test_the_trainer_feeds_activity_but_still_not_the_bps_readings():
+    """**A feature that is constant in training cannot be judged by the contest.**
+
+    It wins no splits, so `vs_champion` measures no loss from dropping it whatever
+    it would have been worth live - the model is not choosing to ignore it, it is
+    being shown a column of zeroes. `activity` is fed properly because the volume
+    it needs is already on the bar; the three bps readings are not, because the
+    trainer replays through `Ranges`, which cannot produce them. The second half of
+    this test pins a defect rather than a design - when it starts failing, the
+    skew has been fixed and `research/docs/forward-features.md` wants updating.
+    """
+    from till_infinity.models import envelope_train as et
+
+    rows = [x for x in et._track("EURUSD", _volume_bars()).x if x is not None]
+    assert rows, "the replay produced no warm rows"
+    col = {name: i for i, name in enumerate(ev.MODEL_NAMES)}
+
+    seen = {round(r[col["activity"]], 9) for r in rows}
+    assert len(seen) > 50, f"activity barely moves in training: {len(seen)} distinct"
+    assert min(seen) > 0.0
+
+    for name in ("ens_ratio", "fc_ratio", "garch_ratio", "vol_stretch"):
+        assert {round(r[col[name]], 9) for r in rows} == {0.0}, (
+            f"{name} now varies in training - the skew is fixed, so drop it from this "
+            "list and update research/docs/forward-features.md"
+        )
+
+
+def test_activity_defaults_to_nothing_unusual_without_a_book():
+    """A caller that keeps no activity book must not poison the feature."""
+    t = tc.Touches()
+    rng = random.Random(1)
+    price = 1.1
+    for i in range(300):
+        price *= math.exp(rng.gauss(0, 0.001))
+        t.advance(
+            "eurusd", "15m", 1_700_000_000 + 900 * i, price * 1.0005, price * 0.9995, price, 0.001
+        )
+    assert t.base("eurusd", "15m")["activity"] == 1.0
+
+
+def test_a_model_trained_before_activity_still_loads(tmp_path):
+    """The subset rule: adding a name must not strand the models in service."""
+    spec = _constant(_gaussian(5))
+    spec["recipe"] = ev.MODEL_RECIPES[-1]
+    spec["names"] = ["lvol", "r1", "r5", "r20", "rng", "hour"]
+    models = tmp_path / "models"
+    models.mkdir(parents=True, exist_ok=True)
+    (models / "envelope_fx15m_5.json").write_text(json.dumps(spec))
+    frozen.forget_cache()
+    assert ev.model_quantiles(5, _features(), family="fx") is not None

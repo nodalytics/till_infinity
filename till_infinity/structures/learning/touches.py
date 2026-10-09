@@ -238,6 +238,13 @@ def base(
         "fc_ratio": _ratio(fwd.get("forecast_bps"), sigma),
         "garch_ratio": _ratio(fwd.get("garch_bps"), sigma),
         "vol_stretch": fwd.get("vol_stretch", 0.0),
+        # **How busy this bar was against what is typical for the series**, as
+        # a ratio, so it means the same on gold as on a synthetic index. Unlike
+        # the three bps readings above it is fed in training as well as in
+        # service (`models/envelope_train.py` keeps its own book), which is the
+        # only reason it is worth adding. 1.0 is "nothing unusual", and is what
+        # a caller that keeps no activity book supplies.
+        "activity": fwd.get("activity", 1.0),
         # **How much of the path went somewhere**, over `EFFICIENCY_N` bars.
         # `body` and `displaced` ask the same question of one bar and of two,
         # with a threshold each; this asks it of the run and lets the model
