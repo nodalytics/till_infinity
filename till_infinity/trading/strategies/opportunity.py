@@ -199,12 +199,20 @@ class Shape:
 #: actually run. Not used by the class - this is the map between the old
 #: architecture and the new one, and the reference a search starts from.
 PRESETS: dict[str, Shape] = {
-    # Read off the classes rather than written by hand, and two of them are the
-    # **same point**: `level-scalp` and `sweep-aware` have identical exits and
-    # differ only in an extra entry gate. `fade-to-value` and `approach-scalp`
-    # differ from them by a hold and nothing else. That is the argument for
-    # this module in one table.
-    "level-scalp": Shape(stop=1.0, target=1.0, trail=0.0, protect=0.0, hold=0.0, pullback=0.0),
+    # Read off the classes rather than written by hand. `fade-to-value` and
+    # `approach-scalp` differ from `level-scalp` by a hold and nothing else,
+    # which is the argument for this module in one table.
+    #
+    # **"Read off the classes" is a claim this table cannot enforce, and on
+    # 2026-10-08 it stopped being true.** `LevelScalp` declared `trail_vol` and
+    # `break_even_at` for the first time and this row was not moved with it, so
+    # the table said 0.0/0.0 while the class said 1.0/0.6. Nothing read the
+    # stale numbers - `PRESETS` is the search's starting point and the
+    # service's `--shape` lookup, not what the strategy runs - but
+    # `test_the_presets_recover_the_named_strategies` is the thing that keeps
+    # the claim honest, and it had to fail for anyone to notice. It did, and
+    # the merge went in red, which is how a broken deploy reached `main`.
+    "level-scalp": Shape(stop=1.0, target=1.0, trail=1.0, protect=0.6, hold=0.0, pullback=0.0),
     # No longer the same point as `level-scalp`: it keeps that entry and takes
     # `ride`'s exit. See `SweepAware` for the measurement.
     "sweep-aware": Shape(stop=1.0, target=6.0, trail=0.5, protect=1.0, hold=0.0, pullback=0.0),
