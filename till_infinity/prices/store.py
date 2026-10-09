@@ -139,6 +139,34 @@ DELETE FROM quotes WHERE (source, feed, venue, ticker, ts) IN (
 QUOTE_BATCH = 50_000
 QUOTE_MAX_PER_RUN = 2_000_000
 
+#: The same bite-sized shape as the quote constants above, and needed more
+#: here, not less. The bars delete is a window function over **every** series
+#: in the file, so one unbounded transaction has to rank the whole table before
+#: it deletes a row - which is why bar retention was left to the CLI and then
+#: never run, and why production reached 15.6 GB of live rows with a retention
+#: policy it had been shipping for weeks.
+BAR_BATCH = 20_000
+BAR_MAX_PER_RUN = 500_000
+
+#: Bounded variant of `_PRUNE_BARS`, for the collector's periodic trim. The
+#: ranking is the expensive half and `LIMIT` cannot be applied to it directly,
+#: so the bound goes on the delete and the pass simply runs again next cycle.
+_PRUNE_BARS_BATCH = """
+DELETE FROM bars
+WHERE (source, feed, venue, ticker, interval, ts) IN (
+    SELECT source, feed, venue, ticker, interval, ts FROM (
+        SELECT source, feed, venue, ticker, interval, ts,
+               ROW_NUMBER() OVER (
+                   PARTITION BY source, feed, venue, ticker, interval
+                   ORDER BY ts DESC
+               ) AS rank
+        FROM bars
+    )
+    WHERE rank > ?
+    LIMIT ?
+)
+"""
+
 _PRUNE_BARS = """
 DELETE FROM bars
 WHERE (source, feed, venue, ticker, interval, ts) IN (
@@ -382,6 +410,37 @@ class SqliteStore(Store):
             removed += went
             if went < batch:
                 break  # nothing older than the cutoff is left
+        return removed
+
+    def prune_bars_sync(self, keep: int, limit: int = BAR_MAX_PER_RUN) -> int:
+        """Keep the newest `keep` bars per series, in bounded batches, no VACUUM.
+
+        The counterpart of `prune_quotes_sync`, and it exists for the same
+        reason: `prune` is a maintenance-window operation that counts the table
+        twice and deletes without a bound, which is correct for a CLI and
+        unusable in a collector loop. This one takes a bite and leaves.
+
+        **No `COUNT(*)`.** `prune` brackets its delete with two full scans to
+        report `deleted` and `kept`; on a file this size each of those is the
+        expensive part of the whole operation. `total_changes` gives the same
+        number for free.
+        """
+        if keep < 1:
+            raise ValueError("keep must be at least 1 - prune does not empty the table")
+        conn = self._require()
+        removed = 0
+        while removed < limit:
+            batch = min(BAR_BATCH, limit - removed)
+            before = conn.total_changes
+            # One transaction per batch, so the write-ahead log can be
+            # checkpointed between them rather than holding the whole backlog -
+            # a 10.5 GB log is how this file took the desk out once already.
+            with conn:
+                conn.execute(_PRUNE_BARS_BATCH, (keep, batch))
+            went = conn.total_changes - before
+            removed += went
+            if went < batch:
+                break  # every series is at or under `keep`
         return removed
 
     async def reindex(self, only: str | None = None) -> ReindexResult:

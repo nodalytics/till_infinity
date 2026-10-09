@@ -1010,6 +1010,22 @@ class Settings:
     #: heavier than this, and they are already bounded per series by construction where quotes
     #: were bounded by nothing at all.
     retain_quote_days: float = DEFAULT_RETAIN_QUOTE_DAYS
+    #: Bars kept per series by the same periodic trim. **Zero leaves them
+    #: alone**, which is what every release before this one did.
+    #:
+    #: The comment above used to end "Bars are left to the CLI", and the CLI
+    #: was never called: production reached **15.6 GB of live rows** - not
+    #: free pages, so no VACUUM would have helped - while shipping a bar
+    #: retention policy the whole time. A policy nothing runs is not a policy,
+    #: and the cost of it here was a two-hour cold start, because `Engine.seed`
+    #: replays that file before `structures` subscribes to the bus.
+    #:
+    #: `DEFAULT_RETAIN_BARS` is already sized as what the seed needs with room
+    #: to spare, so this trims to the number the models were going to read
+    #: anyway. Batched and without a VACUUM, exactly like the quote trim: the
+    #: space is freed for reuse inside the file, and shrinking it stays a
+    #: `prices prune --vacuum` job in a window.
+    retain_bars: int = DEFAULT_RETAIN_BARS
     retain_every_seconds: float = 3_600.0
 
     # Realtime bid/ask polling
@@ -1052,6 +1068,7 @@ class Settings:
             live_bars=_env_int(300, "PRICES_LIVE_BARS"),
             cycle_seconds=_env_float(60.0, "PRICES_CYCLE_S"),
             retain_quote_days=_env_float(DEFAULT_RETAIN_QUOTE_DAYS, "PRICES_RETAIN_QUOTE_DAYS"),
+            retain_bars=_env_int(DEFAULT_RETAIN_BARS, "PRICES_RETAIN_BARS"),
             retain_every_seconds=_env_float(3_600.0, "PRICES_RETAIN_EVERY_S"),
             spreads=_env_flag("PRICES_SPREADS", False),
             spread_kinds=tuple(

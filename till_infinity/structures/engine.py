@@ -1038,10 +1038,93 @@ def _read_bars(
                 (*params, bars * 8),
             )
             for row in found:
-                yield {**row, "time": row["ts"]}
+                # The bar's *close*, not its stamp - see `_merged`. Carried on
+                # the row rather than recomputed there so the merge stays a
+                # comparison and does not need to know about intervals.
+                at = float(row["ts"]) + lv.SECONDS.get(str(row["interval"]), 0.0)
+                yield {**row, "time": row["ts"], "_at": at}
     except sqlite3.Error as exc:
         log.warning("levels: could not warm from %s: %s", path, exc)
         return
+
+
+def _read_quotes(
+    database: Path | str,
+    feeds: Sequence[str],
+    quotes: int,
+) -> Iterator[dict]:
+    """Stored quotes as bus-shaped payloads, oldest first, **streamed**.
+
+    The same shape as `_read_bars` and for the same reason: materialising a
+    warm's worth of rows OOM-killed every cold start that tried it, and quotes
+    outnumber bars by orders of magnitude, so the margin here is thinner still.
+
+    **Bounded per venue series, not per feed.** `observe_quote` reaches the
+    level path through `Quotes.observe`, which wants several venues on one
+    instrument before it will call a price agreed - taking the newest N per
+    *feed* would hand the whole budget to whichever venue publishes fastest and
+    leave the consensus unable to form at all.
+
+    `ts` is epoch **milliseconds** in this table and epoch seconds everywhere
+    the engine reasons; converted here, once, at the edge.
+    """
+    path = Path(database)
+    if not path.exists() or quotes <= 0:
+        return
+
+    where, params = "1=1", []
+    if feeds:
+        where = f"feed IN ({','.join('?' * len(feeds))})"
+        params = list(feeds)
+    try:
+        with closing(sqlite3.connect(f"file:{path}?mode=ro", uri=True, timeout=10.0)) as conn:
+            conn.row_factory = sqlite3.Row
+            held = {row[1] for row in conn.execute("PRAGMA table_info(quotes)")}
+            if "mid" not in held:
+                return
+            columns = ["feed", "venue", "ts", "mid"]
+            columns += [name for name in ("spread_bps",) if name in held]
+            picked = ", ".join(columns)
+            found = conn.execute(
+                f"SELECT {picked} FROM ("
+                f"  SELECT {picked},"
+                "         ROW_NUMBER() OVER (PARTITION BY feed, venue ORDER BY ts DESC) AS rn"
+                f"  FROM quotes WHERE {where}"
+                ") WHERE rn <= ? ORDER BY ts",
+                (*params, quotes),
+            )
+            for row in found:
+                when = float(row["ts"]) / 1000.0
+                yield {**row, "time": when, "_at": when, "_quote": True}
+    except sqlite3.Error as exc:
+        log.warning("levels: could not warm quotes from %s: %s", path, exc)
+        return
+
+
+def _merged(bars: Iterator[dict], quotes: Iterator[dict]) -> Iterator[dict]:
+    """One chronological stream out of two, each already ordered.
+
+    **Keyed on when each row becomes knowable, which is not when it is
+    stamped.** A bar carries its *open* time and is not a fact until it closes,
+    while a quote is a fact when it is observed - so replaying both on the
+    stamp would feed the engine a bar before the quotes that happened inside
+    it, and every touch in that span would resolve against a level the bar had
+    already moved.
+
+    Ties go to the bar, which is the same order the live path produces: the
+    quote at a bar's closing instant is delivered by `observe_quote` after the
+    bar that ends there.
+    """
+    left = next(bars, None)
+    right = next(quotes, None)
+    while left is not None or right is not None:
+        take_left = right is None or (left is not None and left["_at"] <= right["_at"])
+        if take_left:
+            yield left
+            left = next(bars, None)
+        else:
+            yield right
+            right = next(quotes, None)
 
 
 def _volume(reported: object) -> float | None:
@@ -3003,9 +3086,23 @@ class Engine:
         feeds: Sequence[str] = (),
         intervals: Sequence[str] = (),
         bars: int = SEED_BARS,
+        quotes: int = 0,
         on_progress: Callable[[int, int], None] | None = None,
     ) -> int:
         """Warm the windows from stored history. Returns bars replayed.
+
+        `quotes` is how many stored quotes to replay per venue series, merged
+        into the bar stream in time order. **Zero, meaning off, is the
+        default**, and deliberately: a warm already takes long enough to be
+        the longest window in which this service produces nothing, and quotes
+        outnumber bars by orders of magnitude. Turn it on against a measured
+        file, not a hopeful one - `STRUCTURES_SEED_QUOTES`.
+
+        What it buys when it is on: the level filter learns from touches the
+        bar stream cannot show it. A bar says where price went, a quote says
+        when it was there, and `Tracker` resolves a touch on the second - so a
+        cold engine warmed from bars alone starts with levels whose Kalman has
+        seen only the touches that happened to land on a bar boundary.
 
         See `structures-engine.md` in research/docs.
         """
@@ -3034,8 +3131,16 @@ class Engine:
         beat = max(1, total // 100)
         spoken = max(1, total // 10)
         self._touch_eras = eras
+        stream: Iterator[dict] = _read_bars(database, feeds, wanted, bars)
+        if quotes > 0:
+            stream = _merged(stream, _read_quotes(database, feeds, quotes))
+        quoted = 0
         try:
-            for row in _read_bars(database, feeds, wanted, bars):
+            for row in stream:
+                if row.get("_quote"):
+                    self.observe_quote(row)  # calls discarded on purpose
+                    quoted += 1
+                    continue
                 self.observe_bar(row)  # calls discarded on purpose
                 replayed += 1
                 feeds_seen.add(str(row["feed"]))
@@ -3052,8 +3157,9 @@ class Engine:
         finally:
             self._touch_eras = []
         log.info(
-            "levels: warmed from %d stored bars across %s, touching from %s",
+            "levels: warmed from %d stored bars%s across %s, touching from %s",
             replayed,
+            f" and {quoted:,} quotes" if quotes > 0 else "",
             ", ".join(sorted(feeds_seen)) or "nothing",
             " then ".join(interval for _start, interval in eras) or "nothing",
         )

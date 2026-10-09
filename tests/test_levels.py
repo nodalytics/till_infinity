@@ -3154,3 +3154,200 @@ def test_a_merge_into_an_empty_side_adopts_its_wick_depth():
     into, other = SideStats(), SideStats(wick_vol=2.5, wick_n=4.0)
     into.merge(other)
     assert into.wick_vol == 2.5
+
+
+# ------------------------------------------------------------------ warming from quotes
+
+
+def _price_store(tmp_path, bars=300):
+    """A store with both tables, quotes sampled inside each bar's span."""
+    import sqlite3
+
+    path = tmp_path / "prices.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE bars (source TEXT, feed TEXT, venue TEXT, ticker TEXT, interval TEXT,"
+        " ts INTEGER, open REAL, high REAL, low REAL, close REAL, volume REAL,"
+        " closed INT, updated REAL)"
+    )
+    conn.execute(
+        "CREATE TABLE quotes (source TEXT, feed TEXT, venue TEXT, ticker TEXT, ts INTEGER,"
+        " bid REAL, ask REAL, last REAL, mid REAL, spread REAL, spread_bps REAL,"
+        " volume REAL, change REAL, change_pct REAL, venue_ts INTEGER)"
+    )
+    payloads = list(_range_bound(bars))
+    conn.executemany(
+        "INSERT INTO bars VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                "tv",
+                p["feed"],
+                p["venue"],
+                "X",
+                p["interval"],
+                p["time"],
+                p["close"],
+                p["high"],
+                p["low"],
+                p["close"],
+                0,
+                1,
+                0.0,
+            )
+            for p in payloads
+        ],
+    )
+    # Two quotes inside each bar's five minutes, so the consensus can form and
+    # the merge has something to interleave rather than append.
+    conn.executemany(
+        "INSERT INTO quotes VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                "tv",
+                p["feed"],
+                p["venue"],
+                "X",
+                int((p["time"] + offset) * 1000),
+                None,
+                None,
+                None,
+                p["close"],
+                None,
+                1.0,
+                None,
+                None,
+                None,
+                None,
+            )
+            for p in payloads
+            for offset in (60, 180)
+        ],
+    )
+    conn.commit()
+    conn.close()
+    return path
+
+
+def test_quotes_are_off_by_default_so_a_warm_costs_what_it_used_to(tmp_path):
+    """The depth is a number somebody chooses, not one that arrives by upgrade."""
+    from till_infinity.structures.config import Settings
+
+    assert Settings().seed_quotes == 0
+    path = _price_store(tmp_path)
+    seen = []
+    engine = Engine(intervals=("5m",))
+    engine.observe_quote = lambda payload: seen.append(payload) or []
+    assert engine.seed(path) > 0
+    assert seen == [], "a default warm replayed quotes"
+
+
+def test_a_warm_with_quotes_replays_both(tmp_path):
+    path = _price_store(tmp_path)
+    seen = []
+    engine = Engine(intervals=("5m",))
+    real = engine.observe_quote
+    engine.observe_quote = lambda payload: (seen.append(payload), real(payload))[1]
+    assert engine.seed(path, quotes=1_000) > 0
+    assert len(seen) > 100, f"only {len(seen)} quotes reached the engine"
+    # Seconds, not the milliseconds the table stores - the engine reasons in
+    # seconds everywhere and the conversion belongs at the reader.
+    assert all(1_000 < p["time"] < 1e11 for p in seen)
+    assert all("mid" in p for p in seen)
+
+
+def test_the_merge_is_chronological_on_when_each_becomes_knowable(tmp_path):
+    """**A bar is not a fact until it closes.**
+
+    Replaying on the stored stamp would hand the engine a bar before the quotes
+    that happened inside it, and every touch in that span would resolve against
+    a level the bar had already moved. The order is the whole correctness
+    argument for merging two streams, so it is asserted directly.
+    """
+    path = _price_store(tmp_path)
+    order = []
+    engine = Engine(intervals=("5m",))
+    bar, quote = engine.observe_bar, engine.observe_quote
+
+    def watch_bar(payload, busy=None):
+        order.append(("bar", float(payload["time"]) + 300.0))
+        return bar(payload, busy)
+
+    def watch_quote(payload):
+        order.append(("quote", float(payload["time"])))
+        return quote(payload)
+
+    engine.observe_bar, engine.observe_quote = watch_bar, watch_quote
+    engine.seed(path, quotes=1_000)
+
+    assert any(k == "quote" for k, _ in order)
+    assert any(k == "bar" for k, _ in order)
+    times = [when for _kind, when in order]
+    assert times == sorted(times), "the warm replayed history out of order"
+    # And genuinely interleaved rather than one stream then the other.
+    kinds = [kind for kind, _ in order]
+    assert len(set(kinds[:40])) == 2, f"not interleaved: {kinds[:40]}"
+
+
+def test_warming_quotes_from_a_store_without_the_table_is_not_an_error(tmp_path):
+    """A file written by an older collector still warms its bars."""
+    import sqlite3
+
+    path = tmp_path / "prices.db"
+    conn = sqlite3.connect(path)
+    conn.execute(
+        "CREATE TABLE bars (source TEXT, feed TEXT, venue TEXT, ticker TEXT, interval TEXT,"
+        " ts INTEGER, open REAL, high REAL, low REAL, close REAL, volume REAL,"
+        " closed INT, updated REAL)"
+    )
+    conn.executemany(
+        "INSERT INTO bars VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?)",
+        [
+            (
+                "tv",
+                p["feed"],
+                p["venue"],
+                "X",
+                p["interval"],
+                p["time"],
+                p["close"],
+                p["high"],
+                p["low"],
+                p["close"],
+                0,
+                1,
+                0.0,
+            )
+            for p in _range_bound(300)
+        ],
+    )
+    conn.commit()
+    conn.close()
+    assert Engine(intervals=("5m",)).seed(path, quotes=500) > 0
+
+
+def test_quotes_change_what_the_level_filter_learned(tmp_path):
+    """The point of the change: the filter is fed a history it could not see.
+
+    **Not "more touches", which was the obvious assertion and is false.** On
+    this fixture the quote warm resolves 57 against the bar warm's 59: a quote
+    arriving inside a bar's span can resolve a touch *earlier*, and a touch
+    resolved earlier is one that does not go on to become two. The claim worth
+    pinning is that the filter ends somewhere different, not that it ends with
+    a bigger number.
+    """
+    path = _price_store(tmp_path)
+    without = Engine(intervals=("5m",))
+    without.seed(path)
+    with_quotes = Engine(intervals=("5m",))
+    with_quotes.seed(path, quotes=1_000)
+
+    def state(engine):
+        return {
+            (level.feed, round(level.price, 6)): round(level.filter.mean, 9)
+            for level in engine.levels("gold", "5m")
+        }
+
+    plain, quoted = state(without), state(with_quotes)
+    assert plain, "the bar warm produced no levels"
+    assert quoted, "the quote warm produced no levels"
+    assert quoted != plain, "replaying quotes left the filter exactly where bars did"
