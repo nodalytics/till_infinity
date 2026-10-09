@@ -645,6 +645,119 @@ loses money because its average loss is 1.8 times its average win. **The
 binding constraint on this desk is cost per trade against edge per trade, and
 it has been the binding constraint on every question answered this week.**
 
+### The other half of that sentence: short-term patterns, and what makes an error temporary
+
+The description has two halves - *"tiny, temporary pricing errors **and**
+short-term patterns"* - and everything above is the first. The second deserves
+its own treatment, because this desk has gone looking for short-term patterns
+repeatedly and the results are consistent enough to be a finding in themselves.
+
+**What "temporary" means, and why it is the whole difficulty.** An error is
+only an error if it comes back. A relationship that has *ended* produces
+exactly the same observation as a large temporary error - a wide, confident
+deviation - and the two are indistinguishable at the moment you have to act.
+That is why the ranking earlier is three quantities and not one: the deviation
+says how far, the reversion speed says how temporary, and the loading strength
+says whether it is an error at all rather than a name that has left the group.
+A deviation without the other two is not a pricing error, it is a number.
+
+#### What has already been looked for here, and what happened
+
+| looked for | found |
+| --- | --- |
+| similar past windows predicting direction | **AUC 0.4921** against 0.5000 shuffled, flat at every traded horizon ([`similarity.md`](../research/docs/similarity.md)) |
+| trees, forests, cosine similarity, an MLP | a **1KB logistic regression beat all of them**, and five times the data changed nothing ([`models.md`](../research/docs/models.md)) |
+| a 497,664-configuration parameter search | nothing survived Benjamini-Hochberg ([`ftv-tuning.md`](../research/docs/ftv-tuning.md)) |
+| Deriv's crypto quote lagging the exchanges | **the lag is real** and survives a placebo in both halves - **and the spread is wider than the lateness is worth** ([`lagging.md`](../research/docs/lagging.md)) |
+| havens leading equities intraday | no lead-lag at all; the haven reprices in the **same bar** ([`carry.md`](../research/docs/carry.md)) |
+
+#### Similarity is not a failed idea here - it is a working one pointed at the right question
+
+The table above is the direction half, and taken alone it misreads what has
+actually been measured. Similarity has been asked **four** questions on this
+desk, and the split is clean:
+
+| question | answer |
+| --- | --- |
+| does similarity predict **direction**? | **no** - shapes at chance on two embeddings, every conformal method's P50 at AUC 0.47-0.54 |
+| does distance order neighbours by **agreement about direction**? | **no** - AUC 0.4921 against 0.5000 shuffled |
+| is the next-N-bars **range** forecastable? | **yes, and it is shipped** - percentiles that hold their stated rates, corrected online |
+| does weighting past outcomes **by condition similarity** tighten a correctly-covering interval? | **yes** - the weighted band is **12.05 against 13.84** at N = 50, and it lifts calm-regime coverage from 82.8% to 86.7%, on FX, metals, crypto and three Deriv families |
+
+**Similarity works on the width and not on the side.** That is the same
+sentence as [the section above on why the width is the part worth modelling](#why-the-width-is-the-part-worth-modelling-at-all),
+arrived at from a different direction, and it is already in production: the
+envelope is similarity-weighted and the weighting measurably tightens the band
+without losing coverage. The kNN behind every level call earns its place the
+same way - it beats a one-feature floor by 3.1 points of edge
+([`learning.md`](../research/docs/learning.md)) - while a *learned* distance
+adds nothing over it.
+
+So the useful form of "find similar situations" in a panel is **not** "find
+past deviations that look like this one and see which way they resolved" -
+that is the failed question wearing new clothes. It is:
+
+> weight past deviations by how similar their conditions were, and use them to
+> sharpen **how far this one goes and how long it takes**.
+
+Which is exactly the two quantities the ranking already needs and currently
+estimates from a single state equation: the deviation's dispersion and its
+reversion speed. Similarity is the thing most likely to improve both, and the
+least likely to tell you which way to lean.
+
+Read together, those say something more useful than "pattern discovery does not
+work". **Twice the pattern was there and the cost ate it.** The Deriv quote
+really is late, measurably and reproducibly; it is simply late by less than the
+spread. That is the same sentence as the 1m level losing where the 5m does not,
+and as a hedged book with a gross Sharpe of +0.27 and a net of -0.97.
+
+So the question to ask of any short-term pattern on this desk is not "is it
+real" but **"is it bigger than the spread"**, and that question can be asked
+*before* the search rather than after it.
+
+#### Where a slope is the pattern worth having
+
+The one short-term reading already built here, and the cheapest to extend, is a
+**slope that is turning over**. A level carries its drift as a state and knows
+when that drift has started to decay or reverse - `turning` and `crossed`.
+
+The deviation in a pair or a panel is the same kind of object, and it should
+carry the same two readings:
+
+* **a deviation that is still widening is a trap**, not an entry. It is the
+  single most expensive mistake available in this strategy, and it is exactly
+  what "two assets out of sync" looks like on the way *out* of sync.
+* **a deviation that has stopped widening and started to close** is the entry,
+  and the moment it does is a specific touch rather than a threshold crossing.
+
+That turns "wait for the deviation to be large" - a level rule, which cannot
+tell a widening gap from a closing one - into "wait for the deviation to turn",
+which can. It needs no new machinery: it is the slope state on a different
+quantity.
+
+#### And lead-lag, which is a state-space question rather than a correlation
+
+If one instrument prices before another, that is not in the correlation matrix
+at all - a contemporaneous correlation is lag zero by construction. It lives in
+the **transition** matrix: `f[t] = F f[t-1]` with `F` off-diagonal, which is a
+vector autoregression and is the same panel model with one more term.
+
+The two measurements above were both narrow - one pair in
+[`lagging.md`](../research/docs/lagging.md), one event study in
+[`carry.md`](../research/docs/carry.md) - and neither asked it of the panel.
+That makes it genuinely open, with the cost question attached up front: a
+lead-lag is only tradeable if the lead exceeds the spread, and the one time
+this desk measured such a lag precisely, it did not.
+
+#### The discipline that has to come with it
+
+Pattern discovery is a search, and the measured history of searches here is
+that nothing survives correction. 497,664 configurations produced no survivor
+after Benjamini-Hochberg. So the search space is written down before it is
+searched, the correction is chosen before the result is seen, and the control
+is a shuffled panel of the same size - because over N assets, L lags and H
+horizons, *something* always looks significant.
+
 ### N assets, not two - and the pair was always the degenerate case
 
 "Two related assets" is the textbook framing and it is the smallest one. With
