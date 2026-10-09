@@ -3491,3 +3491,35 @@ def test_the_third_state_survives_a_pickle_round_trip():
     assert (back.accel, back.var_accel, back.cov_accel) == (k.accel, k.var_accel, k.cov_accel)
     assert (back.prev_slope, back.earned_slope) == (k.prev_slope, k.earned_slope)
     assert back.turning == k.turning
+
+
+@pytest.mark.parametrize(
+    ("label", "prev", "now", "expected"),
+    [
+        ("an uptrend decaying toward zero", +0.5, +0.2, True),
+        ("an uptrend reversing gently", +0.5, -0.3, True),
+        # **The case the first version got wrong.** A hard reversal leaves the
+        # slope steeper than it was, in the other direction, and a magnitude
+        # test rejected the clearest turning point there is.
+        ("an uptrend reversing hard", +0.5, -0.8, True),
+        ("a downtrend decaying toward zero", -0.5, -0.2, True),
+        ("a downtrend reversing gently", -0.5, +0.3, True),
+        ("a downtrend reversing hard", -0.5, +0.8, True),
+        ("an uptrend steepening", +0.5, +0.9, False),
+        ("a downtrend steepening", -0.5, -0.9, False),
+    ],
+)
+def test_turning_is_symmetric_and_survives_a_hard_reversal(label, prev, now, expected):
+    """Up into down and down into up, at any steepness."""
+    k = Kalman(mean=100.0, variance=1.0, updated=0.0)
+    k.earned_slope = True
+    k.prev_slope, k.slope = prev, now
+    assert k.turning is expected, label
+
+
+def test_a_level_that_never_trended_is_never_turning_however_the_slope_moves():
+    k = Kalman(mean=100.0, variance=1.0, updated=0.0)
+    k.prev_slope, k.slope = 0.5, -0.8
+    assert not k.earned_slope
+    assert not k.turning
+    assert not k.crossed

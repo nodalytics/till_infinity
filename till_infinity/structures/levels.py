@@ -430,15 +430,20 @@ class Kalman(Restorable):
         first is a turning point, and selecting on the magnitude alone would
         measure the base rate of levels instead.
 
-        So this asks three things in order: has this level ever earned a slope,
-        is the slope smaller than it was, and is it moving *against* the
-        direction it had. The third is what separates decelerating from merely
-        wobbling - a slope that shrinks because the touch was noisy is not a
-        level turning over.
+        So this asks two things: has this level ever earned a slope, and did the
+        last touch move that slope *against* the direction it had. The second is
+        what separates turning over from merely steepening - and it covers both
+        a trend decaying toward zero and one that has gone straight through it.
+
+        **It deliberately does not ask whether the slope got smaller.** The
+        first version did, and that rejected the clearest turning point there
+        is: an uptrend reversing hard into a downtrend, where the new slope is
+        *steeper* than the old one in the opposite direction. +0.5 to -0.8 is
+        the case, and it read as not turning. The test is also redundant for
+        the case it was meant to cover, since a slope that moves against itself
+        without changing sign is necessarily smaller than it was.
         """
         if not self.earned_slope or self.prev_slope == 0.0:
-            return False
-        if abs(self.slope) >= abs(self.prev_slope):
             return False
         return (self.slope - self.prev_slope) * self.prev_slope < 0.0
 
