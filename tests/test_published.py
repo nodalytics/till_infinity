@@ -349,6 +349,25 @@ def judged(rows: Sequence[dict]) -> dict[str, liveness.Reading]:
 #: move in my window" is the finding, not the excuse - see the module docstring
 #: on `macro_us_core_inflation`.
 ALLOWED: dict[str, str] = {
+    "level_accel_vol": (
+        "the level filter's third state, gated at ACCEL_SIGMAS = 4.0. **Measured "
+        "reachable rather than assumed**: on a curving path the ratio of accel to "
+        "its own posterior sd is 3.91 at a curvature of 0.02, 7.88 at 0.05 and 15.37 "
+        "at 0.10, firing on 30, 43 and 47 of 60 touches - and on a straight line it "
+        "is 2.11 and fires on none of them. The gate discriminates; what the fixture "
+        "lacks is a level whose drift *curves* for long enough, which is a property "
+        "of 2.5 days of synthetic bars and not of the producer. If this is still "
+        "constant on production it is dead weight and should be removed, which is a "
+        "different claim needing different evidence - see research/docs/ideas.md."
+    ),
+    "level_accelerating": ("the gate on the above, so it is constant for the same reason."),
+    "level_crossed": (
+        "a level's slope changing sign, which needs the level to earn a slope "
+        "(SLOPE_SIGMAS = 3.0), hold it, and then be pulled the other way hard enough "
+        "to flip it. `level_turning` - the same event without requiring the sign "
+        "change - does vary in this fixture, which is what says the path is wired up "
+        "and this is the rarity of the event rather than a broken producer."
+    ),
     "neighbours": (
         "the kNN returns DEFAULT_K = 12 whenever it is warm, and it pools across "
         "instruments so it is warm almost immediately. Measured in production: 12 on "
