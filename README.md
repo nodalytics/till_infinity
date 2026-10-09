@@ -184,7 +184,11 @@ significance and the lower placement.
 
 Beyond the single level, it also publishes the **level range** price is sitting
 in - the nearest agreed price above and below - with the room to each in
-volatility units, and a model of **which wall gets reached first**. That is an
+volatility units, and a model of **which wall gets reached first**. Those two
+bounds are what a trade is made of - a price that says the reading was wrong
+and one that says it was right - and they are measurements of structure rather
+than risk settings; turning them into a stop and a target needs cost and size,
+which is the trading layer's job and not the model's. That is an
 entry and a target made of prices the market drew rather than a stop multiple.
 Both are published as features and read by nothing yet, which is deliberate:
 the record gets to say whether they predict anything before they are worth

@@ -497,6 +497,50 @@ failed.
 
 See [trading.md](trading.md) for how each is implemented.
 
+## One estimate, but two bounds - because a trade needs a price to be wrong at
+
+Both ways of trading need the same two things: a price that says the reading
+was wrong, and a price that says it was right. Those are not risk-management
+settings bolted on afterwards. They are **statements about structure** - where
+the wall is below, where the wall is above - and the model that estimates
+levels is the thing that should produce them.
+
+So the valuation's output is not a price. It is a pair:
+
+```
+barrier_down = (price, sigma)      the wall below, with its own uncertainty
+barrier_up   = (price, sigma)      the wall above
+p_up_first                          which one gives way first
+```
+
+Each bound is a level in its own right - the same latent state, the same mean
+and variance - widened on the side a stop must clear by how far wicks actually
+run past it there. The asymmetry is the point: how far price overshoots a floor
+and how far it undershoots a ceiling are different quantities, measured
+separately, and a single symmetric band averages them into something neither
+side ever does.
+
+**This does not make them a stop and a target, and the distinction is the same
+one this document opened with.** Two bounds with uncertainties are a
+measurement. A stop is a decision, and it needs what the measurement cannot
+supply: the cost of crossing the spread, the size against a loss limit, whether
+the distance is worth taking at all. The model says where the structure is and
+which side gives way first; the trading layer turns that into orders, or
+declines to.
+
+The practical difference is modest and real. Today a consumer assembles those
+bounds from three separate places - the range the price sits in, the race
+between its walls, and the band a stop has to clear - and only the last of them
+carries an uncertainty derived from evidence. One model emitting both bounds
+means a stop is placed against **one** estimate that states how sure it is,
+rather than three that do not.
+
+`2026-10-09-levels-in-one-state-space-design.md` records this as **I7** with
+what already exists, and with the reason it is sequenced late: it is the only
+improvement on that list with a visible path to P&L, which makes it the easiest
+to talk oneself into, and it is only as good as the per-side statistics
+underneath it - most of which are still outside the state vector.
+
 ## And two kinds of evidence, which is where the five parts come from
 
 A directional call is only worth making when the price structure and the
