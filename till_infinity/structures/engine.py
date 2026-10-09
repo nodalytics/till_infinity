@@ -846,6 +846,26 @@ class Call(Restorable):
                 # the same number on every card ever sent.
                 "comparable": float(self.inference.comparable),
                 "strength": self.level.strength(self.time, vol),
+                # **Which way this level is drifting, and whether it is turning
+                # over.** The filter has carried a slope since 2026-10-07 and an
+                # acceleration since 2026-10-09, and until now nothing outside
+                # `Kalman` read either: they moved where the level sat and how
+                # wide its band was, and reached no feature, no gate and no
+                # strategy. A direction the engine already estimates and does
+                # not publish is a reading the models cannot be judged on.
+                #
+                # **In volatility units per hour, not price units.** The filter
+                # keeps price units because that is what it filters; a feature
+                # in price units per hour means something different on gold and
+                # on BTC and could only ever be learned per instrument. This is
+                # the same convention the forward readings use.
+                #
+                # Gated on `trending` rather than published raw: an ungated
+                # slope is mostly the noise three scattered touches fit, which
+                # is the whole reason `SLOPE_SIGMAS` exists. A level that has
+                # not earned a slope publishes zero, which is the truth about
+                # it rather than a small number that looks like information.
+                **_direction(self.level, vol),
                 "risk_vol": self.inference.risk_vol,
                 # Where a violent move began, and whether this level sits in
                 # one. A level that coincides with unfilled interest is better
@@ -1125,6 +1145,36 @@ def _merged(bars: Iterator[dict], quotes: Iterator[dict]) -> Iterator[dict]:
         else:
             yield right
             right = next(quotes, None)
+
+
+def _direction(level: lv.Level, vol: Volatility) -> dict[str, float]:
+    """The level filter's directional state, in volatility units per hour.
+
+    Scale-free, so one model can read it across instruments - `price_units`
+    converts a volatility unit into this instrument's prices, so dividing by it
+    goes the other way.
+
+    `turning` and `crossed` are published whether or not the slope currently
+    clears its gate, and that is deliberate: both already require
+    `earned_slope`, so they describe a level that *did* have a direction and
+    has lost or reversed it. Suppressing them on the gate would hide the event
+    at exactly the moment it happens.
+    """
+    unit = vol.price_units(level.price, 1.0)
+    if unit <= 0:
+        return {}
+    k = level.filter
+    trending = k.trending
+    return {
+        "level_slope_vol": round(k.slope / unit, 6) if trending else 0.0,
+        "level_trending": float(trending),
+        # Signed: which way the last touch moved the slope, not how much.
+        "level_slope_change_vol": round(k.slope_change / unit, 6),
+        "level_turning": float(k.turning),
+        "level_crossed": float(k.crossed),
+        "level_accel_vol": round(k.accel / unit, 6) if k.accelerating else 0.0,
+        "level_accelerating": float(k.accelerating),
+    }
 
 
 def _volume(reported: object) -> float | None:
@@ -2689,7 +2739,7 @@ class Engine:
             calibrator=self._zone_widths,
         )
         # The wick is the zone's far edge, not noise to discard.
-        level.observe_wick(done.features.side, done.origin or done.extreme, done.extreme, vol)
+        level.observe_wick(done.features.side, done.origin or done.extreme, done.extreme, vol, when)
         log.debug("level %s %.5g resolved %s", level.feed, level.price, done.outcome)
         self._resolved.append((level, done))
         # Bounded: a consumer that stops draining must not become a slow memory

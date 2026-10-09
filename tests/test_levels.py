@@ -3110,14 +3110,31 @@ def test_merging_a_level_keeps_every_statistic():
     """
     import dataclasses
 
-    from till_infinity.structures.levels import SideStats
+    from till_infinity.structures.levels import Kalman, SideStats
+
+    def distinct(field, which: float):
+        """A value of the right shape, different on each side.
+
+        Typed rather than "set everything to a float", because the class now
+        holds a filter as well as counters - but still derived from
+        `dataclasses.fields`, so a field added later is covered on the day it
+        is added rather than when somebody remembers this list.
+        """
+        if field.type is not float and "Kalman" in str(field.type):
+            return Kalman(mean=which, variance=which, updated=which)
+        return which
 
     into, other = SideStats(), SideStats()
     for field in dataclasses.fields(SideStats):
-        setattr(into, field.name, 2.0)
-        setattr(other, field.name, 3.0)
+        setattr(into, field.name, distinct(field, 2.0))
+        setattr(other, field.name, distinct(field, 3.0))
     into.merge(other)
-    untouched = [f.name for f in dataclasses.fields(SideStats) if getattr(into, f.name) == 2.0]
+
+    def unchanged(field) -> bool:
+        got = getattr(into, field.name)
+        return got.mean == 2.0 if isinstance(got, Kalman) else got == 2.0
+
+    untouched = [f.name for f in dataclasses.fields(SideStats) if unchanged(f)]
     assert untouched == []
 
 
@@ -3351,3 +3368,312 @@ def test_quotes_change_what_the_level_filter_learned(tmp_path):
     assert plain, "the bar warm produced no levels"
     assert quoted, "the quote warm produced no levels"
     assert quoted != plain, "replaying quotes left the filter exactly where bars did"
+
+
+# ------------------------------------------------------------------ the third state
+
+
+HOUR = 3600.0
+
+
+#: Price units per hour of process noise, as `Level.observe_touch` supplies it.
+#: Without a drift the slope cannot be learned at all: `update` predicts with
+#: zero, so `var_slope` never leaves zero, `covariance` stays zero with it and
+#: the slope gain is zero for ever. Production passes
+#: `vol.price_units(price, DRIFT_VOL_PER_HOUR)`.
+DRIFT = 0.3
+
+
+def _kalman_touch(k: Kalman, price: float, when: float, noise: float = 0.05) -> float:
+    """One touch the way `Level.observe_touch` delivers one: predict, then update."""
+    k.predict(when, DRIFT)
+    return k.update(price, noise, when)
+
+
+def _trended(slope_per_hour: float, touches: int = 14, start: float = 100.0) -> Kalman:
+    """A filter walked along a line until it has earned a slope."""
+    k = Kalman(mean=start, variance=1.0, updated=0.0)
+    for i in range(1, touches + 1):
+        _kalman_touch(k, start + slope_per_hour * i, i * HOUR)
+    return k
+
+
+def test_a_level_that_never_earns_a_slope_is_unchanged_to_the_bit():
+    """**The regression that matters.** The first version of the *slope* let
+    its covariance terms through ungated and widened every zone in the book,
+    including levels with no slope at all. A third state is the same failure
+    available again, so the untrending path is pinned exactly."""
+    flat = Kalman(mean=100.0, variance=1.0, updated=0.0)
+    for i in range(1, 12):
+        _kalman_touch(flat, 100.0, i * HOUR)
+    assert not flat.trending
+    assert not flat.accelerating
+    # The state itself never moved - no touch gave it a reason to.
+    assert flat.accel == 0.0
+    # **`var_accel` does grow, and must.** Process noise on the third state is
+    # ungated for the same reason the off-diagonal is: a variance that is never
+    # allowed to grow can never be reduced by an observation, so an
+    # acceleration gated on its own posterior would never be learnable at all.
+    # What has to be unchanged is what a caller can see.
+    assert flat.var_accel > 0.0
+    # A horizontal level quotes a band that owes nothing to the new terms.
+    assert flat.sigma_at(20 * HOUR) == math.sqrt(max(flat.variance, 0.0))
+    assert flat.at(20 * HOUR) == flat.mean
+
+
+def test_slope_change_is_what_the_last_touch_did_to_the_slope():
+    k = _trended(0.5)
+    before = k.slope
+    _kalman_touch(k, k.mean + 5.0, 20 * HOUR)
+    assert k.prev_slope == pytest.approx(before)
+    assert k.slope_change == pytest.approx(k.slope - before)
+    assert k.slope_change != 0.0
+
+
+def test_turning_is_not_merely_a_slope_near_zero():
+    """A level that never earned a trend has a slope of exactly zero and is
+    not turning over - it is the common case, and counting it would measure
+    the base rate of levels instead of the thing being asked about."""
+    fresh = Kalman(mean=100.0, variance=1.0, updated=0.0)
+    assert fresh.slope == 0.0
+    assert not fresh.turning
+    assert not fresh.crossed
+
+    flat = Kalman(mean=100.0, variance=1.0, updated=0.0)
+    for i in range(1, 12):
+        _kalman_touch(flat, 100.0, i * HOUR)
+    assert abs(flat.slope) < 1e-6
+    assert not flat.turning, "a level that never trended is not turning over"
+
+
+def test_turning_fires_when_an_earned_trend_decays_toward_zero():
+    """Earned a trend, then decelerated - the case this is for."""
+    k = _trended(0.5)
+    assert k.trending
+    assert k.earned_slope
+    rising = k.slope
+    assert rising > 0.0
+    # A touch well below where the line said it would be: the slope is pulled
+    # back toward zero without yet crossing it.
+    _kalman_touch(k, k.at(15 * HOUR) - 3.0, 15 * HOUR)
+    assert abs(k.slope) < abs(rising)
+    assert k.turning
+
+
+def test_a_slope_growing_in_its_own_direction_is_not_turning():
+    k = _trended(0.5)
+    rising = k.slope
+    _kalman_touch(k, k.at(15 * HOUR) + 3.0, 15 * HOUR)
+    assert abs(k.slope) > abs(rising)
+    assert not k.turning
+
+
+def test_crossed_needs_a_sign_change_and_an_earned_trend():
+    k = _trended(0.5)
+    assert not k.crossed
+    for i in range(15, 30):
+        _kalman_touch(k, k.at(i * HOUR) - 6.0, i * HOUR)
+        if k.crossed:
+            break
+    assert k.crossed, "a sustained pull the other way never flipped the slope"
+    assert k.slope * k.prev_slope < 0.0
+
+
+def test_earned_slope_latches_so_a_flattened_level_stays_answerable():
+    """`turning` asks whether a level *has* earned a trend. Clearing the flag
+    the first time the slope drops below the gate would delete exactly the
+    state the question is about."""
+    k = _trended(0.5)
+    assert k.earned_slope
+    for i in range(15, 24):
+        _kalman_touch(k, k.mean, i * HOUR)
+    assert k.earned_slope, "the record of having trended was thrown away"
+
+
+def test_acceleration_stays_inert_until_it_clears_its_own_posterior():
+    """Gated like the slope and a sigma stricter - see ACCEL_SIGMAS."""
+    k = _trended(0.5)
+    if not k.accelerating:
+        assert k._accel_carry(5.0) == 0.0
+    # Whatever it has learned, the gate is the published rule.
+    assert k.accelerating == (
+        k.var_accel > 0.0 and abs(k.accel) >= lv.ACCEL_SIGMAS * math.sqrt(k.var_accel)
+    )
+
+
+def test_the_third_state_survives_a_pickle_round_trip():
+    """The filter is restored from a msgpack snapshot on every start."""
+    k = _trended(0.5)
+    back = pickle.loads(pickle.dumps(k))
+    assert (back.accel, back.var_accel, back.cov_accel) == (k.accel, k.var_accel, k.cov_accel)
+    assert (back.prev_slope, back.earned_slope) == (k.prev_slope, k.earned_slope)
+    assert back.turning == k.turning
+
+
+@pytest.mark.parametrize(
+    ("label", "prev", "now", "expected"),
+    [
+        ("an uptrend decaying toward zero", +0.5, +0.2, True),
+        ("an uptrend reversing gently", +0.5, -0.3, True),
+        # **The case the first version got wrong.** A hard reversal leaves the
+        # slope steeper than it was, in the other direction, and a magnitude
+        # test rejected the clearest turning point there is.
+        ("an uptrend reversing hard", +0.5, -0.8, True),
+        ("a downtrend decaying toward zero", -0.5, -0.2, True),
+        ("a downtrend reversing gently", -0.5, +0.3, True),
+        ("a downtrend reversing hard", -0.5, +0.8, True),
+        ("an uptrend steepening", +0.5, +0.9, False),
+        ("a downtrend steepening", -0.5, -0.9, False),
+    ],
+)
+def test_turning_is_symmetric_and_survives_a_hard_reversal(label, prev, now, expected):
+    """Up into down and down into up, at any steepness."""
+    k = Kalman(mean=100.0, variance=1.0, updated=0.0)
+    k.earned_slope = True
+    k.prev_slope, k.slope = prev, now
+    assert k.turning is expected, label
+
+
+def test_a_level_that_never_trended_is_never_turning_however_the_slope_moves():
+    k = Kalman(mean=100.0, variance=1.0, updated=0.0)
+    k.prev_slope, k.slope = 0.5, -0.8
+    assert not k.earned_slope
+    assert not k.turning
+    assert not k.crossed
+
+
+@pytest.mark.parametrize("rising", [True, False])
+def test_a_reversal_is_detected_the_same_way_in_both_directions(rising):
+    """Through real touches, not hand-set fields.
+
+    The parametrised case above pins the predicate; this pins that the filter
+    actually reaches those states from a sequence of observations, and that an
+    uptrend flipping down and a downtrend flipping up are mirror images rather
+    than two code paths.
+    """
+    per_hour = 0.5 if rising else -0.5
+    pull = -6.0 if rising else 6.0
+    k = Kalman(mean=100.0, variance=1.0, updated=0.0)
+    for i in range(1, 15):
+        _kalman_touch(k, 100.0 + per_hour * i, i * HOUR)
+    assert k.trending
+    assert k.earned_slope
+    earned = k.slope
+    assert (earned > 0.0) is rising
+
+    for i in range(15, 26):
+        _kalman_touch(k, k.at(i * HOUR) + pull, i * HOUR)
+        if k.crossed:
+            break
+    assert k.crossed, "a sustained pull the other way never flipped the slope"
+    assert k.turning
+    assert (k.slope > 0.0) is not rising
+    # Mirrored, not merely both true: the magnitudes match to the sign.
+    assert k.slope == pytest.approx(-_mirror(k, earned), rel=1e-9)
+
+
+def _mirror(k: Kalman, earned: float) -> float:
+    """The slope this filter would have reached from the opposite trend."""
+    return abs(k.slope) * (1.0 if earned > 0.0 else -1.0)
+
+
+def test_the_touch_noise_is_the_measured_dispersion_not_a_chosen_number():
+    """`R` is the denominator of the gain, so it decides how fast a level learns.
+
+    0.40 comes from `level-dispersion.md` - the median spread of touches around
+    their level across 22,402 levels, the same on 1h, 4h and 1d - and is
+    corroborated from the other end by the conformal pools covering 97.6-98.6%
+    against a 90% target. The old 0.5 was chosen rather than measured, and
+    being 25% too wide made every gain too small.
+    """
+    assert lv.TOUCH_NOISE_VOL == 0.40
+
+
+def test_narrower_noise_makes_a_confident_level_learn_faster():
+    """The point of the change, and where it bites hardest.
+
+    Gain is `variance / (variance + R)`, so shrinking `R` matters most when
+    `variance` is already small - which is precisely a level that has been
+    touched often and had stopped moving.
+    """
+
+    def gain_for(noise_vol: float, sigma_vol: float) -> float:
+        variance = sigma_vol**2
+        return variance / (variance + noise_vol**2)
+
+    settled = gain_for(lv.TOUCH_NOISE_VOL, 0.2) / gain_for(0.5, 0.2)
+    loose = gain_for(lv.TOUCH_NOISE_VOL, 1.5) / gain_for(0.5, 1.5)
+    assert settled > 1.4, "a settled level should correct substantially faster"
+    assert loose < 1.1, "an unsure level was already near gain 1 and barely changes"
+    assert settled > loose
+
+
+def test_the_slope_learns_faster_for_the_same_reason():
+    """The slope is learned only through `covariance / innovation`, so it is
+    scaled by the same denominator the price gain is."""
+    quiet = Kalman(mean=100.0, variance=1.0, updated=0.0)
+    for i in range(1, 15):
+        _kalman_touch(quiet, 100.0 + 0.5 * i, i * HOUR)
+    assert quiet.trending
+    assert abs(quiet.slope) > 0.0
+
+
+# ------------------------------------------------------------------ the sweep edge
+
+
+def test_the_sweep_edge_widens_when_the_mean_depth_is_barely_known():
+    """**The point of filtering the depth.** The EWMA had no notion of its own
+    uncertainty, so a side with two wicks and a side with fifty produced
+    equally confident edges - and a stop is placed against both."""
+    from till_infinity.structures.levels import SideStats
+
+    thin, thick = SideStats(), SideStats()
+    for i, depth in enumerate(((0.8, 1.2)), start=1):
+        thin.observe_wick(depth, i * HOUR)
+    for i in range(1, 41):
+        thick.observe_wick(0.8 if i % 2 else 1.2, i * HOUR)
+
+    assert thin.wick_filter is not None
+    assert thick.wick_filter is not None
+    assert thick.wick_filter.variance < thin.wick_filter.variance
+    # The same spread of depths, but the thin side knows its centre less well
+    # and must reach further to cover the next sweep.
+    assert thin.wick_deep_vol(2.0) > thick.wick_deep_vol(2.0)
+
+
+def test_the_filtered_depth_tracks_sweeps_getting_deeper():
+    from till_infinity.structures.levels import SideStats
+
+    stats = SideStats()
+    for i in range(1, 31):
+        stats.observe_wick(0.5 + 0.03 * i, i * HOUR)
+    assert stats.wick_filter is not None
+    # Nearer the recent depths than the average of all of them.
+    assert stats.wick_filter.mean > stats.wick_sum / stats.wick_n
+
+
+def test_a_wick_without_a_clock_still_records_the_depth():
+    """Every existing caller and test passes no `when`; none may lose data."""
+    from till_infinity.structures.levels import SideStats
+
+    stats = SideStats()
+    stats.observe_wick(0.9)
+    assert stats.wick_vol > 0.0
+    assert stats.wick_n == 1.0
+    assert stats.wick_filter is None
+
+
+def test_merging_two_sweep_edges_weights_by_certainty():
+    """Two estimates of one quantity combine by inverse variance, so the more
+    certain side pulls harder and the result beats either input."""
+    from till_infinity.structures.levels import SideStats
+
+    sure, unsure = SideStats(), SideStats()
+    for i in range(1, 41):
+        sure.observe_wick(1.0, i * HOUR)
+    unsure.observe_wick(3.0, HOUR)
+    before = sure.wick_filter.variance
+
+    sure.merge(unsure)
+    assert sure.wick_filter.variance <= before
+    assert 1.0 <= sure.wick_filter.mean < 2.0, "the one-wick side pulled too hard"

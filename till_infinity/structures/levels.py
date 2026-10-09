@@ -61,6 +61,49 @@ from .vol.volatility import Volatility
 #: sense the data can distinguish.
 ZONE_SIGMA = 2.0
 
+#: How much a single **wick depth** is believed, in volatility units.
+#:
+#: Wick depth is noisier than a touch price: the origin is where price turned
+#: and is observed twice over, where the extreme is one print that may be one
+#: order deep. Wider than `TOUCH_NOISE_VOL` for that reason, and this one is
+#: judgement rather than measurement - `level-dispersion.md` fitted the spread
+#: of touches around a level, not of wicks past an origin. Stated here so the
+#: study that corrects it knows what it is correcting.
+WICK_NOISE_VOL = 0.6
+
+#: How fast the mean sweep depth is allowed to wander, in volatility units per
+#: hour. A tenth of the level's own `DRIFT_VOL_PER_HOUR`: where price turns can
+#: move with the market, but how far past it liquidity is taken is a property
+#: of the book, which changes more slowly than the price does.
+WICK_DRIFT_VOL_PER_HOUR = 0.002
+
+#: How much a single touch is believed, in volatility units. The filter's `R`.
+#:
+#: **0.40 from 2026-10-09, measured; it was 0.5, chosen.** Two independent
+#: routes put the old number about 25% too wide:
+#:
+#: * `research/docs/level-dispersion.md` fitted how tightly each level's touches
+#:   actually cluster, over **22,402 levels of five or more touches**. The median
+#:   is **0.40 volatility units on every timeframe** - 1h, 4h and 1d agree, which
+#:   is itself the reason to trust it rather than a per-timeframe number.
+#: * The conformal pools reached it from the other end: **97.6% to 98.6%
+#:   realised coverage against a 90% target**. A band that contains the next
+#:   touch far more often than it was asked to is a band built from an
+#:   overstated noise.
+#:
+#: What being too wide costs is not cosmetic. `R` is the denominator of the
+#: Kalman gain, so an inflated one shrinks `variance / (variance + R)` on every
+#: touch: the level under-corrects toward where price actually turned, and -
+#: because the slope is learned only through `covariance / innovation` - the
+#: slope under-corrects with it. The filter was not merely quoting a wide band,
+#: it was **learning more slowly than its evidence justified**, on both states.
+#:
+#: Narrower noise means larger gains and tighter zones. The conformal
+#: calibrator will absorb part of the width change, since it scores the
+#: standardised residual `(extreme - at(when)) / spread` and `spread` moves
+#: with this - which is the right place for the remaining adjustment to land.
+TOUCH_NOISE_VOL = 0.40
+
 #: How many of its own standard deviations a level's slope must clear before
 #: anything is allowed to use it.
 #:
@@ -88,6 +131,31 @@ SLOPE_HORIZON_HOURS = 24.0
 #: slope enough variance to forget what it learned. A tenth keeps the slope's
 #: memory roughly an order of magnitude longer than the price's.
 SLOPE_DRIFT_SHARE = 0.1
+
+#: The same guard as `SLOPE_SIGMAS`, one derivative up, and **stricter on
+#: purpose**.
+#:
+#: A velocity state fits a slope to noise given the chance; an acceleration
+#: state fits one to the noise in the *slope*, which is itself an estimate from
+#: a handful of touches. The first version of the slope was ungated and widened
+#: every zone in the book - see `Kalman` - and that failure mode is available
+#: again here with less evidence behind it. Four rather than three, because the
+#: cost of being slow is a level that behaves exactly as it does today.
+ACCEL_SIGMAS = 4.0
+
+#: How far ahead acceleration may be carried, in hours.
+#:
+#: Shorter than `SLOPE_HORIZON_HOURS` and for a sharper version of the same
+#: reason: a quadratic extrapolated is wrong faster than a line extrapolated.
+#: Six hours is the span over which "this level is turning over" is a statement
+#: about now rather than a forecast.
+ACCEL_HORIZON_HOURS = 6.0
+
+#: The acceleration's process noise per hour, as a share of the slope's.
+#:
+#: The same judgement as `SLOPE_DRIFT_SHARE` applied once more: a level's
+#: *change of direction* should wander more slowly than its direction.
+ACCEL_DRIFT_SHARE = 0.1
 
 #: A zone is never narrower than this many volatility units, however confident
 #: the filter becomes. A band tighter than a typical move is a band price
@@ -369,6 +437,75 @@ class Kalman(Restorable):
     var_slope: float = 0.0
     #: The off-diagonal of the covariance, `P01`. Symmetric, so one number.
     covariance: float = 0.0
+    #: Price units per hour per hour. The third state - see `accelerating`.
+    accel: float = 0.0
+    #: The acceleration's own posterior variance, `P22`.
+    var_accel: float = 0.0
+    #: `P12`, the slope-acceleration off-diagonal. The one that lets an
+    #: acceleration be learned at all, for the same reason `covariance` is.
+    cov_accel: float = 0.0
+    #: The slope as it stood before the last touch, and whether this level has
+    #: **ever** cleared `SLOPE_SIGMAS`. Both exist for `turning`, and neither
+    #: feeds the filter: they are a record of what the filter did, not an input
+    #: to it, so a level that never earns a slope is still unchanged to the bit.
+    prev_slope: float = 0.0
+    earned_slope: bool = False
+
+    @property
+    def slope_change(self) -> float:
+        """How much the last touch moved the slope. Signed.
+
+        The directly measured quantity, as opposed to `accel`, which is the
+        modelled one. A touch is the only thing that moves a slope - `predict`
+        grows `var_slope` but leaves `slope` alone - so this is stamped to a
+        specific touch and joins cleanly to whatever price did next.
+        """
+        return self.slope - self.prev_slope
+
+    @property
+    def turning(self) -> bool:
+        """**Earned a trend, and is now decaying toward or through zero.**
+
+        Not "the slope is near zero", which is three states wearing one number:
+        a level that decelerated out of a trend, a level that never had a slope
+        (`slope` is initialised to exactly 0.0, which is most of them), and a
+        level with too few touches for `trending` to mean anything. Only the
+        first is a turning point, and selecting on the magnitude alone would
+        measure the base rate of levels instead.
+
+        So this asks two things: has this level ever earned a slope, and did the
+        last touch move that slope *against* the direction it had. The second is
+        what separates turning over from merely steepening - and it covers both
+        a trend decaying toward zero and one that has gone straight through it.
+
+        **It deliberately does not ask whether the slope got smaller.** The
+        first version did, and that rejected the clearest turning point there
+        is: an uptrend reversing hard into a downtrend, where the new slope is
+        *steeper* than the old one in the opposite direction. +0.5 to -0.8 is
+        the case, and it read as not turning. The test is also redundant for
+        the case it was meant to cover, since a slope that moves against itself
+        without changing sign is necessarily smaller than it was.
+        """
+        if not self.earned_slope or self.prev_slope == 0.0:
+            return False
+        return (self.slope - self.prev_slope) * self.prev_slope < 0.0
+
+    @property
+    def crossed(self) -> bool:
+        """The slope changed sign on the last touch, having earned one."""
+        return self.earned_slope and self.slope * self.prev_slope < 0.0
+
+    @property
+    def accelerating(self) -> bool:
+        """Has the acceleration cleared its own uncertainty?
+
+        The same guard as `trending`, one derivative up and a sigma stricter -
+        see `ACCEL_SIGMAS`. Until it passes, the third state is carried in the
+        covariance and changes nothing a caller can see.
+        """
+        if self.var_accel <= 0.0:
+            return False
+        return abs(self.accel) >= ACCEL_SIGMAS * math.sqrt(self.var_accel)
 
     @property
     def trending(self) -> bool:
@@ -384,6 +521,22 @@ class Kalman(Restorable):
     def _span(self, hours: float) -> float:
         """How far ahead the covariance is propagated, in hours."""
         return min(max(hours, 0.0), SLOPE_HORIZON_HOURS)
+
+    def _accel_span(self, hours: float) -> float:
+        """How far ahead the acceleration is propagated, in hours."""
+        return min(max(hours, 0.0), ACCEL_HORIZON_HOURS)
+
+    def _accel_carry(self, hours: float) -> float:
+        """How far the *slope* is allowed to move along the acceleration.
+
+        Zero until the acceleration has cleared `ACCEL_SIGMAS`, and zero again
+        unless the slope itself is trending: carrying a slope that is not used
+        would be arithmetic nobody reads, and it would let an unearned
+        acceleration leak into `var_slope` and so into the gate on the slope.
+        """
+        if not (self.accelerating and self.trending):
+            return 0.0
+        return self._accel_span(hours)
 
     def _carry(self, hours: float) -> float:
         """How far the *mean* is allowed to move along the slope.
@@ -405,17 +558,39 @@ class Kalman(Restorable):
         elapsed_hours = max(0.0, (when - self.updated)) / 3600.0
         span = self._span(elapsed_hours)
         carry = self._carry(elapsed_hours)
+        # Read before anything moves, so the slope's propagation and the
+        # acceleration's see the same state - the same discipline the price
+        # and slope terms already keep below.
+        accel_carry = self._accel_carry(elapsed_hours)
+        accel_span = self._accel_span(elapsed_hours)
         if carry > 0.0:
             # F P F' with F = [[1, carry], [0, 1]], read before the mean moves
             # so both see the same state.
             self.variance += 2.0 * carry * self.covariance + carry * carry * self.var_slope
             self.mean += self.slope * carry
+        if accel_carry > 0.0:
+            # The third row of the same F, gated the same way: the slope moves
+            # along the acceleration and takes its uncertainty with it. The
+            # price's own `0.5 * accel * dt**2` is deliberately **not** applied
+            # - the mean has already been carried along the pre-move slope
+            # above, and adding the quadratic term as well would advance the
+            # level twice on one elapsed span.
+            self.var_slope += 2.0 * accel_carry * self.cov_accel + (
+                accel_carry * accel_carry * self.var_accel
+            )
+            self.slope += self.accel * accel_carry
         if span > 0.0:
             # Ungated, and it must be: the off-diagonal is the only thing that
             # lets a slope be learned, so gating it is a deadlock.
             self.covariance += span * self.var_slope
+        if accel_span > 0.0:
+            # And ungated for exactly the same reason, one derivative up.
+            self.cov_accel += accel_span * self.var_accel
         self.variance += (drift_per_hour**2) * elapsed_hours
         self.var_slope += ((drift_per_hour * SLOPE_DRIFT_SHARE) ** 2) * elapsed_hours
+        self.var_accel += (
+            (drift_per_hour * SLOPE_DRIFT_SHARE * ACCEL_DRIFT_SHARE) ** 2
+        ) * elapsed_hours
         self.updated = max(self.updated, when)
 
     def update(self, observation: float, noise: float, when: float) -> float:
@@ -435,16 +610,38 @@ class Kalman(Restorable):
         innovation = self.variance + noise
         gain = self.variance / innovation
         slope_gain = self.covariance / innovation
+        # **`P02`, the price-acceleration off-diagonal, is not carried.** A full
+        # constant-acceleration filter keeps six covariance terms; this keeps
+        # four and reaches the third state only through the slope it is
+        # attached to. That is a deliberate approximation and worth naming: the
+        # acceleration is learned from how the slope moves, not from how the
+        # price moves, so an acceleration can only ever be as good as the slope
+        # under it - which is the same thing `_accel_carry` enforces by
+        # refusing to carry one unless the slope is trending.
+        accel_gain = (self.cov_accel / innovation) if self.covariance else 0.0
         residual = observation - self.mean
+        # Recorded before the slope moves, so `slope_change` and `turning`
+        # describe this touch. Not an input to the filter - see the fields.
+        self.prev_slope = self.slope
         self.mean += gain * residual
         self.slope += slope_gain * residual
-        # P <- (I - K H) P, H = [1, 0]. Symmetry survives this form; the old
+        self.accel += accel_gain * residual
+        # P <- (I - K H) P, H = [1, 0, 0]. Symmetry survives this form; the old
         # covariance is needed for the slope row, so it is read before it moves.
         prior_covariance = self.covariance
+        prior_cov_accel = self.cov_accel
         self.variance *= 1.0 - gain
         self.covariance *= 1.0 - gain
+        self.cov_accel = max(0.0, self.cov_accel - accel_gain * prior_covariance)
         self.var_slope = max(0.0, self.var_slope - slope_gain * prior_covariance)
+        self.var_accel = max(0.0, self.var_accel - accel_gain * prior_cov_accel)
         self.updated = max(self.updated, when)
+        # Latched, never cleared: `turning` asks whether this level *has* earned
+        # a trend, and a level that earned one and then flattened is precisely
+        # the case it is for. Clearing it on the first touch that drops below
+        # the gate would delete the state the question is about.
+        if self.trending:
+            self.earned_slope = True
         return gain
 
     def at(self, when: float) -> float:
@@ -493,6 +690,21 @@ class SideStats(Restorable):
     #: price turned and the wick is how far it was pushed to get there, so the
     #: level occupies the span between them rather than a band centred on one.
     wick_vol: float = 0.0
+    #: The same depth, **filtered** rather than exponentially smoothed.
+    #:
+    #: `wick_vol` is an EWMA with a fixed 0.2 weight, which has no notion of
+    #: its own uncertainty: a side with two wicks and a side with fifty produce
+    #: equally confident edges, and a stop is placed against both. This gives
+    #: the mean depth a gain that falls as evidence accumulates and a slope it
+    #: can earn, so a level whose sweeps are getting deeper says so instead of
+    #: averaging it away. `None` until the first wick - a filter seeded with a
+    #: zero would start every level claiming sweeps reach nowhere.
+    #:
+    #: **It filters the mean, and the mean is not the quantile.** The variance
+    #: this carries is uncertainty about *where the average sweep ends*, which
+    #: is a different thing from how far sweeps spread around it. Both go into
+    #: `wick_deep_vol`, and conflating them is the one mistake available here.
+    wick_filter: Kalman | None = None
     #: Sum, sum-of-squares and count of wick depth, for its **dispersion**.
     #:
     #: `wick_vol` above is a mean, and a mean is the wrong statistic for the
@@ -593,14 +805,38 @@ class SideStats(Restorable):
                 total = mine + theirs
                 if total > 0:
                     self.wick_vol = (self.wick_vol * mine + other.wick_vol * theirs) / total
+        # And the filtered depth, which is a mean with a variance and so cannot
+        # be summed either. Combined the way two estimates of one quantity are:
+        # inverse-variance weighted, so the side that was more certain counts
+        # for more, and the result is at least as certain as either input.
+        #
+        # This is the field `test_merging_a_level_keeps_every_statistic` exists
+        # to catch - it walks `dataclasses.fields`, so a field added later is
+        # covered on the day it is added, and it caught this one.
+        self.wick_filter = _merge_filters(self.wick_filter, other.wick_filter)
 
-    def observe_wick(self, depth_vol: float) -> None:
-        """Fold in how far the wick ran past the origin, exponentially."""
+    def observe_wick(self, depth_vol: float, when: float = 0.0) -> None:
+        """Fold in how far the wick ran past the origin.
+
+        Both estimates are kept. The EWMA stays because it is what every
+        restored level already carries and what the filter falls back to while
+        cold; the filter is what a settled level is read from.
+        """
         depth_vol = max(0.0, depth_vol)
         self.wick_vol = depth_vol if not self.wick_vol else self.wick_vol * 0.8 + depth_vol * 0.2
         self.wick_sum += depth_vol
         self.wick_sq += depth_vol * depth_vol
         self.wick_n += 1.0
+        if not when:
+            return
+        if self.wick_filter is None:
+            # Seeded on the first observation rather than at zero, and with a
+            # variance equal to the noise: one wick is one wick, and the next
+            # one should move it about halfway.
+            self.wick_filter = Kalman(mean=depth_vol, variance=WICK_NOISE_VOL**2, updated=when)
+            return
+        self.wick_filter.predict(when, WICK_DRIFT_VOL_PER_HOUR)
+        self.wick_filter.update(depth_vol, WICK_NOISE_VOL**2, when)
 
     @property
     def wick_sd_vol(self) -> float:
@@ -623,7 +859,17 @@ class SideStats(Restorable):
         spread = self.wick_sd_vol
         if spread <= 0 or self.wick_n < 2:
             return self.wick_vol
-        return max(self.wick_vol, self.wick_sum / self.wick_n + sigmas * spread)
+        held = self.wick_filter
+        centre = held.mean if held is not None else self.wick_sum / self.wick_n
+        # **Predictive, not just dispersive.** The question is how deep the
+        # *next* sweep reaches, and that is uncertain for two separate reasons:
+        # sweeps vary around their mean, and the mean itself is only estimated.
+        # Adding the variances is the honest combination, and it is what makes
+        # a two-wick side quote a wider edge than a fifty-wick side with the
+        # same spread - which the EWMA could not express at all.
+        uncertainty = held.variance if held is not None else 0.0
+        reach = math.sqrt(spread * spread + max(uncertainty, 0.0))
+        return max(self.wick_vol, centre + sigmas * reach)
 
     def record(self, outcome: Outcome, push_vol: float) -> None:
         self.touches += 1
@@ -960,12 +1206,19 @@ class Level(Restorable):
             0.4 * evidence + 0.25 * max(0.0, agreement) + 0.2 * recency + 0.15 * breadth, 4
         )
 
-    def observe_wick(self, side: Side, origin: float, wick: float, vol: Volatility) -> None:
-        """Record how far past the origin the wick ran, on the side it came from."""
+    def observe_wick(
+        self, side: Side, origin: float, wick: float, vol: Volatility, when: float = 0.0
+    ) -> None:
+        """Record how far past the origin the wick ran, on the side it came from.
+
+        `when` is what lets the depth be filtered rather than only smoothed -
+        see `SideStats.wick_filter`. Defaulted so a caller that has no clock
+        still records the depth, which is what every existing test does.
+        """
         if not origin:
             return
         depth = abs((wick - origin) / origin * 10_000) / vol.bps
-        self.stats(side).observe_wick(depth)
+        self.stats(side).observe_wick(depth, when or self.last_touch)
 
     def observe_touch(
         self,
@@ -1001,7 +1254,7 @@ class Level(Restorable):
                     (extreme - self.filter.at(when)) / spread,
                     ZONE_SIGMA,
                 )
-        noise = vol.price_units(self.price, 0.5) ** 2
+        noise = vol.price_units(self.price, TOUCH_NOISE_VOL) ** 2
         gain = self.filter.update(extreme, noise, when)
         self.last_touch = when
         if self.state is State.FRESH:
@@ -1087,6 +1340,27 @@ class Level(Restorable):
 
 
 # ------------------------------------------------------------------ forming
+
+
+def _merge_filters(into: Kalman | None, other: Kalman | None) -> Kalman | None:
+    """Two estimates of one quantity, combined by inverse variance.
+
+    The precision-weighted mean is the right combination for two independent
+    estimates of the same thing: the more certain side pulls harder, and the
+    result is at least as certain as either input. Falls back to whichever
+    exists when only one does.
+    """
+    if other is None:
+        return into
+    if into is None:
+        return other
+    a = 1.0 / max(into.variance, 1e-12)
+    b = 1.0 / max(other.variance, 1e-12)
+    return Kalman(
+        mean=(into.mean * a + other.mean * b) / (a + b),
+        variance=1.0 / (a + b),
+        updated=max(into.updated, other.updated),
+    )
 
 
 def seed_price(point: Point) -> float:
