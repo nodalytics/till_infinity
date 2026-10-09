@@ -40,7 +40,7 @@ quietly, so those are the parts kept in the record.
 
 The corollary is the uncomfortable half. It means most of what is built here
 will earn nothing, and that has to be discoverable rather than argued about -
-which is what [research/inert.md](../research/inert.md) is: a list of things
+which is what [research/inert.md](../research/docs/inert.md) is: a list of things
 computed correctly and read by nothing, kept because a fix that ships and
 changes no number is the failure mode this desk is most prone to.
 
@@ -442,7 +442,7 @@ equally, and the half that failed is the one most systems are built on.
 rate on the arriving side, resolutions separate 59.4% to 92.2% across four
 bands with an AUC of 0.648 - the strongest single signal a level carries, and
 the only one that *strengthened* when a volatility-denominator bug was fixed.
-See [strength.md](../research/strength.md).
+See [strength.md](../research/docs/strength.md).
 
 **Not supported.** Price is not drawn to a level. Across 22,219 evaluation bars
 a level was reached within twenty bars 44.9% of the time against 49.5% for an

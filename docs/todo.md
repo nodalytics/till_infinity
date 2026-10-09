@@ -8,7 +8,7 @@ duplicated here.
 ## Residual time is the hold clock, and the hold clock is where the money went
 
 Noted 2026-09-08 from Agudelo-España et al., *Bayesian Online Prediction of
-Change Points* (UAI 2020) - see [research/reading.md](../research/reading.md).
+Change Points* (UAI 2020) - see [research/reading.md](../research/docs/reading.md).
 
 Standard BOCPD infers **run length**: how long since the last regime change.
 That paper extends it to **residual time**: how many steps until the *next*
@@ -35,7 +35,7 @@ left.
    clock costs **-319.50** and the stop costs **-1,801.56**; per trade that is
    -2.68 against -24.35. `thesis-only` is -255.35 on the clock against -690.45
    on stops. A residual-time model would be aimed at the smaller of two
-   problems. See [research/locking.md](../research/locking.md).
+   problems. See [research/locking.md](../research/docs/locking.md).
 2. **Score a trivial residual-time baseline first**: the median observed
    regime duration per feed and interval, which is a lookup. A Bayesian
    posterior has to beat that before it has earned anything.
@@ -259,7 +259,7 @@ Noted 2026-09-08. The proposal is poker's: have models play versions of
 themselves and let the improvement compound.
 
 **Self-play needs an opponent whose improvement forces yours, and there is not
-one.** [research/reading.md](../research/reading.md) already records this from
+one.** [research/reading.md](../research/docs/reading.md) already records this from
 the AlphaGo Zero side - *"self-play has no analogue at all"* - and the reason is
 structural rather than a matter of effort. In poker the opponent adapts, so a
 better strategy makes the game harder and the pressure is what produces
@@ -281,7 +281,7 @@ names the exception:
 > generated process we can draw unlimited samples from, with no structure to
 > find.
 
-That was a hypothesis when it was written. [spiking.md](../research/spiking.md)
+That was a hypothesis when it was written. [spiking.md](../research/docs/spiking.md)
 now measures the generator: on Boom 500 the spike arrival is **memoryless with a
 coefficient of variation of 0.99** at one per 11.9 minutes, the grind sits
 inside a 0.24 band, and the spike size distribution is in hand. **That is enough
@@ -387,7 +387,7 @@ subscription for three instruments before any of the above is possible.
 
 ## Spotting a trap while it is happening, not after - noted 2026-09-08
 
-[research/trapping.md](../research/trapping.md) counts traps **after they
+[research/trapping.md](../research/docs/trapping.md) counts traps **after they
 resolve**: price went through a level and came back, and the counter increments
 once the return is in. That is the right way to measure them and it is useless
 at the moment a trade has to be placed.
@@ -415,7 +415,7 @@ the break within seconds - and `Cusum` is already stateful per feed and
 threshold-adaptive.
 
 **The obstacle that has to be respected.**
-[research/resolution.md](../research/resolution.md) measured that **two thirds
+[research/resolution.md](../research/docs/resolution.md) measured that **two thirds
 of touch outcomes resolve within two seconds**. For a model that is either a
 gift or a wall depending on which side of the two seconds the decision sits: a
 trap that completes in a second is not something an order reacts to, it is
@@ -523,7 +523,7 @@ else. That is a size and selection question rather than a side one.
 ## The round-number control - run 2026-09-07, and it could not answer
 
 Osler's *Support for Resistance* (FRBNY Economic Policy Review, 2000; see
-[research/reading.md](../research/reading.md)) tests the support and resistance
+[research/reading.md](../research/docs/reading.md)) tests the support and resistance
 levels six FX firms published to their customers and finds they do predict
 intraday trend interruptions. It also finds that **round numbers predict about
 as well as most published levels**.
@@ -554,7 +554,7 @@ round number is worth, and the zone code has a cheaper substitute. If the drawn
 levels win, this is the first outside validation the level book has ever had.
 
 **Run on 2026-09-07 and it answered none of those.**
-[research/rounding.md](../research/rounding.md) has it in full. Drawn, round
+[research/rounding.md](../research/docs/rounding.md) has it in full. Drawn, round
 and random books all hold price within one standard error of each other over
 5,877 approaches - and the positive control fails with them: splitting the
 drawn book by its own touch count separates the well-tested half from the
@@ -562,7 +562,7 @@ untested one by 2.34pp against a standard error of 2.03.
 
 A counter that cannot tell a level touched forty times from one touched twice
 is not entitled to an opinion about round numbers, so the null means nothing.
-The reason was already on file: [resolution.md](../research/resolution.md)
+The reason was already on file: [resolution.md](../research/docs/resolution.md)
 measured that **two thirds of touch outcomes resolve within two seconds**, and
 this audit ran at 5m.
 
@@ -576,7 +576,7 @@ telling them apart.
 ## What is left of the origin-localization specification - 2026-09-07
 
 Only what is outstanding. What was done or refused is recorded in
-[research/localising.md](../research/localising.md) with the numbers, which is
+[research/localising.md](../research/docs/localising.md) with the numbers, which is
 where a finished thing belongs - a todo that lists its own completed items
 stops being a list of what to do.
 
@@ -650,7 +650,7 @@ fixed first.
 
 **Why it is worth wanting.** Everything this system draws is inferred from
 price. Open interest is the one exception already collected, and
-[research/crypto.md](../research/crypto.md) makes the argument for it: OI plus
+[research/crypto.md](../research/docs/crypto.md) makes the argument for it: OI plus
 price direction separates fresh money from closing, and the price path is
 identical in both cases, so it is information a price-only model cannot
 recover. Options flow is the same kind of claim with more structure - strikes
@@ -672,11 +672,11 @@ more than a better-correlated one, which is the test `slowing` had to pass.
    comparison between instruments rather than about them.
 2. **Consume something already collected.** Open interest has been sitting in
    `positioning.py` unread since it was built. Wiring a fourth source before
-   the first three feed anything is how [inert.md](../research/inert.md) got to
+   the first three feed anything is how [inert.md](../research/docs/inert.md) got to
    nine cases.
 3. **Then the ordinary discipline**: correlate against `approach_vol` and
    `depth_vol` before looking at AUC at all, and run it against the null in
-   [research/null.md](../research/null.md), because a positioning series
+   [research/null.md](../research/docs/null.md), because a positioning series
    measured on a trending market will look predictive whether or not it is.
 
 **The honest prior.** Deribit is one venue on two instruments. Whatever gamma
@@ -708,7 +708,7 @@ drawdowns. Institutions use it to gauge fair value and to minimise market
 impact on an order they were going to place anyway, which is not the same as
 using it to decide whether to place one. So the shape this would take here is
 a **feature and a second opinion on fair value**, published beside the outcome
-and read by nothing, in the order [features.md](../research/features.md)
+and read by nothing, in the order [features.md](../research/docs/features.md)
 argues for.
 
 **What would block it.** VWAP needs volume, and volume is the field this book
@@ -727,7 +727,7 @@ needs before it can be trusted with money.
 
 The evidence behind all of them: `approach_vol` and `depth_vol` together
 separate hold from break at **AUC 0.658** over 10,904 touches
-([research/force.md](../research/force.md)), on a question `up_rate` - which
+([research/force.md](../research/docs/force.md)), on a question `up_rate` - which
 carries almost all of *direction* - answers at 0.4892, i.e. not at all.
 
 ### 1. Refuse the trade the level is about to lose
@@ -737,7 +737,7 @@ existing strategy trades a level *holding*; none of them asks how likely it is
 to give way. A gate that refuses when `break_probability` is high is a filter on
 what already exists rather than a new thing to size.
 
-**Needs first**: the arithmetic in [paying.md](../research/paying.md), applied
+**Needs first**: the arithmetic in [paying.md](../research/docs/paying.md), applied
 to breaks. A refusal is only worth making if the trades it declines lose more
 than the trades it wrongly declines would have won.
 
@@ -992,7 +992,7 @@ the same fault seen from another angle.
 
 ## 0n. Trend context is the strongest thing measured here, and nothing uses it
 
-Found 2026-08-27, written up in [replay.md](../research/replay.md), built by
+Found 2026-08-27, written up in [replay.md](../research/docs/replay.md), built by
 `research/harness/trend.py`. **This is the highest-value unbuilt item on the
 list.**
 
@@ -1134,7 +1134,7 @@ someone measured rather than reasoned.
   out divided by the venues past quorum - 4x on EURUSD and GBPUSD, 3x on
   XAUUSD, 2x on BTCUSD. Every distance in volatility units read that much too
   large. This invalidates measurements, not just numbers: see [levels.md](
-  levels.md) §10b and the agreement section, and [strength.md](../research/strength.md).
+  levels.md) §10b and the agreement section, and [strength.md](../research/docs/strength.md).
 - **`expire`'s return value was discarded** (`04d24c0`), so touches that
   resolved on the clock reached only the kNN memory - no `level.record`, no
   journal, no `facto`. Breaks went 11 to 61 and back checks 3 to 29.
@@ -1289,8 +1289,8 @@ durations are gone. The negative durations are a *separate* bug - they
 concentrate on 1m, the opposite interval - and are untouched by this.
 
 **What it does not touch.** Every research document replays bars only, so the
-findings in [prior.md](../research/prior.md),
-[magnitude.md](../research/magnitude.md) and the rest describe the bar path and
+findings in [prior.md](../research/docs/prior.md),
+[magnitude.md](../research/docs/magnitude.md) and the rest describe the bar path and
 are unaffected. What is now in doubt is whether production behaves like the
 thing that was measured.
 
@@ -1319,12 +1319,12 @@ Two things follow.
 **Do not fit `facto` on this.** It loses at every filter level - to a 1KB
 logistic regression and to the trivial rule alike - and at the honest filter it
 scores **52.0%**, which is a coin flip. That agrees with
-[models.md](../research/models.md), which measured it at 64.3% against 73.1% on
+[models.md](../research/docs/models.md), which measured it at 64.3% against 73.1% on
 replayed touches.
 
 **And the model is the trivial rule again, on production data this time.**
 Logistic and holds are within 0.8 points of each other at every level: 97.3 vs
-97.4, 77.1 vs 77.3, 67.0 vs 67.8. [prior.md](../research/prior.md) found that
+97.4, 77.1 vs 77.3, 67.0 vs 67.8. [prior.md](../research/docs/prior.md) found that
 on the replay; here it is in the journal.
 
 The survival table is also the cleanest statement of the bug:
@@ -1371,11 +1371,11 @@ purpose:
 > outperform pivots, the swing detection is not earning its complexity.**
 
 That control has never run, and this week it would have been worth a great
-deal. [prior.md](../research/prior.md) found the kNN prior contributes nothing
+deal. [prior.md](../research/docs/prior.md) found the kNN prior contributes nothing
 and `similarity.md` reportedly found the distance metric orders neighbours no
 better than random - **but that document does not exist and never has**, so
 treat the second half as unsupported. Measured live in
-[learning.md](../research/learning.md), the kNN beats a one-feature floor by
+[learning.md](../research/docs/learning.md), the kNN beats a one-feature floor by
 3.1 points on 1,996 matched touches, so the cold-start mechanism is not dead. **A
 pivot is on the chart before the first touch**, which is the same problem
 solved without borrowing anything.
@@ -1386,13 +1386,13 @@ daily, `1w` for weekly, both of which exist and are warm (`btc/1d` reads 136.8
 bps against the floor's 0.05).
 
 **Then run the control**, and target magnitude rather than direction:
-[magnitude.md](../research/magnitude.md) found `expected_push` is the only
+[magnitude.md](../research/docs/magnitude.md) found `expected_push` is the only
 component in this project to beat its null, ordering realised profit 7.5x from
 bottom decile to top, while every directional claim reduces to `side`.
 
 ## 0e. `edge` is measuring `side`, and the honest version is a coin flip
 
-**Measured on 2026-08-17, in [prior.md](../research/prior.md).** The most
+**Measured on 2026-08-17, in [prior.md](../research/docs/prior.md).** The most
 consequential finding so far and the one that needs a decision rather than more
 work.
 
@@ -1420,7 +1420,7 @@ measurement. **Make it deliberately.**
 What follows if the honest version is adopted:
 
 - ~~`Memory`, `Features.distance` and the kNN can be deleted~~ - **withdrawn**,
-  see [learning.md](../research/learning.md). The `similarity.md` this rested on
+  see [learning.md](../research/docs/learning.md). The `similarity.md` this rested on
   does not exist in the tree or in git history, and the live bench has the kNN
   3.1 points of edge ahead of a one-feature floor over 1,996 matched touches.
 - The published directional estimate becomes the side-conditioned base rate.
@@ -1432,7 +1432,7 @@ What follows if the honest version is adopted:
 ## 0f. The `reward_to_risk` gate refuses 85% of calls to gain nothing
 
 **Re-verified on 2026-08-27 against the live journal** - see
-[replay.md](../research/replay.md), "Re-verifying the `reward_to_risk` gate".
+[replay.md](../research/docs/replay.md), "Re-verifying the `reward_to_risk` gate".
 The re-check confirmed the direction and substantially softened the claim
 below, so read this first.
 
@@ -1459,7 +1459,7 @@ explanation of it is not supported.
 
 ### The original 2026-08-17 measurement, kept for the record
 
-**Measured in [magnitude.md](../research/magnitude.md).** Read with the
+**Measured in [magnitude.md](../research/docs/magnitude.md).** Read with the
 correction above: these are push figures, not R.
 
 `actionable` requires `reward_to_risk >= MIN_REWARD_TO_RISK`. On 11,113 calls:
@@ -1504,7 +1504,7 @@ already recorded on every touch, so the data to derive a real stop exists.
 
 The two learning-path bugs from the same day are **fixed** - the silent
 `journal.read` clamp that starved `facto.dataset`, and the unscaled features
-that diverged the FM. Both accounted for in [handoff.md](../research/handoff.md). Neither
+that diverged the FM. Both accounted for in [handoff.md](../research/docs/handoff.md). Neither
 touches the two items below, and the first of them now matters *more*: a fit
 can finally see the whole journal, so nothing but the warning below stops it
 drawing 9,000 examples from one afternoon.
@@ -1746,7 +1746,7 @@ strength work below has no history behind it for a while.
 
 **Replace `Level.strength`, do not merely stop multiplying it.** Removing
 confluence breadth from `Zone.strength` was the cheap half.
-[strength.md](../research/strength.md) finds the composite loses to its own best term in
+[strength.md](../research/docs/strength.md) finds the composite loses to its own best term in
 every run - AUC 0.548 against 0.648 for the level's own same-side record - and
 this number is not only reported: `reactions.py` passes it into the model as a
 feature. Mixing one signal that works with three that do not is diluting the
@@ -1880,7 +1880,7 @@ one outlet counted twice by our own collection - so `MACRO`'s headline lens is
 looking for something the data does not contain. And symbol normalisation is
 unbuilt, so half the corpus cannot be routed to an instrument at all.
 
-So the order is the one [news-models.md](../research/news-models.md) §2 already gives:
+So the order is the one [news-models.md](../research/docs/news-models.md) §2 already gives:
 symbol normalisation, then keyword matching against TradingView's tagged rows,
 then a headline trigger, then the join with price. Wiring the trigger first
 inverts it. Today the roles read prices and structures
@@ -1901,7 +1901,7 @@ Concretely, in the order the groundwork exists:
   which is exactly what `agents/data.py` already exposes. The join is the
   product; either half alone is what we have now.
 - **Faster.** The window is the scarcest resource in the system. See
-  [bandits.md](../research/bandits.md): choosing which instruments deserve the
+  [bandits.md](../research/docs/bandits.md): choosing which instruments deserve the
   ten trigger slots is the one genuinely bandit-shaped problem here, and the
   incumbent policy is "first ten past the gate".
 - **More accurate.** The spread finding on 2026-08-14 reported a reading "at
@@ -1910,7 +1910,7 @@ Concretely, in the order the groundwork exists:
   spreads; the other tools in `agents/tools.py` want the same read-through.
 
 **The directional call does not beat "assume the level holds", and the feature
-set is why.** Measured in [features.md](../research/features.md), and it is the
+set is why.** Measured in [features.md](../research/docs/features.md), and it is the
 most serious finding of 2026-08-14 because it is about the premise rather than
 the plumbing.
 
@@ -2050,7 +2050,7 @@ than what argues against it. Do that one first.
 
 **Snapshot the microstructure state into a touch when it opens.** The
 question "what should we measure at a touch" is answered in
-[research/features.md](../research/features.md) for everything derivable from
+[research/features.md](../research/docs/features.md) for everything derivable from
 bars: nothing predicts direction beyond `side` except the level's own record,
 now added as `up_rate`. The candidates that remain are microstructure, and they
 cannot be tested - not because they were tried and failed, but because there is
@@ -2109,11 +2109,11 @@ comparison. `Engine(formation=...)` takes `pip`, `run` or `both` and
 `research/harness/` replays all three over one history and the outcome
 machinery says which set price respects - the same question
 [levels.md](levels.md) leaves unresolved for pip against run, and which
-[strength.md](../research/strength.md) showed was measured on a broken
+[strength.md](../research/docs/strength.md) showed was measured on a broken
 volatility denominator anyway and needs redoing regardless.
 
 One caution from what is already measured, and it cuts both ways.
-[research/features.md](../research/features.md) found `approach_vol` predicts
+[research/features.md](../research/docs/features.md) found `approach_vol` predicts
 nothing about direction once side is known - so momentum *at a touch* is not
 informative. That is not evidence against momentum-derived *levels*: the claim
 here is about where a level should be drawn, not about what predicts once
@@ -2144,13 +2144,13 @@ was simply never re-run after the config grew.
 till-infinity prices backfill --interval 1d   # then --interval 1h, --interval 15m
 ```
 
-**Done on 2026-08-15, and it changed an answer.** [turns.md](../research/turns.md)
+**Done on 2026-08-15, and it changed an answer.** [turns.md](../research/docs/turns.md)
 went from 131 turns to 310 and from "does not separate from chance" to **AUC
 0.595, interval 0.540-0.654**. The method did not change at all; only the
 sample did.
 
 **A correction, because the first version of this item was wrong.** It claimed
-the daily backfill would also give [cycles.md](../research/cycles.md) the span
+the daily backfill would also give [cycles.md](../research/docs/cycles.md) the span
 it lacked. It does not: cycles is limited by *fine-grained* history, because
 the touch replay reads 1m/5m/15m/1h and never touches a daily bar. Daily bars
 feed the cycle *label*, not the touches being labelled.
@@ -2174,15 +2174,15 @@ Three things worth keeping:
 
 - **Re-run the harness after any backfill.** Every research document was
   measured off `touches.pkl`, which regenerates from whatever is in the store.
-  The numbers in [features.md](../research/features.md),
-  [models.md](../research/models.md) and [edge.md](edge.md) all moved.
+  The numbers in [features.md](../research/docs/features.md),
+  [models.md](../research/docs/models.md) and [edge.md](edge.md) all moved.
 - **A gap in collection depth is invisible from the outside.** Nothing alerted,
   nothing failed, and the live pipeline was healthy throughout - because the
   intervals it consumes were being collected. Only a research question that
   needed *history* rather than *freshness* surfaced it. Worth a periodic check
   of span per feed per interval rather than waiting for the next one.
 - **Do not take a cross-venue median at cycle scale.**
-  [cycles.md](../research/cycles.md) §2 found it destroys a path-dependent
+  [cycles.md](../research/docs/cycles.md) §2 found it destroys a path-dependent
   measure: venues sit at different levels and do not all report every day, so
   the median adds steps the instrument never took.
 
@@ -2356,7 +2356,7 @@ is consumed nowhere as a decision. There is no point at which the system says
 "this one is worth less" and acts on it.
 
 Three sources of evidence were proposed for that judgement. **All three have
-now been measured** ([strength.md](../research/strength.md)), and only one of them earns
+now been measured** ([strength.md](../research/docs/strength.md)), and only one of them earns
 its place:
 
 - **What it has done - yes, and by a wide margin.** A level's own same-side
@@ -2381,7 +2381,7 @@ composite loses to its own best term** in every run (AUC 0.548 against 0.648
 for the record alone). Mixing touches, agreement, recency and breadth into one
 number dilutes the one part that works with three that do not.
 
-[strength.md](../research/strength.md) proposes a concrete `quality_l` built from the
+[strength.md](../research/docs/strength.md) proposes a concrete `quality_l` built from the
 record and experience only, graded *within* `(feed, interval)` - the grading is
 load-bearing, since chart identity alone reaches AUC 0.586-0.608. It is
 unfitted and beats `Level.strength` on all four runs. The open risks are the
@@ -2424,7 +2424,7 @@ was wrong. It is that **hand-set numbers go stale and nothing notices**:
 | constant | set to | what measuring found |
 |---|---|---|
 | `0.08` edge gate | a judgement | passed 2.3% of calls when set, 69.6% by 2026-08-15 - below the median |
-| `HALF_LIFE` | 60 bars | optimum is 7-10 at every interval ([volatility.md](../research/volatility.md)) |
+| `HALF_LIFE` | 60 bars | optimum is 7-10 at every interval ([volatility.md](../research/docs/volatility.md)) |
 | `MIN_ZONE_TICKS` | 6 | opened a 2.27v zone on sol, wider than `resolve_vol` |
 | `MAX_ZONE_VOL` | 3.0 | twice `resolve_vol`, so a touch could be born resolved |
 | `DEFAULT_K` | 12 | a fixed count, so the neighbour count carries no information |
@@ -2436,7 +2436,7 @@ rather than a list of numbers to re-pick.
 ### The mechanism is expert aggregation, not a bandit - mostly
 
 The instinct to reach for a bandit is close but not quite right, and the
-distinction is the same one [bandits.md](../research/bandits.md) draws for the
+distinction is the same one [bandits.md](../research/docs/bandits.md) draws for the
 alert gate. A bandit exists to handle **partial feedback**: it sees the reward
 of the arm it pulled and never the others. For a parameter like `HALF_LIFE`
 there is no such limitation - several estimators can run side by side and every
@@ -2450,7 +2450,7 @@ So:
 - **`HALF_LIFE`** - the obvious first candidate, and **measuring it produced
   the most important correction to this whole section.** Weighting several
   half-lives by realised *forecast* loss would optimise the wrong thing:
-  [volatility.md](../research/volatility.md) found the forecast optimum at 7 to
+  [volatility.md](../research/docs/volatility.md) found the forecast optimum at 7 to
   10 bars, and running the edge machinery at each half-life found the calls do
   not improve - h=7 and h=10 are worse on direction than the current 60, and
   the spread across all four is 3.1 points against a standard error of 1.1.
@@ -2472,7 +2472,7 @@ So:
   it.
 - **The agents' attention budget** - genuinely a bandit, for the reason the
   others are not: analysing gold tells you nothing about what analysing btc
-  would have found. See [bandits.md](../research/bandits.md).
+  would have found. See [bandits.md](../research/docs/bandits.md).
 
 ### The trap to design against
 
@@ -2489,7 +2489,7 @@ tracks a drift is not better, it is only harder to audit.
 
 ## ~~6a. Model the next major turn, not just the next touch~~ - measured on 2026-08-15, and the answer is do not build it
 
-**Built, run and written up in [turns.md](../research/turns.md).** The
+**Built, run and written up in [turns.md](../research/docs/turns.md).** The
 falsification was written first, as this item asked, and it fails.
 
 Four signals do separate turns from non-turns in sample, consistently and in
@@ -2499,7 +2499,7 @@ None survives a purged walk-forward - every interval contains 0.5, and
 `since_low` falls from 0.616 to **0.503**. Leave-one-instrument-out is five of
 six above chance with one below and intervals a quarter wide.
 
-That is a different verdict from [cycles.md](../research/cycles.md), where
+That is a different verdict from [cycles.md](../research/docs/cycles.md), where
 nothing pointed anywhere. Here something does and it is still not enough.
 
 Four things worth keeping from it:
@@ -2523,7 +2523,7 @@ Four things worth keeping from it:
 **The one cheap lever is a collection run.** Eight tracked feeds have no daily
 bars at all - audusd, eth, nzdusd, sol, usdcad, usdchf, usdcnh, usdjpy - so the
 cross-section is six instruments where it could be fourteen. That roughly
-doubles the turns, and [cycles.md](../research/cycles.md) failed for want of
+doubles the turns, and [cycles.md](../research/docs/cycles.md) failed for want of
 exactly the same span. It is not enough on its own.
 
 The original statement of the question follows.
@@ -2566,7 +2566,7 @@ reading them before starting rather than rediscovering it:
   the cell was empty, and the honest answer was to say so.
 - [magnet.md](magnet.md) - 45 point estimates, and the one positive had an
   interval five times its own width.
-- [features.md](../research/features.md) - an effect that looked like +22.9
+- [features.md](../research/docs/features.md) - an effect that looked like +22.9
   points pooled collapsed to +3.1 within cells.
 
 A turn model will produce a confident-looking number from a dozen observations
@@ -2590,7 +2590,7 @@ loosely will make everything downstream look excellent.
 
 Do not start from the news. [news-dedup.md](news-dedup.md) established that
 the corpus contains no observation of independent outlets converging on a
-story, and [news-models.md](../research/news-models.md) §1 was demoted on the strength of
+story, and [news-models.md](../research/docs/news-models.md) §1 was demoted on the strength of
 it. Sentiment or crowding as a turn signal is the same claim in a longer coat,
 and the data to test it does not exist yet.
 
@@ -2600,7 +2600,7 @@ at the wrong scale for this question.
 
 ## ~~6c. Cyclical context - where a level sits in the larger move~~ - measured on 2026-08-15, and the answer is no
 
-**Built, run and written up in [cycles.md](../research/cycles.md).** Nothing
+**Built, run and written up in [cycles.md](../research/docs/cycles.md).** Nothing
 separates: under a self-calibrating labeller every cycle cell's interval
 contains the pooled up-rate, no threshold from 0.10 to 0.40 changes that, and a
 model given the cycle gains a thousandth of AUC while losing accuracy. The
@@ -2637,7 +2637,7 @@ The original statement of the question follows.
 
 Every feature the model has is **local to the touch**. `approach_vol`,
 `depth_vol`, `run_vol`, `pivot`, `backcheck`, and the six candidates tested in
-[features.md](../research/features.md) §4 all describe the last few bars before
+[features.md](../research/docs/features.md) §4 all describe the last few bars before
 price arrived. None of them describes *where that arrival sits in anything
 larger* - whether the instrument has been climbing for a month, falling for a
 month, or oscillating in a range, and if in a range, whether this level is near
@@ -2662,7 +2662,7 @@ Three findings point the other way and should be read first:
 
 - [magnet.md](magnet.md) found levels **do not attract price**. A cycle claim is
   a bigger version of the same kind of claim, and the smaller one failed.
-- [features.md](../research/features.md) §1 found `side` carries essentially all
+- [features.md](../research/docs/features.md) §1 found `side` carries essentially all
   of the signal and eight other features carry none. The prior on any tenth
   feature mattering should be low.
 - The pooled-to-within-cell collapse: +22.9 points became +3.1. Anything
@@ -2751,7 +2751,7 @@ sample under thirty. What is missing is closed trades.
    way `trading report` already does. A win rate without the base rate beside
    it is the mistake §7 of levels.md exists to prevent.
 3. **Then decide what to keep.** `confluence-scalp` is the one to watch:
-   [strength.md](../research/strength.md) measures confluence depth at an AUC of 0.476 and
+   [strength.md](../research/docs/strength.md) measures confluence depth at an AUC of 0.476 and
    0.452 - below the 0.5 that means no information - so the prior says it
    should not beat `level-scalp`. If it does, that is worth understanding
    rather than celebrating, because what strength.md measured is "did price get
@@ -3211,7 +3211,7 @@ times the window made it worse, not better. So did KCP and RuLSIF; only FOCuS
 improved on the baseline, and it still lost to taking the extreme.
 
 Full table and the reason - the localisation problem is an *extremum* problem
-wearing change-point clothes - in [localising.md](../research/localising.md).
+wearing change-point clothes - in [localising.md](../research/docs/localising.md).
 
 The run-length posterior is still the only one of the six that reports a
 *distribution* over where the change was, so if a consumer ever wants a
@@ -3223,7 +3223,7 @@ one today.
 Two shapes, and they are different experiments:
 
 1. **Every detector into one model.** The six detectors of
-   [localising.md](../research/localising.md) each produce a statistic per bar
+   [localising.md](../research/docs/localising.md) each produce a statistic per bar
    per timeframe; feed the vector to an HMM and let the hidden state be the
    regime. The attraction is that the detectors disagree in structured ways -
    FOCuS and the extreme agreeing is already measured to mean something
@@ -3247,7 +3247,7 @@ null returns -0.66v, and 3+tf is ahead on 6 of 6 instruments that produce
 enough of both. They are not the same object at different strengths - they
 point opposite ways. Full tables, the confound that had to be beaten and the
 five things it does *not* establish are in
-[agreeing.md](../research/agreeing.md).
+[agreeing.md](../research/docs/agreeing.md).
 
 What is still open on this item:
 
@@ -3355,8 +3355,8 @@ is the binding constraint and it is not a data problem.
 
 **What the run did settle is where the money goes.** Boom is 53% of all losses
 - 44 trades, -410, losing in *both* directions - on an instrument
-[spiking.md](../research/spiking.md) had already shown to be memoryless and
-unpredictable. See [catalysing.md](../research/catalysing.md).
+[spiking.md](../research/docs/spiking.md) had already shown to be memoryless and
+unpredictable. See [catalysing.md](../research/docs/catalysing.md).
 
 ## 7h. Levels that tally across instruments - run, and it is about the dollar
 
@@ -3364,7 +3364,7 @@ unpredictable. See [catalysing.md](../research/catalysing.md).
 one, is the pair worth more than either alone? Designed, not run.
 
 The trap is named in the design and it already killed the change-point version
-in [peering.md](../research/peering.md): **two dollar pairs are not two
+in [peering.md](../research/docs/peering.md): **two dollar pairs are not two
 witnesses, they are one witness seen twice.** The controls are a no-shared-
 currency pair, the synthetics, and a permutation test rather than one shuffle.
 
@@ -3487,7 +3487,7 @@ The same idea across eight instruments instead of across timeframes. Effects of
 about a volatility unit with shuffled-label nulls of comparable size, mostly
 gone once the instrument's own timeframes are conditioned on - and **Deriv's
 synthetics, which share no macro factor, produced a larger effect than real
-assets that share the dollar**. See [peering.md](../research/peering.md).
+assets that share the dollar**. See [peering.md](../research/docs/peering.md).
 
 Nothing was published from it. What is left:
 
@@ -3519,7 +3519,7 @@ period before it is trusted.
 **The null it has to beat**, and it is not "does the HMM fit": an HMM will
 always find states. The question is whether the state it infers predicts
 anything the current priority ordering does not - which is the same bar
-[choosing.md](../research/choosing.md) sets for HMM strategy selection, and the
+[choosing.md](../research/docs/choosing.md) sets for HMM strategy selection, and the
 two should share a harness rather than each grow one.
 
 **A warning from the run above.** Every method that pooled more inputs did
@@ -3534,7 +3534,7 @@ Separating a **trend reversal** from a **liquidity spike** is the framing that
 falls out of running two change detectors side by side: the range widening and
 the volume spiking while the mean return does *not* shift is absorption or a
 news print, not a turn. That is exactly the trap population
-[trapping.md](../research/trapping.md) already has - 64% of attempts, 94.6% at
+[trapping.md](../research/docs/trapping.md) already has - 64% of attempts, 94.6% at
 30m - so the hypothesis has somewhere to be tested.
 
 Two things block it:

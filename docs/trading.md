@@ -325,7 +325,7 @@ model's own - several timeframes on one price is one structure seen several
 times - and it is worth knowing that **the only measurement bearing on it found
 nothing**.
 
-[strength.md](../research/strength.md) tested confluence depth against whether a level
+[strength.md](../research/docs/strength.md) tested confluence depth against whether a level
 holds. Four runs produced four different orderings, and as a ranking signal
 depth scores an **AUC of 0.476 and 0.452** - below 0.5, meaning that if
 anything more agreement goes very slightly with breaking. `depth >= 3` against
@@ -671,7 +671,7 @@ that has cleared nothing; once price is past a 15m-1h level the stop steps in
 behind it, because a rung is a price the market has already agreed on and a
 stop just beyond one is protected by the same thing the entry was.
 
-**What the replay says.** [swinging.md](../research/swinging.md) walks all six
+**What the replay says.** [swinging.md](../research/docs/swinging.md) walks all six
 over 17 instruments and 1.1M stored bars. As first written it lost 0.173R a
 trade net of the spread over 72 trades. Part 3 is the component that pays -
 requiring the candle refuses 76% of candidates and moves the mean by +0.135R.
@@ -1369,7 +1369,7 @@ asserts the gates still run before the side is flipped.
 ## The three direction gates, measured - and none of them survived
 
 Measured on 2026-08-27 (`research/harness/gates.py`, written up in
-[replay.md](../research/replay.md)). The question is not whether these numbers
+[replay.md](../research/docs/replay.md)). The question is not whether these numbers
 mean something - they are model outputs and they do - but whether trades above
 a floor do better than trades below it. A gate that does not separate is not
 neutral: it costs every trade it refuses and returns nothing.
@@ -1448,7 +1448,7 @@ losing to having no floor at all.
 
 The matched-constant version - two fixed numbers, one per direction - is beside
 it in `floors.by_direction` and is what this repository's evidence generally
-favours. See [replay.md](../research/replay.md) for why a quantile is
+favours. See [replay.md](../research/docs/replay.md) for why a quantile is
 defensible in this one case and was not in the others.
 
 ## What the gates are actually for
@@ -1770,7 +1770,7 @@ which is why every `Refusal` carries a machine-readable gate name.
 ## The level's own record, now published
 
 `structures` computes a level's hold rate on the side price is arriving from
-and, until recently, published it nowhere. [strength.md](../research/strength.md) measures
+and, until recently, published it nowhere. [strength.md](../research/docs/strength.md) measures
 it as the strongest thing a level knows - 59.4% to 92.2% across four buckets
 with an **AUC of 0.648**, and the only signal in that study that got *stronger*
 when the volatility denominator bug was fixed, against `Level.strength`'s 0.548

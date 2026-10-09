@@ -965,12 +965,12 @@ features plus a pivot flag:
 | `up_rate` | **the share of this side's previous touches that pushed up**, [0, 1] |
 
 `up_rate` is the only one of these that has been measured to earn its place,
-and it was added late. [research/features.md](../research/features.md) dropped
+and it was added late. [research/features.md](../research/docs/features.md) dropped
 each feature in turn and found that **none of the other eight predicts
 direction once `side` is known** - while the level's own same-side record,
 which was not among them, is worth +0.024 AUC on levels with three or more
 prior touches. It had been hiding inside `strength`, diluted with three terms
-[research/strength.md](../research/strength.md) shows separate nothing, and
+[research/strength.md](../research/docs/strength.md) shows separate nothing, and
 behind `experience`, which counts touches without saying what they did.
 
 0.5 means *no history*, not an even split. Those are different things and the
@@ -1166,7 +1166,7 @@ four tests were doing exactly that and still passing.
 
 **And the calls improved.** Direction went from 69.2% to 71.1%, and the deficit
 against "assume the level holds" - the trivial rule that has beaten this model
-everywhere ([features.md](../research/features.md) §3) - roughly halved, from
+everywhere ([features.md](../research/docs/features.md) §3) - roughly halved, from
 −7.1 points to −3.7. On about 1,850 calls against a standard error near 1.1
 that is suggestive rather than settled, and the outcome population changed by
 construction, so it is not a paired comparison.
@@ -1267,7 +1267,7 @@ to invert the sign of the return - gating at 1.0 turned a mean realised push of
 passing every gate returned -0.151 while everything the gate rejected returned
 +0.569. The ratio correlates -0.359 with its own denominator, so a high value
 is substantially a *tight stop*, and a tight stop sits inside the noise the
-level is made of. See [magnitude.md](../research/magnitude.md). It is still
+level is made of. See [magnitude.md](../research/docs/magnitude.md). It is still
 computed and reported; it is no longer a gate.
 
 The reasoning it was built on follows, because it was the best-argued gate in
@@ -1494,7 +1494,7 @@ Two independent series with those marginals would agree about **78%** of the
 time. Ninety-nine point nine is not skill.
 
 The cause is the touch inflation described in
-[handoff.md](../research/handoff.md): when one grinding episode is counted as 171 separate
+[handoff.md](../research/docs/handoff.md): when one grinding episode is counted as 171 separate
 touches, the level's *history* and its *next outcome* are the same price action
 counted twice. The model predicts down because it just went down 148 times, and
 it goes down again because it is still the same move. Nothing leaked from the
@@ -1758,7 +1758,7 @@ beside, so the zone is worth its best member.
 > Measured against whether the level then held, over four replays, breadth
 > does not separate at all: four runs produced four different orderings, AUC
 > 0.45-0.51, and a bootstrap over levels put the spread at -2.2 points
-> [-6.3, +1.7]. See [strength.md](../research/strength.md). The multiplier is gone; `depth`
+> [-6.3, +1.7]. See [strength.md](../research/docs/strength.md). The multiplier is gone; `depth`
 > and `timeframes` are still reported, because the object really is different
 > even if the difference does not predict holding. This ordered what the agents
 > are shown and what the CLI prints, so it was a live decision rather than a
@@ -2091,7 +2091,7 @@ every formation that found a level.
 > divided by the number of venues reporting each bar (see §10b), and every
 > threshold here - 1v, 2v, 4v - is in volatility units, so the *arms of the
 > comparison were not the distances they say they were*. Re-run on the
-> corrected denominator in [strength.md](../research/strength.md), the ordering **inverts**:
+> corrected denominator in [strength.md](../research/docs/strength.md), the ordering **inverts**:
 > run-only goes from weakest to strongest, and adding origin to a hold model
 > drops its held-out AUC below a chart-identity baseline. Origin came out of
 > that design.

@@ -379,6 +379,6 @@ So three things follow:
 
 The repair is the metric, not the cutoff: which features belong in
 `Features.distance`, and with what weights, is an empirical question nobody has
-asked. [strength.md](../research/strength.md) reached the same shape of conclusion from a
+asked. [strength.md](../research/docs/strength.md) reached the same shape of conclusion from a
 different direction - the level's own record predicts, and the derived
 quantities layered on top of it mostly do not.
