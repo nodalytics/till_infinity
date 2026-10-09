@@ -693,3 +693,87 @@ it is unhappy.
 healthy container failed this check on 2026-09-15 and was deleted for it. The
 desk loads a 145MB state file at start, so a single sample taken while that
 
+
+## When Actions cannot build: the fallback
+
+**Added 2026-10-09**, the day GitHub Actions stopped starting jobs - *"recent
+account payments have failed or your spending limit needs to be increased"* -
+and `main` carried a merged change the instance could not receive.
+
+Two scripts, one on each box, and neither knows about the other:
+
+| | where | what it does |
+| --- | --- | --- |
+| [`ci-fallback.sh`](../ci-fallback.sh) | the research machine, cron | builds the image Actions did not, pushes it to ghcr |
+| [`pull-deploy.sh`](../pull-deploy.sh) | the instance, cron | deploys whatever is newest in the registry |
+
+### The trigger is a missing image, not a billing error
+
+Parsing *"recent account payments have failed"* would catch one cause and miss
+runner shortages, Actions outages, a cancelled run and a workflow edited wrong.
+`ci-fallback.sh` asks a better question - **is there an image for this commit
+yet?** - and that question is also what makes it safe to leave running
+afterwards. When Actions builds again the tag resolves, the script exits having
+done nothing, and the fallback goes dormant with no flag to unset.
+
+Three guards stop it duplicating work CI is already doing:
+
+* **the tag check.** Actions tags by commit sha. If `:${sha}` resolves, CI got
+  there first.
+* **a grace period** of twelve minutes. The research machine takes about as
+  long as a runner, so without a wait both would start, both would push, and
+  the slower would win a race nobody asked for.
+* **the same `paths-ignore` as the workflow.** A commit touching only `docs/`,
+  `research/`, markdown or `LICENSE` produces no image, because a push that
+  cannot alter the image must not restart the service - four docs-only merges
+  landed on 2026-10-09 alone.
+
+### Both architectures, and why that is not optional here
+
+The instance is **aarch64**. The research machine is x86 and had no arm64
+emulation installed, so a fallback written the obvious way would have produced
+an amd64-only image, and `docker pull` would have failed on Graviton **after
+the old container had been stopped for the cutover**. The script installs
+`binfmt` on every run - registrations do not survive a reboot, and the call is
+idempotent - and builds `linux/amd64,linux/arm64` exactly as the workflow does.
+
+### The instance half needs no GitHub access at all
+
+`pull-deploy.sh` compares what `:latest` resolves to against what it last
+deployed, recorded in `~/.deployed-manifest`. It therefore does not care who
+built the image, cannot deploy the same digest twice, and needs no token and no
+network path to anything but the registry it already pulls from.
+
+**It also refuses to deploy into a warm.** If `structures` has not journalled
+for five minutes it is either replaying history or stalled, and restarting
+costs the whole replay: on 2026-10-09 a deploy ten minutes after the desk came
+up cost a second 84-minute warm, and the one after that was OOM-killed at the
+sixty-minute mark, so three hours produced no levels at all.
+
+### Setting it up
+
+On the research machine, a token with `repo` read - push credentials for ghcr
+are already in its docker config:
+
+```bash
+printf '%s' '<token>' > ~/.ghtoken && chmod 600 ~/.ghtoken
+crontab -l | { cat; echo '*/10 * * * * /bin/bash $HOME/ci-fallback.sh'; } | crontab -
+```
+
+On the instance:
+
+```bash
+crontab -l | { cat; echo '*/5 * * * * /bin/bash $HOME/pull-deploy.sh'; } | crontab -
+```
+
+Both log beside themselves - `~/ci-fallback.log` and `~/pull-deploy.log` - and
+both exit zero when there is nothing to do, so a quiet log is the normal state
+rather than evidence of a problem.
+
+### What it does not do
+
+It does not run the tests. The workflow deploys `needs: test` for a reason, and
+this path has no equivalent - **an image built here has been type-checked and
+linted by nobody.** It is a way to ship a change that CI already passed on a
+branch, or to recover a box that is behind, and it is not a reason to stop
+caring whether CI is green.
