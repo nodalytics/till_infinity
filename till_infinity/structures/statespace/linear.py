@@ -29,10 +29,16 @@ the measurement noise.
 `jerk` is the spectral density of the third derivative, in value units squared
 per hour to the fifth. Its counterpart in production is
 `DRIFT_VOL_PER_HOUR = 0.02`, which was chosen per hour and applied at every
-timeframe, and which the structures outcomes journal cannot currently be used to
-fit because it records `feed`, `interval`, `interval_log` and `level` but not the
-raw touch price. Until that field exists, any value here is a placeholder and
-this module says so rather than implying otherwise.
+timeframe and has never been fitted.
+
+**It is fittable today.** I spent six files saying the journal does not record a
+raw touch price; it does. `Episode.to_dict` records `entry` - the touch price -
+with `level` and `r_price` beside it, all at eight decimal places, and every
+touch is journalled that way whether it was called or not: 250,412 of them as of
+2026-10-10. What I had actually checked was the *resolutions* write, which
+carries `feed`, `interval`, `interval_log` and `level` only, and I generalised
+one write to "the journal". So this value is a placeholder because nobody has
+run the fit, not because the data is missing.
 
 ## What the coefficients may depend on, which is I4
 

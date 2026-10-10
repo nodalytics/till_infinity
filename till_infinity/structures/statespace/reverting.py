@@ -98,8 +98,14 @@ not.
 
 A bar close is not a touch. The close moves because price moved; a level is not
 supposed to. So the comparison above establishes the *direction* - a stable rate
-beats a random-walking one - and sets none of the constants. `theta` for a level
-needs the raw touch price the outcomes journal does not record.
+beats a random-walking one - and sets none of the constants.
+
+`theta` for a level has to be fitted on touches, and those are available: the
+episode record carries `entry` - the touch price - at eight decimal places, with
+`level` and `r_price` for the scale, 250,412 of them as of 2026-10-10. An earlier
+version of this docstring said the journal did not record it. That was wrong, and
+wrong in a specific way worth keeping: the *resolutions* write does not carry it,
+the *episode* write does, and I generalised from the one I had looked at.
 """
 
 from __future__ import annotations

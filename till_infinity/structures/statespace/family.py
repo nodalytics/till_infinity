@@ -284,7 +284,15 @@ PENDING: dict[str, str] = {
     "hmm": (
         "the Kalman on the same series. A discrete state is a different claim "
         "about the world, not a better fit, so the comparison has to be on "
-        "held-out likelihood rather than on regimes it can draw"
+        "held-out likelihood rather than on regimes it can draw. It now has a "
+        "specific job rather than being a different claim for its own sake: "
+        "velocity is two variables and only one of them is learnable. Measured "
+        "on eurusd 4h, speed is 8.1x as persistent as the signed rate - the sum "
+        "of the first five autocorrelations is +0.381 against -0.047 - and "
+        "direction agrees with its predecessor 49.5% of the time against 50% "
+        "+/- 3.1%. So the state wants to be (position, log speed) with "
+        "direction as a separate discrete process, which is a switching model, "
+        "and the HMM is the direction half of it"
     ),
     "rfs": (
         "the geometric levels themselves - `pips` on its own data, not a random "

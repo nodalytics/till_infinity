@@ -75,7 +75,8 @@ every line: **nothing here publishes until it has beaten a named null.**
    56 — and a bar close is not a touch. The close moves because price moved; a
    level is not supposed to. Reading that factor as a correction would be #136's
    mistake again: a number validated without checking what it is a number
-   about. Still blocked on the touch-price field.
+   about. The touch price this needs is in the episode record, not the
+   resolutions one — see the correction below.
 
 5. ~~**The smoother is linear-only.**~~ Fixed — `smooth` takes a filter factory
    and reads its dimension from the member, so it smooths `Reverting` (two
@@ -106,6 +107,151 @@ every line: **nothing here publishes until it has beaten a named null.**
    still describes its state in prose. Making the three explicit per subject is
    what would let a subject and a member be composed rather than paired by hand.
 
+## Velocity is two variables, and only one of them is learnable
+
+Measured 2026-10-10 on 999 eurusd 4h returns —
+`research/ideas/statespace_speed_and_direction.py`:
+
+| component | ACF lag 1 | sum of first 5 |
+| --- | ---: | ---: |
+| signed velocity | −0.00 | **−0.047** |
+| speed `|v|` | +0.16 | **+0.381** |
+| direction `sign(v)` | −0.01 | −0.100 |
+
+**Speed is 8.1× as persistent as the signed rate, and direction is a coin** —
+consecutive signs agree 49.499% against 50% ± 3.102% at 95%.
+
+The minimal-state principle says not to split velocity into speed and direction,
+because they are a redundant reparameterisation of one signed number. That
+assumes both halves are equally learnable. **Here one half carries all the
+structure and the other is noise**, so a filter handed signed velocity is
+tracking a quantity with no autocorrelation while discarding a magnitude with
++0.38.
+
+**It also reinterprets `reverting`'s own result.** `theta = 0.5` per hour — drift
+decaying 86% per 4h bar — is not the market being memoryless. It is the filter
+correctly reporting that the state variable it was given does not persist.
+
+So the implied state is `(position, log speed)` plus a separate direction
+process: continuous magnitude, discrete direction, which is a **switching
+state-space model**. That is I9 and it is what the HMM member would be for. The
+null is already written in `family.PENDING`, and the comparison has to be
+held-out because a switching model carries more parameters.
+
+Measured on bar returns, not on a level's rate. Repeating it on a level's rate
+is task 3 and it is **not** blocked: `entry` on the episode record is the touch
+price, 250k of them since 2026-10-02.
+
+## The deep state-space family, and the three ideas from it that transfer
+
+Reviewed 2026-10-10 from IBM's *What are state space models?* (Bergmann, 7 July
+2025), asked for because the article names RNNs, CNNs, Mamba and S4 and none of
+them appears anywhere in this package.
+
+They are absent because this package is the **classical** half of the field:
+`A` and `C` are written down from what a level is, and the Kalman recursion is
+exact given them. The article's half learns `A`, `B` and `C` as neural network
+weights by backpropagation, and is explicit about the price — it needs "a great
+deal of training data" and is "not interpretable". Both are disqualifying here:
+this desk has ~10^5 touches, not 10^9 tokens, and a gate that cannot say why it
+refused cannot be journalled.
+
+That is a refusal of the deep *models*. It is not a refusal of the ideas
+underneath them, and three of those are cheap on data already in hand.
+
+### The two halves are the same recursion
+
+The article's continuous form is `h'(t) = A h(t) + B x(t)`, `y(t) = C h(t) + D x(t)`,
+discretised to `h_t = Abar h_{t-1} + Bbar x_t`, `y_t = Cbar h_t`. So a discretised
+SSM **is** a linear RNN whose hidden state is the state vector — the article says
+so outright — and one with a fixed `Abar` unrolls into a 1-D convolution kernel
+`(Cbar Bbar, Cbar Abar Bbar, Cbar Abar^2 Bbar, ...)` trainable by FFT. RNN, CNN
+and SSM are three readings of one recursion rather than three models, which is
+worth knowing before reaching for any of the three by name.
+
+`D` is the direct input-to-output term; the article notes it is usually dropped.
+This package drops it for the stronger reason in I1 — there is no input at all.
+
+### D1. The transition as a chosen memory rather than a chosen physics — HiPPO
+
+**The one to do first**, and the article's sharpest number: on sequential MNIST,
+replacing a random `A` with the **HiPPO** matrix moved accuracy from 60% to 98%.
+Nothing was learned differently. The transition was chosen rather than guessed.
+
+Both members here choose `A` from physics. `linear` is an integrated jerk — a
+local Taylor expansion of where the level is going; `reverting` is an integrated
+OU — the same with a pull-back. Both describe the level **now**. HiPPO-LegS
+instead chooses `A` so that the state is the optimal least-squares projection of
+the *whole history so far* onto Legendre polynomials, in closed form and needing
+no dependency:
+
+    A[n,k] = -sqrt(2n+1)*sqrt(2k+1)   for n > k
+             -(n+1)                   for n = k
+             0                        for n < k
+
+For a level touched forty times across three weeks, "the entire touch history
+compressed into k numbers, optimally" is a different claim from "position, rate
+and acceleration right now" — and it is nearer the claim this desk's levels are
+supposed to embody, that a level **is** its history.
+
+**Null:** `linear` and `reverting` on held-out one-step predictive likelihood over
+the same measurement series, scored exactly as I5 was. It is a drop-in: same
+`Filter` protocol, same `smooth` factory, a different `A` and `C`. Legendre
+Memory Units (Voelker, Kajic and Eliasmith 2019) are the same idea a generation
+earlier and worth reading beside it.
+
+### D2. Selectivity, which is the step size as a function of the input — S6/Mamba
+
+The article's selective SSM makes the parameters depend on the input, breaking
+time-invariance to buy "a capability previously offered only by the self-attention
+mechanism of the transformer architecture". The step size `delta` is one of those
+parameters.
+
+Half of this is already here under another name: `robust` makes the measurement
+weight a function of the innovation, which is an input-dependent gain. The
+missing half is the interesting one. **`dt` here is clock time between touches,
+and a level does not age by the clock** — one untouched across a dead weekend has
+advanced less than `dt` says, one untouched through an NFP print more. `regime`
+and the per-feed volatility are already computed, so `delta = dt * activity`
+costs one parameter and no new data.
+
+**Null:** the same member on clock `dt`, held out. If event time does not beat the
+clock then the clock was right and this closes.
+
+### D3. One state, several measurements — MIMO
+
+The article's worked example reads a two-state system through a `C` with four
+output rows, and names MIMO explicitly. This package runs a filter per
+`(level, interval)` row. `drawing/confluence.py` already argues the other way in
+prose — "evidence gathered at three resolutions of one price is evidence about
+one price" — and MIMO is the arithmetic for exactly that: one state per level,
+one `C` row per resolution, several measurements updating one state.
+
+It also answers part of the matrix question that started `subjects.py`. The first
+useful matrix is **not** instruments side by side; it is resolutions of one level
+stacked, and it needs no data that is not already recorded.
+
+**Null:** the independent per-interval filters on the same held-out measurements.
+If the resolutions are independent the stacked `C` buys nothing — which is the
+same shape of test as the cross-instrument innovation correlation.
+
+### Noted and declined
+
+| from the article | status here |
+| --- | --- |
+| S4, DSS, S5 — structured SSMs | **declined**: their structure is a trained `A`, and we have ~10^5 touches and need an explainable refusal |
+| Mamba, selective SSM (S6) | **declined as an architecture**, adopted as D2's idea |
+| recurrence/convolution duality, FFT training | **noted, little use here**: it needs uniform `delta` and time-invariance, and touches are irregular; the harnesses that do use uniform bars loop over 999 of them |
+| hardware-aware parallel scan | **noted**: a throughput fix for sequence lengths this desk does not have |
+| zero-order hold, bilinear, Euler | **already stronger**: `reverting.py` uses the exact closed form, with `-expm1(-theta*dt)` where the naive expression cancels, and `tests/test_statespace.py` checks it against both a van Loan reference and quadrature |
+| expectation maximization, N4SID | **already named** — I11 and `family.PENDING` |
+| HiPPO, Legendre Memory Units | **adopted as D1** |
+| trained `A`,`B`,`C` by backpropagation | **declined**, in the article's own words: a great deal of training data, and not interpretable |
+
+What would move the first row: a reason to accept a gate that cannot explain its
+refusal, which this desk does not have, and an order of magnitude more data than
+the 250k episodes it does.
+
 ## Members not written
 
 Each already names the null it must beat, in `family.PENDING`. Do not add one
@@ -122,17 +268,32 @@ without it.
   twice and failed twice in its tradeable form; the escape is that as an
   instrument *state* it carries no hedge, turnover or funding.
 
-## Blocked on one missing field
+## Not blocked. The touch price has been in the journal all along
 
-**Every `jerk` in `subjects.py` is a placeholder and every one says so.** The fit
-is the same shape for all three — `var(m2 - m1) = q*dt + 2R`, slope the process
-variance and intercept twice the measurement noise — and for `LEVEL` it needs a
-**raw touch price**, which the structures outcomes journal does not record: it
-has `feed`, `interval`, `interval_log` and `level` only.
+**Corrected 2026-10-10, and it was my error, repeated across six files and three
+merge messages.** This section used to say the fit was blocked on the structures
+outcomes journal recording a raw touch price. It is not, and the old text gave
+itself away by naming the field in the next paragraph. `Episode.to_dict`
+records `entry` - the touch price - alongside `level` and `r_price`, all three
+rounded to **eight decimal places**, and `service.py` journals one of these for
+every touch, called or not, under `context={"shape": "episode", ...}`. There are
+**250,412** of them in the journal as of 2026-10-10.
 
-The field belongs on `reactions.Episode`, which is written for every touch and
-already carries `level_id`, `level_price`, `started`, `entry` and `unit`. The
-journal write is `service.py::record_outcomes`.
+What I actually checked was the shape of the **resolutions** write, which does
+carry `feed`, `interval`, `interval_log` and `level` only — and then generalised
+from one write to "the journal". The episode write is a different write, it is
+the one built to follow the whole path after contact, and it has what the fit
+needs.
+
+So **every `jerk` in `subjects.py` is still a placeholder**, but for the ordinary
+reason that nobody has run the fit, not because the data is missing. The fit is
+the same shape for all three — `var(m2 - m1) = q*dt + 2R` over measurement
+pairs, slope the process variance and intercept twice the measurement noise.
+
+The intercept is a free check on something else: it should come back near
+`2 * TOUCH_NOISE_VOL**2`, and `TOUCH_NOISE_VOL = 0.40` is itself a guess, so a
+fit that returns ~0.32 would be evidence and one that returns 1.5 would be a
+problem found.
 
 **The same field blocks two other measurements**, which is the argument for
 adding it now rather than when one of them comes up:
