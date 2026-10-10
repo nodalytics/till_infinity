@@ -217,7 +217,31 @@ from typing import Protocol, runtime_checkable
 
 @runtime_checkable
 class Filter(Protocol):
-    """What every member of the family must do, in time rather than in samples."""
+    """What every member of the family must do, in time rather than in samples.
+
+    **Four different quantities, kept apart on purpose**, because conflating
+    them is the easiest mistake to make from outside:
+
+    | | accessor | units |
+    | --- | --- | --- |
+    | the prediction | `value`, `output()`, `at_time(when)` | the subject's |
+    | the uncertainty | `sd`, `band(when, sigmas)` | the subject's |
+    | the log density of a reading | `loglike` | nats, any sign |
+    | the probability it still exists | `existence` | [0, 1] |
+
+    All four are on this contract, so a caller holding a `Filter` can reach
+    every one of them without knowing which member it has.
+
+    **`covariance()` is deliberately not here.** It is the one optional
+    capability: `linear`, `reverting` and `robust` carry a full posterior and
+    `selective` does not, because a selective state space model is a
+    deterministic map and there is no posterior in it to report. That is why
+    `smoothing.smooth` returns None for that member rather than half-smoothing
+    it - the same answer it gives a member that cannot state its own `F`. A
+    caller wanting the covariance has to ask whether it is there, and a member
+    without one still answers `sd`, which for `selective` is a **fitted**
+    spread rather than an inferred one.
+    """
 
     #: Where the quantity is now, in the subject's units.
     value: float
@@ -229,6 +253,20 @@ class Filter(Protocol):
     #: Measurements folded in. Not a warm-up gate; the number a score is read
     #: against.
     seen: int
+    #: Accumulated log predictive density. **The score**, and the reason it is
+    #: on the contract rather than on the members: every comparison in this
+    #: package is one member's `loglike` against another's on held-out data, and
+    #: a member that spells it differently is a member that cannot be compared.
+    #: `selective` called this `predictive` until the family was audited.
+    loglike: float
+    #: The most recent standardised innovation, which `diagnostics.py` consumes.
+    #: A correctly specified filter makes the series of these a standard normal,
+    #: and that is what Ljung-Box and Jarque-Bera are testing.
+    last_standardised: float
+    #: Belief that the quantity still exists, in [0, 1]. The one genuine
+    #: probability here - `loglike` is a density and can be any sign, `sd` is a
+    #: spread, and `value` is in the subject's units.
+    existence: float
 
     def predict(self, when: float) -> None:
         """Advance belief to `when`, widening uncertainty by elapsed time."""
@@ -241,6 +279,14 @@ class Filter(Protocol):
 
     def at_time(self, when: float) -> float:
         """Where the quantity will be at `when`, by this member's own belief."""
+        ...
+
+    def observation(self) -> tuple[tuple[float, ...], ...]:
+        """`C`: one row per output, one column per state."""
+        ...
+
+    def output(self) -> tuple[float, ...]:
+        """`y = C h`. The observable half, which is not always a state slot."""
         ...
 
     def band(self, when: float, sigmas: float = 2.0) -> tuple[float, float]:
@@ -262,8 +308,14 @@ def members() -> dict[str, type]:
     from .linear import Gaussian
     from .reverting import Reverting
     from .robust import Robust
+    from .selective import Selective
 
-    return {"kalman": Gaussian, "reverting": Reverting, "robust": Robust}
+    return {
+        "kalman": Gaussian,
+        "reverting": Reverting,
+        "robust": Robust,
+        "selective": Selective,
+    }
 
 
 #: Members the spec names that are not written yet, with the null each will have

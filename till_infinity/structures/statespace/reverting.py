@@ -272,6 +272,35 @@ class Reverting:
 
     NAMES: tuple[str, ...] = ("value", "rate")
 
+    #: What `C` reads out of the state. One row, because one thing is measured
+    #: here: a touch price. **A second row is D3** - `drawing/confluence.py`
+    #: argues that evidence at three resolutions of one price is evidence about
+    #: one price, and the arithmetic for it is a `C` row per resolution over one
+    #: shared state, which is what the article's worked example does with four
+    #: output rows over two states.
+    OUTPUTS: tuple[str, ...] = ("value",)
+
+    def observation(self) -> tuple[tuple[float, ...], ...]:
+        """`C`, the observation matrix: one row per output, one column per state.
+
+        Written down rather than implied. The state equation has been explicit
+        in this package since it was started and the *observation* equation has
+        not - `value` was the first state slot by convention, which is true for
+        this member and not true in general.
+        """
+        return ((1.0, 0.0),)
+
+    def output(self) -> tuple[float, ...]:
+        """`y = C h`, in `OUTPUTS` order. What the model says is *observable*.
+
+        `state()` is what it believes; this is what that belief predicts a
+        reading would be.
+        """
+        state = self.state()
+        return tuple(
+            sum(c * x for c, x in zip(row, state, strict=True)) for row in self.observation()
+        )
+
     def state(self) -> tuple[float, ...]:
         return (self.value, self.rate)
 

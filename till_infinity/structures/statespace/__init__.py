@@ -23,6 +23,78 @@ than the real assets. The machinery in both cases worked; the hypothesis did not
 A state-space rewrite is a bigger version of the same bet, so it gets the same
 discipline.
 
+## Can a state space model a complex adaptive system?
+
+Asked on 2026-10-10 - "the market is a complex adaptive system, it is
+non-deterministic in nature; can our statespace algos model it?" - and the
+question is sharp enough to answer in parts rather than agree with. These are
+the guiding principles for this package, and three of them are already measured
+rather than asserted.
+
+**1. Non-determinism is the premise, not the obstacle.** A state space model is
+not a deterministic machine with noise bolted on: the state *is* a random
+process and the reading *is* a noisy view of it. `jerk` is the rate at which the
+truth wanders unpredictably and `R` is how badly a reading sees it. A model that
+asserted determinism would be an ODE with no `q` - which is exactly what this
+package is not. So "the market is non-deterministic" is an argument for this
+machinery and not against it.
+
+**2. Adaptivity is the real challenge, and it is a different one.** A fixed
+parameter filter assumes the dynamics it was fitted to still hold. That
+assumption is what fails in an adaptive system, and the family is organised
+around the specific ways to drop it:
+
+| what adaptivity means | which member answers it |
+| --- | --- |
+| the regime switches | `hmm` - a discrete state, held out |
+| nobody knows how many regimes | `dpm` - unbounded mixture |
+| the dynamics depend on the input | `selective` - `B`, `C`, `delta` from it |
+| the parameters themselves drift | `I11` - EM or N4SID, refitted |
+| the shocks are not Gaussian | `robust`, and **measured**: these fail Jarque-Bera |
+| the memory outlasts one decay | `D1` HiPPO, `D4` oscillatory |
+
+**3. The model is of an observable, never of "the market".** This is the
+principle that does the most work. Nothing here claims to model a complex
+adaptive system; each member claims that *one named quantity* has a
+low-dimensional state plus noise, and is scored on that quantity alone. A
+**level** is a far better candidate than a price, and for a reason that is about
+the market being adaptive rather than in spite of it: a level is a price many
+participants have coordinated on, so it is the one thing in an adaptive system
+that should be *more* persistent and lower-dimensional than the flow around it.
+That is the thesis, and it is why `subjects.py` makes the quantity explicit
+before any filter touches it.
+
+**4. These models are known to be misspecified, and the diagnostics are how we
+know.** `diagnostics.py` exists to fail: autocorrelated residuals mean the state
+equation is wrong, non-normal residuals mean the noise model is. Both have
+already fired on real series - the autocorrelation survives and the non-normality
+gets worse - and that is recorded rather than tuned away. The honest position is
+not "this captures the system". It is **"this beat a named null on held-out data
+while still being wrong"**, which is a much smaller claim and the only one the
+evidence supports.
+
+**5. What no member here can do**, stated so nobody has to discover it twice:
+
+* **Emergence.** The state is a low-dimensional summary; the interacting agents
+  that produce the behaviour are not in it, and cannot be recovered from it.
+  Everything they do arrives as `q`.
+* **Reflexivity.** Every member assumes the reading is a passive observation. Our
+  own orders move the book, and no member represents that.
+* **A system with no stable low-dimensional state.** If there is nothing to
+  track, no choice of member helps - and this is measurable, not philosophical.
+  I5 asked it directly and the answer was bracing: a third state is perfectly
+  estimable from price alone and still **loses** 0.138 nats a point, and the fit
+  handed a second drift component set its noise to zero rather than use it.
+  Given more state, the data declined it.
+* **Parameters drifting faster than they can be estimated.** The failure mode
+  with no remedy: by the time a window is long enough to fit, the thing has
+  changed. The check is parameter stability across refits, and it is not written.
+
+So: **yes for a level, no for the market, and the difference is the whole
+design.** The package's job is to find which observables have a state worth
+tracking, and the rule below - nothing publishes until it beats a named null -
+is what stops that search from becoming a story.
+
 ## The models live here too
 
 Not only the improvements. The spec lists the family - Kalman, particle, HMM,
