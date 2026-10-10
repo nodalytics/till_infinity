@@ -149,6 +149,27 @@ the bug that mattered** - the Kalman arm first reported a negative log-likelihoo
 of 1.15e17 because `log(r^2)` of a rounded-to-zero FX bar is about -690, and a
 Gaussian null never produces one. A passed null is not a correct implementation.
 
+## State count is a separate question from state *stability*, and it was measured
+
+Held out on the same 534 points of eurusd 4h:
+
+| model | held out | per point |
+| --- | ---: | ---: |
+| two states, reverting rate | **-1009.55** | best |
+| three states, two-factor drift | -1083.48 | -0.138 |
+| three states, white jerk | -1453.26 | -0.831 |
+
+**Observability was not what decided it**, which is worth saying because it is
+the argument I5 reaches for: the condition number of the observability matrix
+for price-only measurements at 4h is 2.5 with two states and about 40 with
+three, far from the ~1e8 where a state stops being identifiable. A third state
+is estimable here. It loses anyway, and the fit declined it - given a slow and a
+fast drift component it set the fast one's noise to zero.
+
+So the two axes separate cleanly: **stability is worth about 0.7 nats a point
+and the extra state is worth -0.14.** A member proposing more states has to
+clear a bar that a member proposing better dynamics did not.
+
 ## What is missing, named rather than left out
 
 `dynamax` puts three operations beside each other, and this package has one and a
@@ -157,7 +178,7 @@ half of them:
 | operation | what it answers | here |
 | --- | --- | --- |
 | filter | `p(state_t | y up to t)` | `linear.predict` / `update` |
-| **smooth** | `p(state_t | y up to T)` | `smoothing.smooth` |
+| **smooth** | `p(state_t | y up to T)` | `smoothing.smooth`, any member |
 | sample | draw a path from the model | `paths.simulate` |
 
 **The smoother is the real gap, and it is a research gap rather than a live one.**
@@ -263,7 +284,15 @@ PENDING: dict[str, str] = {
     "hmm": (
         "the Kalman on the same series. A discrete state is a different claim "
         "about the world, not a better fit, so the comparison has to be on "
-        "held-out likelihood rather than on regimes it can draw"
+        "held-out likelihood rather than on regimes it can draw. It now has a "
+        "specific job rather than being a different claim for its own sake: "
+        "velocity is two variables and only one of them is learnable. Measured "
+        "on eurusd 4h, speed is 8.1x as persistent as the signed rate - the sum "
+        "of the first five autocorrelations is +0.381 against -0.047 - and "
+        "direction agrees with its predecessor 49.5% of the time against 50% "
+        "+/- 3.1%. So the state wants to be (position, log speed) with "
+        "direction as a separate discrete process, which is a switching model, "
+        "and the HMM is the direction half of it"
     ),
     "rfs": (
         "the geometric levels themselves - `pips` on its own data, not a random "

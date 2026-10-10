@@ -50,9 +50,12 @@ not move it, and a real break should.
 
 `gate`, in standard deviations of the innovation. 2.5 as a starting point and
 **not measured**: it is the point past which a touch is treated as surprising,
-and the honest way to set it is the distribution of realised innovations, which
-needs the raw touch price the outcomes journal does not record. The same missing
-field blocks `jerk`, and the same fit would settle both.
+and the honest way to set it is the distribution of realised innovations over
+real touches. That is measurable now: the episode record carries `entry` - the
+touch price - at eight decimal places, with `r_price` for the scale. This
+docstring used to call it a missing field, which was my error; the resolutions
+write lacks it and the episode write has it. The same measurement settles `jerk`
+alongside it.
 """
 
 from __future__ import annotations

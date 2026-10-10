@@ -74,9 +74,11 @@ it is the market. The run says the **machinery** is sound, and says nothing abou
 what `jerk` is for a level.
 
 Levels are observed when price returns to them, which is a sparser and
-differently-biased sample, and the raw touch price is not in the outcomes
-journal. Until that field exists this harness cannot be pointed at the right
-measurement.
+differently-biased sample. Pointing this harness at that sample is a job not yet
+done rather than one that cannot be: the episode record carries `entry`, the
+touch price, at eight decimal places - 250,412 of them. An earlier version of
+this docstring called it a missing field, having checked the resolutions write
+and generalised to the journal.
 
 
 

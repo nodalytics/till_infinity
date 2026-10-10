@@ -11,10 +11,48 @@ toward zero at `theta` per hour, and the value is its integral:
     d(value) = rate dt
     d(rate)  = -theta * rate dt + sigma dW
 
-A level still drifts, and the drift dies out. Two states rather than three:
-a reverting rate already supplies the curvature that `linear`'s acceleration
-state was there to provide, and whether a *third* reverting state earns anything
-is I5's question, asked separately.
+A level still drifts, and the drift dies out.
+
+## Two states rather than three, and that is measured
+
+The weak version of this argument is that a reverting rate already supplies the
+curvature `linear`'s acceleration state was there to provide. True, and not the
+reason. The reason is that a third state was tried and lost - and **not** for the
+cause I5 proposes.
+
+**Observability is not the blocker.** The condition number of the observability
+matrix for price-only measurements at 4h is 2.5 with two states and about 40 with
+three, against the ~1e8 where a state stops being numerically identifiable. A
+third state is perfectly estimable here.
+
+**It loses anyway.** Held out on the same 534 points of eurusd 4h:
+
+| model | held out | per point |
+| --- | ---: | ---: |
+| two states, reverting rate | **-1009.55** | best |
+| three states, two-factor drift | -1083.48 | -0.138 |
+| three states, white jerk | -1453.26 | -0.831 |
+
+The three-state variant tested is a **two-factor drift** - the rate as the sum of
+a slow and a fast Ornstein-Uhlenbeck component, so a level's drift can have two
+time scales. That is the generalisation which keeps the stability this module is
+about; moving the reversion up a derivative instead would leave the rate
+random-walking and reintroduce I3's defect one level higher.
+
+And the fit answered for itself: given two components it set the fast one's noise
+to **zero**. Offered a third state it declined to use it, which is a two-state
+model with extra machinery.
+
+**Why there is nothing there to find.** The best `theta` on this series is a
+3.5-hour half-life, so the rate retains 45% of itself across one 4h bar. A second
+drift component would have to be *more* persistent than that to add anything, and
+two time scales cannot be resolved in a quantity that barely survives one
+sampling interval.
+
+**The asymmetry is the useful part**: three states with white jerk lose 0.83 per
+point and three states with reverting drift lose 0.14, so almost all of the gap
+was the *instability* rather than the state count. Stability is worth about 0.7
+nats a point here. The extra state is worth -0.14.
 
 ## Why it exists: it was measured before it was written
 
@@ -60,8 +98,14 @@ not.
 
 A bar close is not a touch. The close moves because price moved; a level is not
 supposed to. So the comparison above establishes the *direction* - a stable rate
-beats a random-walking one - and sets none of the constants. `theta` for a level
-needs the raw touch price the outcomes journal does not record.
+beats a random-walking one - and sets none of the constants.
+
+`theta` for a level has to be fitted on touches, and those are available: the
+episode record carries `entry` - the touch price - at eight decimal places, with
+`level` and `r_price` for the scale, 250,412 of them as of 2026-10-10. An earlier
+version of this docstring said the journal did not record it. That was wrong, and
+wrong in a specific way worth keeping: the *resolutions* write does not carry it,
+the *episode* write does, and I generalised from the one I had looked at.
 """
 
 from __future__ import annotations
@@ -224,6 +268,31 @@ class Reverting:
             self.earned_rate = True
         return innovation
 
+    # ------------------------------------------------- what a smoother needs
+
+    NAMES: tuple[str, ...] = ("value", "rate")
+
+    def state(self) -> tuple[float, ...]:
+        return (self.value, self.rate)
+
+    def covariance(self) -> tuple[tuple[float, ...], ...]:
+        return ((self.p00, self.p01), (self.p01, self.p11))
+
+    def transition(self, dt: float) -> tuple[tuple[float, ...], ...]:
+        """`F(dt)` for the integrated Ornstein-Uhlenbeck.
+
+        `expm1` for the carry term: `(1 - e^-u)/theta` is the difference of two
+        nearly-equal numbers for small `u`, and it is the entry the value's whole
+        drift comes through.
+        """
+        theta = max(self.theta, 0.0)
+        if theta > 0.0:
+            decay = math.exp(-theta * dt)
+            carry = -math.expm1(-theta * dt) / theta
+        else:
+            decay, carry = 1.0, dt
+        return ((1.0, carry), (0.0, decay))
+
     # ---------------------------------------------------------------- readings
 
     @property
@@ -231,9 +300,10 @@ class Reverting:
         """There is no acceleration state. Reported as the rate's own pull.
 
         `-theta * rate` is where the rate is heading, which is the nearest
-        honest answer and is **not** a third state: a consumer that needs the
-        acceleration's own uncertainty needs `linear.Gaussian` or I5's question
-        answered first.
+        honest answer and is **not** a third state. A consumer needing the
+        acceleration's own uncertainty needs `linear.Gaussian` - and should know
+        that a third state was measured here and lost by 0.138 nats a point,
+        having been offered and declined by the fit itself.
         """
         return -max(self.theta, 0.0) * self.rate
 

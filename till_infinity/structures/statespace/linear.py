@@ -29,10 +29,16 @@ the measurement noise.
 `jerk` is the spectral density of the third derivative, in value units squared
 per hour to the fifth. Its counterpart in production is
 `DRIFT_VOL_PER_HOUR = 0.02`, which was chosen per hour and applied at every
-timeframe, and which the structures outcomes journal cannot currently be used to
-fit because it records `feed`, `interval`, `interval_log` and `level` but not the
-raw touch price. Until that field exists, any value here is a placeholder and
-this module says so rather than implying otherwise.
+timeframe and has never been fitted.
+
+**It is fittable today.** I spent six files saying the journal does not record a
+raw touch price; it does. `Episode.to_dict` records `entry` - the touch price -
+with `level` and `r_price` beside it, all at eight decimal places, and every
+touch is journalled that way whether it was called or not: 250,412 of them as of
+2026-10-10. What I had actually checked was the *resolutions* write, which
+carries `feed`, `interval`, `interval_log` and `level` only, and I generalised
+one write to "the journal". So this value is a placeholder because nobody has
+run the fit, not because the data is missing.
 
 ## What the coefficients may depend on, which is I4
 
@@ -269,6 +275,44 @@ class Gaussian:
         if self.rate_confident:
             self.earned_rate = True
         return innovation
+
+    # ------------------------------------------------- what a smoother needs
+
+    #: Components, in the order `state` and `covariance` report them.
+    NAMES: tuple[str, ...] = ("value", "rate", "accel")
+
+    def state(self) -> tuple[float, ...]:
+        """The state vector, in `NAMES` order."""
+        return (self.value, self.rate, self.accel)
+
+    def covariance(self) -> tuple[tuple[float, ...], ...]:
+        """The full covariance, dense and symmetric.
+
+        Dense rather than the six floats it is stored as, because a smoother
+        should not have to know how a member packs its upper triangle - and the
+        cost is nine floats on a structure that already holds a market.
+        """
+        return (
+            (self.p00, self.p01, self.p02),
+            (self.p01, self.p11, self.p12),
+            (self.p02, self.p12, self.p22),
+        )
+
+    def transition(self, dt: float) -> tuple[tuple[float, ...], ...]:
+        """`F(dt)`, the integrator for a constant-jerk model.
+
+        **The reason a factory alone cannot smooth a member.** The
+        Rauch-Tung-Striebel gain is `P_t F' P_{t+1|t}^-1`, so a smoother needs
+        the transition and not only the ability to run the filter. A member that
+        cannot state its own `F` cannot be smoothed, which is a true thing to
+        say about it rather than a limitation of the smoother.
+        """
+        half = 0.5 * dt * dt
+        return (
+            (1.0, dt, half),
+            (0.0, 1.0, dt),
+            (0.0, 0.0, 1.0),
+        )
 
     # ---------------------------------------------------------------- readings
 

@@ -28,9 +28,12 @@ words has not been specified, whatever its value is.
 **Every `jerk` below is a placeholder and every one says so.** None has been
 fitted. The fit is the same shape for all three -
 `var(m2 - m1) = jerk_equivalent * dt + 2R` over measurement pairs, slope the
-process variance and intercept twice the measurement noise - and for `LEVEL` it
-is blocked on the structures outcomes journal recording a raw touch price, which
-it does not. Shipping a number without saying that is how
+process variance and intercept twice the measurement noise - and for `LEVEL` the
+measurements are there: `entry` on the episode record is the touch price, at
+eight decimal places, 250,412 of them as of 2026-10-10. An earlier version of
+this file said that was blocked on a field the journal does not record; it was
+the *resolutions* write that lacks it, not the episode write. Shipping a number
+without saying it is a placeholder is how
 `DRIFT_VOL_PER_HOUR = 0.02` came to be applied at every timeframe without anyone
 having measured it once.
 
@@ -91,9 +94,9 @@ class Subject:
 #: `noise` is the one number here that *is* measured: `TOUCH_NOISE_VOL = 0.40`
 #: from 2026-10-09, two independent estimates agreeing, replacing a chosen 0.5 -
 #: so `R = 0.40^2`. `jerk` is not: its production counterpart is
-#: `DRIFT_VOL_PER_HOUR = 0.02`, chosen per hour and applied at every timeframe,
-#: and the fit that would settle it needs a raw touch price the outcomes journal
-#: does not record.
+#: `DRIFT_VOL_PER_HOUR = 0.02`, chosen per hour and applied at every timeframe
+#: and never fitted - though the fit is available, not blocked: the episode
+#: record carries `entry`, the touch price, at eight decimal places.
 LEVEL = Subject(
     name="level",
     quantity="the price at which this level currently sits",
@@ -103,8 +106,8 @@ LEVEL = Subject(
     noise=0.40**2,
     provenance=(
         "noise measured 2026-10-09 (TOUCH_NOISE_VOL, two independent estimates); "
-        "jerk a placeholder - DRIFT_VOL_PER_HOUR = 0.02 was chosen, never fitted, "
-        "and the fit is blocked on the outcomes journal recording a touch price"
+        "jerk a placeholder - DRIFT_VOL_PER_HOUR = 0.02 was chosen and never "
+        "fitted; the fit is available on the episode record's touch price"
     ),
 )
 
