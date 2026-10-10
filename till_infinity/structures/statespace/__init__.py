@@ -37,6 +37,7 @@ two modules rather than an argument about a rewrite.
 | `rates.py` | a rate per unit time, which every `A` coefficient needs (I6) | written |
 | `family.py` | the interface, and which member has beaten which, where | written |
 | `linear.py` | the Kalman member: linear-Gaussian, continuous time | written |
+| `reverting.py` | a rate that pulls back instead of running away (I3) | **beats `linear`** |
 | `robust.py` | the Kalman with a Huber-gated gain - the cheap arm for fat tails | written |
 | `subjects.py` | what the state means for a level, an instrument, a relationship | written |
 | `diagnostics.py` | fit the parameters by likelihood; test whether the model is right | written |
@@ -205,6 +206,7 @@ from .family import MISSING, PENDING, Filter, members
 from .linear import Gaussian
 from .paths import Path, hourly, simulate, with_gaps
 from .rates import Slope, slope_per_bar, slope_per_hour
+from .reverting import Reverting
 from .robust import Robust
 from .smoothing import Smoothed, smooth
 from .subjects import INSTRUMENT, LEVEL, RELATION, SUBJECTS, Subject
@@ -220,6 +222,7 @@ __all__ = [
     "Gaussian",
     "Path",
     "Residuals",
+    "Reverting",
     "Robust",
     "Slope",
     "Smoothed",

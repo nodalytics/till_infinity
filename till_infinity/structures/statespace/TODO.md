@@ -24,11 +24,39 @@ every line: **nothing here publishes until it has beaten a named null.**
    **What is left is the fixed-lag form**, which bounds latency by the lag
    rather than by the end of the series — the only version a desk could read,
    and even then probably should not.
-2. **EM**, which needs the smoother first because the E-step *is* the smoothed
+2. ~~**A stable state equation (I3).**~~ Written — `reverting.py`, an integrated
+   Ornstein-Uhlenbeck where the rate reverts at `theta` instead of
+   random-walking. Measured first, held out, on eurusd 4h: **+0.96 nats per
+   point**, innovation spread 1.294 to **0.985**, Ljung-Box 5.96e-27 to
+   1.22e-04. Projection is bounded by `rate / theta` however far ahead you ask,
+   so the horizon cap becomes unnecessary rather than merely unused.
+
+   **Three things it does not do, and they set what comes next:**
+
+   * **Autocorrelation survives** at p = 1.22e-04. Structure remains that a
+     reverting rate does not capture — that is **I8**, and the candidates are
+     quantities the desk already computes (hour-of-day share, activity) rather
+     than another dynamics tweak.
+   * **Non-normality gets worse**, 9.18e-89 to 8.83e-183. A reveal, not a
+     regression: a marginally stable rate absorbs a large move by running away
+     with it, so the move never appears as an outlier. Fix the dynamics and it
+     does. **This inverts the order** — `robust.py` is a `PY` change and was the
+     smaller error while `PX` was wrong; it is the dominant remaining one now
+     that `PX` is not, and it has a far better case than before.
+   * **`theta` came out at 0.5 per hour**, a 1.39-hour half-life, so a 4h bar
+     retains 13.5% of its drift. The best-fitting model of a level's drift is
+     one in which that drift is **very nearly noise** — which is where every
+     other result on this desk that survived a control has landed: magnitude
+     predictable, direction not.
+
+   All of it measured on **closes, not touches**, so it sets the direction and
+   none of the constants.
+
+3. **EM**, which needs the smoother first because the E-step *is* the smoothed
    posterior. `diagnostics.fit_jerk` searches one parameter; EM fits the set,
    with a closed-form M-step for the noise covariances. That is the route to
    `jerk` **and** `R` together rather than measuring one and searching the other.
-3. ~~**An end-to-end exercise on real bars.**~~ Run —
+4. ~~**An end-to-end exercise on real bars.**~~ Run —
    `research/ideas/statespace_first_contact.py`, eurusd 4h, 1,073 bars. The
    machinery works and **the model is wrong on this series in all three ways at
    once**: autocorrelated (Ljung-Box p = 2e-47), non-normal (p = 9e-95) and
@@ -49,13 +77,22 @@ every line: **nothing here publishes until it has beaten a named null.**
    mistake again: a number validated without checking what it is a number
    about. Still blocked on the touch-price field.
 
-4. **A reference for anything hand-written.** Every formula in the module is now
+5. **The smoother is linear-only.** `smoothing.smooth` builds a
+   `linear.Gaussian` itself, so it cannot smooth a `Reverting` — which matters
+   now, because `reverting` is the member that wins. A test asserts the
+   limitation so it is recorded rather than discovered. The fix is to take a
+   filter factory instead of a `jerk`, which is also what a fixed-lag form will
+   need.
+
+6. **A reference for anything hand-written.** Every formula in the module is now
    checked against an independent one — the generator's Cholesky against its own
    empirical covariance, `band` against actually predicting forward, the OLS
    slope and its variance against numpy, Ljung-Box and Jarque-Bera against
    numpy. That audit exists because `smoothing._gain` was wrong and was checked
    against nothing. **Anything added here arrives with its reference.**
-5. **`Subject` carries no `PX0` / `PX` / `PY`.** `family.py` says a member is
+7. **`Subject` carries no `PX0` / `PX` / `PY`.** And `Subject.filter()` always
+   returns a `Gaussian`, so no subject can declare that it wants the reverting
+   member — which is now the one with evidence behind it. `family.py` says a member is
    identified by which of the three distributions changes, and `subjects.py`
    still describes its state in prose. Making the three explicit per subject is
    what would let a subject and a member be composed rather than paired by hand.

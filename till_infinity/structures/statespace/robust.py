@@ -23,12 +23,22 @@ a rejected measurement is information thrown away, and on a level it is often th
 *interesting* one - the measurement's variance is **inflated** by how surprising
 it is:
 
-    R' = R * (|y| / (k * sqrt(S)))^2   when |y| > k * sqrt(S)
+    R' = R * (|y| / (k * sqrt(S)))    when |y| > k * sqrt(S)
 
-which is Huber's idea applied to the gain: inside the gate nothing changes at
-all, and outside it the update moves in proportion to `sqrt` of the surprise
-rather than linearly in it. A reading sixteen sigma out moves the state about as
-far as one four sigma out, instead of four times as far.
+which is Huber's idea applied to the gain. Inside the gate nothing changes at
+all. Outside it the gain falls as `1/sigma` while the innovation grows as
+`sigma`, so the **movement is bounded**: a reading sixteen sigma out moves the
+state about as far as one four sigma out, instead of four times as far.
+
+**The exponent is one, and it was two until it was tested.** Squaring the ratio
+makes the gain fall as `1/sigma^2` and the movement as `1/sigma` - so a sixteen
+sigma reading moved the state *less* than a four sigma one, measured at 0.0071
+against 0.0266. That is a **redescending** estimator, Tukey's shape rather than
+Huber's, and it is the wrong one here: the more a reading disagrees, the less a
+redescending filter listens, which is exactly backwards for a level that has
+genuinely broken. A real break arrives as a run of large innovations and the
+filter has to be able to follow them. Bounded influence follows; vanishing
+influence does not.
 
 **It is not a filter that ignores outliers.** A series that genuinely re-levels
 will keep producing large innovations, each one widening its own `R'` less than
@@ -103,10 +113,11 @@ class Robust(Gaussian):
         if sigma > gate:
             self.gated += 1
             # Inflate the measurement's variance by how far past the gate it is.
-            # Squared, because `R` is a variance and the ratio is in standard
-            # deviations: the gain then falls as 1/surprise rather than being
-            # linear in it.
-            noise = noise * (sigma / gate) ** 2
+            # **Linear in the ratio, not squared.** The gain then falls as
+            # `1/sigma` while the innovation grows as `sigma`, so the movement is
+            # bounded - Huber. Squaring it makes the movement *fall* with the
+            # surprise, which is redescending and ignores a real break.
+            noise = noise * (sigma / gate)
 
         return Gaussian.update(self, measured, noise)
 
