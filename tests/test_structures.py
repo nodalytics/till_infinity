@@ -1010,6 +1010,7 @@ def test_every_persisted_class_restores_a_field_it_predates():
     import pkgutil
 
     import till_infinity.structures as package
+    from till_infinity.shared import codec
     from till_infinity.structures.state import Restorable
 
     checked = 0
@@ -1018,6 +1019,14 @@ def test_every_persisted_class_restores_a_field_it_predates():
     # which is how this test caught the move rather than passing through it.
     for found in pkgutil.walk_packages(package.__path__, package.__name__ + "."):
         module = importlib.import_module(found.name)
+        # **The same rule `codec.registry` applies, imported rather than
+        # restated.** A package that declares itself unpersisted is not in the
+        # state file's schema, so requiring its classes to be `Restorable` would
+        # assert the opposite of what it says. Two copies of this rule would
+        # drift, and the direction they would drift is a class that is persisted
+        # and is not checked.
+        if codec.skipped(found.name):
+            continue
         for name in dir(module):
             cls = getattr(module, name)
             if not (
