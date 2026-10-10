@@ -148,3 +148,70 @@ And the diagnosis started in the wrong place. The warm was measured, halved,
 and the halving [measured not to work](losing-faster.md) - all correct, all
 irrelevant, because the warm was a symptom. What found this was asking why the
 *restored state* was thin instead of why the *warm* was slow.
+
+## And none of it was running, measured 2026-10-10
+
+The fix above shipped, the saves went on failing, and the second diagnosis was
+as blind as the first. The cause was not in the model at all.
+
+**The image carried two copies of the package and the wrong one was imported.**
+
+| | `/app/.venv/.../till_infinity` | `/app/till_infinity` |
+| --- | --- | --- |
+| what it is | the installed package | the source it was built from |
+| **what Python imports** | **this one** | nothing |
+| `_finite` | absent | present |
+| `prune_nonfinite` | absent | present |
+| the save counter | absent | present |
+| `learned.py` | 31,196 bytes | 37,724 bytes |
+
+`uv sync --frozen --no-editable` builds the project into a wheel and caches it,
+and **the cache key does not include the source.** The version in
+`pyproject.toml` never changes, so uv reinstalled a wheel it had built from an
+older tree. Every core file differed. The installed copy had no
+`TOUCH_NOISE_VOL`, no `ACCEL_SIGMAS`, no `SEED_NEW_BARS` - so it predates #130,
+and **#130, #136 and #141 were built, tagged, deployed, health-checked and
+reported `up on <sha>` while none of them ran.** No commit on `main` matches its
+file sizes, so the wheel came from a working tree rather than a revision.
+
+### Why three content checks all missed it
+
+The rule after yesterday's mislabelled image was *verify the contents, not the
+tag*. It was followed, and it still missed this, because of one detail:
+
+```
+WORKDIR /app
+```
+
+`docker run --entrypoint python ... -c "from till_infinity... import X"` resolves
+`till_infinity` from the working directory **before** site-packages. Every check
+read `/app/till_infinity` - the source - and confirmed exactly the copy that was
+not running. The verification and the failure had the same cause.
+
+So the rule needs its second half: **verify the artefact the process loads, not
+a file that happens to be in the image.** `till_infinity.__file__` answers it in
+one line, and the build now answers it without being asked.
+
+### The fix
+
+* `--reinstall-package till-infinity` on the project sync, so a cached wheel
+  cannot satisfy it.
+* **A build-time digest check** over every `.py` in the installed package
+  against every `.py` in the source. A stale wheel now fails the build instead
+  of shipping.
+* **The source tree is no longer shipped.** Two copies with one imported is what
+  made a wrong check possible; with one copy in the image, `python -c` cannot
+  read the wrong thing.
+
+### What this voids
+
+[`losing-faster.md`](losing-faster.md)'s "the warm cap does not bind" section,
+and #140, which recorded it. `SEED_NEW_BARS` was not in the running process, so
+the unchanged bar count measured a missing constant rather than an unbinding
+cap. **Untested, not refuted.**
+
+It is also the fourth time in two days that tooling reported success over a
+wrong artefact - an rsync that moved 189MB and left the directory empty, an
+image tagged with a commit it did not contain, a save that wrote a `.tmp` and
+renamed nothing, and now an install that reported done and changed nothing. The
+common shape is that each one had a cheap check nobody had written yet.

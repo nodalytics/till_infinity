@@ -163,6 +163,16 @@ just a smaller fraction of a wider stop.
 
 ## The warm cap does not bind, measured 2026-10-09
 
+> **Void, 2026-10-10.** This whole section measured a constant that was not in
+> the running process. The image carried the new source at `/app/till_infinity`
+> and an old installed package in its venv - `uv sync --no-editable` had
+> reinstalled a wheel cached from an older tree - and the venv is what Python
+> imports. `SEED_NEW_BARS` never shipped, so a bar count that did not change is
+> what a missing constant looks like rather than a cap that does not bind. The
+> conclusion below is **untested**, not refuted. See
+> [`sixteen-days-without-a-save.md`](sixteen-days-without-a-save.md).
+
+
 A change shipped that afternoon halved the rows the warm reads per
 `(feed, interval)` - `SEED_NEW_BARS`, 500 against `SEED_BARS`' 1000 - on the
 reasoning that `bars * 8 / 12` venue series lands on the 333 that
