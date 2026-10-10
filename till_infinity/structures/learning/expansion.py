@@ -237,7 +237,11 @@ class Expansion(Restorable):
         spec = frozen.load(MODEL, recipe=RECIPE, names=NAMES)
         if spec is None:
             return {}
-        p = frozen.Trees(spec).predict(s.latest)
+        # The spec's own feature order, not this module's - see `frozen.vector`.
+        row = frozen.vector(spec, NAMES, s.latest)
+        if row is None:
+            return {}
+        p = frozen.Trees(spec).predict(row)
         base = float(spec.get("base_rate", 0.0))
         return {
             "expansion_probability": round(p, 4),

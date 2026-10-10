@@ -234,7 +234,11 @@ class Shocks(Restorable):
         s = self.series.get(f"{feed}|{interval}")
         if spec is None or s is None or not s.latest:
             return {}
-        p = frozen.Trees(spec).predict(s.latest)
+        # The spec's own feature order, not this module's - see `frozen.vector`.
+        row = frozen.vector(spec, NAMES, s.latest)
+        if row is None:
+            return {}
+        p = frozen.Trees(spec).predict(row)
         base = float(spec.get("base_rate", 0.0))
         # The base rate is the trained model's, a constant, so it is carried inside the lift rather
         # than published on every call (`test_published` refuses a feature that never varies).

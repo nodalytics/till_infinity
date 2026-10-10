@@ -597,3 +597,61 @@ def test_a_model_trained_before_activity_still_loads(tmp_path):
     (models / "envelope_fx15m_5.json").write_text(json.dumps(spec))
     frozen.forget_cache()
     assert ev.model_quantiles(5, _features(), family="fx") is not None
+
+
+# ---------------------------------------------- a model is fed its own feature order
+
+
+def test_vector_passes_a_matching_order_through_untouched():
+    """The common case costs nothing: same names, same order, same list."""
+    from till_infinity.shared import frozen
+
+    names = ("a", "b", "c")
+    spec = {"names": list(names)}
+    assert frozen.vector(spec, names, [1.0, 2.0, 3.0]) == [1.0, 2.0, 3.0]
+    # A spec that declares no names at all is an older file; feed it as given.
+    assert frozen.vector({}, names, [1.0, 2.0, 3.0]) == [1.0, 2.0, 3.0]
+
+
+def test_vector_reorders_when_the_recipe_has_gained_a_feature():
+    """**The bug this exists to stop.** `load` accepts a file whose names are a
+    subset, so a module that adds a feature keeps its shipped models - and a
+    caller feeding positionally from its own constant then shifts every value.
+
+    `activity` becoming the fifteenth envelope feature on 2026-10-09 is the real
+    case: the shipped files have fourteen names.
+    """
+    from till_infinity.shared import frozen
+
+    code = ("lvol", "r1", "r5", "activity")
+    trained_on = ["lvol", "r1", "r5"]
+    values = [0.1, 0.2, 0.3, 0.9]
+
+    got = frozen.vector({"names": trained_on}, code, values)
+    assert got == [0.1, 0.2, 0.3], "the model must see its own three, not the first three of four"
+
+    # And a reordering, not just a truncation.
+    got = frozen.vector({"names": ["r5", "lvol", "r1"]}, code, values)
+    assert got == [0.3, 0.1, 0.2]
+
+
+def test_vector_refuses_a_model_wanting_a_feature_we_cannot_supply():
+    """The one genuinely unsafe case, and the only one that returns None."""
+    from till_infinity.shared import frozen
+
+    assert frozen.vector({"names": ["a", "zzz"]}, ("a", "b"), [1.0, 2.0]) is None
+
+
+def test_the_positional_callers_all_route_through_vector():
+    """Guards the fix rather than the helper: the three modules that build a
+    feature list positionally must hand it to `frozen.vector` before predicting,
+    or the hazard above comes straight back."""
+    import inspect
+
+    from till_infinity.structures.learning import expansion, shocks, touches
+
+    for mod in (shocks, expansion, touches):
+        src = inspect.getsource(mod)
+        assert "frozen.vector(" in src, f"{mod.__name__} does not reorder to the spec's names"
+        # And it must not still be predicting straight off its own list.
+        assert "predict(s.latest)" not in src, f"{mod.__name__} still predicts positionally"
