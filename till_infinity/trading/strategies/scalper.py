@@ -90,6 +90,46 @@ class LevelStrategy(Strategy):
     #: so here rather than reimplementing the placement.
     stop_multiple: ClassVar[float] = 1.0
     target_multiple: ClassVar[float] = 1.0
+    #: Whether this strategy wears `sweep_gate` - the refusal to stand a stop
+    #: in front of the liquidity a sweep would be aimed at. Read by the gate
+    #: itself, so turning it off stops the refusal wherever it is called from. **On for every level
+    #: strategy from 2026-10-10**, asked for as "the liquidity sl gate we have
+    #: in sweep aware, to all the other guys as well".
+    #:
+    #: It lives here rather than in thirteen copies of `accept` because it
+    #: reads only `stop_multiple` and `stop_floor_vol`, so it adapts to each
+    #: strategy's own geometry with no per-strategy argument, and a new level
+    #: strategy gets it without remembering to ask.
+    #:
+    #: What spreading it refuses, over the 3,266 decisions in the journal, and
+    #: what those refusals were worth per closed trade (positive means the
+    #: calls it declines lose money, so declining them gains):
+    #:
+    #:   inverse          25% refused   +0.254 +/-0.076 R   +7.37 R
+    #:   snap             19%           +0.162 +/-0.088     +4.05
+    #:   thesis-only      63%           +0.066 +/-0.040     +8.35
+    #:   momentum-scalp   18%           +0.041 +/-0.055     +0.21
+    #:   runner           17%           +0.002 +/-0.116     +0.04
+    #:   level-scalp      17%           -0.015 +/-0.074     -0.34
+    #:   fade-to-value    21%           -0.084 +/-0.115     -2.18
+    #:   approach-scalp   11%           -0.232 +/-0.000     -0.70
+    #:
+    #: **Only `inverse` clears twice its own standard error.** Every other row
+    #: is inside the noise, including the two negative ones, so this is not a
+    #: table of eight measured improvements - it is one measured improvement
+    #: and seven strategies where the record cannot yet tell. That is the
+    #: honest reason the default is on rather than per-strategy: the gate is a
+    #: geometry refusal that is true or false about the stop regardless of
+    #: which strategy placed it, and no strategy's record argues against it.
+    #:
+    #: `thesis-only` is the row to watch and the reason this is one line to
+    #: turn off. 63% of its calls carry a stop in front of liquidity, because a
+    #: 4v circuit breaker nearly always does, and its +54.45 R comes from a
+    #: handful of large winners - mean +0.253 against a +/-0.308 standard
+    #: error. Cutting 63% of the entries of a strategy whose profit is that
+    #: concentrated can remove the next large winner, and the measurement
+    #: cannot see that risk.
+    sweep_gated: ClassVar[bool] = True
 
     def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
         """Extra conditions beyond the shared ones. None means take it."""
@@ -569,7 +609,12 @@ class LevelStrategy(Strategy):
                 feed,
             )
 
-        narrowed = self.accept(payload, features)
+        # The liquidity refusal comes first, which is where the three strategies
+        # that wore it first called it, so the refusal reported when both would
+        # fire is the same one as before. `sweep_gate` returns None for a
+        # strategy that has opted out, so the flag is checked there rather than
+        # costing this method a branch.
+        narrowed = sweep_gate(self, payload, features) or self.accept(payload, features)
         if narrowed is not None:
             return narrowed
 
@@ -779,16 +824,13 @@ class CycleScalp(LevelStrategy):
     target_multiple: ClassVar[float] = 1.25
 
     def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
-        """Keep the unified scalp thesis lean: refuse clogging liquidity, then a z-score against.
+        """A z-score against the trade. The liquidity refusal is `consider`'s now.
 
         The z gate is on by default (`TRADING_ZMA_GATE=0` turns it off) but acts
         only where the feed's own record has earned it, and it can only ever
         remove a trade - see `zma_gate` for why a detector measuring 0.50 on
         this book is not allowed to add one.
         """
-        clogged = sweep_gate(self, payload, features)
-        if clogged is not None:
-            return clogged
         return zma_gate(self, payload, features)
 
     def distances(
@@ -931,10 +973,6 @@ class ConfluenceScalp(LevelStrategy):
     # against any other timeframe at all, which is a different and weaker
     # claim: a 1m call confirmed by 3m is not "confirmed by a higher
     # timeframe", it is the same fast noise seen twice.
-
-    def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
-        """`sweep-aware`'s gate, judged against *this* strategy's wider stop."""
-        return sweep_gate(self, payload, features)
 
 
 @register
@@ -1185,6 +1223,9 @@ def sweep_gate(
 
     See `strategies-scalper.md` in research/docs.
     """
+    if not getattr(strategy, "sweep_gated", True):
+        return None
+
     feed = str(payload.get("feed") or "")
     settings = strategy.settings
 
@@ -1202,7 +1243,29 @@ def sweep_gate(
     if beyond <= 0:
         return None  # nothing within reach to be run toward
 
-    risk_vol = abs(_number(features, "risk_vol")) * strategy.stop_multiple
+    # **The stop this judges has to be the stop the trade will get.**
+    # `distances` places `max(risk_vol * stop_multiple, stop_floor_vol(interval))`
+    # - a `max` - and reading only the first arm of it describes something
+    # narrower than what is placed, so the gate refuses too little and fails
+    # *open*, which is the direction that costs money.
+    #
+    # For the 1.0-multiple strategies the gap is small: 1.47v seen against
+    # 1.55v realised on `sweep-aware`'s 597 calls. For **`thesis-only` it is
+    # not** - that strategy keeps `stop_multiple = 1.0` and takes its width
+    # from `Settings.thesis_stop_vol` through an overridden `stop_floor_vol`,
+    # so the gate read 1.66v where the trade risked 4.03v, 2.43x, and cleared
+    # 209 of 450 calls whose real geometry it had never looked at.
+    #
+    # Measured over the 3,266 decisions in the journal on 2026-10-10. The
+    # trades the old arm let through and this one stops lose 0.41-0.64 R each
+    # across all three strategies already wearing the gate - eight closed
+    # trades, so the size of that is not established, but the sign is the same
+    # on every one of them.
+    interval = str(payload.get("interval") or "")
+    risk_vol = max(
+        abs(_number(features, "risk_vol")) * strategy.stop_multiple,
+        strategy.stop_floor_vol(interval),
+    )
     exposure = risk_vol / beyond
     if exposure >= settings.sweep_max_exposure:
         return Refusal(
@@ -1285,8 +1348,10 @@ class SweepAware(LevelStrategy):
     #: were stopped, more than any other strategy here.
     max_against_vol: ClassVar[float] = 1.5
 
-    # **`ride`'s exit, kept on this entry.** The filter above is what works -
-    # the calls it declines are worth +0.189R each - and the exit it had was
+    # **`ride`'s exit, kept on this entry.** The filter is what works - the
+    # calls it declines are worth +0.189R each - and from 2026-10-10 it is not
+    # written here any more: `sweep_gate` runs in `consider` for every level
+    # strategy, so this class keeps the exit and inherits the entry.
     # See `strategies-scalper.md` in research/docs.
 
     #: Six times the modelled push is far past the p99 of what touches reach,
@@ -1296,6 +1361,3 @@ class SweepAware(LevelStrategy):
     trail_vol: ClassVar[float] = 0.5
     #: Protect the trade once it has paid for its own risk.
     break_even_at: ClassVar[float] = 1.0
-
-    def accept(self, payload: dict[str, Any], features: dict[str, float]) -> Refusal | None:
-        return sweep_gate(self, payload, features)

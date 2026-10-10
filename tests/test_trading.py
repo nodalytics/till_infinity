@@ -2348,12 +2348,43 @@ def test_nothing_within_reach_is_not_a_reason_to_refuse():
     assert isinstance(got, Intent)
 
 
-def test_sweep_aware_refuses_rather_than_widening_the_stop():
-    """Widening would keep the trade and change what it costs."""
-    plain = take("level-scalp", signal(features={"liquidity_beyond_vol": 1.0}))
-    guarded = take("sweep-aware", signal(features={"risk_vol": 1.0, "liquidity_beyond_vol": 1.0}))
+def test_sweep_aware_refuses_rather_than_widening_the_stop(monkeypatch):
+    """Widening would keep the trade and change what it costs.
+
+    The control used to be `level-scalp`, on the grounds that it did not wear
+    the gate. From 2026-10-10 every level strategy does, so the control is now
+    the opt-out itself - which keeps the claim this test was making and also
+    pins the flag, the one line that turns the gate off again.
+    """
+    call = signal(features={"risk_vol": 1.0, "liquidity_beyond_vol": 1.0})
+    monkeypatch.setattr(td.STRATEGIES["level-scalp"], "sweep_gated", False)
+    plain = take("level-scalp", call)
+    guarded = take("sweep-aware", call)
     assert isinstance(plain, Intent)
     assert isinstance(guarded, Refusal)
+    assert guarded.gate == "in_front"
+
+
+def test_the_gate_judges_the_stop_the_trade_will_actually_get():
+    """`thesis-only`'s width comes from its floor, not from its multiple.
+
+    `distances` places `max(risk_vol * stop_multiple, stop_floor_vol(interval))`.
+    Reading only the first arm described a 1.00v stop on a trade risking 4.00v
+    and so cleared 209 of 450 calls it had never really looked at; this is the
+    `max`. The strategy keeps `stop_multiple = 1.0`, so a test that went
+    through the multiple would pass either way.
+    """
+    engine = td.STRATEGIES["thesis-only"](settings())
+    assert engine.stop_multiple == 1.0
+    assert engine.stop_floor_vol("5m") == 4.0
+
+    # Liquidity 3v beyond: the multiple arm alone reaches 33% of the way to it
+    # and clears the 80% limit, while the stop actually placed reaches 133%.
+    call = signal(features={"risk_vol": 1.0, "liquidity_beyond_vol": 3.0})
+    got = take("thesis-only", call)
+    assert isinstance(got, Refusal)
+    assert got.gate == "in_front"
+    assert "4.00v" in got.detail
 
 
 # ----------------------------------------------- pricing the distance
