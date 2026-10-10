@@ -34,6 +34,7 @@ from __future__ import annotations
 import os
 import pickle
 import sys
+from collections import deque
 from pathlib import Path
 from typing import Any
 
@@ -165,6 +166,99 @@ def _stream(state: dict[str, Any], fingerprint: dict[str, Any], stream: Any) -> 
     return written + pack_into(state, stream)
 
 
+#: Recursion frames allowed while writing state. **River picks 980 and Python
+#: allows 1,000.**
+#:
+#: `HoeffdingTreeRegressor(max_depth=None)` resolves to 980 inside river - chosen
+#: there so river's own recursive traversals stay under the interpreter's default
+#: limit. That leaves twenty frames for the splitter chains hanging off each
+#: leaf, the leaf estimators, this module's own walk, and whatever stack the
+#: caller is already holding. A tree river is willing to grow is therefore
+#: unpicklable at the default limit, by construction, and the failure is a
+#: `RecursionError` from inside `pickle` with nothing pointing at the cause.
+#:
+#: From 2026-09-23 to 2026-10-10 every save raised exactly that. The models are
+#: capped well below this now (`vol/learned.MAX_TREE_DEPTH`), so this is the
+#: second line rather than the first: it exists so the *next* structure that
+#: grows deeper than someone expected costs a log line instead of a fortnight of
+#: silent non-persistence.
+#:
+#: 4,000 rather than something enormous: `pickle` recurses on the C stack too,
+#: and a limit a thread's stack cannot honour turns a failed save into a
+#: segfault, which is strictly worse. Four times the default is far more than
+#: any capped model needs and nowhere near a stack this size.
+SAVE_RECURSION_LIMIT = 4_000
+
+#: Nodes the failure diagnostic will visit before giving up, and how much of the
+#: path it prints. Bounded because it runs on a 206MB object graph inside an
+#: exception handler on a two-core box - and because the walk it bounds is the
+#: one case where taking too long is worse than answering imprecisely: the save
+#: has already failed, and the service still has to come back.
+#:
+#: 8,000,000 rather than 2,000,000: at the smaller budget it reported 21 levels
+#: against a true 92 on production's own state, because breadth is what consumes
+#: it and the deep branches had not been opened yet. An exhausted budget is now
+#: reported rather than hidden, but a number that is usually right is worth more
+#: than a caveat that is always there.
+DIAGNOSTIC_NODES = 8_000_000
+DIAGNOSTIC_PATH = 12
+
+
+def deepest_path(root: Any) -> tuple[int, str]:
+    """The deepest chain in `root`, as `(depth, path)`. For failure messages only.
+
+    **Iterative on purpose.** This runs because something already exceeded the
+    recursion limit, so a recursive walk would raise inside the handler and
+    replace a useful message with a confusing one.
+
+    Cycles are skipped by tracking the nodes on the current path rather than
+    every node seen: a shared object reached twice by different routes is not a
+    cycle and its depth is worth knowing, which a global visited-set would hide.
+
+    **The depth is a lower bound and says so when it is one.** The walk stops
+    after `DIAGNOSTIC_NODES` because the live graph is a million nodes on a
+    two-core box, and it can stop before reaching the deepest branch: measured
+    on production's own state it reported 21 against a true 92. A diagnostic
+    that quietly under-reports is the fault it was written to find, so an
+    exhausted budget is named in the returned path.
+    """
+    scalar = (type(None), bool, int, float, str, bytes, bytearray)
+    best_depth, best_path = 0, ()
+    budget = DIAGNOSTIC_NODES
+    # (node, path, depth, ancestors) with an explicit stack.
+    stack: list[tuple[Any, tuple, int, frozenset]] = [(root, (), 0, frozenset())]
+    while stack and budget > 0:
+        node, path, depth, seen = stack.pop()
+        budget -= 1
+        if depth > best_depth:
+            best_depth, best_path = depth, path
+        if isinstance(node, scalar) or id(node) in seen:
+            continue
+        here = seen | {id(node)}
+        try:
+            if isinstance(node, dict):
+                kids = [(f"[{k!r}]", v) for k, v in list(node.items())[:2048]]
+            elif isinstance(node, list | tuple | set | frozenset | deque):
+                kids = [(f"[{i}]", v) for i, v in enumerate(list(node)[:2048])]
+            else:
+                kids = []
+                held = getattr(node, "__dict__", None)
+                if held:
+                    kids += [(f".{k}", v) for k, v in held.items()]
+                for name in getattr(type(node), "__slots__", ()) or ():
+                    if hasattr(node, name):
+                        kids.append((f".{name}", getattr(node, name)))
+        except Exception:  # a diagnostic that raises is worse than no diagnostic
+            continue
+        for label, child in kids:
+            stack.append((child, (*path, label), depth + 1, here))
+    tail = "".join(best_path[-DIAGNOSTIC_PATH:])
+    lead = "..." if len(best_path) > DIAGNOSTIC_PATH else ""
+    # Budget gone means branches were never opened, so the depth is a floor.
+    cut = " (truncated - depth is a lower bound)" if budget <= 0 and stack else ""
+    return best_depth, f"{lead}{tail}{cut}"
+
+
 def save(state: dict[str, Any], directory: Path | str) -> Path:
     """Write model state atomically. Returns the file written.
 
@@ -175,6 +269,39 @@ def save(state: dict[str, Any], directory: Path | str) -> Path:
     path = target / STATE_FILE
 
     temp = path.with_suffix(".tmp")
+    # **Room to pickle, and the old limit back afterwards.** See
+    # `SAVE_RECURSION_LIMIT` for why the default is not enough for a structure
+    # river is willing to build.
+    was = sys.getrecursionlimit()
+    try:
+        sys.setrecursionlimit(max(was, SAVE_RECURSION_LIMIT))
+        written = _write(state, temp)
+    except RecursionError:
+        # The one failure that says nothing about itself. Report where the depth
+        # is before re-raising, or the caller logs "maximum recursion depth
+        # exceeded" and nobody can act on it.
+        try:
+            depth, where = deepest_path(state)
+            log.error(
+                "structures: state is %d levels deep at %s - too deep to pickle "
+                "even at a limit of %d; the model caps in vol/learned.py are what "
+                "bound this",
+                depth,
+                where,
+                max(was, SAVE_RECURSION_LIMIT),
+            )
+        except Exception as exc:  # never let the diagnostic replace the error
+            log.warning("structures: could not measure the state's depth: %s", exc)
+        raise
+    finally:
+        sys.setrecursionlimit(was)
+    temp.replace(path)  # atomic on POSIX
+    log.debug("structures: saved %d bytes of model state to %s", written, path)
+    return path
+
+
+def _write(state: dict[str, Any], temp: Path) -> int:
+    """The bytes, flushed and on the platter before anyone renames over them."""
     with temp.open("wb") as handle:
         written = _stream(state, _fingerprint(), handle)
         # The state is worth more than the latency. Without this the rename can
@@ -183,9 +310,7 @@ def save(state: dict[str, Any], directory: Path | str) -> Path:
         # passes every check in `load` until it fails mid-parse.
         handle.flush()
         os.fsync(handle.fileno())
-    temp.replace(path)  # atomic on POSIX
-    log.debug("structures: saved %d bytes of model state to %s", written, path)
-    return path
+    return written
 
 
 def load(directory: Path | str) -> dict[str, Any] | None:

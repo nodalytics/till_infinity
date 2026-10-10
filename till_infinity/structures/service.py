@@ -944,16 +944,25 @@ class Watcher:
         # because a restore is the moment the state is in hand and nothing else
         # is touching it, and it is the state on disk that carries the problem.
         try:
-            went = self.engine.vol.learned.prune_nonfinite()
-            if went.get("splitters"):
-                log.info(
-                    "structures: dropped %d vol splitter(s) holding %d non-finite "
-                    "threshold(s) - they are rebuilt from the next bar",
-                    went["splitters"],
-                    went["nodes"],
-                )
+            learned = self.engine.vol.learned
+            went = learned.prune_nonfinite()
+            was = learned.cap_depth()
+            # **Said unconditionally, zero included, and that is the whole point.**
+            # The first version of this line only spoke when it had dropped
+            # something, so a run that found nothing was indistinguishable from a
+            # run that never happened - and on 2026-10-10 that is exactly what
+            # had to be told apart, with the saves still failing after the fix.
+            # The same mistake as a WARNING nobody counted, made again one day
+            # later. A repair step reports what it did, including nothing.
+            log.info(
+                "structures: vol tree repair - dropped %d splitter(s) holding %d "
+                "non-finite threshold(s), depth cap %s",
+                went.get("splitters", 0),
+                went.get("nodes", 0),
+                f"lowered from {was}" if was is not None else "already in place",
+            )
         except Exception as exc:  # repair must never be able to stop a restore
-            log.warning("structures: could not prune non-finite vol splitters: %s", exc)
+            log.warning("structures: could not repair the vol tree: %s", exc)
         # Restored levels were formed under whatever geometry was current when
         # the state was saved, which is not necessarily this one.
         self._decline_unsupported()
