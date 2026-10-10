@@ -2365,19 +2365,23 @@ def test_sweep_aware_refuses_rather_than_widening_the_stop(monkeypatch):
     assert guarded.gate == "in_front"
 
 
-def test_the_gate_judges_the_stop_the_trade_will_actually_get():
+def test_the_gate_judges_the_stop_the_trade_will_actually_get(monkeypatch):
     """`thesis-only`'s width comes from its floor, not from its multiple.
 
     `distances` places `max(risk_vol * stop_multiple, stop_floor_vol(interval))`.
     Reading only the first arm described a 1.00v stop on a trade risking 4.00v
     and so cleared 209 of 450 calls it had never really looked at; this is the
     `max`. The strategy keeps `stop_multiple = 1.0`, so a test that went
-    through the multiple would pass either way.
+    through the multiple would pass either way - which is why this uses the one
+    geometry where the two arms differ by 4x, and forces the gate on to get at
+    it. That `thesis-only` ships with the gate *off* is the next test; this one
+    is about the arithmetic, not about who wears it.
     """
     engine = td.STRATEGIES["thesis-only"](settings())
     assert engine.stop_multiple == 1.0
     assert engine.stop_floor_vol("5m") == 4.0
 
+    monkeypatch.setattr(td.STRATEGIES["thesis-only"], "sweep_gated", True)
     # Liquidity 3v beyond: the multiple arm alone reaches 33% of the way to it
     # and clears the 80% limit, while the stop actually placed reaches 133%.
     call = signal(features={"risk_vol": 1.0, "liquidity_beyond_vol": 3.0})
@@ -2385,6 +2389,31 @@ def test_the_gate_judges_the_stop_the_trade_will_actually_get():
     assert isinstance(got, Refusal)
     assert got.gate == "in_front"
     assert "4.00v" in got.detail
+
+
+def test_thesis_only_keeps_its_circuit_breaker_and_nothing_else_does():
+    """The gate would refuse 63% of this strategy's calls, so it does not wear it.
+
+    A 4v stop is nearly always in front of the liquidity a sweep is aimed at,
+    and the record cannot justify the cut: the refused trades made
+    -0.066 +/-0.040 R each, inside their own standard error, while this
+    strategy's profit comes from a handful of large winners. Every other level
+    strategy wears it - `inverse` is the one where the refused trades lose three
+    standard errors from zero.
+    """
+    assert td.STRATEGIES["thesis-only"].sweep_gated is False
+    others = {
+        name: cls.sweep_gated
+        for name, cls in td.STRATEGIES.items()
+        if name != "thesis-only" and hasattr(cls, "sweep_gated")
+    }
+    assert others, "no other strategy carries the flag"
+    assert all(others.values()), f"unexpectedly ungated: {[k for k, v in others.items() if not v]}"
+
+    # And the exemption is the flag, not the geometry: the same call it now
+    # takes is one the gate would refuse.
+    call = signal(features={"risk_vol": 1.0, "liquidity_beyond_vol": 3.0})
+    assert isinstance(take("thesis-only", call), Intent)
 
 
 # ----------------------------------------------- pricing the distance

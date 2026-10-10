@@ -252,6 +252,62 @@ What would move the first row: a reason to accept a gate that cannot explain its
 refusal, which this desk does not have, and an order of magnitude more data than
 the 250k episodes it does.
 
+## numpy is available here, and three hand-rolled things should go
+
+Checked 2026-10-10. **numpy is importable in `till_infinity/structures` today**:
+`structures/cycles.py` already does it, and numpy 2.5.2 is in `uv.lock` because
+`river[pandas]`, `yfinance` and `pandas` all require it.
+
+Two conditions on using it, and the second is the one that matters:
+
+1. **It is not a declared dependency.** It is purely transitive — absent from
+   `pyproject.toml`'s `dependencies`. So nothing here pins it and dropping
+   `yfinance` or `river` would remove it silently. If this package comes to
+   depend on numpy, it goes in `dependencies` in the same change.
+2. **Import it lazily, or inside this package only.** `cycles.py` imports it
+   *inside the function* with the comment "only for the simulation", and that
+   is load-bearing rather than a style tic: the desk runs in a 2.6GiB cgroup on
+   two cores and sits at ~2.4GB of 3.8GB, so a module-level import in anything
+   `engine.py` loads at startup makes every process pay for numpy whether the
+   feature runs or not. This package publishes nothing and is reached only from
+   tests and harnesses, which is what makes it the safe place to use it.
+
+### What it would replace
+
+`smoothing.py` carries `_transpose`, `_matmul` and `_inverse` — the last being a
+Gauss-Jordan solve with partial pivoting, written general in the dimension
+because the members are not all the same size. It replaced a 3x3 cofactor
+expansion that could only serve one member. All three are numpy one-liners, and
+the tests **already** use numpy as the dense reference they are verified against:
+`numpy.linalg.inv` at both two and three states and on an asymmetric matrix.
+
+So the hand-rolled versions are a reimplementation of the reference they are
+checked against, in the one module where a bug hid longest — `_gain` built the
+`P F'` columns reversed and was 19% worse while still looking right, found only
+when a wrong jerk beat the true one on 25 of 25 seeds.
+
+**This is not a speed argument.** The recursions run over hundreds of points, not
+millions. It is that the arithmetic is the part most likely to be quietly wrong
+and the part numpy makes unnecessary to write.
+
+### The order to do it in
+
+1. `smoothing._inverse`, `_matmul`, `_transpose` → `numpy.linalg.solve` and `@`.
+   Solve rather than invert: the RTS gain is `P_t F' P_{t+1|t}^-1`, which is a
+   linear system and not a request for an inverse, and forming the inverse is
+   the less stable way to get it. The existing tests are the check, unchanged.
+2. `rates.py`'s regression loops, which are a least-squares fit written out.
+3. Leave `linear.py` and `reverting.py` **alone** for now. Their 2x2 and 3x3
+   updates are written out with the cancellation-safe forms the tests pin —
+   `-expm1(-theta*dt)` where the naive expression loses precision — and numpy
+   does not help with that; it would only hide which expression is being
+   evaluated.
+
+D1's HiPPO matrix is the first thing here that genuinely wants numpy rather than
+merely tolerating it: it is a `k x k` construction with an eigendecomposition
+behind its stability argument, and writing that by hand would be the mistake
+this section is about.
+
 ## Members not written
 
 Each already names the null it must beat, in `family.PENDING`. Do not add one
