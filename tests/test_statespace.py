@@ -390,12 +390,22 @@ class TestFamily:
         from till_infinity.structures.statespace.family import Filter, members
 
         got = members()
-        assert set(got) == {"kalman", "robust"}
+        assert set(got) == {"kalman", "reverting", "robust"}
         for name, cls in got.items():
-            instance = cls(jerk=1e-3, at=0.0)
+            # Constructed with no arguments on purpose: a member whose defaults
+            # do not produce a usable filter cannot be scored against another
+            # one without someone choosing its parameters first.
+            instance = cls()
             assert isinstance(instance, Filter), name
             for attr in ("predict", "update", "at_time", "band", "sd", "value", "rate"):
                 assert hasattr(instance, attr), f"{name} is missing {attr}"
+            # And every one of them must take the same call.
+            instance.update(1.0, noise=0.04, when=0.0)
+            instance.update(1.1, noise=0.04, when=HOUR)
+            assert instance.seen == 2, name
+            assert math.isfinite(instance.at_time(2 * HOUR)), name
+            low, high = instance.band(2 * HOUR)
+            assert low <= high, name
 
     def test_every_unwritten_member_already_names_the_null_it_must_beat(self):
         """**The rule that made both prior results conclusive.** A particle filter
@@ -1368,3 +1378,421 @@ class TestEveryHandWrittenFormula:
         assert got.jarque_bera == pytest.approx(
             n / 6.0 * (want_skew**2 + 0.25 * (want_kurt - 3.0) ** 2), rel=1e-9
         )
+
+
+class TestRevertingRate:
+    """I3: a rate that pulls back instead of running away.
+
+    Written because it was measured first - on eurusd 4h, held out, it beat the
+    white-jerk model by 0.96 nats per point and took the innovation spread from
+    1.294 to 0.985. It arrives with its reference, which is the rule the
+    `_gain` bug bought.
+    """
+
+    def test_the_discretisation_matches_a_numerical_integration(self):
+        """`Q(dt)` for an integrated Ornstein-Uhlenbeck, against the integral it
+        is a closed form of: `Q = int_0^dt e^As Qc e^A's ds`, by quadrature.
+
+        **Quadrature rather than van Loan, and that is a finding.** The
+        matrix-exponential construction was the obvious reference and it is the
+        *less* accurate one here: at `theta = 0.5`, `dt = 62` - a weekend gap,
+        so not an exotic case - `scipy.linalg.expm` of the 4x4 block gives
+        42.47009 where quadrature over 200,001 points, an independently derived
+        analytic form, and this implementation all give 42.48000000. The block
+        matrix has norm 62 and `expm` loses the digits.
+
+        So the reference needed guarding, not the code. Van Loan is still
+        checked below, where its argument is small enough to trust.
+        """
+        np = pytest.importorskip("numpy")
+        linalg = pytest.importorskip("scipy.linalg")
+        integrate = pytest.importorskip("scipy.integrate")
+        from till_infinity.structures.statespace.reverting import _process
+
+        sigma2 = 0.18
+        for theta in (0.02, 0.5, 3.0):
+            for dt in (0.25, 1.0, 4.0, 62.0):
+                a = np.array([[0.0, 1.0], [0.0, -theta]])
+                qc = np.array([[0.0, 0.0], [0.0, sigma2]])
+                grid = np.linspace(0.0, dt, 4001)
+                stack = np.empty((grid.size, 2, 2))
+                for index, point in enumerate(grid):
+                    moved = linalg.expm(a * point)
+                    stack[index] = moved @ qc @ moved.T
+                want = np.array(
+                    [
+                        [integrate.simpson(stack[:, r, c], x=grid) for c in range(2)]
+                        for r in range(2)
+                    ]
+                )
+
+                q00, q01, q11 = _process(dt, sigma2, theta)
+                assert q00 == pytest.approx(want[0, 0], rel=1e-6), (theta, dt, "q00")
+                assert q01 == pytest.approx(want[0, 1], rel=1e-6), (theta, dt, "q01")
+                assert q11 == pytest.approx(want[1, 1], rel=1e-6), (theta, dt, "q11")
+
+    def test_van_loan_agrees_where_its_argument_is_small_enough_to_trust(self):
+        """The construction is right; it is the arithmetic that degrades. Kept
+        as a second reference over the range where it holds, so that a future
+        change to `_process` has two independent checks rather than one."""
+        np = pytest.importorskip("numpy")
+        linalg = pytest.importorskip("scipy.linalg")
+        from till_infinity.structures.statespace.reverting import _process
+
+        sigma2 = 0.18
+        for theta, dt in ((0.02, 1.0), (0.5, 4.0), (3.0, 1.0), (0.1, 10.0)):
+            assert theta * dt <= 12.0, "beyond this expm is the inaccurate one"
+            a = np.array([[0.0, 1.0], [0.0, -theta]])
+            qc = np.array([[0.0, 0.0], [0.0, sigma2]])
+            block = np.zeros((4, 4))
+            block[:2, :2] = a * dt
+            block[:2, 2:] = qc * dt
+            block[2:, 2:] = -a.T * dt
+            exp = linalg.expm(block)
+            want = exp[:2, 2:] @ exp[:2, :2].T
+            want = (want + want.T) / 2.0
+
+            q00, q01, q11 = _process(dt, sigma2, theta)
+            assert q00 == pytest.approx(want[0, 0], rel=1e-8), (theta, dt, "q00")
+            assert q01 == pytest.approx(want[0, 1], rel=1e-8), (theta, dt, "q01")
+            assert q11 == pytest.approx(want[1, 1], rel=1e-8), (theta, dt, "q11")
+
+    def test_it_reduces_to_white_acceleration_as_reversion_vanishes(self):
+        """**Where the cancellation bites.** The exact `q00` is
+        `dt - 2(1-e^-u)/theta + (1-e^-2u)/(2 theta)`, whose first two orders in
+        `u` cancel identically - so a naive evaluation loses eight significant
+        figures at `u = 1e-4` and the series is used instead. A discretisation
+        wrong only in the limit is wrong exactly where it matters: a long gap."""
+        from till_infinity.structures.statespace.reverting import _process
+
+        dt, sigma2 = 2.0, 0.3
+        for theta in (1e-9, 1e-7, 1e-5, 1e-4):
+            q00, q01, q11 = _process(dt, sigma2, theta)
+            # The *true* value departs from the limit at first order in
+            # `theta * dt` - `g(u) = u^3/3 - u^4/4`, so q00 is low by about
+            # `0.75 * theta * dt` - and asserting the limit more tightly than
+            # that would be asserting the physics away. At theta = 1e-4 this is
+            # 1.5e-4 relative, which is what a tolerance of 1e-4 rejected.
+            room = max(1e-9, 2.0 * theta * dt)
+            assert q00 == pytest.approx(sigma2 * dt**3 / 3.0, rel=room), theta
+            assert q01 == pytest.approx(sigma2 * dt * dt / 2.0, rel=room), theta
+            assert q11 == pytest.approx(sigma2 * dt, rel=room), theta
+        # And with no reversion at all it is integrated Brownian motion exactly.
+        assert _process(dt, sigma2, 0.0) == (
+            pytest.approx(sigma2 * dt**3 / 3.0),
+            pytest.approx(sigma2 * dt * dt / 2.0),
+            pytest.approx(sigma2 * dt),
+        )
+
+    def test_the_projection_is_bounded_where_the_other_one_runs_away(self):
+        """**The whole of I3 in one assertion.** A reverting rate contributes at
+        most `rate / theta` however far ahead you ask, so a horizon cap becomes
+        unnecessary rather than merely unused."""
+        from till_infinity.structures.statespace import Gaussian, Reverting
+
+        rev = Reverting(sigma2=0.18, theta=0.5)
+        jerk = Gaussian(jerk=1e-3)
+        for i in range(40):
+            rev.update(5.0 + 0.05 * i, noise=0.16, when=i * HOUR)
+            jerk.update(5.0 + 0.05 * i, noise=0.16, when=i * HOUR)
+
+        near = rev.at_time(rev.at + 1_000 * HOUR)
+        far = rev.at_time(rev.at + 1_000_000 * HOUR)
+        assert far == pytest.approx(near, abs=1e-6), "reverting must converge"
+        assert abs(far - rev.value) <= abs(rev.rate / rev.theta) + 1e-9
+
+        # The marginally stable one does not, which is the defect.
+        assert abs(jerk.at_time(jerk.at + 1_000_000 * HOUR)) > 1e6
+
+    def test_uncertainty_still_grows_with_time(self):
+        """Stable dynamics bound the *mean*, not the variance. A level untouched
+        for a month is still a guess."""
+        from till_infinity.structures.statespace import Reverting
+
+        g = Reverting(sigma2=0.18, theta=0.5)
+        for i in range(30):
+            g.update(5.0, noise=0.16, when=i * HOUR)
+        tight = g.p00
+        g.predict(g.at + 72 * HOUR)
+        assert g.p00 > tight
+
+    def test_the_half_life_says_what_the_model_claims(self):
+        """theta = 0.5 per hour is a 1.39-hour half-life, so a 4h bar retains
+        13.5% of its drift. The best-fitting model of a level's drift is one in
+        which that drift is very nearly noise - which is where every other
+        result on this desk that survived a control has landed."""
+        from till_infinity.structures.statespace import Reverting
+
+        g = Reverting(theta=0.5)
+        assert g.half_life_hours == pytest.approx(math.log(2) / 0.5, rel=1e-9)
+        assert g.half_life_hours == pytest.approx(1.386, abs=0.01)
+        assert math.exp(-0.5 * 4.0) == pytest.approx(0.135, abs=0.001)
+        assert Reverting(theta=0.0).half_life_hours == math.inf
+
+    def test_it_beats_the_white_jerk_model_on_data_that_reverts(self):
+        """Held out, because this model has one more parameter and in-sample fit
+        would reward it for that alone."""
+        import random
+
+        from till_infinity.structures.statespace import Gaussian, Reverting
+
+        rng = random.Random(7)
+        noise, theta = 0.16, 0.3
+        times = [i * HOUR for i in range(900)]
+        value, rate, meas = 0.0, 0.0, []
+        for _ in times:
+            rate = math.exp(-theta) * rate + rng.gauss(0, 0.25)
+            value += rate
+            meas.append(value + rng.gauss(0, math.sqrt(noise)))
+
+        half = len(times) // 2
+        best = {}
+        for label, build in (
+            ("jerk", lambda p: Gaussian(jerk=p)),
+            ("reverting", lambda p: Reverting(sigma2=p, theta=theta)),
+        ):
+            scored = []
+            for power in range(-8, 2):
+                f = build(10.0**power)
+                for t, z in zip(times[:half], meas[:half], strict=True):
+                    f.update(z, noise=noise, when=t)
+                scored.append((f.loglike, 10.0**power))
+            chosen = max(scored)[1]
+            f = build(chosen)
+            for t, z in zip(times, meas, strict=True):
+                f.update(z, noise=noise, when=t)
+            # Held out: re-run and take only the second half's contribution.
+            warm = build(chosen)
+            for t, z in zip(times[:half], meas[:half], strict=True):
+                warm.update(z, noise=noise, when=t)
+            before = warm.loglike
+            for t, z in zip(times[half:], meas[half:], strict=True):
+                warm.update(z, noise=noise, when=t)
+            best[label] = warm.loglike - before
+
+        assert best["reverting"] > best["jerk"], best
+
+    def test_a_non_finite_measurement_is_refused(self):
+        from till_infinity.structures.statespace import Reverting
+
+        g = Reverting(sigma2=0.18, theta=0.5)
+        g.update(1.0, noise=0.01, when=0.0)
+        snap = (g.value, g.p00, g.seen)
+        for bad in (float("nan"), float("inf")):
+            g.update(bad, noise=0.01, when=HOUR)
+        g.update(1.0, noise=float("nan"), when=HOUR)
+        assert (g.value, g.p00, g.seen) == snap
+
+    def test_a_state_at_unix_time_zero_still_advances(self):
+        """The same sentinel trap `linear` had, asserted here too rather than
+        assumed not to have been copied."""
+        from till_infinity.structures.statespace import Reverting
+
+        g = Reverting(sigma2=0.18, theta=0.5, at=0.0)
+        g.update(1.0, noise=0.01, when=0.0)
+        before = g.p00
+        g.predict(48 * HOUR)
+        assert g.p00 > before
+        assert g.existence < 1.0
+
+    def test_it_is_a_member_of_the_family(self):
+        from till_infinity.structures.statespace.family import Filter, members
+
+        got = members()
+        assert "reverting" in got
+        assert isinstance(got["reverting"](), Filter)
+
+
+class TestTheRestAgainstAReference:
+    """The components that had no independent check, now that one has bitten.
+
+    `smoothing._gain` was wrong because it was verified against nothing. These
+    close the same gap everywhere else it was still open - most urgently for
+    `reverting.py`, which is new and whose filter path was checked only one
+    piece at a time.
+    """
+
+    def test_the_reverting_filter_matches_a_dense_reference(self):
+        """**The gap `_gain` taught me to close before shipping, not after.**
+
+        `_process` was checked against quadrature, but the predict-and-update
+        path around it - `F P F' + Q`, the gain, the covariance update - was
+        only ever checked against its own arithmetic. This runs the whole filter
+        against a dense numpy implementation built from the matrix definitions.
+        """
+        np = pytest.importorskip("numpy")
+        from till_infinity.structures.statespace import Reverting
+        from till_infinity.structures.statespace.reverting import _process
+
+        sigma2, theta, noise = 0.18, 0.5, 0.16
+        rng = np.random.default_rng(23)
+        # Uneven on purpose: even spacing would hide a dt bug.
+        times, clock = [], 0.0
+        for i in range(120):
+            clock += (62.0 if i % 24 == 23 else 1.0) * HOUR
+            times.append(clock)
+        meas = (5.0 + np.cumsum(rng.normal(0, 0.3, 120))).tolist()
+
+        mine = Reverting(sigma2=sigma2, theta=theta)
+        x = np.zeros(2)
+        cov = np.diag([1.0, 0.0])
+        obs = np.array([[1.0, 0.0]])
+        seen = 0
+
+        for i, (t, z) in enumerate(zip(times, meas, strict=True)):
+            if i:
+                dt = (t - times[i - 1]) / HOUR
+                decay = math.exp(-theta * dt)
+                carry = -math.expm1(-theta * dt) / theta
+                trans = np.array([[1.0, carry], [0.0, decay]])
+                q00, q01, q11 = _process(dt, sigma2, theta)
+                x = trans @ x
+                cov = trans @ cov @ trans.T + np.array([[q00, q01], [q01, q11]])
+            if seen == 0 and cov[0, 0] >= 1.0:
+                x, cov, seen = np.array([z, 0.0]), np.diag([noise, 0.0]), 1
+            else:
+                s = float(cov[0, 0] + noise)
+                gain = (cov @ obs.T / s).ravel()
+                x = x + gain * (z - x[0])
+                cov = cov - np.outer(gain, cov[0, :])
+                seen += 1
+            mine.update(z, noise=noise, when=t)
+
+            assert mine.value == pytest.approx(float(x[0]), abs=1e-10), f"value at {i}"
+            assert mine.rate == pytest.approx(float(x[1]), abs=1e-10), f"rate at {i}"
+            assert mine.p00 == pytest.approx(float(cov[0, 0]), abs=1e-12), f"p00 at {i}"
+            assert mine.p01 == pytest.approx(float(cov[0, 1]), abs=1e-12), f"p01 at {i}"
+            assert mine.p11 == pytest.approx(float(cov[1, 1]), abs=1e-12), f"p11 at {i}"
+
+    def test_revertings_band_agrees_with_predicting_forward(self):
+        """Two hand-written copies of one propagation, as in `linear`. Same
+        check, because the same mistake was available."""
+        from till_infinity.structures.statespace import Reverting
+
+        fields = ("value", "rate", "p00", "p01", "p11", "sigma2", "theta", "at", "seen")
+        for ahead in (0.0, 1.0, 7.0, 62.0):
+            a = Reverting(sigma2=0.18, theta=0.5)
+            for i in range(30):
+                a.update(5.0 + 0.05 * i, noise=0.16, when=i * HOUR)
+            when = a.at + ahead * HOUR
+            low, high = a.band(when, sigmas=1.0)
+            b = Reverting(**{k: getattr(a, k) for k in fields})
+            b.predict(when)
+            assert (high - low) / 2.0 == pytest.approx(b.sd, abs=1e-10), ahead
+            assert a.at_time(when) == pytest.approx(b.value, abs=1e-10), ahead
+
+    def test_the_three_by_three_inverse_matches_numpy(self):
+        """The smoother's gain divides by this. Hand-written cofactors and a
+        determinant, with no check until now."""
+        np = pytest.importorskip("numpy")
+        from till_infinity.structures.statespace.smoothing import _symmetric_3x3_inverse
+
+        rng = np.random.default_rng(31)
+        for _ in range(40):
+            root = rng.normal(size=(3, 3))
+            full = root @ root.T + np.eye(3) * 0.4  # symmetric positive definite
+            got = _symmetric_3x3_inverse(
+                full[0, 0], full[0, 1], full[0, 2], full[1, 1], full[1, 2], full[2, 2]
+            )
+            assert got is not None
+            want = np.linalg.inv(full)
+            places = ((0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2))
+            for value, (r, c) in zip(got, places, strict=True):
+                assert value == pytest.approx(float(want[r, c]), rel=1e-9, abs=1e-12)
+
+    def test_a_singular_matrix_is_refused_rather_than_inverted(self):
+        from till_infinity.structures.statespace.smoothing import _symmetric_3x3_inverse
+
+        # Rank one: every row a multiple of the first.
+        assert _symmetric_3x3_inverse(1.0, 1.0, 1.0, 1.0, 1.0, 1.0) is None
+        assert _symmetric_3x3_inverse(0.0, 0.0, 0.0, 0.0, 0.0, 0.0) is None
+
+    def test_the_robust_influence_is_bounded_and_not_vanishing(self):
+        """**The property that found the exponent was wrong.**
+
+        Huber means *bounded* influence: outside the gate the gain falls as
+        `1/sigma` while the innovation grows as `sigma`, so the movement settles
+        to a constant. Measured across an eightfold range of surprise it does -
+        0.0404 at four sigma to 0.0440 at thirty-two.
+
+        The first implementation squared the ratio, which makes the movement
+        fall as `1/sigma`: a sixteen sigma reading moved the state **less** than
+        a four sigma one, 0.0071 against 0.0266. That is Tukey's redescending
+        shape, not Huber's, and it is the wrong one for a level - the more a
+        reading disagrees the less a redescending filter listens, which is
+        backwards for a level that has genuinely broken. A real break arrives as
+        a run of large innovations and the filter has to be able to follow them.
+        """
+        from till_infinity.structures.statespace import Robust
+
+        moved = {}
+        for surprise in (4.0, 8.0, 16.0, 32.0):
+            g = Robust(jerk=1e-9, gate=2.5)
+            for i in range(80):
+                g.update(5.0, noise=0.01, when=i * HOUR)
+            settled, spread = g.value, math.sqrt(g.p00 + 0.01)
+            g.update(settled + surprise * spread, noise=0.01, when=81 * HOUR)
+            moved[surprise] = abs(g.value - settled)
+
+        # Bounded: eight times the surprise moves it within a fifth as much again.
+        assert moved[32.0] < 1.2 * moved[4.0], moved
+        # Not vanishing: a redescending estimator would move it *less*.
+        assert moved[32.0] > moved[4.0], moved
+        # And nowhere near linear, which would be eight times as far.
+        assert moved[32.0] < 2.0 * moved[4.0], moved
+
+    def test_existence_decays_on_the_same_clock_as_a_forgotten_feed(self):
+        """Documented and therefore worth asserting: a quantity the desk has
+        stopped seeing evidence for and a feed it has stopped seeing bars from
+        are the same kind of absence, so they must not decay on two clocks."""
+        from till_infinity.structures.engine import FORGET_FEED_SECONDS
+        from till_infinity.structures.statespace.linear import EXISTENCE_HALF_LIFE_HOURS
+
+        assert pytest.approx(FORGET_FEED_SECONDS / 3600.0) == EXISTENCE_HALF_LIFE_HOURS
+
+    def test_the_smoother_is_linear_only_and_that_is_a_known_gap(self):
+        """`smooth` builds a `Gaussian` itself, so it cannot smooth a
+        `Reverting` - which matters, because `reverting` is the member that now
+        wins. Asserted so the limitation is recorded rather than discovered."""
+        import inspect
+
+        from till_infinity.structures.statespace import smoothing
+
+        source = inspect.getsource(smoothing.smooth)
+        assert "Gaussian(" in source, "if this changes, the gap below is closed"
+        signature = inspect.signature(smoothing.smooth)
+        assert "jerk" in signature.parameters
+        assert "theta" not in signature.parameters, (
+            "a smoother that takes theta would smooth the reverting member too"
+        )
+
+    def test_accel_confidence_reads_no_information_as_no_information(self):
+        """The same trap `rate_confident` avoids, on the third state."""
+        from till_infinity.structures.statespace import Gaussian
+
+        g = Gaussian(jerk=0.0)
+        g.accel, g.p22 = 9.0, 0.0
+        assert g.accel_confident is False
+        g.p22 = 1e-6
+        assert g.accel_confident is True
+
+    def test_revertings_accel_is_the_rates_pull_and_not_a_state(self):
+        """It reports `-theta * rate` because that is where the rate is heading.
+        A consumer needing the acceleration's own uncertainty needs `linear`."""
+        from till_infinity.structures.statespace import Reverting
+
+        g = Reverting(sigma2=0.18, theta=0.4)
+        g.rate = 2.0
+        assert g.accel == pytest.approx(-0.8)
+        assert not hasattr(g, "p22"), "there is no third state to carry a variance"
+
+    def test_fit_jerk_reports_the_bracket_edge_rather_than_hiding_it(self):
+        """Documented behaviour: returning the edge means the answer is outside
+        the range searched, and the caller is told by getting the edge."""
+        from till_infinity.structures.statespace import fit_jerk
+
+        # Monotone increasing in jerk, so the maximum is at the top edge.
+        found, _best = fit_jerk(math.log10, low=-6.0, high=-2.0)
+        assert math.log10(found) == pytest.approx(-2.0, abs=0.02)
+        found, _best = fit_jerk(lambda j: -math.log10(j), low=-6.0, high=-2.0)
+        assert math.log10(found) == pytest.approx(-6.0, abs=0.02)

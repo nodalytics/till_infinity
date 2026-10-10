@@ -15,8 +15,9 @@ names in the spec:
 
 | member | module | status | measured verdict |
 | --- | --- | --- | --- |
-| linear Gaussian | `linear.py` | written | the incumbent for levels; nothing has beaten it |
-| generalised Gaussian | `robust.py` | written | untested |
+| white jerk | `linear.py` | written | the incumbent's shape; **beaten** |
+| reverting rate | `reverting.py` | written | **wins held out, 0.96 nats/point** |
+| generalised Gaussian | `robust.py` | written | the next step; its case is now stronger |
 | particle | - | not yet | **levels: machinery for nothing. volatility: wins** |
 | HMM | - | not yet | untested as a level filter |
 | random finite set | - | not yet | the set layer, Phase 2 - untested |
@@ -55,10 +56,25 @@ about which of the three is wrong**, which is answerable:
 
 | member | `PX0` | `PX` | `PY` |
 | --- | --- | --- | --- |
-| linear Gaussian | Gaussian | linear, Gaussian | Gaussian |
-| generalised Gaussian (`robust.py`) | Gaussian | linear, Gaussian | **heavy-tailed** |
+| white jerk (`linear.py`) | Gaussian | linear, **marginally stable** | Gaussian |
+| reverting rate (`reverting.py`) | Gaussian | linear, **stable** | Gaussian |
+| generalised Gaussian (`robust.py`) | Gaussian | linear | **heavy-tailed** |
 | nonlinear Gaussian | Gaussian | **nonlinear** | Gaussian |
 | HMM | **discrete** | **discrete** | anything |
+
+The first two rows are the decomposition earning its keep. `reverting.py`
+changes `PX` and nothing else - same state dimension question aside, same `PY`,
+same `PX0` - so the thing it can fix is autocorrelation in the innovations and
+the thing it cannot is their shape. **Both halves of that prediction held**: on
+eurusd 4h it took Ljung-Box from 5.96e-27 to 1.22e-04 and left Jarque-Bera
+*worse*, 9.18e-89 to 8.83e-183.
+
+That second number is the useful one. The tails did not get worse; they stopped
+being hidden. A marginally stable rate absorbs a large move by running away with
+it, so the move never appears as an outlier - fix the dynamics and it does.
+**Which inverts the order:** `robust.py` is a `PY` change and was the smaller
+error while `PX` was wrong, and is the dominant remaining one now that `PX` is
+not.
 
 So `robust.py` changes `PY` alone - it is a claim about the measurement and not
 about the dynamics, which is why `diagnostics.jarque_bera` on the innovations
@@ -223,9 +239,10 @@ def members() -> dict[str, type]:
     """The family members that exist here. Imported lazily to keep this module
     importable while the rest of the package is still being written."""
     from .linear import Gaussian
+    from .reverting import Reverting
     from .robust import Robust
 
-    return {"kalman": Gaussian, "robust": Robust}
+    return {"kalman": Gaussian, "reverting": Reverting, "robust": Robust}
 
 
 #: Members the spec names that are not written yet, with the null each will have
