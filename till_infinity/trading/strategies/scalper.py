@@ -1079,6 +1079,35 @@ class ThesisOnly(LevelStrategy):
 
     name: ClassVar[str] = "thesis-only"
 
+    #: **The one level strategy that does not wear the liquidity gate.** Off
+    #: from 2026-10-10, decided before the gate's first deploy rather than after
+    #: watching it, which is the unusual part and the reason the numbers are
+    #: here.
+    #:
+    #: The gate refuses a call whose stop stands in front of the liquidity a
+    #: sweep would be aimed at. A 4v circuit breaker nearly always does, so the
+    #: gate refuses **63% of this strategy's calls** - 282 of 450 - against
+    #: 11-25% everywhere else. That is not a filter on a strategy, it is a
+    #: different strategy.
+    #:
+    #: And the record cannot justify it. Over the 215 closed trades in the
+    #: journal the refused ones made -0.066 +/-0.040 R each, so refusing them is
+    #: worth +8.35 R in total and **inside its own standard error**. Against
+    #: that, this strategy's +54.45 R comes from a handful of large winners -
+    #: mean +0.253 against a +/-0.308 standard error - and cutting 63% of the
+    #: entries of a strategy whose profit is that concentrated can remove the
+    #: next one. The measurement cannot see that risk, which is exactly why it
+    #: is not evidence for taking it.
+    #:
+    #: `inverse` is the comparison that makes this a judgement rather than a
+    #: blanket exemption: there the refused trades lose 0.254 +/-0.076 R each,
+    #: three standard errors from zero, and the gate stays on.
+    #:
+    #: Turning it back on is this line. What would earn that: the refused set
+    #: separating from zero by more than twice its standard error, or a reason
+    #: to believe the large winners do not come from calls the gate refuses.
+    sweep_gated: ClassVar[bool] = False
+
     #: Median reward-to-risk 0.40 over 361 live decisions, 98% of them below
     #: 1.0 and 72% below 0.5 - the worst geometry on the desk. This is also
     #: the strategy the one existing measurement was taken on, in
