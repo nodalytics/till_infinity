@@ -79,6 +79,49 @@ def key_for(cls: type) -> str:
     return f"{cls.__module__.rsplit('.', 1)[-1]}.{cls.__name__}"
 
 
+#: Attribute a package sets on itself to stay out of the persistence schema.
+#:
+#: **The walk is by module discovery, not by import**, which is the trap this
+#: closes. `registry()` finds every dataclass in every submodule whether anything
+#: persists it or not - so a new subpackage of `structures` lands in the state
+#: file's schema the moment it exists, and from then on adding a field to it is a
+#: schema change on production state.
+#:
+#: `structures/statespace/` is the case that found it: a package built beside the
+#: live engine, explicitly publishing nothing and persisting nothing, which the
+#: walk pulled straight into the fingerprint. Making its dataclasses `Restorable`
+#: would have "fixed" the failing test by declaring them persistable, which is
+#: the opposite of true.
+#:
+#: Opt-out rather than opt-in because the default has to stay "a dataclass in a
+#: service is state": a class that should be persisted and silently is not is a
+#: worse failure than this one.
+UNPERSISTED = "CODEC_UNPERSISTED"
+
+
+def skipped(module_name: str) -> bool:
+    """True when this module, or a package above it, declares itself unpersisted.
+
+    Checks ancestors so a package opts out once in its `__init__` rather than in
+    every module it will ever contain.
+    """
+    import importlib
+    import sys
+
+    parts = module_name.split(".")
+    for cut in range(len(parts), 0, -1):
+        name = ".".join(parts[:cut])
+        module = sys.modules.get(name)
+        if module is None:
+            try:
+                module = importlib.import_module(name)
+            except Exception:
+                continue
+        if getattr(module, UNPERSISTED, False):
+            return True
+    return False
+
+
 def registry(package: Any = None) -> dict[str, type]:
     """Every persisted class in the package, by its stable key.
 
@@ -104,6 +147,9 @@ def registry(package: Any = None) -> dict[str, type]:
             module = importlib.import_module(module_info)
         except Exception as exc:  # a module that will not import is not state
             log.debug("codec: skipping %s while building the registry (%s)", module_info, exc)
+            continue
+        if skipped(module_info):
+            log.debug("codec: %s declares itself unpersisted", module_info)
             continue
         for name in dir(module):
             cls = getattr(module, name)
