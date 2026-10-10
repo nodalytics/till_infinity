@@ -77,12 +77,21 @@ every line: **nothing here publishes until it has beaten a named null.**
    mistake again: a number validated without checking what it is a number
    about. Still blocked on the touch-price field.
 
-5. **The smoother is linear-only.** `smoothing.smooth` builds a
-   `linear.Gaussian` itself, so it cannot smooth a `Reverting` — which matters
-   now, because `reverting` is the member that wins. A test asserts the
-   limitation so it is recorded rather than discovered. The fix is to take a
-   filter factory instead of a `jerk`, which is also what a fixed-lag form will
-   need.
+5. ~~**The smoother is linear-only.**~~ Fixed — `smooth` takes a filter factory
+   and reads its dimension from the member, so it smooths `Reverting` (two
+   states) and `Gaussian` (three) through one recursion. `linear`'s result is
+   unchanged to the digit, which is the check that the generalisation cost
+   nothing.
+
+   **A factory alone was not enough**, and that was the interesting part. The
+   RTS gain is `C = P_t F' P_{t+1|t}^-1`, so the smoother needs each member's
+   *transition* and not merely the ability to run it forward. Members now answer
+   `state()`, `covariance()` and `transition(dt)`; a member that cannot state its
+   own `F` declines to be smoothed, which is a true statement about the member
+   rather than a limitation here.
+
+   The 3x3 cofactor inverse went with it — one Gauss-Jordan solve, general in the
+   dimension, because the members are not all the same size.
 
 6. **A reference for anything hand-written.** Every formula in the module is now
    checked against an independent one — the generator's Cholesky against its own
@@ -135,6 +144,23 @@ adding it now rather than when one of them comes up:
   uncorrelated the off-diagonal blocks are zero and a matrix filter *is* the
   independent filters already running.
 
+## What the three-state measurement also said
+
+Worth separating, because it changes where effort goes. Held out on eurusd 4h:
+
+| model | per point vs best |
+| --- | ---: |
+| two states, reverting rate | best |
+| three states, two-factor drift | -0.138 |
+| three states, white jerk | -0.831 |
+
+**Almost all of the gap was the instability, not the state count.** Stability is
+worth about 0.7 nats a point here; the third state is worth -0.14. So I3 was the
+large win and I5 is a small loss, which is the opposite of how the spec's
+suggested order ranks them — it puts I5 second and I3 outside the list on the
+grounds that it is conditional on I5's answer. I5's answer turned out not to
+gate it.
+
 ## The improvements, in the spec's suggested order
 
 `I6` is done (`rates.py`). The rest apply to the per-level row and need none of
@@ -142,7 +168,7 @@ the set-layer rewrite, which is why they are worth doing before it is settled.
 
 | item | what it is |
 | --- | --- |
-| I5 | observability is the real argument about acceleration — and it is computable, not arguable: the condition number of the observability matrix for price-only measurements |
+| I5 | **partly answered, 2026-10-10.** Observability is *not* the blocker: the condition number for price-only measurements at 4h is 2.5 with two states and ~40 with three, against the ~1e8 where a state stops being identifiable. A third state is estimable and still loses — a two-factor drift is 0.138 nats a point worse held out, and the fit set its second component's noise to zero rather than use it. What is left of I5 is the same question at finer sampling, where the condition number rises |
 | I9 | two state spaces, and there already are two |
 | I10 | the slope has a volatility, and it is currently a guess |
 | I2 | the state is the memory of the system, and this one leaks |

@@ -948,7 +948,7 @@ class TestSmoothing:
 
         truth, noise = 1e-3, 0.09
         path = simulate(hourly(500), jerk=truth, noise=noise, seed=5)
-        got = smooth(path.times, path.measured, jerk=truth, noise=noise)
+        got = smooth(lambda: Gaussian(jerk=truth), path.times, path.measured, noise=noise)
         assert got is not None
         assert len(got) == 500
 
@@ -968,7 +968,7 @@ class TestSmoothing:
         from till_infinity.structures.statespace import hourly, simulate, smooth
 
         path = simulate(hourly(300), jerk=1e-3, noise=0.04, seed=8)
-        got = smooth(path.times, path.measured, jerk=1e-3, noise=0.04)
+        got = smooth(lambda: Gaussian(jerk=1e-3), path.times, path.measured, noise=0.04)
         assert got is not None
         for i, (s, f) in enumerate(zip(got.sd, got.filtered_sd, strict=True)):
             assert s <= f + 1e-9, f"point {i}: smoothed {s} > filtered {f}"
@@ -982,7 +982,7 @@ class TestSmoothing:
 
         times = with_gaps(240, step_hours=1.0, gap_hours=62.0, every=24)
         path = simulate(times, jerk=1e-4, noise=0.04, seed=12)
-        got = smooth(times, path.measured, jerk=1e-4, noise=0.04)
+        got = smooth(lambda: Gaussian(jerk=1e-4), times, path.measured, noise=0.04)
         assert got is not None
         assert all(math.isfinite(v) for v in got.value)
         assert all(math.isfinite(v) for v in got.sd)
@@ -999,7 +999,7 @@ class TestSmoothing:
         from till_infinity.structures.statespace import Gaussian, hourly, simulate, smooth
 
         path = simulate(hourly(200), jerk=1e-3, noise=0.04, seed=4)
-        got = smooth(path.times, path.measured, jerk=1e-3, noise=0.04)
+        got = smooth(lambda: Gaussian(jerk=1e-3), path.times, path.measured, noise=0.04)
         assert got is not None
 
         g = Gaussian(jerk=1e-3)
@@ -1015,15 +1015,15 @@ class TestSmoothing:
 
         times = [0.0, HOUR, HOUR, 2 * HOUR, 3 * HOUR] + [(4 + i) * HOUR for i in range(40)]
         measured = [5.0 + 0.01 * i for i in range(len(times))]
-        got = smooth(times, measured, jerk=1e-4, noise=0.01)
+        got = smooth(lambda: Gaussian(jerk=1e-4), times, measured, noise=0.01)
         assert got is not None
         assert all(math.isfinite(v) for v in got.value)
 
     def test_a_series_too_short_to_smooth_returns_nothing(self):
         from till_infinity.structures.statespace import smooth
 
-        assert smooth([0.0], [1.0], jerk=1e-3, noise=0.01) is None
-        assert smooth([], [], jerk=1e-3, noise=0.01) is None
+        assert smooth(lambda: Gaussian(jerk=1e-3), [0.0], [1.0], noise=0.01) is None
+        assert smooth(lambda: Gaussian(jerk=1e-3), [], [], noise=0.01) is None
 
     def test_a_wrong_jerk_is_confidently_wrong_and_the_filter_is_where_it_shows(self):
         """**What a smoother cannot fix.** Told the level never moves, it produces
@@ -1164,13 +1164,13 @@ class TestSmootherAgainstADenseReference:
         truth, noise = 1e-3, 0.09
         path = simulate(hourly(250), jerk=truth, noise=noise, seed=5)
         ref_x, ref_p = self._reference(list(path.times), list(path.measured), truth, noise)
-        mine = smooth(path.times, path.measured, jerk=truth, noise=noise)
+        mine = smooth(lambda: Gaussian(jerk=truth), path.times, path.measured, noise=noise)
         assert mine is not None
 
         for name, column, got in (
             ("value", 0, mine.value),
             ("rate", 1, mine.rate),
-            ("accel", 2, mine.accel),
+            ("accel", 2, mine.component("accel")),
         ):
             worst = max(abs(r[column] - m) for r, m in zip(ref_x, got, strict=True))
             assert worst < 1e-8, f"{name} diverges by {worst:.3e}"
@@ -1194,13 +1194,15 @@ class TestSmootherAgainstADenseReference:
         trials = 20
         for seed in range(trials):
             path = simulate(hourly(300), jerk=truth, noise=noise, seed=400 + seed)
-            at_truth = rmse(
-                smooth(path.times, path.measured, jerk=truth, noise=noise).value, path.truth
-            )
-            best_wrong = min(
-                rmse(smooth(path.times, path.measured, jerk=j, noise=noise).value, path.truth)
-                for j in (truth / 3, truth * 3)
-            )
+
+            def run(jerk: float, path=path) -> float:
+                # `path` bound as a default: a closure over the loop variable is
+                # the late-binding trap, and ruff is right to refuse it.
+                got = smooth(lambda: Gaussian(jerk=jerk), path.times, path.measured, noise=noise)
+                return rmse(got.value, path.truth)
+
+            at_truth = run(truth)
+            best_wrong = min(run(truth / 3), run(truth * 3))
             beaten += best_wrong < at_truth
         assert beaten <= trials // 3, (
             f"a wrong jerk beat the true one on {beaten}/{trials} seeds - that is "
@@ -1215,7 +1217,7 @@ class TestSmootherAgainstADenseReference:
 
         truth, noise = 1e-3, 0.09
         path = simulate(hourly(600), jerk=truth, noise=noise, seed=5)
-        got = smooth(path.times, path.measured, jerk=truth, noise=noise)
+        got = smooth(lambda: Gaussian(jerk=truth), path.times, path.measured, noise=noise)
         assert got is not None
 
         err = math.sqrt(
@@ -1250,7 +1252,7 @@ class TestSmootherAgainstADenseReference:
             return g.loglike
 
         jerk, _ = fit_jerk(run)
-        got = smooth(times, meas, jerk=jerk, noise=noise)
+        got = smooth(lambda: Gaussian(jerk=jerk), times, meas, noise=noise)
         assert got is not None
         err = math.sqrt(sum((a - b) ** 2 for a, b in zip(got.value, truth, strict=True)) / len(got))
         stated = math.sqrt(sum(s * s for s in got.sd) / len(got))
@@ -1681,31 +1683,46 @@ class TestTheRestAgainstAReference:
             assert (high - low) / 2.0 == pytest.approx(b.sd, abs=1e-10), ahead
             assert a.at_time(when) == pytest.approx(b.value, abs=1e-10), ahead
 
-    def test_the_three_by_three_inverse_matches_numpy(self):
-        """The smoother's gain divides by this. Hand-written cofactors and a
-        determinant, with no check until now."""
+    def test_the_matrix_inverse_matches_numpy_at_both_dimensions(self):
+        """The smoother's gain divides by this. Gauss-Jordan with partial
+        pivoting, general in the dimension because `linear` carries three states
+        and `reverting` two - it replaced a 3x3 cofactor expansion that could
+        only ever serve one of them."""
         np = pytest.importorskip("numpy")
-        from till_infinity.structures.statespace.smoothing import _symmetric_3x3_inverse
+        from till_infinity.structures.statespace.smoothing import _inverse
 
         rng = np.random.default_rng(31)
-        for _ in range(40):
-            root = rng.normal(size=(3, 3))
-            full = root @ root.T + np.eye(3) * 0.4  # symmetric positive definite
-            got = _symmetric_3x3_inverse(
-                full[0, 0], full[0, 1], full[0, 2], full[1, 1], full[1, 2], full[2, 2]
-            )
-            assert got is not None
-            want = np.linalg.inv(full)
-            places = ((0, 0), (0, 1), (0, 2), (1, 1), (1, 2), (2, 2))
-            for value, (r, c) in zip(got, places, strict=True):
-                assert value == pytest.approx(float(want[r, c]), rel=1e-9, abs=1e-12)
+        for size in (2, 3):
+            for _ in range(40):
+                root = rng.normal(size=(size, size))
+                full = root @ root.T + np.eye(size) * 0.4  # symmetric, positive definite
+                got = _inverse(full.tolist())
+                assert got is not None
+                want = np.linalg.inv(full)
+                for r in range(size):
+                    for c in range(size):
+                        assert got[r][c] == pytest.approx(float(want[r, c]), rel=1e-9, abs=1e-12), (
+                            size,
+                            r,
+                            c,
+                        )
+
+        # And it inverts an asymmetric matrix too, which the cofactor version
+        # could not be asked: the gain's argument is symmetric, but a general
+        # solve should not quietly depend on that.
+        a = [[1.0, 2.0, 3.0], [0.0, 1.0, 4.0], [5.0, 6.0, 0.0]]
+        got = _inverse(a)
+        assert got is not None
+        product = np.array(a) @ np.array(got)
+        assert np.allclose(product, np.eye(3), atol=1e-12)
 
     def test_a_singular_matrix_is_refused_rather_than_inverted(self):
-        from till_infinity.structures.statespace.smoothing import _symmetric_3x3_inverse
+        from till_infinity.structures.statespace.smoothing import _inverse
 
         # Rank one: every row a multiple of the first.
-        assert _symmetric_3x3_inverse(1.0, 1.0, 1.0, 1.0, 1.0, 1.0) is None
-        assert _symmetric_3x3_inverse(0.0, 0.0, 0.0, 0.0, 0.0, 0.0) is None
+        assert _inverse([[1.0, 1.0], [1.0, 1.0]]) is None
+        assert _inverse([[1.0, 1.0, 1.0], [2.0, 2.0, 2.0], [3.0, 3.0, 3.0]]) is None
+        assert _inverse([[0.0, 0.0], [0.0, 0.0]]) is None
 
     def test_the_robust_influence_is_bounded_and_not_vanishing(self):
         """**The property that found the exponent was wrong.**
@@ -1750,21 +1767,81 @@ class TestTheRestAgainstAReference:
 
         assert pytest.approx(FORGET_FEED_SECONDS / 3600.0) == EXISTENCE_HALF_LIFE_HOURS
 
-    def test_the_smoother_is_linear_only_and_that_is_a_known_gap(self):
-        """`smooth` builds a `Gaussian` itself, so it cannot smooth a
-        `Reverting` - which matters, because `reverting` is the member that now
-        wins. Asserted so the limitation is recorded rather than discovered."""
+    def test_the_smoother_takes_a_factory_and_names_no_member(self):
+        """It used to build a `Gaussian` itself and therefore could not smooth
+        the member that wins. It takes a factory now and knows no member's
+        parameters - a signature mentioning `jerk` or `theta` would mean it had
+        picked one again."""
         import inspect
 
         from till_infinity.structures.statespace import smoothing
 
-        source = inspect.getsource(smoothing.smooth)
-        assert "Gaussian(" in source, "if this changes, the gap below is closed"
-        signature = inspect.signature(smoothing.smooth)
-        assert "jerk" in signature.parameters
-        assert "theta" not in signature.parameters, (
-            "a smoother that takes theta would smooth the reverting member too"
+        parameters = inspect.signature(smoothing.smooth).parameters
+        assert "build" in parameters
+        assert "jerk" not in parameters
+        assert "theta" not in parameters
+        assert "sigma2" not in parameters
+
+    def test_it_smooths_both_members_through_one_recursion(self):
+        """Two states and three, from the same code - and `linear`'s answer is
+        unchanged, which is what says the generalisation cost nothing."""
+        from till_infinity.structures.statespace import (
+            Gaussian,
+            Reverting,
+            hourly,
+            simulate,
+            smooth,
         )
+
+        truth, noise = 1e-3, 0.09
+        path = simulate(hourly(400), jerk=truth, noise=noise, seed=5)
+
+        def rmse(got):
+            return math.sqrt(
+                sum((a - b) ** 2 for a, b in zip(got, path.truth, strict=True)) / len(path)
+            )
+
+        three = smooth(lambda: Gaussian(jerk=truth), path.times, path.measured, noise=noise)
+        two = smooth(
+            lambda: Reverting(sigma2=0.3, theta=0.1), path.times, path.measured, noise=noise
+        )
+        assert three is not None
+        assert two is not None
+        assert three.names == ("value", "rate", "accel")
+        assert two.names == ("value", "rate")
+        for got in (three, two):
+            assert rmse(got.value) < rmse(got.filtered), got.names
+            assert all(s <= f + 1e-9 for s, f in zip(got.sd, got.filtered_sd, strict=True))
+
+    def test_asking_a_two_state_member_for_an_acceleration_fails(self):
+        """`reverting` has no third state, so a zero would read like a
+        measurement. `KeyError`, naming what it does have."""
+        from till_infinity.structures.statespace import Reverting, hourly, simulate, smooth
+
+        path = simulate(hourly(60), jerk=1e-3, noise=0.09, seed=2)
+        got = smooth(
+            lambda: Reverting(sigma2=0.3, theta=0.1), path.times, path.measured, noise=0.09
+        )
+        assert got is not None
+        assert len(got.component("rate")) == len(got)
+        with pytest.raises(KeyError, match="accel"):
+            got.component("accel")
+
+    def test_a_member_that_cannot_state_its_transition_declines_to_be_smoothed(self):
+        """How a future member opts out, rather than being half-smoothed."""
+        from till_infinity.structures.statespace import smooth
+
+        class Opaque:
+            at = None
+            seen = 0
+
+            def predict(self, when):
+                pass
+
+            def update(self, measured, noise, when=None):
+                return 0.0
+
+        assert smooth(Opaque, [0.0, HOUR, 2 * HOUR], [1.0, 1.0, 1.0], noise=0.01) is None
 
     def test_accel_confidence_reads_no_information_as_no_information(self):
         """The same trap `rate_confident` avoids, on the third state."""

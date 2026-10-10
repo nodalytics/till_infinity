@@ -149,6 +149,27 @@ the bug that mattered** - the Kalman arm first reported a negative log-likelihoo
 of 1.15e17 because `log(r^2)` of a rounded-to-zero FX bar is about -690, and a
 Gaussian null never produces one. A passed null is not a correct implementation.
 
+## State count is a separate question from state *stability*, and it was measured
+
+Held out on the same 534 points of eurusd 4h:
+
+| model | held out | per point |
+| --- | ---: | ---: |
+| two states, reverting rate | **-1009.55** | best |
+| three states, two-factor drift | -1083.48 | -0.138 |
+| three states, white jerk | -1453.26 | -0.831 |
+
+**Observability was not what decided it**, which is worth saying because it is
+the argument I5 reaches for: the condition number of the observability matrix
+for price-only measurements at 4h is 2.5 with two states and about 40 with
+three, far from the ~1e8 where a state stops being identifiable. A third state
+is estimable here. It loses anyway, and the fit declined it - given a slow and a
+fast drift component it set the fast one's noise to zero.
+
+So the two axes separate cleanly: **stability is worth about 0.7 nats a point
+and the extra state is worth -0.14.** A member proposing more states has to
+clear a bar that a member proposing better dynamics did not.
+
 ## What is missing, named rather than left out
 
 `dynamax` puts three operations beside each other, and this package has one and a
@@ -157,7 +178,7 @@ half of them:
 | operation | what it answers | here |
 | --- | --- | --- |
 | filter | `p(state_t | y up to t)` | `linear.predict` / `update` |
-| **smooth** | `p(state_t | y up to T)` | `smoothing.smooth` |
+| **smooth** | `p(state_t | y up to T)` | `smoothing.smooth`, any member |
 | sample | draw a path from the model | `paths.simulate` |
 
 **The smoother is the real gap, and it is a research gap rather than a live one.**
