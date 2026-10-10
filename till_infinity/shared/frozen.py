@@ -56,6 +56,37 @@ def _source(name: str) -> Path | None:
     return None
 
 
+def vector(spec: dict, names: Sequence[str], values: Sequence[float]) -> list[float] | None:
+    """`values`, given in `names` order, rearranged into the spec's own order.
+
+    **The subset check in `load` is what makes this necessary.** A file whose
+    `names` are a subset of the caller's is accepted on purpose - that is what
+    lets a recipe gain a feature without stranding every model already in
+    service - but a caller that then feeds a vector built positionally from its
+    own constant hands the model the wrong value in every slot after the first
+    difference. Nothing raises; the numbers are simply wrong.
+
+    This is the positional form of what `envelope.model_quantiles` does with a
+    dict, and it is the same rule: a model is fed what it was trained on, not
+    what the module currently believes the recipe to be. `activity` becoming the
+    fifteenth envelope feature on 2026-10-09 is the case it exists for - the
+    shipped files have fourteen, and the envelope kept working because it
+    reorders. The three callers that did not would have shifted every feature by
+    one and gone on publishing.
+
+    None means this caller cannot feed this model: the spec wants a name that is
+    not on offer, which is the one genuinely unsafe case.
+    """
+    wanted = tuple(spec.get("names") or ())
+    order = tuple(names)
+    if not wanted or wanted == order:
+        return list(values)
+    row = dict(zip(order, values, strict=False))
+    if any(name not in row for name in wanted):
+        return None
+    return [float(row[name]) for name in wanted]
+
+
 def load(
     name: str,
     *,

@@ -372,7 +372,11 @@ class Touches(Restorable):
             spec = frozen.load(name, recipe=RECIPE, names=NAMES)
             if spec is None:
                 return {}
-            out[f"{band}_prob{AHEAD}"] = round(frozen.Trees(spec).predict(s.latest), 4)
+            # The spec's own feature order, not this module's - see `frozen.vector`.
+            row = frozen.vector(spec, NAMES, s.latest)
+            if row is None:
+                return {}
+            out[f"{band}_prob{AHEAD}"] = round(frozen.Trees(spec).predict(row), 4)
         return out
 
     def forget(self, keep: set[str]) -> int:
