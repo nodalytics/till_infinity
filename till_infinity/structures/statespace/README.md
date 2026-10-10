@@ -1,8 +1,32 @@
-# statespace: what is not done
+# statespace: what is known, what is measured, and what is not done
 
-Carried deliberately rather than forgotten. Order within each section is the
-order worth doing them in, and the rule from the package docstring applies to
-every line: **nothing here publishes until it has beaten a named null.**
+`__init__.py` is the contract - what this package is for, the rule that nothing
+in it publishes, and what a state space can honestly claim about a market. This
+file is the working record underneath it: every measurement taken, every
+reference read, every idea carried, and every mistake worth not repeating.
+
+**The rule from the package docstring applies to every line here: nothing
+publishes until it has beaten a named null on held-out data.** Order within each
+section is the order worth doing them in.
+
+## What is in this file
+
+| | |
+| --- | --- |
+| **Making this module work well** | the current priority, and what is already closed |
+| **Measured** | the eurusd and four-symbol runs, the four quantities on real data, and what each one actually showed |
+| **The members** | `selective` and `swarm` - what they are, what they cost, and what fixes each trade-off |
+| **The papers and the code** | S4, Mamba 1/2/3, HiPPO, LMU, the reference implementations, and which of their ideas transfer |
+| **D1 to D4** | the four borrowed ideas that are worth testing here, each with its null |
+| **Questions answered** | trend changes, multi-timeframe, candlestick liquidity, and whether any of this can model an adaptive market |
+| **Members not written** | with the null each must beat, from `family.PENDING` |
+| **I1 to I11** | the spec's own improvement list and where each one stands |
+
+Three things in here are corrections of claims this package made earlier and got
+wrong - the touch price was never missing, numpy did not speed up the smoother,
+and "zero-order hold, which is what Mamba uses" was wrong twice over. They are
+kept with their measurements rather than quietly fixed, because each one was
+believed for a while and the reason it was believed is the useful part.
 
 ## Making this module work well — the current priority
 
@@ -733,6 +757,719 @@ written:
    member assumes a passive observation. Our own orders move the book. Nothing
    in this package represents that, and a level the desk itself has been
    defending is the case where it matters most.
+
+## Measured on eurusd, 3m to 1d: selection loses, and the LTI basis wins the fast end
+
+`research/ideas/statespace_eurusd_timeframes.py`, run on the lab 2026-10-10.
+Fitted by grid on the first half of each series, scored on the **second half**,
+held-out one-step predictive log-likelihood **a point** so the timeframes are
+comparable. 6,000 bars each. There is no eurusd 5m on the lab - `data/fine`
+carries 5m only for the boom/crash indices - so 3m and 15m bracket it.
+
+| timeframe | `linear` I3 jerk | `reverting` I2 OU | **S4D-Real LTI** | **S6 selection on** |
+| --- | ---: | ---: | ---: | ---: |
+| 3m | -24.07 | -8.49 | **-4.60** | -10.47 |
+| 15m | -6.56 | -3.06 | **-2.36** | -19.00 |
+| 30m | -3.99 | -2.36 | **-2.20** | -2.73 |
+| 1h | -2.81 | **-1.98** | -2.21 | -2.33 |
+| 4h | -3.61 | **-2.49** | -4.56 | -4.59 |
+| 1d | -3.32 | **-2.10** | -2.15 | -2.15 |
+
+Three findings, and the first was predicted, the second was not.
+
+**1. Selection loses, on five of six timeframes.** The sixth is 1d, where the
+grid picked `scale = 0.1` and it changed the score by 0.0000 - a tie reported as
+a win by a harness comparing floats, not a result. This is the clean experiment
+the harness was built for: `S4D-Real LTI` is `selective` with `scale = 0`, so
+the last two columns are **the same model one parameter apart**. Gu and Dao said
+selection "can impede their performance on data that LTI SSMs excel on" and that
+layers near a raw continuous signal "should be LTI". On eurusd closes they are
+right, and at 15m they are right by 16.6 nats a point.
+
+**2. The four-state LTI basis is the best model at 3m, 15m and 30m** - better
+than the integrated jerk and better than the integrated OU, by 0.16 to 3.9 nats
+a point. That is new. It arrived as a by-product: `selective`'s own nested null
+*is* S4D-Real, so writing the neural member handed this package a multi-timescale
+LTI member it did not have and would not have thought to write. **It deserves to
+be a class of its own rather than a special case of the member it beats.**
+
+**3. There is a crossover between 30m and 1h**, and it reads as a real structural
+claim rather than noise: the fast end wants **several decay rates at once** - a
+basis - and the slow end wants **mean reversion** in one. `reverting` wins 1h,
+4h and 1d; the basis wins everything faster. If that survives a second series it
+says the right model is timeframe-dependent, which is not what either camp
+assumes.
+
+### What is wrong with this measurement
+
+* **Bars are not touches.** A close moves because price moved; a level is not
+  supposed to. Sets the direction, none of the constants - the same caveat every
+  harness here carries. The version on touches uses the episode record's `entry`
+  and is not written.
+* **`drift = 1.5` was the top of the grid in every single `selective` fit.** The
+  member wanted a larger step multiplier than it was offered, so **both
+  selective columns are lower bounds** and the LTI win at the fast end may be
+  understated. Widen it before quoting these numbers again. `theta = 2.0` at 1d
+  is the same problem on `reverting`, and `theta = 0.1` at 15m and 30m is the
+  *bottom* edge.
+* **Unequal search.** 5 candidates for `linear`, 20 for `reverting`, 20 for the
+  LTI arm, 80 for S6. More search for S6 and it still lost, which only
+  strengthens that conclusion - but `linear` is undersearched and its last place
+  is not established.
+* **One split, chronological.** No rolling origin, so this is one sample of the
+  answer, not its distribution.
+
+### The 15m pathology is worth naming
+
+S6 scored **-19.00** at 15m against the LTI arm's -2.36 - an order of magnitude
+worse, where elsewhere the gap is fractions of a nat. The mechanism is a feedback
+loop and it is visible in the code: a large innovation opens `delta`, a large
+`delta` resets the state onto that reading, and a state sitting on an outlier
+makes the next innovation large too. Selection on an unrobustified residual is
+positive feedback.
+
+**Which is also the fix, and it is already in the family.** `robust` exists to
+bound the influence of a surprising reading. Composing them - selection reading a
+Huber-gated `z` rather than a raw one - is the one version of S6 this data might
+not reject, and it costs no new parameter.
+
+## `selective`'s trade-offs, and what fixes each one
+
+Asked 2026-10-10: what are the trade-offs and how do we improve on them. Seven,
+ordered by how much the eurusd measurement says they cost. Three have one-line
+fixes and one of them is probably why the member lost at 4h.
+
+**1. No posterior at all.** A selective SSM is a deterministic map: `sd` is a
+*fitted* parameter rather than an inferred spread, `covariance()` is absent, the
+smoother returns None, and `band()` does not widen as time passes. For a desk
+that sizes on uncertainty this is the worst of the seven.
+*Fix:* a particle or ensemble wrapper - see the section below, which is the
+principled answer and also the cheapest real one.
+
+**2. Forward extrapolation decays to zero.** `h` summarises readings that
+arrived, not a quantity that persists, so with no further readings `C h -> 0`.
+A level is a thing whose whole character is sitting still.
+*Fix, one line:* give the spectrum a **zero eigenvalue** - `A = diag(0, -1, -2, -3)`
+instead of `diag(-1, -2, -3, -4)`. One component then never decays and holds the
+level while the others track its movement. This is very likely why 4h lost by
+2 nats while 15m won: a 4h gap decays everything the member knows.
+
+**3. A zero-length step folds in nothing.** `delta` is the only entry channel,
+so two venues printing the same instant give a Kalman member two pieces of
+evidence and give this one none.
+*Fix, one line:* floor `delta`, which is what the reference does with
+`dt_init_floor = 1e-4`.
+
+**4. Selection is positive feedback on an unrobustified residual.** The -19.00
+at 15m. A large innovation opens `delta`, which resets the state onto the
+outlier, which makes the next innovation large.
+*Fix:* read a Huber-gated `z`, which is exactly what `robust` already computes.
+Composition, not a new parameter.
+
+**5. Five parameters and no gradient.** Grid cost grows exponentially, and the
+eurusd grid was coarse enough that `drift` pinned at its top edge in all six
+runs.
+*Fix:* the batched numpy scorer - K candidates advanced through one pass
+together, the shape measured at **26.6x** - plus coordinate descent warm-started
+from the nested null at `scale = 0`, which is now known to be a good starting
+point because it wins outright at the fast end.
+
+**6. A fixed `C` reading the mean of a redundant basis.** Under a constant input
+every state converges to the same value, so four states carry one number. Mamba
+does not care because its `C` is learned.
+*Fix:* D1's HiPPO coupling, which is precisely the off-diagonal that makes the
+basis non-redundant - and which we established is the *only* structural
+difference between HiPPO-LegS and the S4D-Real spectrum this member already has.
+The cheaper half-fix is to fit `C`, four parameters instead of one.
+
+**7. Selection is wrong for this data, measured.** Five of six timeframes.
+*Fix:* stop selecting on the innovation and select on something discrete, which
+is what selection was built for - a session flag, a news window, a regime label
+from `hmm`. Selecting on a continuous residual is asking a content-based
+mechanism to work on data with no content.
+
+## A neural architecture with a particle state space - yes, and it is the right fix
+
+Asked 2026-10-10, and it answers trade-off 1 above, closes the gap the survey
+leaves open, and reuses the one numpy win that measured well. Three threads
+meeting is usually a sign.
+
+**What it is.** A particle filter whose *transition* is the selective
+recurrence: K particles, each a `(SIZE,)` state, advanced by `h = keep*h + (1-keep)*gain*x`
+with per-particle noise, weighted by the Gaussian likelihood of the reading, and
+resampled. The posterior is then the particle spread - **uncertainty the
+deterministic map cannot produce**, and it comes out as a distribution rather
+than as a fitted scalar.
+
+**Why it is affordable.** `family.PENDING` already records that fitting
+*through* a particle filter needs differentiable resampling - PyDPF,
+arXiv:2510.25693 - and costs a PyTorch dependency this desk does not have. That
+constraint does not bite here: **running** a particle filter needs no gradients
+at all, and the parameters come from the same likelihood grid everything else
+here uses. The autodiff wall is only in front of backpropagating through the
+resampling step, which we are not doing.
+
+**Why it is the natural shape for numpy.** K particles x SIZE states advanced one
+step at a time is exactly the batch the 26.6x was measured on. The thing that
+makes a particle filter expensive is the thing numpy is good at, and the thing
+that makes the recursion slow - sequential time - is unchanged either way.
+
+**The null, which is already written.** `family.PENDING["particle"]` says it:
+the linearised Kalman arm on the same model - tied for levels, won on all four
+volatility series. For this version the null is sharper and nearer: `selective`
+itself, scored on the same series. If the particles buy nothing over the
+deterministic map, the answer is that this quantity is Gaussian enough and the
+member should stay deterministic.
+
+**Resampling is a choice and `PENDING` names them**: multinomial, residual,
+stratified, systematic, SSP - and systematic is what the volatility harness
+used, so start there rather than re-deciding it.
+
+**What it does not fix.** Particles give a posterior over the state; they do not
+give the state a reason to persist. Trade-off 2 - extrapolation decaying to zero
+- is a property of the spectrum and has to be fixed in the spectrum. Do the zero
+eigenvalue first; it is one line and it is free.
+
+## Other neural members worth cooking up, in the order the measurement suggests
+
+1. **S4D-Real as a first-class member.** It just won 3m, 15m and 30m outright
+   while existing only as `selective`'s nested null. Promote it: four LTI states,
+   spectrum `-(n+1)`, no selection, nothing input-dependent. The cheapest thing
+   in this list and already the best model at the fast end.
+2. **The zero-eigenvalue variant of it**, which is trade-off 2's one-line fix and
+   the first candidate to beat `reverting` at 4h and 1d.
+3. **D1, HiPPO coupling** - the off-diagonal, which is the only structural gap
+   between what won at the fast end and the matrix the S4 paper is about.
+4. **D4, an oscillatory state** - `fourier_diag`'s skew-symmetric tridiagonal.
+   Nothing in the family can turn around.
+5. **LMU/LegT**, for `theta` as a memory window in hours - a parameter a desk
+   can argue with.
+6. **Liquid S4 / LTC / CfC.** Input-dependent *time constants*, from the
+   continuous-time literature rather than the language-model one, and built for
+   irregularly sampled data. The Mamba paper dismisses Liquid S4 as having "a
+   limited form" of selection, which is a recommendation here rather than a
+   criticism: a limited, continuous-time form of selection is what survived our
+   own measurement, where the unlimited discrete form lost five times out of six.
+   **And it is the literature gap**: the S4-to-Mamba survey (arXiv:2503.18970)
+   addresses neither irregular sampling nor uncertainty, which are this desk's
+   two actual problems.
+7. **The particle-selective hybrid above**, once the spectrum is fixed.
+
+**Not worth cooking.** Mamba-2 and the SSD duality: its trade is a *scalar* `A`
+per head, collapsing every state to one decay rate, and our own measurement says
+the win at the fast end **came from having several**. It is contraindicated by
+this desk's data rather than merely unnecessary. Likewise the gated MLP, the
+attention hybrids and the hardware-aware scan - all of them exist because there
+is a neural network and a GPU around the recurrence, and here there is neither.
+
+## `swarm`: the two trade-offs fixed in a separate member
+
+Written 2026-10-10, asked for as "let do it but another model not the current one
+we have, call it another name" - so `selective` keeps losing on its own terms and
+stays comparable to the runs that scored it.
+
+`swarm` is a bootstrap particle filter over an **anchored** selective
+recurrence. Two fixes, and they are separable on purpose:
+
+* **the spectrum** - `(0, -1, -2, -3)`. The zero does not decay, so it holds the
+  level while the others track movement, and `at_time` far ahead returns the
+  **anchor** rather than zero. A true zero cannot be driven by the recurrence -
+  the entry weight `1 - exp(delta*A)` is exactly zero there - so the anchor is a
+  random walk corrected by which particles the data prefers, and the deviations
+  absorb the residual around it.
+* **the posterior** - `sd` is the weighted spread of the ensemble rather than a
+  fitted parameter, and the band widens in a gap because the anchor wanders.
+  `covariance()` comes back from the sample covariance, so unlike `selective`
+  this member can be smoothed.
+
+**`count = 1` is the anchored member without the ensemble**, which is how the
+two fixes are attributed separately: S4D-Real has neither, `count = 1` has the
+spectrum only, `count = 200` has both. At `count = 1` it falls back to an
+asserted `sd`, honestly, because one particle has no spread.
+
+It is not bolted onto `selective` for a measured reason: that member's read-out
+is the **mean** of its basis, because all of its states converge to the reading.
+Put one slow component in and it retains `1/SIZE` of the level - 39 of 250 over
+48 hours. The anchor needs a read-out of *anchor plus deviations*, which is this
+member's.
+
+### The first score of it was wrong, and the bug is the interesting part
+
+The four-symbol run had `swarm` winning 18 of 24 series. **That number was
+inflated** and is withdrawn. The weighting step subtracts `max(log w)` to keep
+`exp` off the floor and the shift was never added back into the likelihood, so
+every step's log density was too high by `0.5 * min(error**2)` - a log-sum-exp
+missing its shift.
+
+The regression test is non-circular and worth keeping for the shape of it: with a
+negligible seed spread every particle holds the same state, so the ensemble's
+weighted mean predictive density **is** the ordinary Gaussian density of the
+reading. That test fails with the bug and passes without it, and no comparison
+against another member is involved.
+
+## Two accessors that were the same name and different quantities
+
+Both found by comparing members rather than by reading either one, and both the
+same mistake a level down from the first:
+
+**`loglike`.** The three Kalman members had it and `selective` called its density
+`predictive`. Fixed when the family was audited - every member now answers
+`loglike` and the `Filter` contract requires it.
+
+**`last_standardised`.** `linear` divides the innovation by `sqrt(p00 + noise)`,
+the full one-step predictive variance. `selective` divided by the measurement
+noise alone. Over 285,688 held-out points that read as this member having a mean
+`|z|` of **3.05** against `reverting`'s **1.22** while its RMSE was *smaller* -
+two scales masquerading as two accuracies. Ljung-Box and Jarque-Bera are
+scale-invariant so the diagnostics were unaffected, but anything comparing the
+numbers was not. Both this and `swarm` now standardise by the predictive spread.
+
+**The lesson, since it has now happened twice:** a protocol that names a quantity
+does not make two members compute the same one, and the way these surfaced was
+putting all the members in one table. Any new accessor added to `Filter` should
+arrive with a test that it means the same thing on every member, not only that it
+exists.
+
+## What the four quantities showed on real data
+
+285,688 held-out points, 24 series of four symbols, 3m to 1d. Coverage
+recomputed on a **predictive** band - `sqrt(sd^2 + R)` - because the harness's own
+column compared a state band on three members against a fitted predictive spread
+on the fourth, which is the same comparability trap again.
+
+| model | cover +/-2 | RMSE | lag-1 autocorrelation of `z` |
+| --- | ---: | ---: | ---: |
+| `linear` | 68.6% | 50.25 | **+0.323** |
+| `reverting` | 79.4% | 2.84 | +0.092 |
+| **S4D-Real LTI** | **94.2%** | **2.53** | **+0.031** |
+| S6 selective | 91.4% | 14.44 | +0.071 |
+
+**Three independent criteria agree, which is the finding.** S4D-Real fits best,
+is the only member whose two-sigma band is honest - 94.2% against a nominal 95%,
+where `linear` claims far more than it knows - and has the whitest residuals.
+Autocorrelation is scale-free, so that last column is comparable even where the
+`|z|` column was not, and `linear`'s **+0.32** is the diagnostic saying its state
+equation is wrong rather than merely imprecise.
+
+**Every member is still misspecified**, which is what `__init__.py`'s fourth
+principle says to expect: no residual series is white and none is normal. The
+honest reading is a ranking of wrongness, not a model that works.
+
+**`existence` was identical across all four at 0.958** - as it must be, since it
+decays on elapsed time alone and they were fed one timeline. That is a check
+passed rather than a result, and it is the cheap confirmation that the harness
+drove every member on the same clock.
+
+## Can these track where a trend changed, and what happens when price returns?
+
+Asked 2026-10-10, about a specific case: the market trends up for five days,
+stalls, bounces the other way - can the models find the exact turn, and what do
+they say when price comes back to it? The answer is in three parts and only one
+of them is a gap in this package.
+
+**The stall is learnable and the reversal is not, and that is measured.** A trend
+change is a sign change in the rate. On 999 eurusd 4h returns, **speed is 8.1x as
+persistent as signed velocity** - the sum of the first five autocorrelations is
++0.381 against -0.047 - and consecutive directions agree 49.499% against 50%
++/- 3.102%. So "the trend stalled" is a statement about speed, which carries
+structure; "and will bounce the other way" is a statement about direction, which
+is a coin. A member tracking the signed rate is tracking the half with nothing
+in it.
+
+**No member can represent the turn itself.** `linear` integrates, `reverting`
+pulls back, `selective` averages, `swarm` anchors - all purely decaying. They can
+notice a turn *after* it has happened, as the old rate decays and a new one
+builds, and none of them can produce one. That is D4 and it is the only gap in
+the family that no pending member fills.
+
+**The exact point is a level, and that machinery already exists.** A turn becomes
+a level in `structures`, and `fade-to-value` already targets the displacement
+origin - where its 82% figure is a target hit rate and not an entry signal. The
+state space's job is not to find the turn; it is to say where that level is *now*
+and how well it is known.
+
+**What it says when price returns, which is the interesting half.** Four
+quantities, and each answers a different question about a five-day-old turn:
+
+| quantity | what it says on the return touch |
+| --- | --- |
+| `output()` | where the level is estimated to be now - it may have drifted, which is what `jerk` and `DRIFT_VOL_PER_HOUR` model |
+| `band(when)` | how precisely, and it has **widened** over the five days |
+| `existence` | whether it is still a level at all: a 7-day half-life puts a 5-day-old turn at about **0.63** |
+| `last_standardised` | **the signal.** Did the touch land where the level was expected? |
+
+That last row is the one worth building on. A return touch inside the band is the
+level confirming its own position; a touch far outside it is either a level that
+moved or a different level, and those are different trades. Bounding how much a
+surprising touch moves the state is exactly what `robust` is for.
+
+**And the "what does it do when it comes back" question is already answered
+250,412 times.** `reactions.Episode` follows every touch for `EPISODE_BARS` both
+ways and records `mfe_up_r`, `mfe_down_r`, `first`, `held_first`, `bars_up_*`,
+`bars_down_*`, `bars_opposite` and a `kind` - `whipsaw` among its values. The
+measurement is: condition those outcomes on the level's **age** and on its
+`existence`, and ask whether a five-day-old turn behaves differently from a
+five-hour-old one. No new data and no new member required, and it would settle
+whether `existence`'s seven-day half-life is the right clock or a guess that
+happens to match `engine.FORGET_FEED_SECONDS`.
+
+## Multi-timeframe: not tried, and the results argue for it
+
+Asked 2026-10-10. **No** - every timeframe in the harness is fitted and scored
+independently, 3m against 3m and 1d against 1d. There is no member that sees two
+timeframes at once.
+
+**That is D3, and the measurement is now an argument for it rather than an
+analogy.** The crossover is the evidence: the fast end wants several decay rates
+at once and the slow end wants mean reversion, and a model fitted on one does not
+describe the other. Two timeframes carrying different information is the premise
+of stacking them - if 3m and 1d agreed, one `C` row would do.
+
+The shape, which needs no new data: one state per level, one `C` row per
+resolution, `output()` returning a vector it already returns. `mamba3.py` has
+this implemented as `is_mimo=True` at `mimo_rank=4` - low-rank rather than dense,
+which is the better first shape for the same reason the third state lost in I5:
+fewer things to estimate from the same touches.
+
+## Liquidity on candlesticks: most of it is already tracked
+
+Asked 2026-10-10 with a list of candlestick liquidity features. Checked against
+the codebase before proposing anything, and the honest answer is that the desk
+measures most of this already under different names:
+
+| the feature | here |
+| --- | --- |
+| wicks and their size | `wick_above_vol`, `wick_below_vol`, `wick_above_sd`, `wick_below_sd`, `wick_n`, per level, in `engine.py` |
+| buy-side liquidity above swing highs | `liquidity_beyond_vol` - the next level out, which `drawing/sweeps.py` defines as "a price where stops accumulate because it is a price everybody else can see too" |
+| sell-side liquidity below swing lows | the same, by side |
+| a liquidity grab - spike through and snap back | **`Outcome.TRAP`**, already recorded per side, and `sweep_rate` is its decayed share |
+| a stop needing to clear the wick | `engine.py` already sizes in "sigmas of wick spread a stop has to clear beyond the level's own average" |
+
+**Two real gaps.** The body-to-wick *ratio* is not a named feature - the wick
+sizes are there and the small-body-long-wick shape is not. And the single-bar
+grab is not distinguished from the multi-bar sweep: `TRAP` is per interaction,
+and the multi-bar version - break, consolidate, reverse - is closer to
+`Episode.kind == "whipsaw"`, which is defined by R-multiples rather than by
+shape.
+
+### What Mazza (2012) actually found, which is not the folk version
+
+*Intraday Liquidity Dynamics and Price Movements*, 15-minute candlestick
+configurations against limit-order-book liquidity - spread, depth, order
+imbalance, dispersion, slope, plus activity and volatility.
+
+* **Dojis**: high-low volatility falls sharply, significant at 1%. Higher book
+  liquidity. Trading activity is **lower** while orders are **more aggressive**,
+  and asymmetrically: sellers aggressive immediately, buyers only 15 minutes
+  later. Gravestone tilts seller-aggressive, Dragonfly buyer-aggressive.
+* **Hammer family**: higher liquidity *just before* formation, and "not provided
+  by more depth: the book is more dense and the spread is lower". The Hanging
+  Man shows it only *after* it has fully appeared.
+* **Where the body sits in the range matters**: body near the high goes with more
+  liquidity at the ask, near the low with more at the bid, and more so when the
+  body is short.
+* Robust to 30 and 60 minute intervals for Dojis; the Hammer patterns lose
+  significance as the interval lengthens.
+
+**The conclusion is about execution, not direction**: "traders might benefit from
+candlesticks analysis as a way to better time their order submissions in order to
+improve their transaction costs management." The paper does not establish a
+directional edge, and the effects are short-lived. That is a narrower and more
+usable claim than the folk version, which reads a long wick as a reversal signal.
+
+**The caveat that decides how much transfers.** Mazza's measures come from a
+limit order book. This desk has no book - bid, ask and volume, no depth, no
+dispersion, no slope, no order imbalance. What survives is **spread**, **high-low
+volatility** and **activity**, which is enough for the Doji result and not enough
+for most of the rest.
+
+### The state-space reading of all of it, which is the part worth building
+
+**A wick is a measurement outlier, not information about where the level is.** It
+says where stops were. Two consequences, and both are already half-built here:
+
+1. **The filter should not move its state on a wick.** That is bounded influence,
+   which is `robust`. And it is not theoretical: the S6 member's -128.86 at
+   xauusd 4h and -570.31 at usdjpy 3m are a feedback loop in which a large
+   innovation opens `delta`, the state resets onto the outlier, and the next
+   innovation is larger still. Selection reading a Huber-gated residual is the
+   version of that member this data might not reject.
+2. **The wick belongs to a different quantity.** `subjects.py` names three -
+   LEVEL, INSTRUMENT, RELATION - and this argues for a fourth, measured by wick
+   excursions rather than by touch prices, with its own `jerk` and its own
+   noise. A level says where price is agreed; liquidity says where stops are
+   resting. They are different states with different time constants and one
+   filter should not be asked to carry both.
+
+And one structural point that ties back to the trend question: **a Hammer and a
+Hanging Man are the same shape.** The name depends entirely on the preceding
+trend. That is a state-dependent reading of an identical measurement, which is
+what a switching model is - I9, and the HMM member's job.
+
+## Seven symbols, 3m to 1d, scored properly: S4D-Real wins and the anchor needs the particles
+
+`research/ideas/statespace_symbols_timeframes.py`, 2026-10-10, after the
+log-sum-exp fix. Four FX pairs and three Deriv synthetics - **the synthetics are
+the control that matters**, because their volatility is generated and stationary
+by construction, so a member winning only there is describing a simulator.
+
+39 series. Wins by member:
+
+| member | series won |
+| --- | ---: |
+| **S4D-Real LTI** | **21** |
+| `reverting` | 8 |
+| S6 selective | 6, every one of them a tie or within 0.002 |
+| `swarm` | 2 - v25 15m and v75 15m |
+| `anchored`, `count = 1` | **0, and catastrophically** |
+
+### The anchor cannot be had without the particles, and that is structural
+
+`count = 1` was written to answer "fix the extrapolation without the particle
+part". It scores between **-71 and -101,256** a point. That is not a close loss
+or a tuning failure, and the reason is worth more than the member:
+
+**a zero eigenvalue cannot be driven by the recurrence** - the entry weight
+`1 - exp(delta * A)` is exactly zero there - so the anchor is a random walk, and
+with one particle there is nothing to reweight and nothing to resample. **The
+anchor is therefore never corrected toward the data.** The deviations track, the
+anchor drifts off, and `value = anchor + deviations` drifts with it.
+
+So the ensemble is not an optional extra that buys uncertainty on top of a
+working point estimate. **It is the anchor's only correction mechanism.** The
+alternative - a gain that pulls a persistent component toward each reading - is
+precisely a Kalman update on that state, which is what `linear` and `reverting`
+already are. Asked to separate the two fixes, the measurement says they do not
+separate.
+
+### What `swarm` is actually good at, which is not the likelihood
+
+It wins two series of 39, and it is **the best-calibrated member where it runs**:
+96.8% coverage at v75 15m against S4D-Real's 94.3%, on a nominal 95%. That is
+what it was built for and it delivers it - an inferred spread that widens in a
+gap, where `selective`'s is a fitted constant.
+
+The honest summary is that `swarm` buys **honest uncertainty at a small cost in
+fit**, and on this data S4D-Real's fit is better. Which of those a caller wants
+depends on whether it sizes on the band or only reads the point, and this desk
+sizes on the band.
+
+**Its first score is withdrawn.** The run before the log-sum-exp fix had it
+winning 18 of 24; that number was inflated by the missing shift and should not be
+quoted.
+
+### Selection, over 39 series rather than six
+
+Still essentially never: six nominal wins, all ties or within 0.002 a point, and
+the failures remain catastrophic - **-128.86** at xauusd 4h and **-570.31** at
+usdjpy 3m against LTI arms at -6.74 and -2.69. The feedback loop is unchanged: a
+large innovation opens `delta`, the state resets onto the outlier, the next
+innovation is larger. The paper's own limitation holds on seven symbols.
+
+### The synthetics behave differently, and in a readable way
+
+On v25, v75 and v100, `reverting` wins 1h and 4h where it loses those on FX, and
+the whole field is closer together - v75 4h has S4D-Real at **-0.145** against
+`linear`'s -0.883, the widest relative gap anywhere. A generated volatility
+process is more nearly the thing these models assume, which is the expected
+result and is the reason to keep them in the table: a member that cannot win on
+a stationary generator has no business being trusted on a market.
+
+### Still at the grid edge
+
+`drift = 4.0` and `wander = 2.0` pin at the top for nearly every fit, and
+`noise = 2.0` often. **Every selective and swarm number here is a lower bound**
+and the grids want another widening before these are quoted as final.
+
+## What the market does when the model is uncertain, and what signals a move
+
+Measured 2026-10-10 on the 285,688 held-out points, conditioning the **next**
+move on each quantity at the time. Asked as: what does the market do when
+uncertainty is high or low, and what gives a signal that a movement - up or
+down - is about to happen.
+
+**One answer covers all of it: every quantity predicts the size of the next move
+and none of them predicts its direction.**
+
+Ratio of mean `|next move|` in the highest bucket against the lowest, over
+quintiles of 71,374 points on the best-calibrated member:
+
+| conditioned on | ratio | and the direction? |
+| --- | ---: | --- |
+| **`loglike_step`** - how surprised the model was | **2.18x** | coin |
+| **`last_standardised`**, `\|z\|` | **2.02x** | coin |
+| disagreement between the four members | 1.24x | coin |
+| `sd` - the model's own prior uncertainty | 1.24x | coin |
+
+`continue` - the next two moves sharing a sign - sat between **48.3% and 49.6%**
+in every bucket of every cut. Including the signed test, which is the one that
+would have been an edge: bucketed by **signed** `z`, the most negative quintile
+and the most positive both give `|next|` near 1.5, with mean next moves of
+`+0.034` and `-0.013`. A surprise above the model and a surprise below it are
+followed by moves of the same size in no particular direction.
+
+### The realised surprise beats the expected uncertainty, by about 2x
+
+This is the finding worth building on. `sd` is what the model *thinks* it does
+not know; `|z|` and `loglike_step` are what just surprised it. The residual is
+nearly twice the signal that the covariance is - 2.0x against 1.24x - which is
+volatility clustering stated in state-space terms: **what just happened predicts
+the next move's size better than what the model expected to happen.**
+
+So the usable signal here is **residual-based, not covariance-based**, and it is
+direction-free, which matches what was asked for - "it could be an up or down
+volatile movement". A reading the filter found surprising is followed by a move
+1.8 vol units on average against 0.9 for an unsurprising one.
+
+### A safety finding: two members are overconfident exactly when they claim precision
+
+Coverage of the two-sigma band, by quintile of the member's own `sd`:
+
+| member | lowest `sd` bucket | highest |
+| --- | ---: | ---: |
+| `linear` | **19.3%** | 87.9% |
+| `reverting` | **34.0%** | 95.1% |
+| S4D-Real LTI | 86.6% | 93.9% |
+
+When `linear` is most confident its band fails **four times out of five**. That
+is worse than useless to a desk that sizes on the band, and it is not visible in
+an average - pooled, `linear` covers 68.6%. The failure is concentrated in
+precisely the states where a caller would trust it most.
+
+### The `existence` cut is confounded, and the confound is the lesson
+
+Bucketing by `existence` sorted the points by **timeframe**: the median gap in
+the five buckets came out 24.00h, 4.00h, 1.00h, 0.25h and 0.05h. Within a
+regularly sampled bar series `existence` is nearly constant - it decays on the
+clock and every bar restores it - so it varies mainly *between* timeframes. The
+`|next|` and `continue` columns were identical across two different members,
+which is the giveaway: they were properties of the data, not of the model.
+
+**`existence` cannot be tested on bar data.** It needs genuinely irregular gaps,
+which is the touch series - `reactions.Episode`, 250,412 of them - where a level
+can go untouched for five days and then be hit. That is the measurement that
+would say whether the seven-day half-life is right or is just
+`engine.FORGET_FEED_SECONDS` borrowed.
+
+### What else could signal a move, and is not yet tested
+
+* **Speed rather than uncertainty.** Speed is 8.1x as persistent as signed
+  velocity, and `rate` is on every member. Untested as a size predictor, and it
+  is the obvious companion to `|z|`.
+* **The band *narrowing*, not its level.** This measured the level of `sd`. A
+  squeeze - `sd` contracting and then expanding - is the classic version and is
+  a different variable. `linear` also exposes `sd_rate` and `sd_accel`, which
+  are uncertainty about the *rate*, and neither has been looked at.
+* **A rolling Ljung-Box breaking.** Residuals that suddenly correlate are a
+  state equation that has just stopped describing the series, which is a regime
+  change by definition. `diagnostics.residuals` already computes it; nothing
+  calls it on a rolling window.
+* **The wick subject.** Mazza's one directly usable result is that Dojis go with
+  sharply *lower* high-low volatility and higher book liquidity, and this desk
+  can compute spread, high-low and activity even without a book.
+
+## Is the innovation's reversion bigger than the spread? Mostly no
+
+`research/ideas/statespace_innovation_reversion.py`, 2026-10-10. The four-step
+plan, executed in the order where the first step can kill the rest.
+
+**1. The cost gate. 3m fails, eurusd 15m passes, and the sign is not stable.**
+"Edge" is the predicted move for a two-sigma surprise divided by the median
+spread, so below 1.0 the effect sits inside the cost of taking it.
+
+| series | best t | edge, spreads | verdict |
+| --- | ---: | ---: | --- |
+| eurusd 3m | **-7.1** | 0.16 - 0.85 | **strongest effect, least tradeable** |
+| eurusd 15m | -5.2 | 1.15 - **2.42** | clears the spread at h = 2, 5, 10 |
+| eurusd 1h | -2.2 | up to 3.41 | weak t, wide bands |
+| gbpusd 3m | -5.8 | - | same sign as eurusd |
+| usdjpy 3m | **+5.8** | 0.13 - 1.00 | **sign flips: momentum, not reversion** |
+| xauusd | -3.2 | 0.07 - 0.83 | nothing consistent, signs flip |
+
+The first row is the lesson. eurusd 3m has the best statistics in the whole
+table and the worst cost ratio, because the 3m spread is **0.343 volatility
+units** - a third of a typical bar. A statistical effect that lives inside the
+spread is microstructure, and the fact that it is strongest where the spread is
+widest relative to the move is the signature of bid-ask bounce rather than of a
+view about price.
+
+**And the sign is not stable across symbols**: eurusd and gbpusd revert at 3m,
+usdjpy trends, xauusd does neither consistently. That is not one phenomenon. The
+search covered roughly 150 cells - five symbols by three timeframes by five
+horizons by clipped and raw - so eurusd 15m surviving is **a candidate, not an
+edge**, and it needs a different period before it is anything.
+
+**2. Robustifying works, and for the predicted reason.** Clipping the innovation
+at 2.5 sigma strengthens reversion where it exists - eurusd 3m `t` from -4.6 to
+-6.1 at h=1 and -5.6 to -7.1 at h=5, eurusd 15m h=10 edge from 1.58 to 2.42 -
+and **kills momentum where that is what is there**: usdjpy 3m from `t = +5.8` to
+`+1.6`. So **large innovations carry continuation and small ones carry
+reversion**, and the Huber gate separates them. That is exactly what `robust`
+was written for and this is the first measurement of it doing the job.
+
+**3. Ten bars beats one, confirmed.** On eurusd 15m the clipped edge runs 0.92,
+1.30, 1.54, **2.42**, 0.98 across h = 1, 2, 5, 10, 20. It accrues to ten bars
+and then decays, so the natural horizon there is about two and a half hours and
+not a bar.
+
+**4. Cross-resolution confirmation buys nothing, and the first version of that
+test was invalid.** With the 15m innovation correctly lagged by one 15m bar, the
+"3m and 15m agreeing" slope has the same sign and a *weaker* `t` than 3m alone -
+-2.2 against -4.8 on eurusd - because only 58-61% of bars agree and the sample
+shrinks. Requiring confirmation costs more than it buys.
+
+**The version before the lag reported slopes of +0.43 to +0.73 at `t` of +14.5
+to +20.8, uniformly positive on all five symbols including the synthetic
+generator.** A 15m bar stamped at T does not close until T+15m, so attaching its
+innovation to 3m bars from T onward used up to twelve minutes of the future. An
+effect that strong, that uniform, and present on a generated series is the
+signature of leakage - and the agreement rate falling from 73% to 59% once the
+lag was added is how much was leaking.
+
+### And the unit error before it, which is the same kind of mistake
+
+The first run of this harness reported the median spread as **136 volatility
+units** on usdjpy 3m. A spread 136 times the typical bar move would mean the
+market is untradeable, which is how it announced itself: `spread` in the seqlab
+npz is in **points**, not price, and dividing as though it were price inflated
+the cost by `1/tick` - a factor of 100,000 on EURUSD. `tick_size` now infers it
+from the series as the smallest non-zero absolute change, which recovers 1e-5
+for EURUSD, 1e-3 for USDJPY and 1e-2 for XAUUSD and the synthetics.
+
+**Both mistakes were caught by the result being physically absurd rather than by
+reading the code.** That is worth keeping as a habit: a number that cannot be
+true about a market is a faster check than a review.
+
+## One-step scoring is the wrong objective, and it favours the wrong member
+
+Noted 2026-10-10: the desk trades many bars ahead, and **every comparison in
+this file was scored on one-step predictive likelihood.** That is the objective a
+random walk is best at, and it is the objective `at_time` is irrelevant to.
+
+It matters most for the member it was supposed to favour. `swarm`'s anchor exists
+precisely so that extrapolation far ahead returns the level rather than decaying
+to zero, and one-step scoring cannot see that: at `h = 1` the anchor has barely
+moved. So `swarm` was measured on the one horizon where its distinguishing
+feature does nothing.
+
+The signals do survive longer horizons, which is the encouraging half - ratio of
+the next move's size, highest signal quintile against lowest:
+
+| signal | h=1 | h=5 | h=20 | h=50 |
+| --- | ---: | ---: | ---: | ---: |
+| speed | 3.13 | 2.89 | 2.39 | **2.03** |
+| `\|z\|` | 2.02 | 1.85 | 1.59 | 1.47 |
+| `sd` | 1.25 | 1.23 | 1.16 | 1.08 |
+| squeeze | 1.53 | 1.45 | 1.25 | 1.17 |
+
+**Speed still gives 2.03x at fifty bars.** And the series itself diffuses at
+1.00, 1.04, 1.06 and 1.07 times a `sqrt(h)` random walk over those horizons - so
+very nearly pure diffusion, with a hint of trending that grows with the horizon.
+
+**What this requires:** an `h`-step scoring arm in the harness, comparing
+`at_time(t + h)` against the realised close `h` bars later and the coverage of
+`band(t + h)`. Until that exists, every ranking in this file is a ranking at one
+bar and should be read as such.
 
 ## Members not written
 

@@ -309,12 +309,14 @@ def members() -> dict[str, type]:
     from .reverting import Reverting
     from .robust import Robust
     from .selective import Selective
+    from .swarm import Swarm
 
     return {
         "kalman": Gaussian,
         "reverting": Reverting,
         "robust": Robust,
         "selective": Selective,
+        "swarm": Swarm,
     }
 
 

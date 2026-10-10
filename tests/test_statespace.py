@@ -390,7 +390,7 @@ class TestFamily:
         from till_infinity.structures.statespace.family import Filter, members
 
         got = members()
-        assert set(got) == {"kalman", "reverting", "robust", "selective"}
+        assert set(got) == {"kalman", "reverting", "robust", "selective", "swarm"}
         for name, cls in got.items():
             # Constructed with no arguments on purpose: a member whose defaults
             # do not produce a usable filter cannot be scored against another
@@ -2107,11 +2107,18 @@ class TestTheFourQuantities:
 
     def test_the_covariance_is_the_one_optional_capability(self):
         """`selective` has no posterior to report, so it does not pretend to.
-        A caller must ask, and `smooth` is the caller that does."""
+        A caller must ask, and `smooth` is the caller that does.
+
+        **It is now the only member without one.** `swarm` carries an ensemble
+        and reports its sample covariance, which is the point of that member:
+        the same recurrence with an inferred spread instead of an asserted one.
+        So this asserts the exception rather than a list, and a new member that
+        quietly cannot answer will fail here.
+        """
         from till_infinity.structures.statespace.family import members
 
-        with_posterior = {n for n, c in members().items() if hasattr(c(), "covariance")}
-        assert with_posterior == {"kalman", "reverting", "robust"}
+        without = {n for n, c in members().items() if not hasattr(c(), "covariance")}
+        assert without == {"selective"}
 
     def test_existence_decays_on_time_alone_and_never_exceeds_one(self):
         """The one genuine probability here. An absence of evidence is caused by
@@ -2233,3 +2240,214 @@ class TestAgainstTheReferenceImplementation:
             engine.update(77.0, 0.4, i * 900.0)
         assert all(h == pytest.approx(77.0, rel=1e-6) for h in engine.state())
         assert engine.output()[0] == pytest.approx(77.0, rel=1e-6)
+
+
+class TestSwarm:
+    """The anchored particle member: `selective`'s two trade-offs, fixed elsewhere."""
+
+    def test_the_spectrum_has_an_anchor(self):
+        """`(0, -1, -2, -3)`. The zero is the whole design: one component does
+        not decay, so it holds the level while the others track movement."""
+        from till_infinity.structures.statespace.swarm import SIZE, Swarm
+
+        eigen = Swarm.eigenvalues()
+        assert len(eigen) == SIZE
+        assert eigen[0] == 0.0
+        assert all(a < 0.0 for a in eigen[1:])
+        # The anchor's retention is exactly one, at any horizon.
+        engine = Swarm()
+        for hours in (0.0, 1.0, 100.0):
+            assert engine.retention(hours)[0] == 1.0
+
+    def test_extrapolation_goes_to_the_anchor_not_to_zero(self):
+        """`selective`'s worst trade-off, and the reason this member exists.
+
+        There the state summarises readings that arrived, so with none it
+        decays to nothing - useless for a level, whose character is sitting
+        still. Here the deviations decay and the anchor stays.
+        """
+        from till_infinity.structures.statespace.selective import Selective
+        from till_infinity.structures.statespace.swarm import Swarm
+
+        level = 500.0
+        swarm = Swarm(wander=0.1)
+        selective = Selective()
+        for i in range(60):
+            when = i * 900.0
+            for engine in (swarm, selective):
+                engine.predict(when)
+                engine.update(level, 0.4, when)
+
+        far = 60 * 900.0 + 72 * 3600.0
+        assert swarm.at_time(far) == pytest.approx(level, rel=0.02)
+        assert swarm.at_time(far) == pytest.approx(swarm.anchor, rel=1e-6)
+        # And the member it was written to improve on does decay away.
+        assert abs(selective.at_time(far)) < 0.5 * level
+
+    def test_the_band_widens_because_the_anchor_wanders(self):
+        """`selective.sd` is a fitted parameter, so its band cannot widen in a
+        gap. This one is the ensemble's spread plus the anchor's own process
+        noise over the interval - inferred, not asserted.
+
+        The first version of this member got it wrong in the same way it was
+        written to fix: `band` read the *current* spread at every horizon, so
+        +48h was exactly as narrow as now.
+        """
+        from till_infinity.structures.statespace.swarm import Swarm
+
+        engine = Swarm(wander=0.3)
+        for i in range(60):
+            when = i * 900.0
+            engine.predict(when)
+            engine.update(100.0, 0.4, when)
+
+        now = 59 * 900.0
+        widths = []
+        for ahead in (0.0, 1.0, 6.0, 48.0):
+            low, high = engine.band(now + ahead * 3600.0)
+            widths.append(high - low)
+        assert widths == sorted(widths), widths
+        assert widths[-1] > 4.0 * widths[0]
+
+    def test_it_reports_a_posterior_and_can_be_smoothed(self):
+        """The capability `selective` lacks. A covariance from the ensemble
+        means `smooth` has what it needs, where that member returns None."""
+        from till_infinity.structures.statespace.smoothing import smooth
+        from till_infinity.structures.statespace.swarm import SIZE, Swarm
+
+        engine = Swarm()
+        for i in range(40):
+            when = i * 900.0
+            engine.predict(when)
+            engine.update(100.0 + 0.1 * i, 0.4, when)
+
+        cov = engine.covariance()
+        assert len(cov) == SIZE
+        assert all(len(row) == SIZE for row in cov)
+        # Symmetric, and the diagonal is non-negative - it is a covariance.
+        for i in range(SIZE):
+            assert cov[i][i] >= 0.0
+            for j in range(SIZE):
+                assert cov[i][j] == pytest.approx(cov[j][i], abs=1e-12)
+
+        times = tuple(i * 900.0 for i in range(20))
+        measured = tuple(100.0 + 0.1 * i for i in range(20))
+        assert smooth(Swarm, times, measured, noise=0.4) is not None
+
+    def test_the_ensemble_does_not_collapse(self):
+        """A particle filter whose weights concentrate on one particle has
+        silently become a point estimate, and its `sd` has stopped meaning
+        anything. Resampling is what prevents it, and `effective` is how you
+        would know."""
+        from till_infinity.structures.statespace.swarm import COUNT, Swarm
+
+        engine = Swarm(wander=0.2)
+        for i in range(200):
+            when = i * 900.0
+            engine.predict(when)
+            engine.update(100.0 + 0.05 * i, 0.4, when)
+        assert engine.effective() > 0.1 * COUNT, engine.effective()
+        assert engine.resampled > 0, "nothing resampled, so the trigger never fired"
+        assert engine.sd > 0.0
+
+    def test_it_is_in_the_family_and_satisfies_the_protocol(self):
+        from till_infinity.structures.statespace.family import Filter, members
+        from till_infinity.structures.statespace.swarm import Swarm
+
+        assert members()["swarm"] is Swarm
+        engine = Swarm()
+        assert isinstance(engine, Filter)
+        assert 0.0 <= engine.existence <= 1.0
+
+    def test_a_run_is_reproducible(self):
+        """A particle filter whose answer moves between runs cannot be scored
+        against a null, so the seed is part of the member."""
+        from till_infinity.structures.statespace.swarm import Swarm
+
+        def run():
+            engine = Swarm(wander=0.2)
+            for i in range(50):
+                when = i * 900.0
+                engine.predict(when)
+                engine.update(100.0 + 0.03 * i, 0.4, when)
+            return engine.value, engine.sd, engine.loglike
+
+        assert run() == run()
+
+
+class TestSwarmLikelihood:
+    """The score has to be on the same scale as the Kalman members' or the
+    comparison between them is meaningless."""
+
+    def test_one_point_ensemble_reproduces_the_plain_gaussian(self):
+        """A non-circular check, and the one that caught a real bug.
+
+        With a negligible seed spread every particle holds the same state, so
+        the ensemble's weighted mean predictive density **is** the ordinary
+        Gaussian density of the reading. Anything else means the log-sum-exp is
+        wrong - and it was: the stabilising `-= logw.max()` shift was never
+        added back, so every step's score was too high by `0.5*min(error**2)`.
+        """
+        from till_infinity.structures.statespace.swarm import Swarm
+
+        spread = 0.5
+        engine = Swarm(noise=1e-9, wander=0.0, drift=0.0, scale=0.0)
+        engine.update(100.0, spread, 0.0)  # seeds, scores nothing
+        assert engine.loglike == 0.0
+
+        # One further reading, offset so the density is not at its peak.
+        engine.update(101.0, spread, 3600.0)
+        expected = (
+            -0.5 * ((101.0 - 100.0) / spread) ** 2
+            - 0.5 * math.log(2.0 * math.pi)
+            - math.log(spread)
+        )
+        assert engine.loglike == pytest.approx(expected, abs=1e-6)
+
+
+class TestExistenceMeansOneThing:
+    """`existence` has two halves and every member must implement both."""
+
+    def test_time_removes_belief_and_readings_return_it(self):
+        """The rule, and the test that found it missing.
+
+        `existence` is not a function of elapsed time alone - that claim was
+        made and it was wrong. Time decays it in `predict`; **a reading pulls
+        it back toward one** in `update`, because a level being touched is a
+        level that still exists. `swarm` implemented only the decay, and over
+        6,000 bars it finished at 0.045 against every other member's 0.998.
+
+        This is the shape of test the README now asks for whenever an accessor
+        is added to `Filter`: that it means the same thing on every member,
+        not merely that each one answers.
+        """
+        from till_infinity.structures.statespace.family import members
+        from till_infinity.structures.statespace.linear import EXISTENCE_HALF_LIFE_HOURS
+
+        gap = EXISTENCE_HALF_LIFE_HOURS * 3600.0
+        for name, cls in members().items():
+            engine = cls()
+            engine.update(100.0, 0.4, 0.0)
+
+            # Time alone takes it down.
+            engine.predict(gap)
+            assert engine.existence == pytest.approx(0.5, rel=1e-6), name
+
+            # A reading brings it back up, and cannot push past certainty.
+            engine.update(100.0, 0.4, gap)
+            assert engine.existence > 0.5, name
+            assert engine.existence <= 1.0, name
+
+    def test_a_long_run_of_readings_keeps_every_member_near_certain(self):
+        """The symptom that exposed the bug, as a regression test: a level
+        touched every fifteen minutes for days is not a level we have stopped
+        believing in."""
+        from till_infinity.structures.statespace.family import members
+
+        for name, cls in members().items():
+            engine = cls()
+            for i in range(400):
+                when = i * 900.0
+                engine.predict(when)
+                engine.update(100.0, 0.4, when)
+            assert engine.existence > 0.9, f"{name}: {engine.existence}"

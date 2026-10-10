@@ -27,7 +27,7 @@ grid already used for `theta` and `jerk` can fit. That is a smaller claim than
 the paper's and it is the claim that can be checked here.
 
 **No numpy, deliberately.** `A` is diagonal, so the recurrence is `n` independent
-scalars and there is no matrix algebra to do. `TODO.md` argues numpy's case for
+scalars and there is no matrix algebra to do. `README.md` argues numpy's case for
 this package and the first thing that genuinely needs it is D1's HiPPO matrix,
 which is dense. This is not that.
 
@@ -370,7 +370,18 @@ class Selective:
 
         # Scored before the state moves, which is the only order that gives a
         # *predictive* density rather than a fitted one.
-        self.last_standardised = z
+        #
+        # **Standardised by the predictive spread, not by `R` alone.** `linear`
+        # divides by `sqrt(p00 + noise)` - the full one-step variance - and a
+        # member that divides by the measurement noise only is reporting a
+        # different quantity under the same name. Measured consequence: over
+        # 285,688 held-out points this member's mean `|z|` read 3.05 against
+        # `reverting`'s 1.22 while its RMSE was *smaller*, which is two scales
+        # rather than two accuracies. Ljung-Box and Jarque-Bera are
+        # scale-invariant so the diagnostics were unaffected, but anything
+        # comparing the numbers was not.
+        total = math.sqrt(self.noise * self.noise + spread * spread)
+        self.last_standardised = innovation / total if total > 0.0 else 0.0
         if self.seen >= self.burn:
             self.loglike += self.predictive(measured)
         self.existence = min(1.0, self.existence + (1.0 - self.existence) * 0.5)
@@ -417,7 +428,7 @@ class Selective:
 
         For a level - a quantity whose whole character is that it sits still -
         that makes this member's forward extrapolation close to useless, and it
-        is a second reason to expect it to lose the comparison that `TODO.md`
+        is a second reason to expect it to lose the comparison that `README.md`
         already predicts on the paper's own grounds. Use `value` for what it
         has seen; do not read `band()` far ahead.
         """
