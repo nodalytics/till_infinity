@@ -224,6 +224,20 @@ SEED_BARS = WINDOW
 #: about **333 bars**, which is the number `prices.config.DEFAULT_RETAIN_BARS`
 #: already names as what the seed needs. A thousand was margin on a margin.
 #:
+#: **The measurement below is void, and the reason is 2026-10-10.** The image
+#: that was supposed to carry this constant never ran it: `uv sync
+#: --no-editable` reinstalled a wheel it had cached from an older tree, so the
+#: container held the new source at `/app/till_infinity` and an old installed
+#: package in the venv - and the venv is what Python imports. `SEED_NEW_BARS`
+#: was absent from the running process throughout. A bar count that did not
+#: change is exactly what a constant that is not there looks like, so what was
+#: recorded as "the cap does not bind" is **untested**, not refuted. The
+#: arithmetic that chose 500 still stands on its own; nothing has measured it.
+#:
+#: Kept below as written, because a wrong conclusion is worth more in the open
+#: than deleted - and because the next person to halve a constant and read an
+#: unchanged number needs to check that the constant shipped first.
+#:
 #: **Measured on production 2026-10-09, and it changes almost nothing.** The
 #: warm before this read **749,590 bars**; with the cap halved it read
 #: **747,871** - a 0.2% reduction. The cap was never the binding constraint:

@@ -3690,12 +3690,12 @@ def test_topping_up_a_restored_engine_reads_half_a_window():
     the figure `prices.config.DEFAULT_RETAIN_BARS` names as what the seed
     needs. That arithmetic is right and was beside the point.
 
-    **On production the cap does not bind.** The warm read 749,590 bars before
-    the change and 747,871 after, a 0.2% reduction, because 747,871 over twenty
-    feeds and ten intervals is about 3,740 rows per `(feed, interval)` against
-    a limit of 8,000 then 4,000. The store does not hold enough for either to
-    apply, so the constant is kept as correct and harmless rather than as a fix
-    for anything - see `SEED_NEW_BARS`.
+    **Whether it binds on production is unknown.** It was measured as not
+    binding on 2026-10-09 and that measurement was void: the constant was not in
+    the running process at all, because the image's venv held a wheel uv had
+    cached from an older tree. An unchanged bar count is what a missing constant
+    looks like. The arithmetic above is what this test checks; the production
+    question is open - see `SEED_NEW_BARS`.
     """
     from till_infinity.structures.engine import SEED_BARS, SEED_NEW_BARS
 

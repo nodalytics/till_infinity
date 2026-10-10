@@ -246,6 +246,26 @@ HORIZON = 5
 MAX_TREE_MB = 32.0
 MEMORY_CHECK_EVERY = 5_000
 
+#: Levels the tree may grow to. **Set because river's default is 980 and
+#: Python's recursion limit is 1,000.**
+#:
+#: `HoeffdingTreeRegressor(max_depth=None)` resolves to 980 inside river, chosen
+#: there so river's own recursive traversals clear the interpreter's limit. It
+#: leaves twenty frames for the splitter chain under each leaf, the leaf
+#: estimators and whoever is pickling the thing - so a tree river is willing to
+#: grow cannot be written to disk, and the error says only "maximum recursion
+#: depth exceeded". That is what stopped every `structures` save from
+#: 2026-09-23 to 2026-10-10.
+#:
+#: **64 cannot bind on anything this desk will see.** The live tree measured
+#: height **37** after 781,827 observations with `MAX_TREE_MB` already
+#: enforcing, and a Hoeffding tree deepens roughly with the log of its input:
+#: another doubling of the data buys about one more level. 64 is 27 levels of
+#: headroom on the observed height and fifteen times clear of the limit, which
+#: is the property that matters - the cap exists to keep the state writable, not
+#: to shape the model.
+MAX_TREE_DEPTH = 64
+
 
 #: What a feature means when it cannot be computed. Every value in a row is
 #: dimensionless and the ratios are centred on one - `rel` already returns 1.0
@@ -326,6 +346,8 @@ def _model():
     return preprocessing.StandardScaler() | tree.HoeffdingTreeRegressor(
         grace_period=50,
         max_size=MAX_TREE_MB,
+        # Explicit, because the default is 980 - see `MAX_TREE_DEPTH`.
+        max_depth=MAX_TREE_DEPTH,
         memory_estimate_period=MEMORY_CHECK_EVERY,
     )
 
@@ -451,6 +473,29 @@ class Learned(Restorable):
                 del splitters[name]
                 tally["splitters"] += 1
         return tally
+
+    def cap_depth(self) -> int | None:
+        """Hold the restored tree to `MAX_TREE_DEPTH`. Returns what it was, or None.
+
+        **Configuration re-applied over a restore, and not tidying.** The
+        pickled regressor carries the `max_depth` it was *built* with, so a tree
+        saved before this constant existed comes back permitted to grow to
+        river's 980 however many times it is reloaded - and the state file it
+        then cannot be written into is the one that would have carried the fix.
+        The same reason `Watcher.load` re-applies the formation and the clock.
+        """
+        try:
+            regressor = self._model[-1]
+        except Exception:  # a model shape this does not recognise is not ours to set
+            return None
+        was = getattr(regressor, "max_depth", None)
+        if was == MAX_TREE_DEPTH:
+            return None
+        try:
+            regressor.max_depth = MAX_TREE_DEPTH
+        except Exception:
+            return None
+        return was
 
     def _recent(self, key: str) -> Recent:
         found = self._by_key.get(key)

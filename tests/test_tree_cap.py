@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import random
 
+import pytest
+
 from till_infinity.structures.vol.learned import MAX_TREE_MB, MEMORY_CHECK_EVERY, _model
 
 
@@ -291,3 +293,160 @@ def test_pruning_a_clean_tree_changes_nothing():
         learned._model.learn_one(row, rng.uniform(5.0, 15.0))
 
     assert learned.prune_nonfinite() == {"splitters": 0, "nodes": 0}
+
+
+# ------------------------------------------- depth, and room to write it down
+
+
+def test_river_still_defaults_to_a_depth_python_cannot_pickle():
+    """**The fact the rest of this rests on, pinned so it cannot change quietly.**
+
+    River resolves `max_depth=None` to 980 - its own choice, so its recursive
+    traversals clear the interpreter's limit. That leaves twenty frames for the
+    splitter chains, the leaf estimators and whoever is pickling, which is why a
+    tree river is happy to grow cannot be written to disk. If a future river
+    changes this number, the reasoning behind `MAX_TREE_DEPTH` needs re-reading
+    rather than silently inheriting.
+    """
+    import sys
+
+    from river import tree
+
+    assert tree.HoeffdingTreeRegressor(grace_period=50).max_depth == 980
+    assert sys.getrecursionlimit() == 1_000, "the 980 above is chosen against this"
+
+
+def test_the_production_model_caps_its_depth():
+    """A fresh model must not inherit the 980."""
+    from till_infinity.structures.vol.learned import MAX_TREE_DEPTH, _model
+
+    assert MAX_TREE_DEPTH == 64
+    assert _model()[-1].max_depth == MAX_TREE_DEPTH
+    assert MAX_TREE_DEPTH < 980, "the whole point"
+
+
+def test_a_restored_tree_has_its_depth_cap_re_applied():
+    """**The pickle carries the limit it was built with.** Without this, a tree
+    saved before the cap existed comes back permitted to reach 980 on every
+    restore - and the save that would have carried the fix is the save that
+    cannot be written."""
+    from till_infinity.structures.vol.learned import MAX_TREE_DEPTH, Learned
+
+    learned = Learned()
+    learned._model[-1].max_depth = 980  # as a state file written in September has it
+    assert learned.cap_depth() == 980, "it should report what it found"
+    assert learned._model[-1].max_depth == MAX_TREE_DEPTH
+    # Idempotent: a second restore has nothing to say.
+    assert learned.cap_depth() is None
+
+
+def test_the_save_gives_pickle_room_and_puts_the_limit_back():
+    """Raised for the write only. Leaving it raised would hide the next one, and
+    `pickle` recurses on the C stack too - a limit the thread's stack cannot
+    honour turns a failed save into a crash."""
+    import sys
+
+    from till_infinity.structures import store
+
+    assert store.SAVE_RECURSION_LIMIT == 4_000
+    assert sys.getrecursionlimit() < store.SAVE_RECURSION_LIMIT
+    # Far from a stack a thread cannot carry - the point of not choosing 100,000.
+    assert store.SAVE_RECURSION_LIMIT <= 10_000
+
+
+def test_the_limit_is_restored_even_when_the_save_fails(tmp_path, monkeypatch):
+    import sys
+
+    from till_infinity.structures import store
+
+    before = sys.getrecursionlimit()
+
+    def explode(*_a, **_k):
+        raise RecursionError("maximum recursion depth exceeded while pickling an object")
+
+    monkeypatch.setattr(store, "_write", explode)
+    with pytest.raises(RecursionError):
+        store.save({"engine": object()}, tmp_path)
+    assert sys.getrecursionlimit() == before, "a failed save must not leave the limit raised"
+
+
+def test_a_save_that_is_too_deep_says_where(tmp_path, monkeypatch, caplog):
+    """**The reading that was missing.** A `RecursionError` out of `pickle` names
+    nothing, so sixteen days of failures said only "maximum recursion depth
+    exceeded" and the cause had to be inferred from a downloaded state file."""
+    import logging
+
+    from till_infinity.structures import store
+
+    class Node:
+        __slots__ = ("nxt", "tag")
+
+        def __init__(self, nxt=None, tag=0):
+            self.nxt, self.tag = nxt, tag
+
+    chain = None
+    for i in range(400):
+        chain = Node(chain, i)
+
+    def explode(*_a, **_k):
+        raise RecursionError("maximum recursion depth exceeded while pickling an object")
+
+    monkeypatch.setattr(store, "_write", explode)
+    with caplog.at_level(logging.ERROR), pytest.raises(RecursionError):
+        store.save({"engine": {"tree": chain}}, tmp_path)
+
+    said = " ".join(r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR)
+    assert "levels deep" in said
+    assert ".nxt" in said, "it has to name the chain, not just its depth"
+
+
+def test_the_depth_diagnostic_is_iterative_and_survives_a_cycle():
+    """It runs *because* something blew the recursion limit, so it cannot recurse
+    itself - and a graph that refers back to itself must not hang it."""
+    from till_infinity.structures import store
+
+    class Node:
+        __slots__ = ("nxt",)
+
+        def __init__(self, nxt=None):
+            self.nxt = nxt
+
+    deep = None
+    for _ in range(5_000):
+        deep = Node(deep)
+    depth, where = store.deepest_path(deep)
+    assert depth >= 5_000, f"walked only {depth} of a 5,000-long chain"
+    assert ".nxt" in where
+
+    loop = Node()
+    loop.nxt = loop
+    got, _ = store.deepest_path(loop)
+    assert got < 10, "a self-reference is one node deep, not forever"
+
+
+def test_the_depth_diagnostic_admits_when_it_ran_out_of_budget():
+    """**A diagnostic that under-reports silently is the fault it exists to find.**
+
+    Measured: at a 2,000,000-node budget it reported 21 levels against a true 92
+    on production's own state, because breadth consumes the budget before the
+    deep branches are opened. The budget is larger now and an exhausted one is
+    named, so the number is never quietly wrong.
+    """
+    from till_infinity.structures import store
+
+    assert store.DIAGNOSTIC_NODES == 8_000_000
+
+    wide = {f"k{i}": [i] * 3 for i in range(400)}
+    monkey = store.DIAGNOSTIC_NODES
+    try:
+        store.DIAGNOSTIC_NODES = 20
+        depth, where = store.deepest_path(wide)
+        assert "truncated" in where, f"a 20-node budget on 400 keys should say so: {where!r}"
+        assert "lower bound" in where
+    finally:
+        store.DIAGNOSTIC_NODES = monkey
+
+    # And it stays quiet when it did finish.
+    depth, where = store.deepest_path({"a": {"b": {"c": 1}}})
+    assert depth == 3
+    assert "truncated" not in where
