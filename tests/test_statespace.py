@@ -4818,3 +4818,95 @@ class TestSeasonal:
         assert Profile.fit(times, values) is None
         assert not Profile().fitted
         assert Profile().at(12.0 * self.HOUR) == 1.0
+
+    def test_the_clock_drives_the_lever_without_a_caller(self):
+        """`Driven(clock=...)` needs nothing passed per reading.
+
+        The exogenous door takes a number the caller computes; the clock door
+        takes a function of the time, and the time is already `predict`'s
+        first argument. That is what makes a time-of-day profile usable in a
+        live member rather than only in a harness.
+        """
+        from till_infinity.structures.statespace.driven import Driven
+        from till_infinity.structures.statespace.seasonal import Profile, Seasonal
+
+        # A profile peaking at midnight: e at hour 0, 1/e twelve hours later.
+        made = Profile(weights=(0.0, 1.0, 0.0), harmonics=1)
+        base = 1e-4
+        member = Driven(
+            build=lambda: Seasonal(seasonal_on=False, level_wander=base),
+            lever="level_wander",
+            clock=made.factor,
+        )
+        member.predict(0.0)
+        member.update(100.0, 0.1, 0.0)
+        at_peak = member.softness
+
+        member.predict(12.0 * self.HOUR)
+        at_trough = member.softness
+
+        # The variance factor is the size profile squared, so peak over trough
+        # is (e / e^-1)^2 = e^4.
+        assert at_peak / at_trough == pytest.approx(math.exp(4.0), rel=1e-6)
+        assert member.timed == pytest.approx(at_trough)
+        assert member.exogenous == pytest.approx(1.0)
+
+    def test_the_two_doors_compose_rather_than_overwrite(self):
+        """A busy hour and a busy exogenous reading reinforce each other.
+
+        Both are ratios on a variance, so they multiply. If one overwrote the
+        other, wiring the clock in would silently disable the channel
+        `inputs.py` exists to feed, and the harness comparing the two doors
+        would be comparing one of them with itself.
+        """
+        from till_infinity.structures.statespace.driven import Driven
+        from till_infinity.structures.statespace.seasonal import Profile, Seasonal
+
+        made = Profile(weights=(0.0, 1.0, 0.0), harmonics=1)
+        member = Driven(
+            build=lambda: Seasonal(seasonal_on=False, level_wander=1e-4),
+            lever="level_wander",
+            clock=made.factor,
+            gain=1.0,
+        )
+        member.predict(0.0, control=3.0)
+        assert member.exogenous == pytest.approx(4.0)
+        assert member.softness == pytest.approx(4.0 * member.timed)
+
+    def test_no_clock_leaves_the_old_behaviour_exactly(self):
+        """`clock=None` is the control arm, and has to be untouched.
+
+        A wrapper whose unconfigured behaviour drifted would invalidate every
+        measurement already taken through it.
+        """
+        from till_infinity.structures.statespace.driven import Driven
+        from till_infinity.structures.statespace.seasonal import Seasonal
+
+        member = Driven(
+            build=lambda: Seasonal(seasonal_on=False, level_wander=1e-4),
+            lever="level_wander",
+        )
+        member.predict(0.0, control=0.5)
+        assert member.timed == pytest.approx(1.0)
+        assert member.softness == pytest.approx(1.5)
+
+    def test_the_floor_applies_to_the_product(self):
+        """A state that cannot move at all is never what an input should assert.
+
+        The floor is a statement about the member, not about either signal, so
+        it applies once to the product - otherwise two channels each just
+        above the floor would multiply to far below it.
+        """
+        from till_infinity.structures.statespace.driven import Driven
+        from till_infinity.structures.statespace.seasonal import Seasonal
+
+        quiet = type("Quiet", (), {})
+        _ = quiet
+        member = Driven(
+            build=lambda: Seasonal(seasonal_on=False, level_wander=1e-4),
+            lever="level_wander",
+            clock=lambda _when: 0.001,
+            floor=0.01,
+        )
+        member.predict(0.0, control=-0.9)
+        assert member.softness == pytest.approx(0.01)

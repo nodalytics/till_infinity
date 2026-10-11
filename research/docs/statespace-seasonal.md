@@ -133,16 +133,51 @@ about how far, not which way, and `jpy-silver-pair.md` is the cautionary
 example from the same day: an hour-of-day pattern there was the largest effect
 in the study and nothing tradeable followed from it at any horizon above cost.
 
-The natural next steps, in order:
+## Wired into `driven.py`
 
-* **Wire it into `driven.py`**, which is already the door that takes an
-  outside signal into `Q`, so the live members can use a clock profile without
-  a harness.
+`driven.py` was already the door that takes an outside signal into `Q`. It
+took one signal - `control`, a number the caller computes per reading from
+`inputs.py` - and it now takes a second: `clock`, a function of the time
+alone, which needs no caller at all because the time is already `predict`'s
+first argument.
+
+`Profile.factor` is that function. It returns the **variance** multiplier -
+the profile squared - so the squaring lives in one place rather than in every
+caller, and a caller who passed a standard-deviation profile instead would
+under-drive every busy hour by its own square with nothing in the output to
+show it.
+
+The two channels **multiply**, because both are ratios on a variance: a busy
+hour and a busy exogenous reading should reinforce rather than one silently
+overwriting the other. The floor applies once to the product, since "a state
+that cannot move at all" is a statement about the member and not about either
+signal. `clock=None` leaves the old behaviour exactly as it was, which keeps
+every measurement already taken through the wrapper valid.
+
+**The wiring reproduces the hand-rolled arm exactly** - all 26 cells agree to
+one decimal, from EURUSD's +142.5 to ETH's +367.6 and the generated markets'
+-8.6 to +0.5. That equality is the only thing that makes the measurement above
+a statement about the member rather than about a harness, so the harness now
+runs both arms side by side and prints them in adjacent columns.
+
+Using it on a live member is two lines:
+
+```python
+profile = Profile.fit(times, logs)          # on history, once
+member = Driven(build=..., lever="level_wander", clock=profile.factor)
+```
+
+## What is still open
+
 * **A weekly profile**, at `period=168`. The weekend gap makes the phase
   coverage uneven, which is precisely what the harmonic cap now counts.
 * **Re-fit the profile periodically.** It is fitted once here, on half a
   series. Whether the session shape drifts over years is a separate
   measurement, and `wander` on the member is the mechanism if it does.
+* **Which lever on which member.** The profile drove `level_wander` on a
+  level-only `Seasonal` here. `kalman` carries integrated jerk and `reverting`
+  a reversion rate, and whether the clock belongs on those levers or only on
+  the level's is untested.
 
 The harness is `research/ideas/seasonal_members.py`. The member and the
 profile are `till_infinity/structures/statespace/seasonal.py`.

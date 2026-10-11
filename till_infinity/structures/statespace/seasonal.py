@@ -479,16 +479,23 @@ class Profile:
         fitted = sum(a * b for a, b in zip(row, self.weights, strict=True))
         return math.exp(fitted - self.weights[0])
 
-    def wander(self, base: float, when: float) -> float:
-        """A per-hour **variance** for `Q` at `when`, from a base variance.
+    def factor(self, when: float) -> float:
+        """The **variance** multiplier at `when`: the profile, squared.
 
-        Squared, because the profile was fitted to a standard deviation: a
-        threefold profile in size is a ninefold one in variance. Getting this
-        exponent wrong is the difference between a profile that helps and one
-        that overshoots every busy hour.
+        Squared because the profile was fitted to a standard deviation and a
+        variance is its square: a threefold profile in size is a ninefold one
+        in variance. Getting this exponent wrong is the difference between a
+        profile that helps and one that overshoots every busy hour by its own
+        square, so the squaring lives here once rather than in every caller.
+
+        This is the method `driven.Driven` takes as its `clock`.
         """
-        factor = self.at(when)
-        return base * factor * factor
+        size = self.at(when)
+        return size * size
+
+    def wander(self, base: float, when: float) -> float:
+        """A per-hour variance for `Q` at `when`, from a base variance."""
+        return base * self.factor(when)
 
     def shape(self) -> list[float]:
         """The profile hour by hour over one period, for reading or plotting."""

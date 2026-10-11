@@ -15,6 +15,26 @@ refuted in every form it has tested.
 
 So both doors exist and the harness decides. `Driven` is the `Q` one.
 
+## Two signals come through it, and one of them needs no caller
+
+`control` is the exogenous channel: a number the caller computes per reading
+from `inputs.py` and passes in. `clock` is the **endogenous** one, a function
+of the time alone - and it needs no caller because the time is already in
+`predict`'s first argument.
+
+That second door is there because it is the one that measured positive.
+`statespace-seasonal.md` fitted a time-of-day profile to innovation size and
+found FX and metals move three to four times as far per hour at 14:00-15:00
+UTC as at 03:00, worth +197 nats at the median against the same member with a
+constant `Q`, nothing on markets with a known generator and no session, and
+**-443 with the clock deliberately misaligned**. `Profile.factor` is exactly
+the callable this takes.
+
+The two compose multiplicatively, because they are both ratios on a variance:
+a busy hour and a busy exogenous reading should reinforce rather than one
+overwriting the other. `clock=None` leaves the behaviour exactly as it was,
+which keeps the control arm available.
+
 ## It is `Yielding` with the signal supplied from outside
 
 `yielding.py` scales a member's process noise by its own changepoint
@@ -58,16 +78,31 @@ class Driven:
     build: Callable[[], object]
     gain: float = GAIN
     lever: str = LEVER
+
+    #: A **variance** multiplier from the time alone, normally
+    #: `seasonal.Profile.factor`. Multiplies the lever beside `control`.
+    #:
+    #: It takes a variance factor rather than a size factor so the squaring
+    #: lives in whatever produced the profile. A caller passing a
+    #: standard-deviation profile here would under-drive every busy hour by
+    #: its own square, and that mistake is invisible in the output - which is
+    #: why the type is named in `Profile.factor` and not left to a comment.
+    clock: Callable[[float], float] | None = None
     #: Smallest multiple of the member's own process noise. An input is allowed
     #: to quieten a member, not to freeze it.
     floor: float = 0.01
 
     _member: object = field(default=None, repr=False)
     _base: float = 0.0
-    #: The factor applied at the last reading, and its running mean, so what
-    #: the input actually did is observable rather than assumed.
+    #: The **total** factor applied at the last reading, and its running mean,
+    #: so what the input actually did is observable rather than assumed.
     softness: float = 1.0
     average: float = 1.0
+    #: The two channels' contributions separately. Without these a member that
+    #: is being driven hard looks the same whether the clock or the caller did
+    #: it, and the harness cannot attribute a gain to a door.
+    exogenous: float = 1.0
+    timed: float = 1.0
     _total: float = field(default=0.0, repr=False)
     _counted: int = field(default=0, repr=False)
 
@@ -148,7 +183,12 @@ class Driven:
         factor has to be in place before `predict` runs. Scaling afterwards
         would apply this reading's input to the *next* step.
         """
-        self.softness = max(1.0 + self.gain * control, self.floor)
+        self.exogenous = 1.0 + self.gain * control
+        self.timed = float(self.clock(when)) if self.clock is not None else 1.0
+        # Floored on the product rather than on each channel, because the
+        # floor is a statement about the member - a process noise of zero is a
+        # state that cannot move at all - and not about either signal.
+        self.softness = max(self.exogenous * self.timed, self.floor)
         self._total += self.softness
         self._counted += 1
         self.average = self._total / self._counted

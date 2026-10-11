@@ -47,6 +47,7 @@ import os
 import statistics
 from pathlib import Path
 
+from till_infinity.structures.statespace.driven import Driven
 from till_infinity.structures.statespace.seasonal import Profile, Seasonal
 
 HOUR = 3600.0
@@ -205,13 +206,17 @@ def main() -> None:
 #: outside signal into `Q` - and the signal here is the clock.
 
 
-def score_driven(times, values, shape, *, use_shape: bool, door: str = "wander", slide: int = 0):
+def score_driven(times, values, profile, *, use_shape: bool, door: str = "wander", slide: int = 0):
     """A level filter whose **process** noise follows the clock, or does not.
 
     `door` says which noise the profile multiplies, and the distinction is the
     whole result of this arm.
 
-    * `wander` scales `Q`, the level's own per-hour variance: the claim that
+    * `clock` is the same thing **through `driven.Driven`**, which applies the
+      profile from the time alone with nothing passed in per reading. It has
+      to reproduce `wander` to within rounding or the wiring is not what was
+      measured.
+    * `wander` scales `Q`, the level's own per-hour variance by hand: the claim that
       **price moves further during the busy hours**, which is what an
       intraday volatility profile actually says.
     * `noise` scales `R`, the measurement spread: the claim that **the quotes
@@ -233,11 +238,32 @@ def score_driven(times, values, shape, *, use_shape: bool, door: str = "wander",
     base = statistics.pstdev(steps) or 1e-9
     start = len(times) // 2
 
-    member = Seasonal(
-        periods=PERIODS, harmonics=HARMONICS, seasonal_on=False, level_wander=base * base
-    )
+    def build():
+        return Seasonal(
+            periods=PERIODS,
+            harmonics=HARMONICS,
+            seasonal_on=False,
+            level_wander=base * base,
+        )
+
+    if door == "clock":
+        # The wired version: `Driven` applies the profile itself, from the
+        # time alone, with no per-reading input from here. If this does not
+        # reproduce the hand-rolled `wander` arm to within rounding, the
+        # wiring is not the thing that was measured.
+        member = Driven(
+            build=build, lever="level_wander", clock=profile.factor if use_shape else None
+        )
+        for when, value in zip(times, values, strict=True):
+            member.predict(when)
+            member.update(value, base, when)
+            if member.seen == start:
+                member.loglike = 0.0
+        return member.loglike
+
+    member = build()
     for when, value in zip(times, values, strict=True):
-        factor = shape(when) if use_shape else 1.0
+        factor = profile.at(when) if use_shape else 1.0
         noise = base
         if door == "wander":
             member.level_wander = base * base * factor * factor
@@ -258,7 +284,7 @@ def variance_arm() -> None:
     print("   which was the first attempt and the wrong door. 'harm' is how many")
     print("   harmonics the spacing can carry - 4h bars visit six hours of the day.")
     print(
-        f"{'instrument':<22}{'frame':<6}{'through Q':>11}{'slid':>10}"
+        f"{'instrument':<22}{'frame':<6}{'by hand':>11}{'wired':>9}{'slid':>10}"
         f"{'through R':>11}{'hi/lo':>8}{'peak h':>7}{'harm':>6}"
     )
     rows: list[tuple[str, float, float]] = []
@@ -276,24 +302,27 @@ def variance_arm() -> None:
             fitted = Profile.fit(times[:half_point], logs[:half_point])
             if fitted is None:
                 continue
-            shape = fitted.at
 
             gaps = [times[i] - times[i - 1] for i in range(1, min(len(times), 500))]
             bar = statistics.median(gaps) / HOUR if gaps else 1.0
             half = max(round(12.0 / bar), 1)
 
-            flat = score_driven(times, logs, shape, use_shape=False)
-            through_q = score_driven(times, logs, shape, use_shape=True, door="wander")
-            through_r = score_driven(times, logs, shape, use_shape=True, door="noise")
-            slid = score_driven(times, logs, shape, use_shape=True, door="wander", slide=half)
-            slid_flat = score_driven(times, logs, shape, use_shape=False, slide=half)
+            flat = score_driven(times, logs, fitted, use_shape=False)
+            through_q = score_driven(times, logs, fitted, use_shape=True, door="wander")
+            # The wired version, through `Driven`, with nothing passed per reading.
+            wired = score_driven(times, logs, fitted, use_shape=True, door="clock")
+            wired_flat = score_driven(times, logs, fitted, use_shape=False, door="clock")
+            through_r = score_driven(times, logs, fitted, use_shape=True, door="noise")
+            slid = score_driven(times, logs, fitted, use_shape=True, door="wander", slide=half)
+            slid_flat = score_driven(times, logs, fitted, use_shape=False, slide=half)
 
             profile = fitted.shape()
             peak = max(range(24), key=lambda h: profile[h])
             label = f"*{name}" if name in GENERATED else name
             print(
                 f"{label:<22}{frame:<6}{through_q - flat:>11.1f}"
-                f"{slid - slid_flat:>10.1f}{through_r - flat:>11.1f}"
+                f"{wired - wired_flat:>9.1f}{slid - slid_flat:>10.1f}"
+                f"{through_r - flat:>11.1f}"
                 f"{fitted.extent():>8.2f}{peak:>7}{fitted.harmonics:>6}"
             )
             rows.append((label, through_q - flat, slid - slid_flat))
