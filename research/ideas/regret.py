@@ -232,7 +232,9 @@ def main() -> None:
         print(acts.round(4).to_string(index=False) if len(acts) else "none")
         print(f"\n{len(acts)} of {len(t)} cells would be acted on")
 
-    out = Path("regret.csv")
+    # Written beside the other research output rather than at the repo
+    # root, which is where it landed when this was first run.
+    out = Path(__file__).resolve().parent.parent / "regret.csv"
     t.to_csv(out, index=False)
     print(f"\nwritten: {out}")
 

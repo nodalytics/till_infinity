@@ -547,6 +547,20 @@ class Features:
     #: Optional. Garman-Klass needs it; without it that feature is omitted
     #: rather than faked from the close.
     opens: Sequence[float] | None = None
+
+    #: **Quotes, optional.** Either the broker's spread per bar, or the bid
+    #: and ask it came from. Absent by default - a bar feed is the common
+    #: case and a feature that silently reads zeros would be worse than one
+    #: that is not there.
+    #:
+    #: `spreads` is in the **same units as the prices**. The seqlab feeds
+    #: store it in *points*, and the conversion is the caller's: reading a
+    #: point count as a price inflates every cost by `1/tick`, which is how
+    #: one harness came to report a spread of 136 volatility units on a
+    #: market that trades.
+    spreads: Sequence[float] | None = None
+    bids: Sequence[float] | None = None
+    asks: Sequence[float] | None = None
     #: Empty means "whatever this series resolves", which is the portable
     #: default - see `resolvable`. Pass an explicit tuple to override it.
     windows: tuple[Window, ...] = ()
@@ -651,31 +665,9 @@ class Features:
         # per window, because "hours since" has no window.
         self._series = {}
         self._events = {"spike": spikes, "wick": wicks, "pivot": swings}
-        if self.counted:
-            # **Untested, unlike the rates above.** The counted-event
-            # measurement covered the spike, wick and pivot *rates*; these
-            # two distances were added after it and have not been scored,
-            # so they are behind the same flag for a different reason.
-            # **Distance to the last swing, in volatility units** - the reading a
-            # desk takes from a pivot, as opposed to how many there were.
-            #
-            # Both sides are **logs**. The first version divided a *price*
-            # difference by `sigma`, which is a standard deviation of *log*
-            # returns, and reported 267 volatility units on a series whose swings
-            # are under a percent - the same unit mismatch that once read a spread
-            # of 136 volatility units on a market that trades. Zero before the
-            # first pivot, which means absent rather than "at the price".
-            unit = [max(v, 1e-12) for v in sigma]
-            self._series["to_swing_high"] = [
-                math.log(tops[k] / closes[k]) / unit[k] if tops[k] > 0 and closes[k] > 0 else 0.0
-                for k in range(n)
-            ]
-            self._series["to_swing_low"] = [
-                math.log(closes[k] / bottoms[k]) / unit[k]
-                if bottoms[k] > 0 and closes[k] > 0
-                else 0.0
-                for k in range(n)
-            ]
+
+        self._quotes(closes, sigma, shortest_span, n)
+        self._swings(closes, sigma, tops, bottoms, n)
         for window in self.windows:
             span = window.bars(self._bar, self._coverage)
             tag = window.label()
@@ -739,6 +731,85 @@ class Features:
     def names(self) -> tuple[str, ...]:
         """Every feature, in a stable order. Built once, so this is a key list."""
         return tuple(self._series)
+
+    def _swings(
+        self,
+        closes: Sequence[float],
+        sigma: list[float],
+        tops: list[float],
+        bottoms: list[float],
+        n: int,
+    ) -> None:
+        """Distance to the last confirmed swing. Behind `counted`, untested."""
+        if not self.counted:
+            return
+        # Both sides are **logs**. The first version divided a *price*
+        # difference by `sigma`, which is a standard deviation of *log*
+        # returns, and reported 267 volatility units on a series whose
+        # swings are under a percent - the same unit mismatch that once
+        # read a spread of 136 volatility units on a market that trades.
+        # Zero before the first pivot, which means absent rather than "at
+        # the price".
+        unit = [max(v, 1e-12) for v in sigma]
+        self._series["to_swing_high"] = [
+            math.log(tops[k] / closes[k]) / unit[k] if tops[k] > 0 and closes[k] > 0 else 0.0
+            for k in range(n)
+        ]
+        self._series["to_swing_low"] = [
+            math.log(closes[k] / bottoms[k]) / unit[k] if bottoms[k] > 0 and closes[k] > 0 else 0.0
+            for k in range(n)
+        ]
+
+    def _quotes(
+        self,
+        closes: Sequence[float],
+        sigma: list[float],
+        span: int,
+        n: int,
+    ) -> None:
+        """Quote-derived features, when quotes were given. Absent otherwise.
+
+        The cost of crossing is the one quantity on this desk that is
+        **observed** rather than inferred, and every gate here currently uses
+        a constant for it - which the SEC's payment-for-order-flow study says
+        is wrong, because the number moves with the composition of the flow.
+        """
+        quoted = self._spread_series()
+        if quoted is None:
+            return
+        unit = [max(v, 1e-12) for v in sigma]
+        # In volatility units, so a spread on gold and on the euro are the
+        # same number when they cost the same.
+        self._series["cost"] = [quoted[k] / max(closes[k], 1e-12) / unit[k] for k in range(n)]
+        self._series["ema_cost"] = ema(self._series["cost"], span)
+        if self.bids is None or self.asks is None:
+            return
+        # Where the close sat between the quotes: -1 at the bid, +1 at the
+        # ask. **Roll's bounce read directly** rather than inferred from
+        # serial covariance - a close persistently at one side is informed
+        # flow, and one alternating is the spread being paid both ways.
+        self._series["at_ask"] = [
+            2.0 * (closes[k] - self.bids[k]) / (self.asks[k] - self.bids[k]) - 1.0
+            if self.asks[k] > self.bids[k]
+            else 0.0
+            for k in range(n)
+        ]
+
+    def _spread_series(self) -> list[float] | None:
+        """The spread per bar, from whichever quote input was given.
+
+        `spreads` wins if both are present, because a broker's own number is
+        the one the desk is charged - and the disagreement between it and
+        `ask - bid` is itself a measurement worth having rather than an
+        inconsistency to resolve silently.
+        """
+        if self.spreads is not None:
+            return [float(v) for v in self.spreads]
+        if self.bids is not None and self.asks is not None:
+            return [
+                max(float(a) - float(b), 0.0) for a, b in zip(self.asks, self.bids, strict=True)
+            ]
+        return None
 
     def since_last(self, kind: str, index: int) -> float:
         """Hours since the last `spike`, `wick` or `pivot` strictly before `index`.
