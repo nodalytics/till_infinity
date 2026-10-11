@@ -8,6 +8,7 @@ the whole directory deletable.
 
 from __future__ import annotations
 
+import itertools
 import math
 
 import pytest
@@ -4336,6 +4337,278 @@ class TestPaired:
         # Different bar sizes, different windows, the same rate.
         assert got["15m"] == pytest.approx(got["1h"], rel=0.05), got
         assert got["15m"] > 0.0
+
+
+# ------------------------------------------- Wasserstein, as a second metric
+
+
+class TestDistance:
+    """`distance.py` scores a member on where its innovations sit, not only on
+    how likely they were. Likelihood is a sum of point densities and a single
+    fat innovation can dominate it; a transport distance asks how far the whole
+    distribution has to move, which is the question a fat tail answers
+    differently."""
+
+    def test_the_transport_distance_matches_scipy(self):
+        """The 1-D case is exact by sorting, so there is a reference to match.
+
+        scipy is a transitive dependency rather than a declared one, so this
+        skips when it is absent rather than failing - but when it is present
+        the hand-written sort has to agree with it.
+        """
+        stats = pytest.importorskip("scipy.stats")
+        import random
+
+        from till_infinity.structures.statespace.distance import wasserstein
+
+        rng = random.Random(4242)
+        left = [rng.gauss(0.0, 1.0) for _ in range(400)]
+        right = [rng.gauss(0.4, 1.3) for _ in range(400)]
+        assert wasserstein(left, right) == pytest.approx(
+            stats.wasserstein_distance(left, right), rel=1e-6
+        )
+
+    def test_a_sample_against_itself_is_zero(self):
+        from till_infinity.structures.statespace.distance import wasserstein
+
+        values = [3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0]
+        assert wasserstein(values, list(values)) == pytest.approx(0.0)
+
+    def test_shifting_everything_costs_the_shift(self):
+        """Transport distance has a unit, and the unit is the series'.
+
+        This is the property that makes it a usable second axis: a W1 of 0.3
+        on standardised innovations means the distribution sits three tenths
+        of a standard deviation from where the model says it should, which is
+        a sentence a log-likelihood cannot produce.
+        """
+        from till_infinity.structures.statespace.distance import wasserstein
+
+        values = [0.0, 1.0, 2.0, 3.0, 4.0]
+        moved = [v + 2.5 for v in values]
+        assert wasserstein(values, moved) == pytest.approx(2.5)
+
+    def test_a_standard_normal_sample_is_close_to_the_standard_normal(self):
+        """`against_normal` is the member-calibration number.
+
+        Standardised innovations are N(0,1) under a correct model, so the
+        distance from N(0,1) is a calibration error with a unit. A sample of
+        this size lands near 0.01; a member whose innovations are twice too
+        wide lands near 0.8, and that gap is the whole point.
+        """
+        import random
+
+        from till_infinity.structures.statespace.distance import against_normal
+
+        rng = random.Random(99)
+        tight = [rng.gauss(0.0, 1.0) for _ in range(2000)]
+        wide = [v * 2.0 for v in tight]
+        assert against_normal(tight) < 0.05
+        assert against_normal(wide) > 0.5
+
+
+# --------------------------------------- displacements, as an observation process
+
+
+class TestDisplacements:
+    """The sequence of moves between confirmed reversals. Every member in this
+    package observes a price; this observes the gaps between turns, which is
+    already differenced and so has no unit root for a model to chase."""
+
+    def _zigzag(self, legs, *, bars=6, step=0.01, start=100.0):
+        """A clean alternating series: `legs` moves of `bars` bars each."""
+        times, closes = [0.0], [start]
+        for leg, direction in enumerate(legs):
+            for _ in range(bars):
+                times.append(times[-1] + 3600.0)
+                closes.append(closes[-1] * (1.0 + direction * step * (leg + 1)))
+        return times, closes
+
+    def test_two_turns_the_same_way_are_not_a_swing(self):
+        """The detector can fire twice inside one structure; the sequence drops it.
+
+        Keeping both would make the sequence's alternation a property of the
+        pivot threshold rather than of the market, and then every statistic
+        over it would be reading the threshold.
+        """
+        from till_infinity.structures.statespace.displacements import sequence
+
+        times, closes = self._zigzag([1, -1, 1, -1, 1, -1])
+        moves = sequence(times, closes, closes, closes, span=2, unit=0.01)
+        directions = [m.direction for m in moves]
+        assert all(a != b for a, b in itertools.pairwise(directions)), directions
+
+    def test_a_move_is_knowable_only_after_its_pivot_is_confirmed(self):
+        """`confirmed` is later than `ended` by the detector's reach.
+
+        A pivot at bar `k` needs `span` more bars to know it was one, so a
+        feature built on `ended` is a feature that reads the future. Carrying
+        both times is what makes the leak avoidable rather than invisible.
+        """
+        from till_infinity.structures.statespace.displacements import sequence
+
+        times, closes = self._zigzag([1, -1, 1, -1, 1, -1])
+        moves = sequence(times, closes, closes, closes, span=2, unit=0.01)
+        assert moves
+        assert all(m.confirmed > m.ended for m in moves[:-1]), [
+            (m.ended, m.confirmed) for m in moves
+        ]
+
+    def test_a_flat_series_has_no_swings(self):
+        """Ties are not pivots.
+
+        A strict comparison is the difference between this and a detector that
+        finds a reversal on every bar of a constant series - which an earlier
+        version of the pivot finder did, because `<=` makes every tie a swing.
+        """
+        from till_infinity.structures.statespace.displacements import sequence
+
+        times = [i * 3600.0 for i in range(80)]
+        closes = [100.0] * 80
+        assert sequence(times, closes, closes, closes, span=3, unit=0.01) == []
+
+    def test_the_ratio_is_what_a_symmetry_transformation_acts_on(self):
+        """A sequence whose legs grow by a fixed factor has that factor as its ratio."""
+        from till_infinity.structures.statespace.displacements import relations, sequence
+
+        times, closes = [0.0], [100.0]
+        size = 1.0
+        for direction in (1, -1, 1, -1, 1, -1, 1, -1):
+            for _ in range(5):
+                times.append(times[-1] + 3600.0)
+                closes.append(closes[-1] + direction * size)
+            size *= 1.5
+        moves = sequence(times, closes, closes, closes, span=2, unit=1.0)
+        pairs = relations(moves)
+        assert len(pairs) >= 3
+        middle = sorted(p.ratio for p in pairs)[len(pairs) // 2]
+        assert middle == pytest.approx(1.5, rel=0.25), [p.ratio for p in pairs]
+
+
+# ------------------------------------------- symmetry, as a switching model
+
+
+class TestSymmetry:
+    """Three symmetry classes over the displacement ratios. The claim it tests
+    is that the geometric relationships between swings persist within a regime
+    and break at its boundary - which is a switching model, so it is built as
+    one and scored against the sequence shuffled."""
+
+    def test_the_classes_are_a_distribution(self):
+        from till_infinity.structures.statespace.symmetry import CLASSES, Symmetry
+
+        member = Symmetry()
+        assert len(member.weights) == len(CLASSES)
+        for step in range(20):
+            member.predict(step * 3600.0)
+            member.update(0.1, 0.4, step * 3600.0)
+            assert sum(member.weights) == pytest.approx(1.0)
+            assert all(w >= 0.0 for w in member.weights)
+
+    def test_equal_swings_read_as_mirror_and_growing_ones_as_expanding(self):
+        """The three classes have to separate on sequences built to be each one.
+
+        Without this the posterior could be a constant and every reading of
+        `contracting` would be a reading of the prior - which is exactly what
+        the first version of this member did, with all three centres free and
+        all three collapsing onto the data.
+
+        The evidence has to be strong relative to the hazard for the posterior
+        to go anywhere, so this uses tight emissions and a long regime; the
+        next test is about what happens when it is not.
+        """
+        from till_infinity.structures.statespace.symmetry import Symmetry
+
+        settings = {"spread": 0.12, "persist_hours": 24 * 30.0}
+        steady = Symmetry(**settings)
+        growing = Symmetry(**settings)
+        shrinking = Symmetry(**settings)
+        for step in range(1, 40):
+            when = step * 6 * 3600.0
+            for member, ratio in (
+                (steady, 0.0),
+                (growing, 0.48),
+                (shrinking, -0.48),
+            ):
+                member.predict(when)
+                member.update(ratio, 0.12, when)
+
+        assert steady.regime == "mirror", steady.weights
+        assert growing.regime == "expanding", growing.weights
+        assert shrinking.regime == "contracting", shrinking.weights
+        assert steady.mirror > 0.9, steady.weights
+
+    def test_the_posterior_cannot_be_confident_at_the_default_hazard(self):
+        """A 24-hour regime read once a day leaves the posterior near its prior.
+
+        **This is a property a caller needs, not a defect.** With the default
+        `persist_hours` of 24 and displacements a day apart, the transition
+        mixes away about 63% of the posterior between readings, while one log
+        ratio at the default spread is worth a likelihood ratio of about
+        three-quarters. Evidence that weak against mixing that fast settles
+        around 0.4, so a gate written as `mirror > 0.6` would never fire and
+        would look like a dead feature rather than a mis-set one.
+        """
+        from till_infinity.structures.statespace.symmetry import Symmetry
+
+        member = Symmetry()
+        for step in range(1, 60):
+            when = step * 24 * 3600.0
+            member.predict(when)
+            member.update(0.0, 0.3, when)
+        assert member.regime == "mirror"
+        assert 0.35 < member.mirror < 0.55, member.weights
+
+    def test_the_regime_hazard_is_per_hour_and_not_per_turn(self):
+        """Two sequences over the same hours mix the same amount.
+
+        A market that turns ten times in a day and one that turns twice would
+        get regimes of the same length in *events* and wildly different
+        lengths in time if the hazard were per turn - and the member would
+        stop meaning the same thing at 15m as at 1d. This is the test that
+        keeps it portable.
+        """
+        from till_infinity.structures.statespace.symmetry import Symmetry
+
+        slow = Symmetry()
+        fast = Symmetry()
+        slow.predict(0.0)
+        slow.update(0.5, 0.3, 0.0)
+        fast.predict(0.0)
+        fast.update(0.5, 0.3, 0.0)
+
+        day = 24 * 3600.0
+        slow.predict(day)
+        for i in range(1, 5):
+            fast.predict(i * day / 4.0)
+
+        # Four short steps and one long one over the same day leave the regime
+        # posterior in the same place, to the accuracy of the mixing.
+        assert fast.weights[0] == pytest.approx(slow.weights[0], abs=0.05), (
+            fast.weights,
+            slow.weights,
+        )
+
+    def test_the_symmetry_index_sees_a_repeating_sequence(self):
+        """Low index means sizes repeat at that lag. A period-two sequence
+        repeats at even lags and not at odd ones, which is the one case where
+        the index has an unambiguous right answer."""
+        from till_infinity.structures.statespace.symmetry import nodal_symmetry
+
+        sizes = [1.0, 3.0] * 20
+        assert nodal_symmetry(sizes, 2) == pytest.approx(0.0)
+        assert nodal_symmetry(sizes, 1) > 1.0
+
+    def test_the_expected_ratio_carries_the_half_variance_term(self):
+        """A ratio is lognormal, so its mean is not the exponential of its mean.
+
+        Dropping the correction would bias every forecast low, and the bias
+        grows with the spread - which is exactly when a forecast matters.
+        """
+        from till_infinity.structures.statespace.symmetry import Symmetry
+
+        member = Symmetry()
+        assert member.expected_ratio > math.exp(member.value)
 
 
 # -------------------------------------------- a seasonal, locked to the clock
