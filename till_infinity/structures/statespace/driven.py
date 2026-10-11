@@ -108,6 +108,17 @@ class Driven:
     def loglike(self) -> float:
         return float(getattr(self._member, "loglike", 0.0))
 
+    @loglike.setter
+    def loglike(self, value: float) -> None:
+        """Forwarded to the member, so a harness can zero it at a boundary.
+
+        Without this the wrapper is read-only and a held-out comparison -
+        which works by zeroing the likelihood at the train/test split - fails
+        on the wrapper and succeeds on the member it wraps. That is a
+        comparison the wrapper silently cannot take part in.
+        """
+        self._member.loglike = float(value)  # type: ignore[union-attr]
+
     @property
     def last_standardised(self) -> float:
         return float(getattr(self._member, "last_standardised", 0.0))
