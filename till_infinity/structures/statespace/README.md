@@ -1677,6 +1677,93 @@ walk, the synthetic control, the overlap correction, the cell count and the
 spread - and the first version of every measurement in this file failed at least
 one of those.
 
+## Deliberate lookahead: the machinery works, and 87% of the volatility is on the table
+
+`research/ideas/lookahead_oracle.py`, 2026-10-11. Asked for as a diagnostic, and
+it is the right one: every null result so far has two explanations that the
+measurements cannot separate - **there is no signal**, or **the models cannot use
+it**. Handing them the future on purpose separates them.
+
+### 1. Given the answer, the models report it. The machinery is sound.
+
+The leak dial feeds a member `k` bars past the decision point before asking it to
+forecast `h` ahead. RMSE, eurusd:
+
+| h | leak=0 | leak=1 | leak=2 | leak=5 | leak=20 |
+| ---: | ---: | ---: | ---: | ---: | ---: |
+| 20 (15m) | 7.28 | 7.11 | 6.94 | 6.38 | **0.99** |
+| 20 (1h) | 9.34 | 9.09 | 8.83 | 8.09 | **0.51** |
+| 20 (1d) | 7.12 | 6.95 | 6.79 | 6.25 | **0.01** |
+
+**The error collapses exactly when the leak reaches the horizon** - when the
+member has seen the bar it is being asked about - and it collapses to 0.01 on
+daily bars. Beyond that it rises again, because the state has moved past the
+target. So the filters can represent and report the value when they have it: the
+null results are **not** a broken implementation.
+
+### 2. Perfect direction is worth 7 to 800 spreads. Cost is not the constraint.
+
+The ceiling on any directional strategy, as a multiple of the spread it would
+pay:
+
+| series | h=1 | h=5 | h=20 |
+| --- | ---: | ---: | ---: |
+| eurusd 15m | 7.2 | 15.5 | 31.9 |
+| eurusd 1h | 29.2 | 68.2 | 143.3 |
+| eurusd 1d | **174.9** | **411.5** | **798.3** |
+| v75 15m | 2.3 | 5.2 | 10.5 |
+
+**This reframes every "inside the spread" conclusion in this file.** The effects
+found were spread-sized; the *prize* is 7 to 800 times the spread. So the honest
+statement is not "nothing is worth trading here" - it is **"we found nothing
+worth trading, and the search is justified by a large ceiling"**. The binding
+constraint is signal, not cost.
+
+### 3. The volatility forecast captures about a tenth of what is achievable
+
+Ranking by recent speed against ranking by the realised future move, which is
+the ceiling:
+
+| series | h | recent speed | perfect foresight | captured |
+| --- | ---: | ---: | ---: | ---: |
+| eurusd | 1 | 5.73x | 45.32x | **10.7%** |
+| eurusd | 5 | 4.77x | 29.13x | 13.4% |
+| eurusd | 20 | 4.00x | 26.15x | 11.9% |
+| v75 | 1 | 1.04x | 13.65x | **0.3%** |
+
+**This is the most actionable number in the session.** Volatility is the one
+thing measured as forecastable here, and the simplest possible forecast - a
+twenty-bar mean absolute move - captures roughly **an eighth** of the available
+dispersion. There is a seven-to-nine-fold improvement available in the one
+quantity that is known to be predictable, which is a far better place to spend
+effort than another attempt at direction.
+
+### 4. v75 has no volatility clustering, so it is the wrong control for this
+
+Recent speed captures **0.3%** of the ceiling on v75 against 10.7% on eurusd,
+while the oracle still shows 13.65x of dispersion to forecast. The generator's
+volatility varies and **does not autocorrelate**.
+
+That is useful twice over. It explains why v75 produced no slope-fade survivors -
+there is no volatility structure there to be mistaken for direction. And it
+disqualifies v75 as a control for volatility work: it is a control for *direction*
+only, and a volatility model that fails on it is not necessarily wrong.
+
+### The flaw in the smoother arm, which measured the wrong target
+
+The filter-against-smoother comparison reported ratios **below 1.0** - 0.62 on
+v75 1h - which reads as hindsight making the estimate worse. It cannot, and the
+test is at fault: it compares each estimate to the **measurement**, and a
+smoother's job is to be *further* from a noisy reading than the filter is. Being
+closer to the reading is what a member that simply copies it achieves - which is
+exactly what `swarm` scored, 0.056 against the reading and a 1.00x ratio.
+
+Comparing against the latent truth is the only version that means anything, and
+the truth is unobservable on real data. `paths.simulate` generates a path with
+known states, so the honest form of this arm runs there. **Not fixed, recorded** -
+the arm is marked in the harness as measuring the wrong quantity rather than
+left to be read as a result.
+
 ## Members not written
 
 Each already names the null it must beat, in `family.PENDING`. Do not add one
