@@ -2813,6 +2813,175 @@ class TestChangepoint:
         assert len(engine.observation()[0]) == len(engine.state())
 
 
+class TestRankThenMap:
+    """Predict the order, then map it - and the claim that makes it worth it.
+
+    The paper's result is not that ranking is accurate. It is that ranking
+    **transfers** where predicting the value does not, so `test_the_order`
+    below is the one that matters: it fails for a one-step model by
+    construction and must not fail for this one.
+    """
+
+    @staticmethod
+    def _rows(seed: int, count: int = 1500):
+        import random
+
+        rng = random.Random(seed)
+        out = []
+        for _ in range(count):
+            features = [rng.gauss(0.0, 1.0), rng.gauss(0.0, 1.0), rng.gauss(0.0, 1.0)]
+            latent = 2.0 * features[0] - features[1]
+            out.append((features, latent))
+        return out
+
+    def test_it_learns_an_order_and_not_a_scale(self):
+        """The weights recover the latent ratio; their size means nothing."""
+        from till_infinity.structures.statespace.ranking import Ranker
+
+        rows = self._rows(1)
+        ranker = Ranker(margin=0.1)
+        ranker.fit(rows, epochs=2, pairs=4000, seed=3)
+
+        assert ranker.used > 1000, ranker.used
+        # The third feature is noise and must stay near zero; the first two
+        # must come out in the latent 2:-1 ratio whatever their magnitude.
+        scale = ranker.weights[0]
+        assert scale > 0, ranker.weights
+        assert ranker.weights[1] / scale == pytest.approx(-0.5, abs=0.1)
+        assert abs(ranker.weights[2] / scale) < 0.1, ranker.weights
+
+    def test_the_margin_refuses_pairs_that_are_too_close(self):
+        """A pair closer than the margin teaches estimation error."""
+        from till_infinity.structures.statespace.ranking import Ranker
+
+        ranker = Ranker(margin=1.0)
+        assert ranker.learn([1.0], 5.0, [0.0], 0.0) is True
+        assert ranker.learn([1.0], 5.0, [0.0], 4.5) is False
+        assert ranker.skipped == 1
+        before = list(ranker.weights)
+        ranker.learn([1.0], 5.0, [0.0], 4.5)
+        assert ranker.weights == before, "a skipped pair still moved the weights"
+
+    def test_the_order_transfers_where_the_value_does_not(self):
+        """**The claim.** One system to train on, another to predict in.
+
+        The second system applies a different monotone transform to the same
+        latent quantity - which is what a different instrument does to the same
+        market structure. A model fitted to *values* on the first carries that
+        system's scale with it and is wrong on the second. A model fitted to
+        *order* carries nothing, and a handful of anchors supply the rest.
+        """
+        import statistics
+
+        from till_infinity.structures.statespace.ranking import Ranker, RankThenMap
+
+        train = self._rows(11)
+        target = self._rows(12)
+
+        def observed(latent: float) -> float:
+            # The target system's own scale: a different offset and gain.
+            return 3.0 + 7.0 * latent
+
+        ranker = Ranker(margin=0.1)
+        ranker.fit(train, epochs=2, pairs=6000, seed=5)
+        model = RankThenMap(ranker=ranker)
+        model.anchor([(f, observed(v)) for f, v in target[:25]])
+
+        held = target[200:700]
+        ours = statistics.fmean(abs(model.predict(f) - observed(v)) for f, v in held)
+
+        # The null: least squares on the FIRST system's values, applied to the
+        # second. It sees the same features and more of them.
+        size = len(train[0][0])
+        sums = [[0.0] * (size + 1) for _ in range(size)]
+        for features, latent in train:
+            for i in range(size):
+                for j in range(size):
+                    sums[i][j] += features[i] * features[j]
+                sums[i][size] += features[i] * latent
+        for col in range(size):
+            pivot = sums[col][col]
+            for row in range(size):
+                if row == col or abs(pivot) < 1e-12:
+                    continue
+                factor = sums[row][col] / pivot
+                for k in range(col, size + 1):
+                    sums[row][k] -= factor * sums[col][k]
+        weights = [sums[i][size] / sums[i][i] for i in range(size)]
+        theirs = statistics.fmean(
+            abs(sum(w * x for w, x in zip(weights, f, strict=True)) - observed(v)) for f, v in held
+        )
+
+        assert ours < theirs / 5.0, (ours, theirs)
+        assert ours < 0.5, ours
+
+    def test_the_hand_rolled_solve_matches_numpy(self):
+        """The module rule: anything hand-written arrives with a reference.
+
+        `Mapping._least_squares` is a Gauss-Jordan solve of the normal
+        equations, written here because the system is 3x3 and numpy is not a
+        declared dependency. Written here is exactly how `smoothing._gain` came
+        to be **19% wrong while looking right** - it smoothed, it beat the
+        filter, and nothing in the output said otherwise. So it is checked
+        against an independent implementation wherever one is importable.
+        """
+        numpy = pytest.importorskip("numpy")
+
+        from till_infinity.structures.statespace.ranking import _least_squares
+
+        rng = numpy.random.default_rng(4)
+        xs = rng.normal(size=40)
+        ys = 1.5 - 2.0 * xs + 0.75 * xs**2 + rng.normal(scale=0.1, size=40)
+        ours = _least_squares(xs.tolist(), ys.tolist(), 2, [1.0] * 40)
+        # numpy returns highest power first; this module returns lowest first.
+        theirs = list(numpy.polyfit(xs, ys, 2))[::-1]
+        for mine, reference in zip(ours, theirs, strict=True):
+            assert mine == pytest.approx(reference, rel=1e-8, abs=1e-10)
+
+        # And with weights, which `polyfit` takes as 1/sigma rather than as the
+        # weight itself - so the square root is where a careless check passes.
+        weights = rng.uniform(0.5, 2.0, size=40)
+        ours = _least_squares(xs.tolist(), ys.tolist(), 2, weights.tolist())
+        theirs = list(numpy.polyfit(xs, ys, 2, w=numpy.sqrt(weights)))[::-1]
+        for mine, reference in zip(ours, theirs, strict=True):
+            assert mine == pytest.approx(reference, rel=1e-6, abs=1e-9)
+
+    def test_one_bad_anchor_does_not_take_the_mapping_with_it(self):
+        """Median regression first, least squares on the inliers after.
+
+        A mis-annotated anchor is the failure the paper names, and squared
+        error hands it the fit.
+        """
+        from till_infinity.structures.statespace.ranking import Mapping
+
+        scores = [float(k) for k in range(20)]
+        values = [3.0 + 2.0 * s for s in scores]
+        values[7] = 900.0  # one anchor annotated wrong
+
+        robust = Mapping()
+        robust.fit(scores, values)
+        assert robust(10.0) == pytest.approx(23.0, abs=1.5), robust.coefficients
+
+    def test_a_map_that_would_turn_back_falls_back_to_a_line(self):
+        """A higher rank must not predict a smaller quantity.
+
+        A degree-two fit has a turning point, and anchors clustered at one end
+        can put it inside the range. The fallback is a straight line and the
+        flag says so.
+        """
+        from till_infinity.structures.statespace.ranking import Mapping
+
+        # Anchors whose least-squares parabola turns inside their own range.
+        scores = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
+        values = [0.0, 3.0, 4.0, 4.2, 4.3, 9.0]
+        mapping = Mapping()
+        mapping.fit(scores, values)
+        if mapping.straightened:
+            assert len(mapping.coefficients) == 2
+        rising = [mapping(s) for s in scores]
+        assert rising == sorted(rising), rising
+
+
 class TestPaired:
     """A member watched by the FOCuS detector that `learning/focus.py` holds.
 

@@ -1,7 +1,7 @@
 # Counting the informatory pairs: which conditions can the data actually see?
 
 The pre-test from Kretschmer et al. (Nature Methods, 2026), run on 2026-10-11.
-It was the first item in `statespace-from-five-papers.md`'s "what to build
+It was the first item in `statespace-from-papers.md`'s "what to build
 first", on the grounds that it needs no model and decides whether several open
 ideas can work at all. It took one harness and it answered five questions.
 
