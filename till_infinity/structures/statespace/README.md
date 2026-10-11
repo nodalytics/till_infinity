@@ -1971,6 +1971,346 @@ and captures 79% - so a state space on log-variance has a high bar to clear and
 a cheap incumbent to beat. That is the right shape for this package: a named
 null that already works.
 
+## Looking back in time: what was added, and the half that is still missing
+
+Asked 2026-10-11 whether these models support looking back to make decisions.
+Three mechanisms, and two of them were gaps until now.
+
+### Fixed-lag smoothing, written: `smoothing.lagged`
+
+`smooth` conditions on the **whole** series, so its answer for ten minutes ago
+arrives when the series ends - which `smoothing.py` already called "fine for a
+study, useless live". `lagged` conditions on exactly `lag` measurements past
+each point, so the answer for ten minutes ago arrives `lag` bars after it:
+late, bounded, and usable.
+
+It is the same Rauch-Tung-Striebel recursion run over a window rather than over
+everything, so it is the same algorithm conditioned on less - **not** an
+approximation of a different one. Two things stated because they are easy to
+assume away:
+
+* **it is not equal to `smooth` at the same point**, and it converges on it as
+  the lag grows. Measured: the worst gap falls 0.337, 0.268, 0.241, 0.045,
+  0.0006 across lags of 1, 3, 10, 30, 100. The test asserts that monotone
+  convergence, which is the only honest check of a fixed-lag smoother.
+* **every measurement gets an estimate**, with the `delay` that was actually
+  available - fewer than `lag` while the window fills and zero for the last
+  bar, which has no future at all. Returned rather than dropped, because a
+  caller zipping output to input would otherwise misalign silently.
+
+`revision` is the quantity worth watching: how far hindsight moved the estimate.
+A revision much larger than the filter's own standard deviation means the filter
+was confidently wrong at the time, which is a statement about the process noise
+rather than about the smoother.
+
+**What a desk would use it for**: *where was this level ten bars ago, given what
+has happened since* is a better basis for placing a stop than where the filter
+thought it was at the time.
+
+### The input channel: `u` is written, `B` is not
+
+`I1` has said since this package started that "there is no input; `B` and `u` do
+not exist here". `inputs.py` closes the `u` half.
+
+**Every window is measured in hours, never bars**, which was the specific ask
+and is the right call. "200 bars" is not a horizon, it is a horizon times a
+timeframe - ten hours at 3m and eight months at 1d - so a feature defined that
+way means something different on every series, and this file's whole habit of
+comparing across timeframes would be comparing definitions.
+
+**And the week is seven calendar days, with `coverage` doing the rest.** The
+first version hardcoded five days, on the grounds that a trading week is five
+and the weekend is a closed market rather than a quiet one. That is right for FX
+and **wrong for crypto and for the Deriv synthetics, which trade all seven** - it
+silently shortened every crypto window by two sevenths. A constant cannot be
+right for both and a per-symbol calendar table is one more thing to keep in step
+with reality, so the window is **calendar** hours and the conversion uses the
+series' own coverage: `(n - 1) * bar_hours / span_hours`, the share of the
+calendar it actually trades.
+
+Measured on the real files, which is the test of the inference:
+
+| series | coverage | 1 week in bars, 15m |
+| --- | ---: | ---: |
+| EURUSD | **0.711** | 478 |
+| GBPUSD | 0.711 | 478 |
+| XAUUSD | 0.674 | 453 |
+| Volatility_75 | **1.000** | 672 |
+| Volatility_25 | 1.000 | 672 |
+
+0.711 against 5/7 = 0.714 on the FX pairs and exactly 1.000 on the synthetics,
+so the same `Window(168)` spans five trading days on one and seven on the other.
+It reproduces the hardcoded FX answer - 478 against 480 - and fixes the other
+case, which is the shape a good inference has.
+
+Four features per window - the high, the low, the **position** of the last close
+inside that range, and realised volatility over it. `position` is the one worth
+having: it is unit-free in `[0, 1]`, so it travels across symbols as well as
+timeframes, where a raw high is in the instrument's own units. Realised
+volatility aggregates **variance** and takes the root once, per the Cboe
+reading.
+
+**Causality is the whole correctness of it.** `at(i)` reads `[start:i]` and
+never `[start:i + 1]`, and there is a test for exactly that off-by-one: a spike
+planted at bar 300 is invisible to `at(300)` and visible to `at(301)`. The
+cross-resolution test has already shown what the other answer looks like -
+`t = +20.8` across five symbols including a generated one.
+
+### Why `B` is not wired in, which is a decision rather than an omission
+
+`B` maps `u` into the state, and applying it needs a **state setter**. The
+members are `slots=True` dataclasses with named fields - `linear` holds
+`value`, `rate`, `accel`; `swarm` holds an array - and `state()` is a getter
+only. So `B u` needs either a per-member `drive()` or a new protocol method with
+a generic implementation behind it.
+
+Doing it on one member would recreate exactly the inconsistency this file has
+spent its measurements removing: `loglike`, `last_standardised`, `existence` and
+`noise` each meant two things across members, and every one of them was found by
+putting the members in a table rather than by reading any of them. A fifth of
+those is not worth a reference implementation.
+
+**And the case for `B` on a level is weak anyway**, which is worth saying before
+anyone builds it. `B u` is a *known external force*: `INSTRUMENT` has one - its
+family's move - and `RELATION` has one, and a level's position does not
+obviously have any. The honest use of these features on a level is not `B u` at
+all: it is scaling the **process noise** with the realised-volatility
+component, which is improvement 2 above and a different mechanism. `I8` is the
+question that decides each case - "state, input or output - the question a
+feature list never asks".
+
+## Online change-point detection, and the parameter update it comes with
+
+Read 2026-10-11: *Online Learning of Order Flow and Market Impact with Bayesian
+Change-Point Detection Methods*, Tsaknaki, Lillo and Mazzarisi, arXiv:2307.02375.
+Its application does not transfer - order flow and market impact need signed
+trades and a book, and this desk has neither - but **two of its methods do, and
+one of them answers a question left open above.**
+
+### BOCPD belongs in the family, and it is better motivated than `hmm`
+
+Bayesian online change-point detection maintains a posterior over the **run
+length** - how long since the last regime change - rather than over a fixed set
+of states. Two consequences that matter here:
+
+* **it does not require the number of regimes to be chosen**, which is the
+  objection `family.PENDING` records against `hmm` ("a discrete state is a
+  different claim about the world") and the reason `dpm` is listed at all. BOCPD
+  is the change-point formulation of `dpm`'s unbounded-mixture idea and is
+  cheaper: a run-length posterior rather than a mixture over partitions.
+* **it is genuinely online.** `hmm` as usually fitted needs the series; this
+  updates per observation, which is the only form the desk could run - the same
+  objection that made `smooth` unusable live and `lagged` necessary.
+
+**Null:** the same member without change-points, on held-out likelihood. And the
+paper's own claim is the bar: regime information improved their online
+predictions over models without it, which is exactly what `hmm`/I9 would have to
+show here.
+
+### Score-driven parameters: the self-contained version of improvements 1 and 2
+
+This is the part that answers an open question. Improvements 1 and 2 above say to
+make `R` and `q` time-varying, and the mechanism proposed there was an
+**external** forecast - HAR-Parkinson feeding `R_t`. That works and it needs a
+second model.
+
+The paper's novelty is a **score-driven** update: the parameter moves with the
+*score* of the likelihood, which for a Gaussian observation is a function of the
+standardised innovation. Every member in this package already reports exactly
+that, as `last_standardised`, and it was measured as the best model-provided
+volatility signal here - a 2.02x quintile spread against `sd`'s 1.24x.
+
+So a score-driven `R_t` is self-contained: the filter updates its own
+measurement variance from its own innovations, with no second forecaster and one
+new parameter. **Both versions are worth running against each other**, and they
+are different claims - the external one says volatility is a property of the
+market that a better estimator can read, the score-driven one says it is
+whatever has been surprising this filter lately.
+
+Their result (ii) is the target either way: residuals well specified in **both**
+distribution and temporal correlation. Every member in this file currently fails
+both - Ljung-Box and Jarque-Bera at `p = 0.000` nearly everywhere - so a member
+whose residuals pass would be the first here to manage it.
+
+## Order flow: almost none of it is computable here, and the one piece that is already exists
+
+Two references read 2026-10-11. The second one is unusually honest for the genre
+- it names Cont, Kukanov and Stoikov's OFI and VPIN rather than gesturing at
+them - and it states the constraint itself: **"bar data is enough for price
+action, while order flow needs trades with aggressor classification."**
+
+This desk has OHLCV bars from MT5. No depth, no signed trades, no quote stream.
+
+| the tool | what it needs | here |
+| --- | --- | --- |
+| delta, cumulative delta | trade direction | **not available** |
+| footprint | trade direction | not available |
+| book imbalance, `(Qbid - Qask) / (Qbid + Qask)` | Level 2 depth | not available |
+| OFI (Cont-Kukanov-Stoikov) | L1 quote updates | not available |
+| VPIN | trade direction inside volume buckets | not available |
+| queue position | order-by-order feed | not available |
+| **volume profile, point of control** | volume by price | **`drawing/profile.py`** - already drawn |
+
+`profile.py` is the one piece that survives the data constraint, and it was
+written before any of this reading: "levels where a lot of supply changed hands,
+found as modes rather than bins", from "the distribution of activity over
+price, which every instrument has and which needs nothing bought". It is in
+production - `STRUCTURES_FORMATION` reads
+`pip,run,origin,profile,equal,gap,round`.
+
+### Three things that do transfer
+
+**1. The cost lesson, arrived at independently for the fourth time.** The
+article's own worked example conditions on a book imbalance above 0.5 and raises
+the up-move probability from 50% to 58% - then says "half a tick of spread plus
+fees can consume the whole edge". That is precisely what this file measured three
+times from a different direction: the 3m innovation reversion at **0.16
+spreads**, the gbpusd 15m fade where the edge and the cost were both **0.113**
+volatility units, and the usdjpy 15m innovation. A retail order-flow guide and a
+state-space package reach the same conclusion about the same market, which is
+worth more than either reaching it alone.
+
+**2. VPIN's volume clock is the citation D2 was missing.** VPIN buckets by
+**volume** rather than by time, and D2 - selectivity as a step size - proposed
+`delta = dt * activity`, which is the same idea: sample in event time rather
+than clock time. So the reference for that is VPIN and, behind it, the
+subordination literature.
+
+Concretely: `inputs.py`'s windows are in hours and its ladder resolves rungs by
+elapsed time. A volume-clock variant would express them in **cumulative
+volume**, and `resolvable` would pick rungs the same way. The data is there.
+
+**And the caveat is the one Amihud already found.** `|r|/volume` scored -1% to
+8% of achievable here because a CFD "volume" is a **tick count**, not traded
+size. A tick count is still a measure of *activity*, so a clock built on it is a
+tick clock rather than a volume clock - which is the original form of the idea
+and defensible, but it is a different quantity and should be called by its own
+name.
+
+**3. The tick rule has a bar-level proxy, and it is already written.** The
+article gives the rule - at or above the ask is a buy - and no ticks are stored
+here. The standard bar-level stand-in is where the close sits inside the bar's
+range: a close near the high means buying pressure won the bar. That is
+`Features.position`, added today, and it is unit-free so it travels across
+symbols. It is a *proxy for* delta and should never be called delta.
+
+### What this changes about the package: nothing, and that is the finding
+
+No new member, no new feature, no new subject. The honest output of reading two
+order-flow references against this codebase is that the data constraint is
+binding, the one computable tool was already built, and the one new idea - the
+volume clock - is a citation for something already recorded as D2.
+
+That is worth writing down because the alternative was to implement a delta
+proxy, call it delta, and have it measured against a null six months from now by
+someone who had forgotten it was a proxy.
+
+## The profile's window, and whether the ladder belongs on it
+
+Asked 2026-10-11, in two parts.
+
+### Why modes and not bins: it was bins, and they failed measurably
+
+`drawing/profile.py` already answers this and the reasoning is strong enough to
+repeat here, because the same trap is available to anything in this package that
+reaches for a histogram.
+
+**The fair-share threshold could only ever fire when one band dominated.** A bin
+qualified by holding several times its fair share, where fair is one over the
+number of occupied bins - and with `N` equally busy bands each holds *exactly*
+its fair share, never three times it. So a range, which is the one situation a
+volume-at-price formation exists for, produced nothing by construction. **In
+production it drew 3 levels out of 1,808.** The threshold is now relative to the
+*busiest* mode, so several equally busy bands all pass.
+
+**And bins have edges.** A band straddling one is split between two that each
+look ordinary, where an Epanechnikov kernel puts a bump at every observation and
+a band peaks wherever it falls.
+
+A third reason was not about bins at all: **a mode is emitted once per visit,
+not once.** `levels.form` clusters turns and needs three within a volatility
+unit, so one point per band stamped at the window's end can never cluster.
+
+### The ladder does belong on it, and the engine already says why
+
+`profile.points` is handed the engine's whole series, so its horizon is
+`WINDOW = 1000` **bars** - a fixed bar count, which is about two days at 3m and
+three years at 1d. `engine.py`'s own comment names the consequence: "a 4h level
+from four months ago was outside the window, so the levels drawn there came from
+a short memory whatever their timeframe implied."
+
+That is the same defect `inputs.py` was written to fix, and the fix is the same:
+hours rather than bars, converted per series by `coverage`.
+
+**What the multi-horizon version would buy**, and it is not just portability. A
+single window cannot distinguish *busy recently* from *busy historically*, and
+the difference is the thing a desk wants: a band busy over four weeks and quiet
+over one is being abandoned, and one busy over a week but not four has just
+formed. Density over the rungs of the ladder makes that a slope rather than an
+impression - and the volatility work is direct evidence it helps, because HAR's
+multi-scale blend beat every single-lookback estimator it was measured against.
+
+An exponential weighting on visits is the other half, so a visit last week
+counts more than one a month ago at the same price - `inputs.ema` is already
+written and the kernel density is already a weighted sum, so this is a weight
+and not a rewrite.
+
+**The discipline is different here, and that is the point.** This package
+publishes nothing; `profile` is a **production** formation pass, in
+`STRUCTURES_FORMATION` alongside `pip,run,origin,equal,gap,round`. So the
+multi-horizon profile gets measured in a harness against the current one-window
+version before anything in `drawing/` is touched, and the null is the pass as it
+stands - which already draws 204 attributions in 32,603 level calls and whose
+`gap` sibling was measured at a coin.
+
+## Kinetic and PDE modelling: one thing to use, two framings, the rest out of reach
+
+Bertram Düring's research page, read 2026-10-11. Kinetic and Fokker-Planck
+modelling of economic systems, numerical analysis, and financial mathematics.
+Most of it needs a PDE or agent-level data that this desk does not have. Three
+things are worth keeping.
+
+**1. Use a Student-t observation, not a Gaussian. This is actionable now.** The
+kinetic wealth models - Cordier-Pareschi-Toscani, Chakrabarti-Chatterjee-Manna -
+*derive* Pareto tails from conservative exchange rules, which is a reason to
+**expect** heavy tails rather than to treat them as misspecification. And this
+file has measured them: Jarque-Bera at `p = 0.000` on every member, every
+series, every timeframe.
+
+`changepoint` is already the only member with a heavy-tailed predictive - its
+Normal-Inverse-Gamma posterior marginalises to a Student-t - and it got there by
+inferring its variance rather than by choosing a tail. Every other member is
+Gaussian. So a t-distributed observation is a small change with a derivation
+behind it, and `robust`'s Huber gate is the cheap approximation of the same
+thing: bounded influence is what a t-likelihood does automatically.
+
+**2. "Two-factor stochastic volatility information processes that explain
+crash-like price movements"** (Düring, 2009) is a citation for the reframing
+above. I5 measured a two-factor drift on **price** and it lost - the fit set the
+second component's noise to zero. Two factors on **volatility** is a different
+claim, and the HAR result says variance does have structure at several time
+scales. A continuous-time two-factor stochastic volatility model is that claim
+in SDE form, and it is the natural shape for the VOLATILITY subject.
+
+**3. Two framings worth having, neither a method.** A Fokker-Planck equation
+propagates a **density** where a Kalman filter propagates a point and a
+covariance and `swarm` propagates a sample - so the kinetic literature is the
+continuum limit of what `swarm` approximates. Not actionable at four states and
+two hundred particles, and useful for knowing what the approximation is *of*.
+
+And the opinion-dynamics work - "Breaking consensus in kinetic opinion formation
+models on graphons" - is literally about consensus forming and breaking. A level
+**is** a consensus price, and a level breaking is consensus breaking. That is
+the most precise statement of this package's own thesis found in any reference
+read today, and it arrives with no way to apply it: these models need the
+agents, and this desk sees only the price they agreed on.
+
+**Out of reach, recorded so nobody re-reads them hoping**: high-order compact
+finite differences, Wasserstein gradient flows, minimizing-movement schemes and
+Lagrangian meshes all need a PDE to solve. Local volatility calibration by SQP
+or semi-smooth Newton is the right machinery for a hundred parameters and this
+package fits one to five, where a grid is both sufficient and auditable.
+
 ## Members not written
 
 Each already names the null it must beat, in `family.PENDING`. Do not add one
@@ -2051,9 +2391,9 @@ the set-layer rewrite, which is why they are worth doing before it is settled.
 | I5 | **partly answered, 2026-10-10.** Observability is *not* the blocker: the condition number for price-only measurements at 4h is 2.5 with two states and ~40 with three, against the ~1e8 where a state stops being identifiable. A third state is estimable and still loses — a two-factor drift is 0.138 nats a point worse held out, and the fit set its second component's noise to zero rather than use it. What is left of I5 is the same question at finer sampling, where the condition number rises |
 | I9 | two state spaces, and there already are two |
 | I10 | the slope has a volatility, and it is currently a guess |
-| I2 | the state is the memory of the system, and this one leaks |
+| I2 | the state is the memory of the system, and this one leaks. **Fixed-lag smoothing is now written** — `smoothing.lagged` — which is the memory a desk can actually act on |
 | I8 | state, input or output — the question a feature list never asks |
-| I1 | there is no input; `B` and `u` do not exist here |
+| I1 | **half closed.** `u` exists now — `inputs.py`, windows in hours — and `B` does not: see the section below |
 | I7 | two barriers, from one model instead of three |
 
 I3 and I4 are conditional on I5's answer. I11 is above, under members.

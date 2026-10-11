@@ -95,6 +95,48 @@ design.** The package's job is to find which observables have a state worth
 tracking, and the rule below - nothing publishes until it beats a named null -
 is what stops that search from becoming a story.
 
+## Every horizon is expressed in time, never in bars
+
+A standing rule for this package, and it is not a style preference - it is the
+difference between a parameter that means something and one that means something
+different on every series it meets.
+
+**"200 bars" is not a horizon. It is a horizon times a timeframe**: ten hours at
+3m and eight months at 1d. A window, a lag, a hazard or a half-life stated in
+bars therefore encodes a belief that changes silently when the same code is
+pointed at another series - and comparing across timeframes, which this package
+does constantly, then compares definitions rather than behaviour.
+
+So horizons here run **from seconds to weeks, in hours**, and the bar count is
+derived per series:
+
+* `inputs.Window(hours=...)` and `inputs.LADDER`, which spans `10s` to `4w`.
+  `inputs.resolvable` picks the rungs a given series can compute - a 3m series
+  resolves `5m` to `3d` and a 1d series resolves `3d` to `4w`, from one ladder
+  and with neither a special case.
+* `inputs.coverage`, because a week is seven **calendar** days and how much of
+  it a market trades is inferred from its own clock: FX comes back at 0.711
+  against 5/7, and the Deriv synthetics at exactly 1.000. A hardcoded five-day
+  week shortened every crypto window by two sevenths.
+* `changepoint.hazard`, per **hour**. It was per observation at `1/250`, which
+  asserts "a change every 12.5 hours" at 3m and "every 250 days" at 1d - the
+  same member believing wildly different things about the world depending on
+  what it was handed.
+* `smoothing.lagged(hours=...)`, `focus.Paired.hours_since_reset`,
+  `changepoint.run_hours`, and every rate in `rates.py`.
+
+**Two exceptions, and they are not horizons.** `MAX_RUN` truncates a posterior
+and `swarm.COUNT` is a particle count: both are resolutions rather than spans,
+and neither says anything about how long something lasts. `changepoint.
+run_length` is kept in observations because it is the quantity the recursion is
+literally over, and it is documented as not comparable across timeframes with
+`run_hours` beside it for anything that crosses one.
+
+This rule is also why irregular sampling is handled rather than assumed away.
+Touches arrive when they arrive; a hazard per hour converts to a per-observation
+probability from the gap that actually elapsed, and a window in hours spans the
+bars that actually fall inside it.
+
 ## The models live here too
 
 Not only the improvements. The spec lists the family - Kalman, particle, HMM,

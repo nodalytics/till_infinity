@@ -390,7 +390,14 @@ class TestFamily:
         from till_infinity.structures.statespace.family import Filter, members
 
         got = members()
-        assert set(got) == {"kalman", "reverting", "robust", "selective", "swarm"}
+        assert set(got) == {
+            "kalman",
+            "reverting",
+            "robust",
+            "selective",
+            "swarm",
+            "changepoint",
+        }
         for name, cls in got.items():
             # Constructed with no arguments on purpose: a member whose defaults
             # do not produce a usable filter cannot be scored against another
@@ -2452,3 +2459,590 @@ class TestExistenceMeansOneThing:
                 engine.predict(when)
                 engine.update(100.0, 0.4, when)
             assert engine.existence > 0.9, f"{name}: {engine.existence}"
+
+
+class TestFixedLagSmoothing:
+    """`lagged` - the smoother a live desk could run, where `smooth` cannot."""
+
+    def test_it_converges_on_the_whole_series_smoother(self):
+        """The only honest check of it.
+
+        Fixed-lag smoothing conditions on `lag` future measurements where
+        `smooth` conditions on all of them, so the two are **not** equal at a
+        given point - that is the definition rather than a shortfall. What must
+        hold is that the gap closes as the lag grows, and it does: 0.337 at
+        lag 1 down to 0.00064 at lag 100 on this series.
+        """
+        from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.smoothing import lagged, smooth
+
+        times = tuple(i * 900.0 for i in range(120))
+        values = tuple(100.0 + 0.05 * i + (1.5 if i % 23 == 0 else 0.0) for i in range(120))
+        build = lambda: Gaussian(jerk=1e-4)  # noqa: E731
+
+        full = smooth(build, times, values, noise=0.16)
+        assert full is not None
+
+        gaps = []
+        for lag in (1, 3, 10, 30, 100):
+            got = lagged(build, times, values, noise=0.16, lag=lag)
+            assert got is not None
+            by_time = {round(row.when): row.value for row in got}
+            gaps.append(
+                max(
+                    abs(by_time[round(t)] - full.states[i][0])
+                    for i, t in enumerate(times)
+                    if round(t) in by_time
+                )
+            )
+        # Monotone, and tiny by the time the lag covers the series.
+        assert gaps == sorted(gaps, reverse=True), gaps
+        assert gaps[-1] < 1e-3, gaps
+
+    def test_every_measurement_gets_an_estimate_with_its_own_delay(self):
+        """Output aligned to input, and `delay` says how late each one is.
+
+        The first `lag` points have less future to use and the last has none at
+        all, so they come back with the delay that was actually available
+        rather than being dropped - a caller zipping the two would otherwise
+        silently misalign.
+        """
+        from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.smoothing import lagged
+
+        times = tuple(i * 900.0 for i in range(60))
+        values = tuple(100.0 + 0.1 * i for i in range(60))
+        got = lagged(lambda: Gaussian(jerk=1e-4), times, values, noise=0.16, lag=8)
+        assert got is not None
+        assert len(got) == len(times)
+        assert [row.when for row in got] == sorted(row.when for row in got)
+        assert max(row.delay for row in got) == 8
+        assert min(row.delay for row in got) == 0
+
+    def test_the_revision_is_what_hindsight_moved(self):
+        """`revision` is the quantity worth watching: a revision much larger
+        than the filter's own standard deviation means the filter was
+        confidently wrong, which is a statement about the process noise."""
+        from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.smoothing import lagged
+
+        times = tuple(i * 900.0 for i in range(80))
+        # A level that steps, so hindsight has something to correct.
+        values = tuple(100.0 if i < 40 else 103.0 for i in range(80))
+        got = lagged(lambda: Gaussian(jerk=1e-4), times, values, noise=0.16, lag=10)
+        assert got is not None
+        for row in got:
+            assert row.revision == pytest.approx(row.value - row.filtered)
+        # The step is where hindsight helps most.
+        worst = max(got, key=lambda r: abs(r.revision))
+        assert 30 * 900.0 <= worst.when <= 50 * 900.0, worst.when
+
+    def test_a_member_that_cannot_state_its_transition_declines(self):
+        """Same contract as `smooth`: None rather than a half-smoothed answer."""
+        from till_infinity.structures.statespace.selective import Selective
+        from till_infinity.structures.statespace.smoothing import lagged
+
+        times = tuple(i * 900.0 for i in range(30))
+        values = tuple(100.0 + 0.1 * i for i in range(30))
+        # `selective` has no covariance, so it cannot be smoothed either way.
+        assert lagged(Selective, times, values, noise=0.16, lag=5) is None
+
+
+class TestInputsAreMeasuredInTime:
+    """`inputs.py` - the `u` half of the channel `I1` says is missing."""
+
+    def test_a_window_is_the_same_horizon_on_every_timeframe(self):
+        """The reason windows are hours and not bars.
+
+        "200 bars" is a horizon times a timeframe - ten hours at 3m, eight
+        months at 1d - so a feature defined that way means something different
+        on every series. One week has to be one week.
+        """
+        from till_infinity.structures.statespace.inputs import WEEKS, bar_hours
+
+        week = WEEKS[0]
+        got = {}
+        for minutes, label in ((3, "3m"), (15, "15m"), (60, "1h"), (1440, "1d")):
+            times = [i * minutes * 60.0 for i in range(3000)]
+            hours = bar_hours(times)
+            got[label] = week.bars(hours)
+            # The bar count differs; the horizon it covers does not.
+            assert got[label] * hours == pytest.approx(week.hours, rel=0.01), label
+        assert got["3m"] > got["15m"] > got["1h"] > got["1d"]
+        # A continuous clock trades all seven days, so a week is seven daily
+        # bars. The next test is the five-day case.
+        assert got["1d"] == 7
+
+    def test_a_week_is_five_days_on_fx_and_seven_on_crypto(self):
+        """The calendar, inferred rather than hardcoded.
+
+        The first version made a week five days flat, which is right for FX and
+        **wrong for crypto and the Deriv synthetics, which trade all seven** -
+        it silently shortened every crypto window by two sevenths. So the
+        window is calendar hours and `coverage` converts, which gets both right
+        without a per-symbol table.
+
+        Measured on the real files: EURUSD and GBPUSD come back at 0.711,
+        against 5/7 = 0.714, and Volatility_75 and Volatility_25 at exactly
+        1.000.
+        """
+        from till_infinity.structures.statespace.inputs import (
+            WEEKS,
+            bar_hours,
+            coverage,
+        )
+
+        # An FX-shaped clock: 15m bars that stop for 48 hours every five days.
+        fx: list[float] = []
+        t = 0.0
+        for _week in range(12):
+            for _bar in range(5 * 24 * 4):
+                fx.append(t)
+                t += 900.0
+            t += 48 * 3600.0
+        crypto = [i * 900.0 for i in range(len(fx))]
+
+        fx_cover = coverage(fx)
+        crypto_cover = coverage(crypto)
+        assert 0.68 < fx_cover < 0.76, fx_cover
+        assert crypto_cover == pytest.approx(1.0)
+
+        week = WEEKS[0]
+        fx_bars = week.bars(bar_hours(fx), fx_cover)
+        crypto_bars = week.bars(bar_hours(crypto), crypto_cover)
+        # Seven days of 15m bars is 672; five is 480.
+        assert crypto_bars == 672
+        assert 440 < fx_bars < 510, fx_bars
+        assert crypto_bars > fx_bars
+
+    def test_it_cannot_see_the_bar_it_is_computed_for(self):
+        """The off-by-one that decides whether this leaks.
+
+        A window including the current bar leaks the present into a prediction
+        of the present, and the cross-resolution test has already shown what
+        that produces: `t = +20.8` on five symbols, one of them generated.
+        """
+        from till_infinity.structures.statespace.inputs import WEEKS, Features
+
+        times = [i * 900.0 for i in range(500)]
+        closes = [100.0 + i * 0.01 for i in range(500)]
+        highs = [c + 0.5 for c in closes]
+        lows = [c - 0.5 for c in closes]
+        highs[300] = 999.0  # one unmistakable spike
+
+        # Windows passed explicitly: the default is now whatever the series
+        # resolves, and a 500-bar 15m series does not resolve a week.
+        features = Features(times, highs, lows, closes, windows=WEEKS)
+        assert features.at(300).of("high_1w") < 500.0, "bar 300 saw itself"
+        assert features.at(301).of("high_1w") == 999.0, "bar 301 should see it"
+
+    def test_position_is_unit_free_so_it_travels_across_symbols(self):
+        """A raw high is in the instrument's units and a position is not, which
+        is what lets xauusd and eurusd sit in one table."""
+        from till_infinity.structures.statespace.inputs import WEEKS, Features
+
+        times = [i * 900.0 for i in range(600)]
+        for scale in (1.0, 1000.0):
+            closes = [scale * (1.0 + 0.0001 * i) for i in range(600)]
+            highs = [c * 1.001 for c in closes]
+            lows = [c * 0.999 for c in closes]
+            built = Features(times, highs, lows, closes, windows=WEEKS)
+            where = built.position(500, WEEKS[0])
+            assert 0.0 <= where <= 1.0
+            # Rising series: the last close sits near the top of its range.
+            assert where > 0.8, scale
+
+    def test_naming_the_components_rather_than_their_order(self):
+        """`of()` by name, `KeyError` for anything else - the mistake
+        `frozen.vector` exists to prevent one layer down."""
+        from till_infinity.structures.statespace.inputs import WEEKS, Features
+
+        times = [i * 900.0 for i in range(400)]
+        closes = [100.0] * 400
+        features = Features(times, closes, closes, closes, windows=WEEKS)
+        got = features.at(300)
+        assert len(got) == len(got.names)
+        # Six per window plus the two blends, and `position` is a method rather
+        # than a stored feature because it is a ratio of two that are stored.
+        assert len(got) == 6 * len(WEEKS) + 2
+        assert got.of("rv_4w") == 0.0  # a flat series has no realised vol
+        assert got.of("parkinson_4w") == 0.0
+        assert "har_parkinson" in got.names
+        with pytest.raises(KeyError):
+            got.of("not_a_feature")
+
+    def test_time_since_an_event_is_hours_not_bars(self):
+        """Same portability argument, and `inf` rather than a plausible number
+        when the thing has never happened."""
+        from till_infinity.structures.statespace.inputs import since
+
+        flags = [i == 250 for i in range(500)]
+        assert since(flags, 300, 0.25) == pytest.approx(12.5)
+        assert since(flags, 300, 1.0) == pytest.approx(50.0)
+        assert since([False] * 10, 5, 1.0) == math.inf
+
+
+class TestChangepoint:
+    """BOCPD: a posterior over how long the quantity has held."""
+
+    def test_it_finds_a_step_and_says_so(self):
+        """The event nothing else in the family detects.
+
+        A level holds at 100 for sixty readings then jumps to 107. The run
+        length should collapse and `changepoint` should fire on the reading it
+        happens, not after a decay.
+        """
+        import random
+
+        from till_infinity.structures.statespace.changepoint import Changepoint
+
+        rng = random.Random(7)
+        engine = Changepoint()
+        before: list[float] = []
+        during: list[float] = []
+        runs: list[float] = []
+        for i in range(100):
+            truth = 100.0 if i < 60 else 107.0
+            engine.predict(i * 900.0)
+            engine.update(truth + rng.gauss(0.0, 0.3), 0.09, i * 900.0)
+            if 40 <= i < 59:
+                before.append(engine.changepoint)
+            if 60 <= i <= 61:
+                during.append(engine.changepoint)
+            runs.append(engine.run_length)
+
+        assert max(before) < 0.1, max(before)
+        assert min(during) > 0.8, during
+        # The run length collapses at the step and rebuilds afterwards.
+        assert runs[59] > 40.0
+        assert runs[60] < 5.0
+        assert runs[95] > 20.0
+        # And it finds the new level.
+        assert engine.value == pytest.approx(107.0, abs=0.5)
+
+    def test_the_mass_at_exactly_zero_is_useless_as_a_detector(self):
+        """The pathology that made `changepoint` `P(r <= 2)` rather than `P(r = 0)`.
+
+        Both arms of the recursion multiply by the **same** predictive, so the
+        ratio of the change arm to the growth arm is `hazard / (1 - hazard)`
+        whatever the data does - a reading that obliterates every existing run
+        scales both arms down together. So `P(r = 0)` sits near the hazard rate
+        before, during and after a change, which is the worst kind of defect:
+        a detector that looks like it works and never fires.
+        """
+        import random
+
+        from till_infinity.structures.statespace.changepoint import HAZARD, Changepoint
+
+        rng = random.Random(11)
+        engine = Changepoint()
+        at_zero: list[float] = []
+        for i in range(90):
+            truth = 100.0 if i < 50 else 112.0
+            engine.predict(i * 900.0)
+            engine.update(truth + rng.gauss(0.0, 0.2), 0.04, i * 900.0)
+            weights = engine._weights()
+            at_zero.append(weights[0] if weights else 0.0)
+
+        # Flat, and near the hazard rate, straight through a twelve-unit step.
+        assert max(at_zero[40:70]) < 20.0 * HAZARD, max(at_zero[40:70])
+        # While the published detector does fire on the same series.
+        assert engine.run_length < 45.0
+
+    def test_it_learns_the_variance_rather_than_being_told(self):
+        """The one member that infers `R`. Every other is handed it."""
+        import random
+
+        from till_infinity.structures.statespace.changepoint import Changepoint
+
+        rng = random.Random(3)
+        quiet = Changepoint()
+        loud = Changepoint()
+        for i in range(200):
+            when = i * 900.0
+            quiet.predict(when)
+            quiet.update(100.0 + rng.gauss(0.0, 0.1), 1.0, when)
+            loud.predict(when)
+            loud.update(100.0 + rng.gauss(0.0, 2.0), 1.0, when)
+        # Both were told the same prior variance and reached different ones.
+        assert loud.sd > 3.0 * quiet.sd, (quiet.sd, loud.sd)
+
+    def test_it_refuses_to_report_a_rate(self):
+        """A change-point model claims the quantity is piecewise constant, so a
+        rate is not part of what it asserts - the same refusal
+        `reverting.accel` makes about acceleration."""
+        from till_infinity.structures.statespace.changepoint import Changepoint
+
+        engine = Changepoint()
+        for i in range(40):
+            engine.predict(i * 900.0)
+            engine.update(100.0 + 2.0 * i, 0.09, i * 900.0)  # a strong trend
+        assert engine.rate == 0.0
+        # And its forecast is flat, which is the same claim.
+        now = 39 * 900.0
+        assert engine.at_time(now + 100 * 3600.0) == pytest.approx(engine.value)
+
+    def test_the_posterior_is_bounded_and_normalised(self):
+        """Truncation folds the tail into the last kept run length rather than
+        dropping it - a posterior that quietly sums to less than one is the
+        kind of error that looks like a model result."""
+        from till_infinity.structures.statespace.changepoint import MAX_RUN, Changepoint
+
+        engine = Changepoint()
+        for i in range(MAX_RUN + 200):
+            engine.predict(i * 900.0)
+            engine.update(100.0, 0.09, i * 900.0)
+        weights = engine._weights()
+        assert len(weights) <= MAX_RUN
+        assert sum(weights) == pytest.approx(1.0)
+
+    def test_it_is_in_the_family_and_satisfies_the_protocol(self):
+        from till_infinity.structures.statespace.changepoint import Changepoint
+        from till_infinity.structures.statespace.family import Filter, members
+
+        assert members()["changepoint"] is Changepoint
+        engine = Changepoint()
+        assert isinstance(engine, Filter)
+        engine.update(100.0, 0.09, 0.0)
+        engine.predict(900.0)
+        engine.update(100.5, 0.09, 900.0)
+        assert math.isfinite(engine.loglike)
+        assert engine.output() == (engine.value,)
+        assert len(engine.observation()[0]) == len(engine.state())
+
+
+class TestFocus:
+    """FOCuS as the detector, and paired with a member as the forecaster."""
+
+    def test_it_fires_on_a_shift_and_not_on_noise(self):
+        """A detector that never fires and one that always does are both
+        useless; this checks the same threshold does neither."""
+        import random
+
+        from till_infinity.structures.statespace.focus import THRESHOLD, Focus
+
+        rng = random.Random(5)
+        detector = Focus()
+        fired = None
+        for i in range(600):
+            value = rng.gauss(0.0, 1.0) + (0.0 if i < 300 else 1.2)
+            got = detector.update(value)
+            if fired is None and i >= 20 and got >= THRESHOLD:
+                fired = i
+        assert fired is not None, "never detected a 1.2 sigma shift"
+        assert 300 <= fired <= 400, fired
+
+        quiet = Focus()
+        worst = max(quiet.update(rng.gauss(0.0, 1.0)) for _ in range(600))
+        assert worst < THRESHOLD, worst
+
+    def test_the_pruning_keeps_the_hull_small(self):
+        """The cost claim, made observable.
+
+        FOCuS is worth preferring over an `O(R)` posterior because its expected
+        cost is logarithmic, and that is entirely the pruning. A hull that grew
+        linearly would still give the right statistic while quietly being the
+        naive algorithm, which nothing else here would reveal.
+        """
+        import random
+
+        from till_infinity.structures.statespace.focus import Focus
+
+        rng = random.Random(13)
+        detector = Focus()
+        sizes = []
+        for i in range(20000):
+            detector.update(rng.gauss(0.0, 1.0))
+            if i in (100, 1000, 10000, 19999):
+                sizes.append(detector.candidates)
+        # Two hundredfold more data must not mean two hundredfold more work.
+        assert sizes[-1] < 4 * sizes[0], sizes
+        assert sizes[-1] < 100, sizes
+
+    def test_pairing_helps_on_a_step_and_costs_nothing_without_one(self):
+        """The null for `Paired` is the member alone, on the **same** series.
+
+        The first version of this comparison drew fresh randoms for each run,
+        which is not a comparison at all - the numbers below are on one series.
+        """
+        import random
+
+        from till_infinity.structures.statespace.focus import Paired
+        from till_infinity.structures.statespace.linear import Gaussian
+
+        build = lambda: Gaussian(jerk=1e-4)  # noqa: E731
+
+        rng = random.Random(9)
+        stepped = [
+            (i * 900.0, (100.0 if i < 150 else 112.0) + rng.gauss(0.0, 0.3)) for i in range(300)
+        ]
+        alone, paired = build(), Paired(build)
+        for when, value in stepped:
+            alone.predict(when)
+            alone.update(value, 0.09, when)
+            paired.predict(when)
+            paired.update(value, 0.09, when)
+        assert paired.detections == 1, paired.detections
+        assert paired.loglike > alone.loglike + 500.0, (alone.loglike, paired.loglike)
+
+        # And with nothing to find, the pair must be free rather than merely cheap.
+        rng = random.Random(21)
+        flat = [(i * 900.0, 100.0 + rng.gauss(0.0, 0.3)) for i in range(300)]
+        alone, paired = build(), Paired(build)
+        for when, value in flat:
+            alone.predict(when)
+            alone.update(value, 0.09, when)
+            paired.predict(when)
+            paired.update(value, 0.09, when)
+        assert paired.detections == 0
+        assert paired.loglike == pytest.approx(alone.loglike)
+
+    def test_the_triggering_reading_is_not_thrown_away(self):
+        """Reset happens *after* the member has used the reading that caused
+        it. Resetting first would discard the evidence there was anything to
+        reset for, and the rebuilt member would start from nothing."""
+        import random
+
+        from till_infinity.structures.statespace.focus import Paired
+        from till_infinity.structures.statespace.linear import Gaussian
+
+        rng = random.Random(4)
+        paired = Paired(lambda: Gaussian(jerk=1e-4))
+        for i in range(260):
+            when = i * 900.0
+            truth = 100.0 if i < 120 else 130.0
+            paired.predict(when)
+            paired.update(truth + rng.gauss(0.0, 0.2), 0.04, when)
+        assert paired.detections >= 1
+        # A member reset to nothing would sit near zero, not near the new level.
+        assert paired.value == pytest.approx(130.0, abs=1.0)
+
+    def test_it_reports_how_long_the_model_has_stood_in_hours(self):
+        """Hours, not readings - the same portability argument as the windows
+        and the hazard."""
+        import random
+
+        from till_infinity.structures.statespace.focus import Paired
+        from till_infinity.structures.statespace.linear import Gaussian
+
+        rng = random.Random(6)
+        paired = Paired(lambda: Gaussian(jerk=1e-4))
+        for i in range(100):
+            when = i * 900.0
+            paired.predict(when)
+            paired.update(100.0 + rng.gauss(0.0, 0.2), 0.04, when)
+        # 99 bars of 15 minutes is 24.75 hours, and nothing was detected.
+        assert paired.detections == 0
+        assert paired.hours_since_reset == pytest.approx(24.75, abs=0.3)
+
+    def test_paired_satisfies_the_contract_it_delegates(self):
+        """So it can be scored against the member alone without a special case."""
+        from till_infinity.structures.statespace.family import Filter
+        from till_infinity.structures.statespace.focus import Paired
+        from till_infinity.structures.statespace.linear import Gaussian
+
+        paired = Paired(lambda: Gaussian(jerk=1e-4))
+        assert isinstance(paired, Filter)
+        paired.predict(0.0)
+        paired.update(100.0, 0.09, 0.0)
+        paired.predict(900.0)
+        paired.update(100.4, 0.09, 900.0)
+        assert paired.output() == (paired.value,)
+        assert len(paired.observation()[0]) == len(paired.state())
+        assert math.isfinite(paired.at_time(1800.0))
+        low, high = paired.band(1800.0)
+        assert low <= high
+
+    def test_every_series_resolves_the_rungs_it_can_and_no_others(self):
+        """One ladder from seconds to weeks, and each series picks its own.
+
+        A fixed set of windows cannot suit every timeframe - a week is 2,400
+        bars at 3m and five at 1d, and a minute is a fifth of a bar at 5m. So
+        the ladder spans the range and `resolvable` applies two bounds: at
+        least two bars, or the "window" is just that bar's own high and low
+        under a name claiming a horizon; and at most a quarter of the series,
+        or there are too few independent observations of it - which is the
+        mistake the slope-fade harness made before the overlap correction.
+        """
+        from till_infinity.structures.statespace.inputs import (
+            LADDER,
+            bar_hours,
+            resolvable,
+        )
+
+        picked = {}
+        for minutes, label in ((3, "3m"), (15, "15m"), (60, "1h"), (1440, "1d")):
+            times = [i * minutes * 60.0 for i in range(6000)]
+            got = resolvable(bar_hours(times), len(times))
+            picked[label] = [w.label() for w in got]
+            assert got, label
+            # Every rung spans at least two bars and at most a quarter.
+            for window in got:
+                span = window.bars(bar_hours(times))
+                assert 2 <= span <= 1500, (label, window.label(), span)
+
+        # The fast series reach down the ladder and the slow ones reach up.
+        assert "5m" in picked["3m"]
+        assert "4w" not in picked["3m"]
+        assert "3d" in picked["1d"]
+        assert "30m" not in picked["1d"]
+        assert len(picked["15m"]) > 3
+        # And nothing resolves a rung shorter than its own bar.
+        assert "10s" not in picked["3m"]
+        assert all(len(v) <= len(LADDER) for v in picked.values())
+
+    def test_the_estimators_moved_out_of_the_harnesses(self):
+        """HAR-Parkinson and the causal EMA now live in the library.
+
+        Both were stranded in `research/ideas/`, which is excluded from lint,
+        has no tests, and is documented as experiments to be thrown away once
+        the question is answered - a poor home for the two things that actually
+        worked: the blend took the volatility forecast from 64% of achievable
+        to 79%, and the EMA signals were the only slope variants to survive the
+        overlap correction.
+        """
+        from till_infinity.structures.statespace.inputs import (
+            Features,
+            ema,
+            garman_klass,
+            har,
+            parkinson,
+            rolling,
+        )
+
+        # Parkinson is a per-bar variance from the range alone.
+        flat = parkinson([101.0] * 5, [99.0] * 5)
+        assert all(v == pytest.approx(flat[0]) for v in flat)
+        assert flat[0] > 0.0
+        # A wider bar is a larger variance.
+        assert parkinson([110.0], [90.0])[0] > flat[0]
+        # Degenerate bars give zero rather than a domain error.
+        assert parkinson([0.0], [0.0])[0] == 0.0
+        assert garman_klass([0.0], [0.0], [0.0], [0.0])[0] == 0.0
+
+        # The EMA lags and the rolling mean is exact.
+        source = [float(i) for i in range(10)]
+        assert rolling(source, 3)[-1] == pytest.approx(8.0)
+        assert ema(source, 3)[-1] < 9.0
+        # HAR averages three spans, so it sits between the shortest and longest.
+        blended = har(source, (2, 3, 5))[-1]
+        assert rolling(source, 5)[-1] <= blended <= rolling(source, 2)[-1]
+
+        # And they arrive as features, over the windows the series resolves.
+        times = [i * 900.0 for i in range(2000)]
+        closes = [100.0 + 0.01 * i for i in range(2000)]
+        built = Features(
+            times,
+            [c + 0.5 for c in closes],
+            [c - 0.5 for c in closes],
+            closes,
+            opens=[c - 0.01 for c in closes],
+        )
+        names = built.names()
+        assert "har_parkinson" in names
+        assert any(n.startswith("parkinson_") for n in names)
+        assert any(n.startswith("ema_z_") for n in names)
+        # Garman-Klass only when the open was given, never faked from the close.
+        assert any(n.startswith("gk_") for n in names)
+        without = Features(times, closes, closes, closes)
+        assert not any(n.startswith("gk_") for n in without.names())
