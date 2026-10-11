@@ -306,6 +306,26 @@ class Lagged:
         return self.value - self.filtered
 
 
+def _steps(times: Sequence[float], hours: float, fallback: int) -> int:
+    """Observations in `hours` of **calendar** time on this series.
+
+    Dividing by the median spacing alone converts *trading* hours to bars,
+    because the median gap between consecutive bars is the bar size and skips
+    the closures. That left two meanings of one parameter in the package:
+    `Window.bars` reads `hours` as calendar time and corrects with `coverage`,
+    while `lagged` read the same word as trading time - so `lagged(hours=2)`
+    and the `2h` rung of the ladder were different lags on any market that
+    closes. One meaning now, and it is the one `__init__.py` states.
+    """
+    from .inputs import bar_hours, coverage
+
+    bar = bar_hours(times)
+    if bar <= 0:
+        return fallback
+    cover = coverage(times, bar)
+    return max(round(hours * max(cover, 1e-9) / bar), 1)
+
+
 def lagged(
     build: Callable[[], object],
     times: Sequence[float],
@@ -358,14 +378,7 @@ def lagged(
     # a timeframe. `__init__.py` carries this as a package rule; this is the
     # one place that was still counting bars after it was written.
     if hours is not None:
-        gaps = sorted(
-            (float(times[i]) - float(times[i - 1])) / HOUR
-            for i in range(1, min(n, 500))
-            if times[i] > times[i - 1]
-        )
-        if gaps:
-            middle = gaps[len(gaps) // 2]
-            lag = max(round(hours / middle), 1) if middle > 0 else lag
+        lag = _steps(times, hours, lag)
     if lag < 1:
         return None
 

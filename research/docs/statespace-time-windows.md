@@ -142,3 +142,120 @@ the feature's own window and the horizon. The effect survived at a third of the
 `z`, which is the useful part: the direction of the finding did not change, and
 its significance was inflated nearly threefold by an inconsistency that each
 half of looked correct on its own.
+
+## Inside the bar: a parent read on a finer feed
+
+Asked for once windows were being measured in time: look at a 1h bar, then drop
+to 5m and see what was *inside* it. The harness is
+`research/ideas/inside_the_bar.py`, over `(15m, 3m)`, `(1h, 15m)` and
+`(4h, 1h)` on five series - 360 cells.
+
+A parent bar is four numbers; its children are the path that produced them, and
+the path says three things OHLC cannot:
+
+* **which extreme came first.** `open, high, low, close` is famously ambiguous
+  about this - "up then down" and "down then up" give the same four numbers -
+  and it is the one piece of information a finer feed adds for free.
+* **how much travelling the net move cost**, as net displacement over path
+  length. A bar that went a long way to get nowhere is a different object from
+  one that went straight there.
+* **how far it went against itself** before closing where it did.
+
+The question is **not** whether the path predicts - a path contains its bar, so
+anything the bar predicts the path predicts too and a correlation would prove
+nothing. It is whether the path adds anything to what the parent already says,
+so every reading is reported net of the parent's own close-in-range and range,
+and net of a trailing standard deviation over twenty parents.
+
+| feature | direction, net | mag, net | sign consistency |
+|---|---|---|---|
+| efficiency | -0.003 | **-0.020** | 33/45 negative |
+| turns | +0.002 | **+0.016** | 35/45 positive |
+| rv_over_range | +0.008 | **+0.013** | 35/45 positive |
+| adverse | +0.004 | +0.010 | 29/45 |
+| low_at | +0.008 | +0.007 | 27/45 |
+| high_first | -0.003 | -0.006 | 16/45 |
+| close_vs_path | -0.006 | +0.004 | 24/45 |
+| high_at | +0.005 | +0.003 | 25/45 |
+
+**Direction is dead: 19 of 360 cells clear `|t| > 2` against the 16 chance
+gives.** And `high_first` - the one thing OHLC cannot express, which is the
+reason to look inside at all - carries nothing at all: -0.003, `t = 0.2`.
+
+**Magnitude is real, consistent and negligible.** 67 of 360 cells clear
+`|t| > 2`, concentrated entirely at the next parent bar (45 of 120, falling to
+11 of 120 by four parents ahead). The sign is consistent across cells - a
+**choppy** bar, with many direction changes, low efficiency and high realised
+variance relative to the range it produced, precedes a bigger next bar - and the
+effect is a rank correlation of about **0.02**, against **+0.158** for the
+trailing standard deviation it is measured on top of. One part in eight of the
+simplest estimator, for a feed you have to join two resolutions to compute.
+
+### The bug, which was the whole first answer
+
+The first run found `high_first` at `t = 4.9` and called it the strongest cell
+in the table. It was **overlapping outcomes**. Parent bars do not overlap, which
+is what the docstring said and why no stride was applied - but their *outcomes*
+do: at twenty-four parents ahead, consecutive rows share twenty-three
+twenty-fourths of their outcome window.
+
+It announced itself twice and I nearly missed both. Every strong cell was at the
+longest horizon, which is where overlap is worst rather than where an effect
+would be. And `high_first` took **opposite signs on two resolutions of the same
+instrument** - v75 read -0.055 on `15m/3m` and +0.052 on `1h/15m` - which is not
+something an effect does.
+
+Stepping the rows by the horizon removed it entirely: -0.003 at `t = 0.2`. Third
+time overlapping windows have manufactured a finding in this project, after
+`slope_fade.py`'s `t = -10.8` and `cumsum_time.py`'s `z = -7.3`. The lesson is
+not "remember the stride" - it is that **"the rows don't overlap" and "the
+outcomes don't overlap" are different claims**, and only the second one matters.
+
+### And the features that carried the signal are properties of the feed
+
+The portability logic turned on this harness asks: is a path feature a property
+of the **market**, or of the **child feed**? Path length grows without bound as
+sampling gets finer - that is what a fractal dimension above one means - so
+`efficiency` and `turns` cannot be invariant the way a close is.
+
+Same 1h parents, decomposed on 15m children and on 3m children, the two readings
+correlated (eurusd, 2,002 parents; the other three series agree to within 0.03):
+
+| feature | rho between child feeds | mean shift |
+|---|---|---|
+| adverse | **+1.000** | -0.000 |
+| close_vs_path | +0.979 | -0.002 |
+| high_first | +0.967 | +0.043 |
+| low_at | +0.934 | -0.001 |
+| high_at | +0.933 | -0.001 |
+| efficiency | +0.844 | **-0.522** |
+| rv_over_range | **+0.207** | +0.159 |
+| turns | **+0.021** | -0.041 |
+
+**This inverts the result above.** The features that are properties of the
+market - where and in what order the extremes were made, how far the bar went
+against itself, where the close sat on its own path - are invariant to the child
+feed at 0.93 to 1.00, and they carry **nothing**: `high_first` at `t = 0.2`.
+
+The three that carried the small magnitude signal are the three that are *not*
+invariant. `turns` correlates with itself at **0.021** across child feeds, which
+is to say the number of direction changes inside a bar is a property of how
+often you looked, with no market content whatever. `rv_over_range` manages 0.15
+to 0.23, which is the volatility signature plot: realised variance rises as
+sampling gets finer, which is microstructure noise and is why the signature plot
+exists. And `efficiency` orders bars consistently (0.84) but its **level shifts
+by -0.52** between feeds, so a threshold on it means nothing without naming the
+child resolution.
+
+So the honest summary of looking inside the bar is:
+
+> The intra-bar readings that mean the same thing on any feed carry no signal.
+> The ones that carry a trace of signal do not mean the same thing on any feed,
+> and the trace is a rank correlation of 0.02 against the trailing standard
+> deviation's 0.158.
+
+That is a better answer than either arm alone, and it is only available because
+the same question - *does this survive changing the feed?* - was asked of the
+features and not just of the windows. It is the cheapest test in this file: no
+outcome, no horizon, no cost model, and it disqualified three features that had
+already passed a significance screen.

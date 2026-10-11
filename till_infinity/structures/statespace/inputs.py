@@ -129,11 +129,20 @@ LADDER = (
     Window(10.0 / 3600.0, "10s"),
     Window(30.0 / 3600.0, "30s"),
     Window(1.0 / 60.0, "1m"),
+    #: A 1m feed can carry a 3m window - three bars - and the ladder had no
+    #: rung for it, so the finest thing a 1m series could answer was five
+    #: minutes. The rungs are the horizons the desk's own feeds are stored at
+    #: (3m, 15m, 1h, 4h, 6h, 8h, 12h, 1d), which is a reason to pick them
+    #: rather than a preference: a window the desk already keeps a feed for is
+    #: a window somebody will ask about.
+    Window(3.0 / 60.0, "3m"),
     Window(5.0 / 60.0, "5m"),
     Window(15.0 / 60.0, "15m"),
     Window(30.0 / 60.0, "30m"),
     Window(1.0, "1h"),
     Window(4.0, "4h"),
+    Window(6.0, "6h"),
+    Window(8.0, "8h"),
     Window(12.0, "12h"),
     Window(24.0, "1d"),
     Window(3 * 24.0, "3d"),
@@ -153,6 +162,7 @@ def resolvable(
     length: int,
     ladder: tuple[Window, ...] = LADDER,
     share: float = 0.25,
+    cover: float = 1.0,
 ) -> tuple[Window, ...]:
     """The rungs this series can compute: at least `LEAST_BARS`, at most a share.
 
@@ -169,13 +179,24 @@ def resolvable(
 
     So a 3m series resolves minutes to days and a 1d series resolves days to
     weeks, from one ladder and without either being a special case.
+
+    **`cover` is required for the first bound to work and was missing.** The
+    count of bars in a calendar window depends on how much of the calendar the
+    market trades: half an hour is two bars of 15m on a market open all week and
+    about one on FX, which closes at the weekend. Computed without coverage this
+    function admitted a window that `Features._build` then built with a span of
+    one - the exact failure the first bound exists to prevent, since that rung
+    reports a single bar's own high and low under a name claiming a horizon.
+
+    It is a default rather than a required argument because a `Window` on a 24/7
+    series is the same either way, and `coverage` is what tells the two apart.
     """
     if bar <= 0 or length < LEAST_BARS * 2:
         return ()
     cap = max(int(length * share), LEAST_BARS)
     out = []
     for window in ladder:
-        span = window.bars(bar)
+        span = window.bars(bar, cover)
         if LEAST_BARS <= span <= cap:
             out.append(window)
     return tuple(out)
@@ -384,7 +405,7 @@ class Features:
         self._bar = bar_hours(self.times)
         self._coverage = coverage(self.times, self._bar)
         if not self.windows:
-            self.windows = resolvable(self._bar, len(self.closes))
+            self.windows = resolvable(self._bar, len(self.closes), cover=self._coverage)
         self._build()
 
     def _build(self) -> None:
@@ -417,8 +438,11 @@ class Features:
         )
 
         # A rolling spread for standardising, on the shortest resolvable window
-        # so the z-scores react at the series' own pace.
-        shortest = min((w.bars(self._bar) for w in self.windows), default=20)
+        # so the z-scores react at the series' own pace. **With coverage**, like
+        # every other conversion here: without it this was longer than the
+        # shortest span actually built six lines below, so the z-scores reacted
+        # more slowly than the window they are named for.
+        shortest = min((w.bars(self._bar, self._coverage) for w in self.windows), default=20)
         sigma = [math.sqrt(v) for v in rolling(squares, max(shortest, 2))]
         self._zmoves = [moves[k] / sigma[k] if sigma[k] > 0 else 0.0 for k in range(n)]
 

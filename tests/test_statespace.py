@@ -2857,8 +2857,8 @@ class TestPaired:
         """
         import random
 
-        from till_infinity.structures.statespace.paired import Paired
         from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.paired import Paired
 
         build = lambda: Gaussian(jerk=1e-4)  # noqa: E731
 
@@ -2893,8 +2893,8 @@ class TestPaired:
         reset for, and the rebuilt member would start from nothing."""
         import random
 
-        from till_infinity.structures.statespace.paired import Paired
         from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.paired import Paired
 
         rng = random.Random(4)
         paired = Paired(lambda: Gaussian(jerk=1e-4))
@@ -2912,8 +2912,8 @@ class TestPaired:
         and the hazard."""
         import random
 
-        from till_infinity.structures.statespace.paired import Paired
         from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.paired import Paired
 
         rng = random.Random(6)
         paired = Paired(lambda: Gaussian(jerk=1e-4))
@@ -2928,8 +2928,8 @@ class TestPaired:
     def test_paired_satisfies_the_contract_it_delegates(self):
         """So it can be scored against the member alone without a special case."""
         from till_infinity.structures.statespace.family import Filter
-        from till_infinity.structures.statespace.paired import Paired
         from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.paired import Paired
 
         paired = Paired(lambda: Gaussian(jerk=1e-4))
         assert isinstance(paired, Filter)
@@ -2980,6 +2980,151 @@ class TestPaired:
         # And nothing resolves a rung shorter than its own bar.
         assert "10s" not in picked["3m"]
         assert all(len(v) <= len(LADDER) for v in picked.values())
+
+    def test_bocpd_measures_freshness_and_its_memory_in_time(self):
+        """`changepoint` and the truncation are durations, not counts.
+
+        Both were counts and both were wrong for the same reason. "The run is
+        at most two readings old" is half an hour at 15m and two days at 1d, and
+        the class had already decided that was wrong when it added `run_hours`.
+        And the cap of 300 components was justified as the point where the
+        geometric tail is negligible - true at 1d, where it is 300 days against
+        a ten-day regime, and false at 15m, where it is **three**, so the
+        posterior sat against the cap permanently while `run_hours` looked like
+        an estimate.
+        """
+        import random
+
+        from till_infinity.structures.statespace.changepoint import (
+            FRESH_LEAST,
+            MAX_RUN,
+            Changepoint,
+        )
+
+        # The memory, in components, must depend on the spacing.
+        kept = {}
+        for spacing, label in ((0.25, "15m"), (1.0, "1h"), (24.0, "1d")):
+            rng = random.Random(4)
+            engine = Changepoint()
+            for i in range(400):
+                when = i * spacing * 3600.0
+                engine.predict(when)
+                engine.update(100.0 + rng.gauss(0.0, 0.2), 0.04, when)
+            kept[label] = engine._keep()
+        assert kept["15m"] > kept["1h"] > kept["1d"], kept
+        assert kept["1d"] < MAX_RUN, kept
+        # Three expected regimes of ten days is 720 hours: 30 bars at 1d.
+        assert 20 <= kept["1d"] <= 45, kept
+
+        # And freshness covers a window of time, so on a fast series it spans
+        # more components than the statistical floor alone.
+        rng = random.Random(7)
+        engine = Changepoint()
+        for i in range(300):
+            when = i * 0.25 * 3600.0
+            engine.predict(when)
+            engine.update(100.0 + rng.gauss(0.0, 0.2), 0.04, when)
+        floor = sum(engine._weights()[: FRESH_LEAST + 1])
+        assert engine.changepoint > floor, (engine.changepoint, floor)
+        assert 0.0 <= engine.changepoint <= 1.0
+
+        # `saturated` says when the run length is a lower bound rather than an
+        # estimate. On a quiet series far shorter than the memory it is not.
+        assert engine.saturated is False
+
+    def test_the_ladder_reaches_from_seconds_to_weeks(self):
+        """Seconds to weeks, on one series, from one ladder.
+
+        The range is the package's claim and this is what makes it checkable.
+        A feed fine enough and long enough resolves **every** rung - and the
+        two bounds are what decide which slice any particular feed gets, so
+        the slice is a property of the data rather than of the library:
+
+        * a 1s feed of twenty thousand bars reaches `10s` but not `4h`, because
+          four hours is more than a quarter of five and a half hours of data;
+        * a 1d feed reaches `4w` but not `30m`, which is a fraction of a bar.
+
+        Neither is a gap in the ladder. A feed cannot be asked about a horizon
+        it has not observed, and asking anyway is what the bounds prevent.
+        """
+        from till_infinity.structures.statespace.inputs import (
+            LADDER,
+            bar_hours,
+            coverage,
+            resolvable,
+        )
+
+        # 5s bars, and enough of them that four weeks is under the quarter cap.
+        whole = resolvable(5.0 / 3600.0, 2_000_000)
+        assert len(whole) == len(LADDER), [w.label() for w in whole]
+        assert whole[0].label() == "10s"
+        assert whole[-1].label() == "4w"
+
+        # The seconds end is reachable from real timestamps, not just from a
+        # bar size passed in by hand.
+        times = [i * 1.0 for i in range(20000)]
+        bar = bar_hours(times)
+        got = [w.label() for w in resolvable(bar, len(times), cover=coverage(times, bar))]
+        assert got[0] == "10s", got
+        assert "1h" in got, got
+        assert "4h" not in got, got
+
+        # And the weeks end, from a daily series.
+        times = [i * 86400.0 for i in range(6000)]
+        bar = bar_hours(times)
+        got = [w.label() for w in resolvable(bar, len(times), cover=coverage(times, bar))]
+        assert "4w" in got, got
+        assert not any(g.endswith("s") or g == "30m" for g in got), got
+
+    def test_a_window_is_resolved_on_trading_bars_not_calendar_ones(self):
+        """`resolvable` must count the bars a window really holds.
+
+        Its first bound exists so that no rung is shorter than two bars - below
+        that it clamps to one and reports a single bar's own high and low under
+        a name claiming a horizon. **That bound was computed without
+        `coverage`**, so on a market that closes it counted calendar bars and
+        admitted rungs the series could not build, which is the failure the
+        bound was written to prevent.
+
+        A five-day week makes the test concrete. On 15m bars that only exist on
+        weekdays, half an hour is two bars of calendar and about **one** bar of
+        trading, so the `30m` rung must drop out - and under the old conversion
+        it did not.
+        """
+        from till_infinity.structures.statespace.inputs import (
+            LEAST_BARS,
+            bar_hours,
+            coverage,
+            resolvable,
+        )
+
+        # Six thousand 15m bars, weekends removed.
+        times, when = [], 0.0
+        while len(times) < 6000:
+            day = int(when // 86400) % 7
+            if day < 5:
+                times.append(when)
+            when += 900.0
+        bar = bar_hours(times)
+        cover = coverage(times, bar)
+        assert 0.5 < cover < 0.95, cover
+
+        got = resolvable(bar, len(times), cover=cover)
+        assert got
+        for window in got:
+            # Every rung holds at least two bars of *this* series, which is the
+            # only sense in which it is a window at all.
+            assert window.bars(bar, cover) >= LEAST_BARS, (window.label(), cover)
+
+        # And the correction bites: a rung that the calendar count would have
+        # admitted is gone, because the series does not hold it.
+        labels = {w.label() for w in got}
+        naive = {w.label() for w in resolvable(bar, len(times))}
+        assert "30m" in naive, "fixture no longer exercises the boundary"
+        assert "30m" not in labels, (
+            "a 30m window is one trading bar of a weekday 15m series, so it is "
+            "not a window - the conversion is ignoring coverage again"
+        )
 
     def test_the_estimators_moved_out_of_the_harnesses(self):
         """HAR-Parkinson and the causal EMA now live in the library.

@@ -97,3 +97,59 @@ publishes until it has beaten a *named* null. The null has to include the random
 walk, the synthetic control, the overlap correction, the cell count and the
 spread - and the first version of every measurement in this file failed at least
 one of those.
+
+## The audit: four bar counts in a library that forbids them
+
+Asked on 2026-10-11, after a harness bug turned out to be two conversions of
+one duration: *is the library itself clean, or only the rule?* It was not clean.
+Four bar counts, two of which were defects and two of which are correct, and the
+difference between those pairs is the reusable part.
+
+**`resolvable()` counted calendar bars.** Its first bound exists so no rung is
+shorter than two bars - below that the window clamps to one and reports a single
+bar's own high and low under a name claiming a horizon. The bound was computed
+without `coverage`, so on a market that closes it admitted rungs the series
+could not build: the exact failure it was written to prevent. Half an hour is
+two bars of a 24/7 15m feed and about **one** of a weekday one. The fix moved
+the bottom rung on every part-time market - a 3m FX series loses `5m` and gains
+`2w` - and is pinned by a test that asserts the `30m` rung disappears from a
+weekday 15m series.
+
+**`smoothing.lagged(hours=...)` divided by the median spacing alone**, which
+converts *trading* hours rather than calendar ones, because the median gap
+between consecutive bars is the bar size and skips the closures. So
+`lagged(hours=2)` and the `2h` rung of the ladder were different lags on
+anything that closes. Two meanings of one word, which is shape #5 in the
+`finding-bugs` skill and the thing to watch for here rather than a missing
+conversion.
+
+**`changepoint`'s freshness window and its truncation were horizons wearing
+counts.** "The run is at most two readings old" is half an hour at 15m and two
+days at 1d. And the cap of 300 components was justified in its own comment as
+the point where the geometric prior's tail is negligible - which is a claim
+about *time*. At 1d, 300 components is 300 days against a ten-day expected
+regime and the claim holds. At 15m it is **three days**, less than a third of
+one regime, so the posterior sat against the cap permanently and `run_hours`
+reported a lower bound while reading like an estimate. Both are durations now,
+the cap covers three expected regimes of time inside a compute ceiling, and
+`Changepoint.saturated` publishes when the truncation binds.
+
+**Two counts were kept.** `LAGS` in the Ljung-Box test and `WARMUP` in `paired`
+are about the innovation *sequence* and the convex hull's point count, neither
+of which is a horizon. The test for autocorrelation in a sequence of
+innovations is a statement about that sequence; a detector needing twenty points
+before it fires is a statement about the hull.
+
+So the rule is not "no integers". It is:
+
+> A count is right only when the question is about the sequence. If the question
+> is about the market, it is a duration, and `coverage` converts it.
+
+### And `saturated` is why the first version of the fix was wrong
+
+The flag was first written as "mass sits at the last component", which is True
+on any quiet series - with no change to find, the posterior concentrates on the
+*longest* run length it holds, truncation or not. It needs both conditions: the
+component list has reached the cap **and** mass is at the edge. The test caught
+it on the first run, which is the argument for writing the assertion before
+believing the property.

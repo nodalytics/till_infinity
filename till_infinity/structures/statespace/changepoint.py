@@ -82,17 +82,41 @@ from .linear import EXISTENCE_HALF_LIFE_HOURS
 
 HOUR = 3600.0
 
-#: The run-length posterior is truncated here. 300 is not measured: it is the
-#: point where the geometric prior's tail is negligible for the hazard rates
-#: worth running, and the cap is renormalised rather than dropped so no
-#: probability leaks.
-MAX_RUN = 300
+#: Hard ceiling on the run-length posterior, as a **compute budget**. Each
+#: component carries six floats and is touched every reading, so this is the
+#: cost of the member rather than a statement about the model.
+#:
+#: **It used to be 300 and the reason given for it was wrong.** The claim was
+#: that 300 is where the geometric prior's tail is negligible - which is a
+#: claim about *time* dressed as a count. At 1d a hazard of one change per ten
+#: days makes 300 components 300 days and the tail genuinely negligible; at 15m
+#: the same 300 components are **three days**, less than a third of one
+#: expected regime, so the posterior was pressed against the cap permanently
+#: and `run_hours` reported a lower bound while looking like an estimate.
+MAX_RUN = 1000
 
-#: How short a run counts as "just changed", for `changepoint`. Two rather
-#: than zero, because `P(run length = 0)` is approximately the hazard rate
+#: How many expected regime lengths the posterior should reach before it is
+#: truncated, which is the duration the cap is really about. Three gives a tail
+#: of `exp(-3)`, about 5%, and the tail is folded into the last kept component
+#: rather than dropped - so nothing leaks either way, and what truncation costs
+#: is the ability to say a regime is *older* than this.
+LIVES = 3.0
+
+#: How recent a run counts as "just changed", in **hours**. A duration, because
+#: "two readings ago" is half an hour at 15m and two days at 1d, and the
+#: question `changepoint` answers - did the thing I track just change - is about
+#: the market rather than about the sampling.
+#:
+#: Six hours is not fitted. It is short relative to the ten-day regime the
+#: hazard expects, which is the only property it needs.
+FRESH_HOURS = 6.0
+
+#: Components always included in `changepoint`, whatever the clock says. Two
+#: rather than zero because `P(run length = 0)` is approximately the hazard rate
 #: whatever the data does - see `changepoint` for why, and for the measurement
-#: that showed it.
-FRESH = 2
+#: that showed it - so on a series whose bars are longer than `FRESH_HOURS` the
+#: statistical floor is what applies.
+FRESH_LEAST = 2
 
 #: Hazard **per hour**, not per observation. `1/HAZARD` is the mean time
 #: between changes, so this says "expect a regime to last about ten days" -
@@ -171,6 +195,10 @@ class Changepoint:
     #: Elapsed **hours** covered by each run-length component, parallel to
     #: `_logp`. What makes `run_hours` portable where `run_length` is not.
     _hours: list[float] = field(default_factory=list)
+    #: Running mean of the gaps between readings, in hours. What turns the
+    #: truncation's duration into a component count without being told the
+    #: timeframe.
+    _spacing: float = 0.0
     #: Sufficient statistics per run length, parallel to `_logp`.
     _mu: list[float] = field(default_factory=list)
     _kappa: list[float] = field(default_factory=list)
@@ -213,7 +241,7 @@ class Changepoint:
 
     @property
     def changepoint(self) -> float:
-        """Posterior mass on a run length of at most `FRESH` observations.
+        """Posterior mass on a run no older than `FRESH_HOURS`.
 
         **The output this member exists for**: "the thing I am tracking just
         changed", on the observation it happens rather than after a decay.
@@ -231,9 +259,25 @@ class Changepoint:
         So the detection is in the posterior's mass moving to *small* run
         lengths, not in its mass at exactly zero. This reports that, and
         `run_length` is the same event as a single number.
+
+        **"Small" is a duration, not a count.** The first version summed the
+        first three components, which is ninety minutes at 30m and three days at
+        1d - so the same number meant different questions on different feeds,
+        and this class had already decided that was wrong when it added
+        `run_hours`. The components now included are those whose elapsed time is
+        within `FRESH_HOURS`, with `FRESH_LEAST` always included so the
+        statistical floor above still holds on a series whose bars are longer
+        than that.
         """
         weights = self._weights()
-        return sum(weights[: FRESH + 1]) if weights else 0.0
+        if not weights:
+            return 0.0
+        total = 0.0
+        for i, weight in enumerate(weights):
+            within = i < len(self._hours) and self._hours[i] <= FRESH_HOURS
+            if i <= FRESH_LEAST or within:
+                total += weight
+        return total
 
     @property
     def run_length(self) -> float:
@@ -366,11 +410,49 @@ class Changepoint:
         risk = -math.expm1(-self.hazard * elapsed) if elapsed > 0 else 0.0
         risk = min(max(risk, 1e-12), 1.0 - 1e-12)
 
+        if elapsed > 0:
+            count = max(self.seen - 1, 1)
+            self._spacing += (elapsed - self._spacing) / count
         self._advance(measured, densities, risk, elapsed)
         self.seen += 1
         self._read_at = when if when is not None else self._read_at
         self.existence = min(1.0, self.existence + (1.0 - self.existence) * 0.5)
         return innovation
+
+    def _keep(self) -> int:
+        """How many components to hold: `LIVES` regimes of **time**, capped.
+
+        The cap is a compute budget and this is the duration it is meant to
+        cover, so the conversion happens here rather than being assumed. The
+        spacing comes from the readings themselves - a running mean of the gaps
+        actually seen - because a member is handed one reading at a time and
+        never told its timeframe.
+        """
+        want = LIVES / max(self.hazard, 1e-12)
+        if self._spacing <= 0:
+            return MAX_RUN
+        return max(min(round(want / self._spacing), MAX_RUN), FRESH_LEAST + 1)
+
+    @property
+    def saturated(self) -> bool:
+        """Whether the posterior is pressed against the truncation.
+
+        When it is, `run_hours` and `run_length` are **lower bounds** rather
+        than estimates: the mass that would have sat at longer runs has been
+        folded into the last kept component. Published rather than assumed
+        away, because the previous version of this cap was wrong on every fast
+        series and nothing said so.
+
+        **Both conditions are needed and the first version had only the
+        second.** On a quiet series the posterior concentrates on the *longest*
+        run length it holds, so mass at the last component is the normal state
+        of affairs and means nothing on its own. It is evidence of truncation
+        only once the list has actually reached the cap.
+        """
+        weights = self._weights()
+        if not weights or len(weights) < self._keep():
+            return False
+        return weights[-1] > 0.01
 
     def _advance(
         self,
@@ -416,12 +498,12 @@ class Changepoint:
         self._alpha = [self.alpha0, *grown_alpha]
         self._beta = [self.beta0, *grown_beta]
 
-        if len(self._logp) > MAX_RUN:
+        keep = self._keep()
+        if len(self._logp) > keep:
             # Truncate the tail. The mass there is folded into the last kept
             # run length rather than discarded, so nothing leaks - a posterior
             # that quietly sums to less than one is the kind of error that
             # looks like a model result.
-            keep = MAX_RUN
             tail = self._logp[keep:]
             if tail:
                 edge = max(tail)

@@ -114,6 +114,34 @@ derived per series:
   `inputs.resolvable` picks the rungs a given series can compute - a 3m series
   resolves `5m` to `3d` and a 1d series resolves `3d` to `4w`, from one ladder
   and with neither a special case.
+* **Seconds to weeks, on one ladder, and the range is tested.** `inputs.LADDER`
+  runs `10s` to `4w` and a feed fine and long enough resolves all fourteen
+  rungs. Which slice a given feed gets is decided by two rules rather than by a
+  per-instrument list: at least two bars, or the "window" is one bar's own high
+  and low under a name claiming a horizon; and at most a quarter of the series,
+  or there are too few independent observations of it. So a 1s feed answers
+  seconds to the hour, a 1d feed answers days to the month, and neither is a
+  special case. A feed cannot be asked about a horizon it has not observed.
+* **A count is right only when the question is about the sequence.** The audit
+  on 2026-10-11 found four bar counts in this package and kept two. `LAGS` in
+  the Ljung-Box test and `WARMUP` in `paired` are counts because they are about
+  the innovation *sequence* and the hull's point count - neither is a horizon.
+  `changepoint`'s freshness window and its truncation were horizons wearing
+  counts: "the run is at most two readings old" is half an hour at 15m and two
+  days at 1d, and a cap of 300 components was justified as the point where the
+  geometric tail is negligible, which is true at 1d (300 days against a ten-day
+  regime) and false at 15m (three days), so the posterior sat against the cap
+  permanently while `run_hours` looked like an estimate rather than a bound.
+  Both are durations now, the cap carries `LIVES` expected regimes of time
+  within a compute ceiling, and `Changepoint.saturated` publishes when the
+  truncation is binding instead of leaving it to be assumed away.
+* **`hours` means calendar time everywhere, and `coverage` does the
+  conversion.** Both halves of that were wrong somewhere until 2026-10-11:
+  `resolvable` counted calendar bars and so admitted rungs a part-time market
+  could not build, and `smoothing.lagged` divided by the median spacing alone,
+  which reads `hours` as *trading* time - so `lagged(hours=2)` and the `2h` rung
+  were different lags on anything that closes. Two meanings of one word is the
+  shape to watch for here, not a missing conversion.
 * `inputs.coverage`, because a week is seven **calendar** days and how much of
   it a market trades is inferred from its own clock: FX comes back at 0.711
   against 5/7, and the Deriv synthetics at exactly 1.000. A hardcoded five-day
