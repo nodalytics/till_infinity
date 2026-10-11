@@ -47,6 +47,7 @@ from till_infinity.structures.statespace.fractional import Fractional
 from till_infinity.structures.statespace.inputs import bar_hours
 from till_infinity.structures.statespace.linear import Gaussian
 from till_infinity.structures.statespace.nulls import Walk
+from till_infinity.structures.statespace.oscillator import Oscillator
 from till_infinity.structures.statespace.reverting import Reverting
 from till_infinity.structures.statespace.switching import Switching
 
@@ -87,6 +88,14 @@ GRIDS: dict[str, tuple] = {
     "linear": (Gaussian, {"jerk": (-8.0, 3.0)}),
     "reverting": (Reverting, {"theta": (-4.0, 1.0)}),
     "fractional": (Fractional, {"wander": (-6.0, 3.0), "slowest": (1.0, 4.0)}),
+    # The damped harmonic oscillator. **Two parameters and they are not
+    # independent**: `zeta = gamma / (2 omega)` is the thing that matters, so
+    # fitting both separately searches a ridge. Fitted anyway, because the
+    # alternative is asserting one of them.
+    "oscillator": (
+        Oscillator,
+        {"omega": (-3.0, 1.0), "gamma": (-3.0, 1.0), "forcing": (-6.0, 2.0)},
+    ),
     "switching": (
         Switching,
         {

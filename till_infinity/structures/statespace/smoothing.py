@@ -158,6 +158,25 @@ class Smoothed:
     #: so it is carried here to save running the filter twice.
     loglike: float
 
+    #: The **full** smoothed covariance at each time, not just the observed
+    #: component's spread. Carried because `sd` alone cannot support an EM
+    #: M-step, which needs the whole matrix.
+    covariances: tuple[tuple[tuple[float, ...], ...], ...] = ()
+
+    #: The lag-one smoothed **cross**-covariance, `P(t, t-1 | T)`, empty at
+    #: the first entry because there is no step before it.
+    #:
+    #: **This is the piece EM was blocked on**, and `diagnostics.fit_both`
+    #: says so in its own docstring: the M-step for `Q` needs
+    #: `E[x(t) x(t-1)' | all data]`, which is this plus the outer product of
+    #: the smoothed means, and `Smoothed` did not carry it - so the fit had to
+    #: be coordinate ascent on the marginal likelihood instead.
+    #:
+    #: `P(t, t-1 | T) = P(t | T) C(t-1)'`, with `C` the smoother gain the mean
+    #: recursion already computes. One matrix product per step and nothing
+    #: else, which is why it being absent was an omission rather than a cost.
+    cross: tuple[tuple[tuple[float, ...], ...], ...] = ()
+
     def __len__(self) -> int:
         return len(self.times)
 
@@ -235,6 +254,7 @@ def smooth(
     # Backward: the last point is already conditioned on everything.
     smooth_x = [list(row[0]) for row in post]
     smooth_p = [[list(r) for r in row[1]] for row in post]
+    gains: list[list[list[float]] | None] = [None] * n
 
     for i in range(n - 2, -1, -1):
         dt = steps[i + 1]
@@ -246,6 +266,7 @@ def smooth(
             # to produce.
             continue
         gain = _matmul(_matmul(post[i][1], _transpose(filt.transition(dt))), inverse)
+        gains[i] = gain
 
         delta = [a - b for a, b in zip(smooth_x[i + 1], pred[i + 1][0], strict=True)]
         moved = _matvec(gain, delta)
@@ -261,6 +282,21 @@ def smooth(
             for row_p, row_c in zip(post[i][1], correction, strict=True)
         ]
 
+    # `P(t, t-1 | T) = P(t | T) C(t-1)'`, from the gains the mean recursion
+    # already needed. Empty where the gain does not exist - a zero step, or a
+    # prediction too degenerate to invert - because an absent cross term and a
+    # zero one are different statements and an EM step must be able to skip
+    # rather than be handed zeros.
+    width = len(smooth_x[0]) if smooth_x else 0
+    cross: list[tuple[tuple[float, ...], ...]] = [()]
+    for i in range(1, n):
+        previous = gains[i - 1]
+        if previous is None or width == 0:
+            cross.append(())
+            continue
+        product = _matmul(smooth_p[i], _transpose(previous))
+        cross.append(tuple(tuple(row) for row in product))
+
     return Smoothed(
         times=tuple(float(t) for t in times[:n]),
         states=tuple(tuple(row) for row in smooth_x),
@@ -269,6 +305,8 @@ def smooth(
         filtered=filtered,
         filtered_sd=filtered_sd,
         loglike=float(getattr(filt, "loglike", 0.0)),
+        covariances=tuple(tuple(tuple(r) for r in row) for row in smooth_p),
+        cross=tuple(cross),
     )
 
 

@@ -106,3 +106,49 @@ search was allowed to reach its own optimum.
 
 A fitted model against an asserted null is not a comparison, and it is an easy
 one to publish by accident.
+
+---
+
+## Every member, fitted, becomes the random walk
+
+`oscillator.py` was added after the first version of this document - a damped
+harmonic oscillator, `phi'' + gamma phi' + omega^2 phi = noise`, which is the
+one member in the family that *can* cycle, because underdamped its eigenvalues
+are complex. Unfitted it is catastrophic (-1,310,685 on eurusd, the worst
+number this desk has produced). Fitted it reaches **-6,936** against a walk at
+**-6,838**.
+
+So it ties too. And its fitted parameters say why, in the same voice as the
+others:
+
+| member | fitted parameter | what that value means |
+|---|---|---|
+| `fractional` | `slowest = 9,870h` (pinned) | the slowest mode never decays over the sample |
+| `linear` | `jerk = 48.9` to `72.2` | retention goes to zero, the state collapses onto the reading |
+| `oscillator` | `omega = 0.009`, `gamma = 1.21` | `zeta = 67` - massively overdamped, no restoring force |
+| `reverting` | `theta = 0.0016` | the reversion rate goes to zero |
+
+**A mode that never decays, a retention that collapses, a restoring force sent
+to zero and a reversion rate sent to zero are the same thing said four ways.**
+Each member reaches the random walk from whichever direction its own
+parameterisation allows, and then stops, because that is where the likelihood
+is maximised.
+
+That is a stronger statement than "the walk wins". It says the optimum of this
+family's likelihood surface **is** the walk, and the members are
+parameterisations of a neighbourhood around it. `nulls.Walk`'s docstring
+guessed exactly this for one member -
+
+> as `drift` grows, retention goes to zero and every state collapses onto the
+> current reading - so the limit of that family is exactly "the next value
+> equals this one"
+
+\- and fitting four members found it is true of all of them.
+
+**What would falsify it**, and is the next thing worth running: a member whose
+degenerate limit is *not* a walk. `switching` is the candidate, because its
+extra structure is a discrete regime rather than a continuous rate, and it is
+the only member here whose fitted parameters did **not** run to an edge - its
+durations came back interior, at 1 to 2.8 hours for balance and 20 to 42 for
+imbalance. A model that cannot collapse into the null by turning one knob is
+the only kind that can beat it.

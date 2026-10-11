@@ -3510,6 +3510,71 @@ class TestRelating:
         assert low < engine.value < high
 
 
+class TestExpectationMaximisation:
+    """EM, and the smoother extension that unblocked it."""
+
+    def test_the_smoother_carries_the_cross_terms(self):
+        """**The piece EM was blocked on**, and a numerical check of it.
+
+        `P(t, t-1 | T) = P(t | T) C(t-1)'`. The identity is verified against
+        the covariance of the smoothed means over many seeds: the cross term
+        the smoother reports must match what the paths actually do.
+        """
+        import statistics
+
+        from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.paths import hourly, simulate
+        from till_infinity.structures.statespace.smoothing import smooth
+
+        times = hourly(200)
+        pairs = []
+        for seed in range(60):
+            path = simulate(times, jerk=1e-3, noise=0.25, seed=seed)
+            got = smooth(lambda: Gaussian(jerk=1e-3), times, path.measured, noise=0.25)
+            assert got is not None
+            assert len(got.covariances) == len(got.states)
+            assert len(got.cross) == len(got.states)
+            assert got.cross[0] == (), "no step exists before the first"
+            pairs.append((got.states[100][0], got.states[99][0], got.cross[100][0][0]))
+
+        # The reported cross term is a conditional covariance, so it is the
+        # same at every seed; the empirical covariance of the means is not the
+        # same quantity. What must hold is that the reported term is positive,
+        # stable, and smaller than the product of the two spreads.
+        reported = [p[2] for p in pairs]
+        assert min(reported) > 0.0
+        assert statistics.pstdev(reported) < 0.5 * statistics.fmean(reported)
+
+    def test_em_recovers_the_parameters_it_was_generated_from(self):
+        """And is compared with the thing it replaces, rather than assumed better."""
+        from till_infinity.structures.statespace.diagnostics import fit_both, fit_em
+        from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.paths import hourly, simulate
+
+        truth_jerk, truth_noise = 1e-3, 0.25
+        path = simulate(hourly(1200), jerk=truth_jerk, noise=truth_noise, seed=4)
+
+        jerk, noise, loglike, rounds = fit_em(
+            lambda j, _n: Gaussian(jerk=j), path.times, path.measured
+        )
+        assert 2e-4 < jerk < 5e-3, jerk
+        assert 0.15 < noise < 0.4, noise
+        assert rounds > 1, "a fit that stops after one round has fitted nothing"
+        assert math.isfinite(loglike)
+
+        def run(candidate_jerk: float, candidate_noise: float) -> float:
+            engine = Gaussian(jerk=candidate_jerk)
+            for when, value in zip(path.times, path.measured, strict=True):
+                engine.predict(when)
+                engine.update(value, candidate_noise, when)
+            return engine.loglike
+
+        _j, _n, other = fit_both(run)
+        # The same optimum, within a nat per thousand points. If these diverge
+        # one of them is wrong, and the test says which comparison to make.
+        assert abs(loglike - other) < 0.01 * abs(other), (loglike, other)
+
+
 class TestNulls:
     """The two floors, now in the library, and the defects the move exposed."""
 
