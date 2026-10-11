@@ -1860,6 +1860,117 @@ that study measured". So the testable residue of the void literature is whether
 the midpoint behaves differently from the edge, on a pass that is attributed 204
 times in 32,603 level calls.
 
+## How to use all of this to improve the members, in order
+
+Asked 2026-10-11, after the measurements. Six changes, ordered by expected value
+over cost, and the first is free because the capability is already there.
+
+### 1. Feed a time-varying `R`. It is already supported and was never used.
+
+`update(measured, noise, when)` takes the measurement variance **per call** on
+every member. **Every harness in this file passed a constant `NOISE = 0.4`.**
+
+So the single most justified change needs no library edit at all: pass
+`R_t` from the HAR-Parkinson forecast instead of a constant.
+
+And it explains a result that is otherwise just a defect. `linear` covers
+**19.3%** of readings in the quintile where it is most confident and 87.9% where
+it is least - its band is worst exactly where a caller would trust it. A filter
+whose `R` is constant while true volatility varies several-fold will do precisely
+that: in quiet periods it believes a noise level far above the truth and reports
+a band that is too *narrow* relative to what it should be, because the state has
+been over-smoothed.
+
+**Null:** the same member with constant `R`, on coverage and interval score
+rather than on point likelihood. Cost: a line in the caller.
+
+### 2. Scale the process noise with the same forecast.
+
+`jerk`, `sigma2` and `wander` are **fields**, set once. A level's drift rate
+should scale with market volatility for the same reason `R` should, and this one
+does need a member change - either per-call process noise or a `scale(factor)`
+that multiplies it.
+
+`DRIFT_VOL_PER_HOUR = 0.02` in production is a constant chosen once and applied
+at every timeframe, which is the same mistake one level up.
+
+**Null:** constant `q`.
+
+### 3. Give the members the high and the low. This is D3 with a reason.
+
+A bar is **three** observations of one state - high, low and close - and
+Parkinson's estimator being more efficient than close-to-close says the range is
+where the information is. The package has had `high` and `low` all along and no
+member has ever seen them.
+
+`C` already takes multiple rows and `output()` already returns a vector, so the
+machinery is in place: one `C` row for the close, one for the high, one for the
+low, with the high and low given larger `R` because they are extremes rather
+than consensus prices.
+
+**Null:** the same member on closes only. This is the first MIMO application
+with a measured reason behind it rather than an analogy.
+
+### 4. Score on the band, not the point.
+
+The random walk beats every member on the point forecast at every horizon, and
+`swarm` is the only member whose band is honest far out - 92.8% at `h = 50`
+against `reverting`'s 88.0%. **The members' value is the interval.** So the
+objective should be a proper interval score - CRPS, or the interval score with
+its coverage penalty - and not one-step predictive likelihood, which is the
+objective a martingale wins by default.
+
+This changes which member wins, and it is the metric that matches how the desk
+sizes. It is also the cheapest reframing in this list: the harness already
+records coverage and band width at four horizons.
+
+### 5. Robustify the measurement. `robust` was never in a single comparison.
+
+Roll's implied spread reaching 16-36% of the achievable volatility signal
+confirms that bid-ask bounce is a large part of the innovation at fast
+timeframes. That is a measurement artefact, not a level moving, and `robust`'s
+Huber gate exists to bound its influence - and the innovation-reversion harness
+found clipping at 2.5 sigma strengthening reversion and killing momentum, which
+is the gate separating the two.
+
+**Null:** `linear` and `reverting` unclipped, which is what every table here has
+used.
+
+### 6. The reframing: point the machinery at variance, not at price.
+
+This is the conclusion the measurements actually support, and it is larger than
+the five items above.
+
+**Price is a near-martingale.** It diffuses at 1.00 to 1.07 times `sqrt(h)`;
+direction is a coin in every test; the random walk wins the point forecast at
+every horizon on 17 to 21 of 39 series. There is very little for a state space
+to track, which is why the best member here is the one that tracks the least.
+
+**Log-variance is not.** It is persistent, it is forecastable - 79% of achievable
+with HAR-Parkinson - and HAR's win says it has structure at **several time
+scales** at once. That is a description of a quantity a multi-component state
+space is built for, and it is exactly what D1's HiPPO basis offers: several
+decay rates in one state, which is the thing that lost on price because price has
+no memory to compress.
+
+So `subjects.py` should carry a fourth subject - **VOLATILITY**, measured by
+realised variance over a bar, in log units so the state is unconstrained - and
+the members should be scored on forecasting it. Everything in this file that
+failed on price has a reason to work there:
+
+| what failed on price | why it should work on log-variance |
+| --- | --- |
+| the multi-timescale basis (D1, S4D-Real) | HAR's win **is** the multi-scale result |
+| `reverting`'s mean reversion | volatility mean-reverts; price does not |
+| a persistent state (`swarm`'s anchor) | variance has a level to return to |
+| the state space at all | there is something to track |
+
+**And the honest caveat**: this is an argument, not a measurement. The null is
+HAR-Parkinson itself, which is a linear regression on three realised variances
+and captures 79% - so a state space on log-variance has a high bar to clear and
+a cheap incumbent to beat. That is the right shape for this package: a named
+null that already works.
+
 ## Members not written
 
 Each already names the null it must beat, in `family.PENDING`. Do not add one
