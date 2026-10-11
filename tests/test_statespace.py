@@ -2813,6 +2813,184 @@ class TestChangepoint:
         assert len(engine.observation()[0]) == len(engine.state())
 
 
+class TestNulls:
+    """The two floors, now in the library, and the defects the move exposed."""
+
+    def test_the_walk_scores_its_likelihood_on_the_spread_it_predicts_with(self):
+        """**The defect this move fixed.**
+
+        The harness copy standardised by `sqrt(noise^2 + R)` and scored its
+        likelihood on `noise` alone. For a Gaussian, `-0.5 (i/s)^2 - log s`
+        punishes an understated `s`, so the null was handicapped and every
+        member's margin over it was overstated.
+        """
+        from till_infinity.structures.statespace.nulls import Walk
+
+        walk = Walk(noise=1.0)
+        walk.update(0.0, 0.0, 0.0)
+        walk.update(1.0, 3.0, 900.0)
+
+        # One reading folded in, so one term: a unit innovation against a
+        # predictive spread of sqrt(1 + 3) = 2.
+        spread = 2.0
+        expected = -0.5 * (1.0 / spread) ** 2 - 0.5 * math.log(2.0 * math.pi) - math.log(spread)
+        assert walk.loglike == pytest.approx(expected)
+        assert walk.last_standardised == pytest.approx(0.5)
+
+    def test_the_walk_band_diffuses_and_its_forecast_does_not(self):
+        """Flat forecast, `sqrt(h)` band. Both halves are the null."""
+        from till_infinity.structures.statespace.nulls import Walk
+
+        walk = Walk(noise=0.5)
+        for i in range(10):
+            walk.predict(i * 900.0)
+            walk.update(100.0 + i, 0.0, i * 900.0)
+        assert walk.step == pytest.approx(900.0)
+        assert walk.at_time(walk.at + 900.0 * 50) == pytest.approx(walk.value)
+
+        one = walk.band(walk.at + 900.0)
+        four = walk.band(walk.at + 900.0 * 4)
+        assert (four[1] - four[0]) == pytest.approx(2.0 * (one[1] - one[0]), rel=1e-9)
+
+    def test_trailing_and_the_rotated_control(self):
+        """The magnitude floor, and the control that makes a reading mean something."""
+        import random
+        import statistics
+
+        from till_infinity.structures.statespace.nulls import control, spearman, trailing
+
+        rng = random.Random(5)
+        values, level = [0.0], 0.0
+        for i in range(600):
+            scale = 0.2 if i < 300 else 2.0
+            level += rng.gauss(0.0, scale)
+            values.append(level)
+        got = trailing(values, 20)
+        assert statistics.fmean(got[350:]) > 4.0 * statistics.fmean(got[100:290])
+
+        # A feature correlated with itself reads 1.0; rotated, it reads nothing.
+        assert spearman(got, got) == pytest.approx(1.0)
+        assert abs(control(got, got)) < 0.35
+
+
+class TestFacts:
+    """Rollouts, and whether they look like a market."""
+
+    def test_autocorrelation_matches_numpy(self):
+        """The module rule: anything hand-written arrives with a reference."""
+        numpy = pytest.importorskip("numpy")
+
+        from till_infinity.structures.statespace.facts import autocorrelation
+
+        rng = numpy.random.default_rng(7)
+        series = numpy.cumsum(rng.normal(size=500)).tolist()
+        for lag in (1, 3, 10):
+            mine = autocorrelation(series, lag)
+            centred = numpy.asarray(series) - numpy.mean(series)
+            reference = float(
+                (centred[: len(centred) - lag] * centred[lag:]).sum() / (centred**2).sum()
+            )
+            assert mine == pytest.approx(reference, rel=1e-9, abs=1e-12)
+
+    def test_it_survives_a_series_that_would_overflow(self):
+        """A mis-specified rollout can run to 1e200; the estimator must report.
+
+        Raising instead of reporting would make the one check designed to catch
+        a runaway member the thing the runaway member breaks.
+        """
+        from till_infinity.structures.statespace.facts import autocorrelation, kurtosis
+
+        wild = [float(10.0**k) for k in range(1, 160)]
+        assert math.isfinite(autocorrelation(wild, 1))
+        assert math.isfinite(kurtosis(wild))
+
+    def test_it_tells_a_clustering_series_from_a_random_walk(self):
+        """The discrimination that makes the measurement worth having.
+
+        A GARCH series clusters and its kurtosis falls with aggregation; a
+        random walk does neither. If this cannot separate them it cannot
+        separate a member from a member.
+        """
+        import random
+
+        from till_infinity.structures.statespace.facts import measure, rollout, verdict
+        from till_infinity.structures.statespace.nulls import Walk
+        from till_infinity.structures.statespace.paths import hourly
+
+        rng = random.Random(1)
+        level, variance, previous = 0.0, 1.0, 0.0
+        clustered = [0.0]
+        for _ in range(6000):
+            variance = 0.02 + 0.10 * previous * previous + 0.88 * variance
+            previous = rng.gauss(0.0, math.sqrt(variance))
+            level += previous
+            clustered.append(level)
+
+        real = measure(clustered)
+        assert abs(real.drift) < 0.1, real.drift
+        assert real.clustering > 0.3, real.clustering
+        assert real.tails_fall
+
+        made = measure(rollout(lambda: Walk(noise=1.0), hourly(6000), noise=0.25, seed=2))
+        assert abs(made.drift) < 0.1, made.drift
+        assert made.clustering < 0.1, "a random walk must not cluster"
+        assert "NO clustering" in verdict(real, made)
+
+
+class TestYielding:
+    """Widening the process noise instead of resetting the state."""
+
+    def test_it_declines_a_member_that_cannot_name_its_process_noise(self):
+        """The same contract `smooth` uses: declining is a true statement."""
+        from till_infinity.structures.statespace.nulls import Walk
+        from till_infinity.structures.statespace.yielding import Yielding
+
+        with pytest.raises(AttributeError, match="process noise"):
+            Yielding(Walk)
+
+    def test_it_softens_on_a_step_and_is_nearly_free_without_one(self):
+        """The two halves of its null, on one series each.
+
+        Softening must help where there is a change and cost almost nothing
+        where there is not - and `reach = 1` must reproduce the member exactly,
+        which is the arm that proves the mechanism is what is being measured
+        rather than the wrapper.
+        """
+        import random
+
+        from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.yielding import Yielding
+
+        build = lambda: Gaussian(jerk=1e-4)  # noqa: E731
+
+        def run(engine, rows):
+            for when, value in rows:
+                engine.predict(when)
+                engine.update(value, 0.09, when)
+            return engine
+
+        rng = random.Random(9)
+        stepped = [
+            (i * 900.0, (100.0 if i < 150 else 112.0) + rng.gauss(0.0, 0.3)) for i in range(300)
+        ]
+        alone = run(build(), stepped)
+        soft = run(Yielding(build), stepped)
+        assert soft.loglike > alone.loglike + 100.0, (alone.loglike, soft.loglike)
+        assert soft.widest > 2.0, soft.widest
+
+        # `reach = 1` is the member, exactly. If this drifts, the comparison
+        # above is measuring the wrapper rather than the softening.
+        inert = run(Yielding(build, reach=1.0), stepped)
+        assert inert.loglike == pytest.approx(alone.loglike)
+        assert inert.widest == pytest.approx(1.0)
+
+        rng = random.Random(21)
+        flat = [(i * 900.0, 100.0 + rng.gauss(0.0, 0.3)) for i in range(300)]
+        alone = run(build(), flat)
+        soft = run(Yielding(build), flat)
+        assert soft.loglike > alone.loglike - 10.0, (alone.loglike, soft.loglike)
+
+
 class TestRankThenMap:
     """Predict the order, then map it - and the claim that makes it worth it.
 
@@ -2914,6 +3092,24 @@ class TestRankThenMap:
 
         assert ours < theirs / 5.0, (ours, theirs)
         assert ours < 0.5, ours
+
+    def test_the_mapping_says_whether_it_helped(self):
+        """`improvement` can be negative, which is the point of having it."""
+        from till_infinity.structures.statespace.ranking import Mapping
+
+        scores = [float(k) for k in range(30)]
+        useful = Mapping()
+        useful.fit(scores, [3.0 + 2.0 * s for s in scores])
+        assert useful.improvement(scores, [3.0 + 2.0 * s for s in scores]) > 10.0
+
+        # A map fitted on noise cannot beat the constant by much, and may lose.
+        import random
+
+        rng = random.Random(2)
+        noise = [rng.gauss(0.0, 1.0) for _ in scores]
+        blind = Mapping()
+        blind.fit(scores, noise)
+        assert blind.improvement(scores, noise) < 0.5
 
     def test_the_hand_rolled_solve_matches_numpy(self):
         """The module rule: anything hand-written arrives with a reference.

@@ -71,6 +71,7 @@ from __future__ import annotations
 
 import math
 import random
+import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
@@ -284,6 +285,30 @@ class Mapping:
             return True
         turning = -self.coefficients[1] / (2.0 * self.coefficients[2])
         return not (self.low < turning < self.high)
+
+    def improvement(self, scores: Sequence[float], values: Sequence[float]) -> float:
+        """How much the map beats quoting the anchors' mean. **Can be negative.**
+
+        Taken from `structures/learning/calibration.py`, which scores *both*
+        streams on the same observations - its own output and the raw one it was
+        given - so the record can say whether calibrating helped:
+
+            Nothing consumes the calibrated number yet. It is published beside
+            the raw one so the record can say which is better before either
+            decides anything.
+
+        `Mapping` had no such number, which meant a fit that had learned nothing
+        and a fit that had learned something looked identical from outside. The
+        comparison is mean absolute error against a constant - the mean of the
+        values it was fitted on - and a positive result means the ordering
+        carried something the constant did not.
+        """
+        if not self.coefficients or len(scores) != len(values) or not values:
+            return float("nan")
+        constant = statistics.fmean(values)
+        ours = statistics.fmean(abs(self(s) - v) for s, v in zip(scores, values, strict=True))
+        theirs = statistics.fmean(abs(constant - v) for v in values)
+        return theirs - ours
 
     def __call__(self, score: float) -> float:
         if not self.coefficients:
