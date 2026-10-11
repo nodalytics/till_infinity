@@ -303,6 +303,28 @@ stated as a duration is a span that cannot be compared across timeframes.
 
 ---
 
+## 14. A sample size that implies more history than the instrument has
+
+**Shape.** A statistic is read before its `n` is. The `n` is arithmetically
+impossible for the instrument named, which means the series is not what its
+filename says.
+
+**Found here.** `slope_fade.py` reported momentum on daily usdjpy surviving
+costs across seven neighbouring cells at `t` up to +4.1 - the pattern the
+harness was built to look for. Then: `n = 3159` independent observations at a
+stride of five daily bars needs **15,800 daily bars**, and the file duly starts
+on **1971-01-03**. `EURUSD.1d` starts the same day, twenty-eight years before
+the euro existed, so most of it is a vendor's chained reconstruction. Restricted
+to 2010 onwards, all seven cells vanished and the survivor count fell to exactly
+the chance yield.
+
+**The check.** Print every series' **date range** beside its bar count, and ask
+whether the instrument existed for all of it. Then read `n` as a claim about the
+world before reading the `t` beside it. This contamination *manufactures*
+findings rather than hiding them, so it is not caught by a result looking weak.
+
+---
+
 ## What has actually caught things here
 
 Ranked by what they found, not by how they sound:
@@ -326,7 +348,11 @@ Ranked by what they found, not by how they sound:
    plausible-looking output; the one that was wrong failed its own stability
    criterion and the one that works predicted `p = 1` and measured it. A
    correction with no falsifiable consequence is a parameter.
-6. **Printing the number.** A filter reported `slope = 0.0000` forever and
+6. **Reading `n` as a claim about the world.** Three separate defects surfaced
+   this way in one session: `n = 39,998` meant a stride of one where the code
+   claimed to step by the window, `n = 10` meant a 4-week lookback had no
+   sample at all, and `n = 3159` on daily bars meant the file began in 1971.
+7. **Printing the number.** A filter reported `slope = 0.0000` forever and
    looked entirely healthy, because the covariance it needed to learn from was
    gated out of existence. The tests passed. Printing it took one line.
 

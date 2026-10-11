@@ -62,8 +62,9 @@ from __future__ import annotations
 import math
 import os
 import statistics
-from collections import Counter
 from pathlib import Path
+
+from till_infinity.structures.statespace.inputs import WEEK, bar_hours, coverage, ema
 
 SYMBOLS = (
     ("eurusd", "EURUSD"),
@@ -75,21 +76,43 @@ SYMBOLS = (
 
 FRAMES = ("15m", "1h", "4h", "1d")
 
-#: Bar lookbacks asked for, plus the one-to-two week pair which has to be
-#: expressed in time and converted per timeframe - 480 bars of 15m is a week,
-#: 5 bars of 1d is.
-LOOKBACKS = (5, 10, 20)
-WEEKS = (1.0, 2.0, 3.0, 4.0)
+#: Slope lookbacks, in **hours**. Redone on 2026-10-11: these were `(5, 10,
+#: 20)` bars with the one-to-four week pair bolted on beside them, which made
+#: the table two different things at once - a bar count means 1.25h at 15m and
+#: 5 days at 1d, so "lookback 5" named five estimators rather than one. Stated
+#: as durations the short end and the multi-week end are the same ladder, and
+#: the deduplication that used to be a special case for daily bars happens for
+#: every timeframe by construction.
+LOOKS = (1.0, 4.0, 24.0, 1 * WEEK, 2 * WEEK, 3 * WEEK, 4 * WEEK)
 
-#: Horizons to hold for, in bars.
-HORIZONS = (5, 20, 50)
+#: Horizons to hold for, in **hours**, for the same reason.
+HORIZONS = (4.0, 24.0, 1 * WEEK)
 
-#: Bars used to forecast volatility, from the speed result: the mean absolute
-#: move over the recent past, which beat every model quantity as a predictor of
-#: the next move's size.
-VOL_BARS = 20
+#: The volatility forecast's own window, in **hours**. From the speed result:
+#: the mean absolute move over the recent past, which beat every model quantity
+#: as a predictor of the next move's size. A day of trading rather than twenty
+#: bars, which was five hours at 15m and twenty days at 1d.
+VOL_HOURS = 24.0
 
 LIMIT = int(os.environ.get("LIMIT", "20000"))
+
+#: Fewest independent observations before a `t` is reported at all. A `t` on
+#: ten points is not a weak result, it is not a result, and the long lookbacks
+#: on fast bars produce exactly that - see `independent`.
+LEAST_INDEPENDENT = 30
+
+#: Only use bars at or after this date. **Not a tuning knob - a provenance
+#: filter.** `EURUSD.1d` in seqlab starts on 1971-01-03, twenty-eight years
+#: before the euro existed, so the early part of that series is a vendor's
+#: reconstruction rather than the market. `USDJPY.1d` starts the same day, at
+#: the collapse of Bretton Woods, under capital controls and official
+#: intervention that no longer exist.
+#:
+#: The first time this harness ran on hours it reported a momentum cluster on
+#: `usdjpy 1d` surviving costs at `t` up to +4.1 across seven neighbouring
+#: cells - over a window starting in 1971. Whatever that is evidence about, it
+#: is not the market this desk trades. Set `SINCE=0` to see the whole file.
+SINCE = float(os.environ.get("SINCE", "1262304000"))  # 2010-01-01
 
 
 def tick_size(closes: list[float]) -> float:
@@ -101,9 +124,7 @@ def tick_size(closes: list[float]) -> float:
     units on a market that trades.
     """
     positive = [
-        abs(closes[i] - closes[i - 1])
-        for i in range(1, len(closes))
-        if closes[i] != closes[i - 1]
+        abs(closes[i] - closes[i - 1]) for i in range(1, len(closes)) if closes[i] != closes[i - 1]
     ]
     return min(positive) if positive else 0.0
 
@@ -120,11 +141,14 @@ def load(stem: str, frame: str):
         order = np.argsort(bundle["time"])
         times = bundle["time"][order].tolist()
         closes = bundle["close"][order].tolist()
-        spreads = (
-            bundle["spread"][order].tolist()
-            if "spread" in bundle
-            else [0.0] * len(closes)
-        )
+        spreads = bundle["spread"][order].tolist() if "spread" in bundle else [0.0] * len(closes)
+    # **The provenance filter, before the length cap.** Cutting after the cap
+    # would silently return nothing for a series whose last 20,000 bars all
+    # predate the cut.
+    first = 0
+    while first < len(times) and times[first] < SINCE:
+        first += 1
+    times, closes, spreads = times[first:], closes[first:], spreads[first:]
     if len(closes) > LIMIT:
         times, closes, spreads = times[-LIMIT:], closes[-LIMIT:], spreads[-LIMIT:]
     return times, closes, spreads
@@ -176,6 +200,15 @@ def independent(values: list[float], overlap: int) -> tuple[float, float, int]:
     observations. That is not a small sample, it is no sample, and it is the
     honest reason the long-lookback results cannot be tested here rather than a
     reason they are false.
+
+    **And that paragraph used to be the only place it was enforced.** The
+    survivor gate tested `|t| > 3` and nothing else, so the rerun on 2026-10-11
+    duly promoted `usdjpy 15m look=672h h=168h` - `t = -3.1` **on ten points**,
+    reporting a mean of -8.0 volatility units - into the list of things worth
+    reading. A docstring that states a limit the code does not apply is bug
+    shape #8 in the `finding-bugs` skill, and this was an instance of it in the
+    file that exists to prevent exactly this error. `LEAST_INDEPENDENT` applies
+    it now.
     """
     step = max(overlap, 1)
     sample = values[::step]
@@ -208,27 +241,40 @@ def main() -> None:
             unit = volatility_unit(closes)
             tick = tick_size(closes)
             points = [s for s in spreads if s > 0]
-            spread_vol = (
-                (statistics.median(points) * tick / unit) if points and tick > 0 else 0.0
-            )
+            spread_vol = (statistics.median(points) * tick / unit) if points and tick > 0 else 0.0
             # Everything downstream in volatility units.
             values = [(c / closes[0] - 1.0) * 10_000 / (unit * 10_000 / closes[0]) for c in closes]
-            bar_hours = max(
-                statistics.median(
-                    [(times[i] - times[i - 1]) / 3600.0 for i in range(1, min(500, len(times)))]
-                ),
-                1e-9,
-            )
-            week_bars = [max(int(round(w * 5 * 24 / bar_hours)), 2) for w in WEEKS]
-            # **Deduplicated, and the collision is informative.** On daily bars
-            # one week is 5 bars and two weeks is 10, which are already in
-            # `LOOKBACKS` - so the "1-2 week" test at 1d *is* the 5 and 10 bar
-            # test, and the first version of this harness ran and reported each
-            # of them twice.
-            lookbacks = sorted(set(LOOKBACKS) | set(week_bars))
+            bar = bar_hours(times)
+            if bar <= 0:
+                continue
+            # **`coverage`, not a hardcoded five-day week.** This harness had
+            # `w * 5 * 24 / bar`, which is wrong on crypto and on the Deriv
+            # synthetics - they trade seven days - and wrong by a different
+            # amount on every instrument with its own session. The share of the
+            # calendar a series trades is inferred from its own timestamps.
+            cover = coverage(times, bar)
 
-            print(f"=== {label} {frame}: {len(values)} bars, bar={bar_hours:.3g}h, "
-                  f"spread={spread_vol:.3f} vol units, week={week_bars[0]} bars ===")
+            def spans(hours: float, cover: float = cover, bar: float = bar) -> int:
+                """Calendar hours to bars for *this* series. Bound explicitly,
+                because a closure over a loop variable reads the last
+                iteration's value if it is ever called later."""
+                return max(round(hours * max(cover, 1e-9) / bar), 2)
+
+            # Durations that land on the same bar count are one lookback, not
+            # several - which on 1d bars collapses the short end into the weekly
+            # end, exactly the collision the bar-count version had to special-
+            # case and then got wrong anyway.
+            looks: dict[int, float] = {}
+            for hours in LOOKS:
+                looks.setdefault(spans(hours), hours)
+            lookbacks = sorted(looks)
+            vol_bars = spans(VOL_HOURS)
+
+            print(
+                f"=== {label} {frame}: {len(values)} bars, bar={bar:.3g}h, "
+                f"coverage={cover:.3f}, spread={spread_vol:.3f} vol units, "
+                f"week={spans(WEEK)} bars ==="
+            )
 
             moves = [0.0] + [values[k] - values[k - 1] for k in range(1, len(values))]
 
@@ -237,21 +283,11 @@ def main() -> None:
             sigmas = [0.0] * len(values)
             run = 0.0
             for k in range(1, len(values)):
-                if k <= VOL_BARS:
+                if k <= vol_bars:
                     run = statistics.fmean(abs(v) for v in moves[1 : k + 1]) if k else 0.0
                 else:
-                    run += (abs(moves[k]) - abs(moves[k - VOL_BARS])) / VOL_BARS
+                    run += (abs(moves[k]) - abs(moves[k - vol_bars])) / vol_bars
                 sigmas[k] = max(run, 1e-9)
-
-            def ema(source: list[float], span: int) -> list[float]:
-                """Causal EMA, `alpha = 2/(span+1)`. Nothing here sees ahead."""
-                alpha = 2.0 / (span + 1.0)
-                out = [0.0] * len(source)
-                current = 0.0
-                for k, value in enumerate(source):
-                    current = value if k == 0 else current + alpha * (value - current)
-                    out[k] = current
-                return out
 
             #: The standardised move, which is what an EMA over z-scores
             #: smooths. Standardising *before* the EMA rather than after is
@@ -260,125 +296,147 @@ def main() -> None:
             #: drift and a volatile-market drift of the same magnitude do not
             #: contribute equally.
             zmoves = [moves[k] / sigmas[k] if sigmas[k] > 0 else 0.0 for k in range(len(moves))]
-            print(f"  {'look':>4}{'signal':>11}{'h':>5}{'follow R':>10}{'t':>7}"
-                  f"{'after cost':>12}{'hit':>7}{'overstretched':>15}{'t':>7}")
+            print(
+                f"  {'look':>4}{'signal':>11}{'h':>5}{'follow R':>10}{'t':>7}"
+                f"{'after cost':>12}{'hit':>7}{'overstretched':>15}{'t':>7}"
+            )
 
             emas = {look: ema(moves, look) for look in lookbacks}
             zemas = {look: ema(zmoves, look) for look in lookbacks}
 
             for look in lookbacks:
-              for kind in ("slope", "ema slope", "ema zscore"):
-                for horizon in HORIZONS:
-                    plain: list[float] = []
-                    sized: list[float] = []
-                    stretched: list[float] = []
-                    vols: list[float] = []
-                    ratios: list[float] = []
-                    start = max(look, VOL_BARS) + 1
-                    for k in range(start, len(values) - horizon):
-                        slope = (values[k] - values[k - look]) / look
-                        sigma = sigmas[k]
-                        if sigma <= 0:
-                            continue
-                        if kind == "slope":
-                            signal = slope
-                        elif kind == "ema slope":
-                            signal = emas[look][k]
-                        else:
-                            signal = zemas[look][k]
-                        side = 1.0 if signal > 0 else (-1.0 if signal < 0 else 0.0)
-                        if side == 0.0:
-                            continue
-                        # Return to FOLLOWING the slope. Fade is the negative.
-                        got = side * (values[k + horizon] - values[k])
-                        plain.append(got)
-                        # Sized by `1 / forecast vol`, which is the quantity a
-                        # desk actually earns: return per unit of risk taken,
-                        # rather than return per trade regardless of size.
-                        sized.append(got / sigma)
-                        vols.append(sigma)
-                        # Overstretch: how far price went over the lookback
-                        # against what this volatility implies it should have.
-                        #
-                        # **The `sqrt(look)` matters.** The proposal was
-                        # `slope * N / sigma`, and `slope * N` is the total
-                        # travel, so dividing by one bar's `sigma` gives a
-                        # number that grows like `sqrt(N)` for *any* series -
-                        # a random walk would read as more overstretched the
-                        # longer the lookback, purely by arithmetic. Dividing
-                        # by `sigma * sqrt(N)` compares the travel to what a
-                        # random walk would have done over the same span, so
-                        # 1.0 means "exactly as far as chance" and the number
-                        # is comparable across lookbacks.
-                        ratio = abs(slope) * look / (sigma * math.sqrt(look))
-                        ratios.append(ratio)
-                    if len(plain) < 200:
-                        continue
-                    cells += 1
-                    mean, _se, t, n = stats(plain)
-                    after = mean - spread_vol
-                    hit = statistics.fmean(1.0 if v > 0 else 0.0 for v in plain)
-
-                    # The >1 standard deviation overstretch filter, measured on
-                    # this series' own distribution of the ratio rather than
-                    # assumed to be 1.0.
-                    cut = statistics.fmean(ratios) + statistics.stdev(ratios)
-                    stretched = [g for g, r in zip(plain, ratios, strict=True) if r >= cut]
-                    smean, _sse, st, sn = stats(stretched)
-                    cells += 1
-
-                    # The honest `t`: one observation per non-overlapping
-                    # window, where the window spans the signal's lookback as
-                    # well as the outcome's horizon.
-                    imean, it, inn = independent(plain, max(look, horizon))
-                    flag = ""
-                    if abs(it) > 3 and abs(after) > 0:
-                        flag = " <-"
-                        survivors.append(
-                            f"{label} {frame} {kind} look={look} h={horizon} "
-                            f"follow {mean:+.3f} (overlapping t{t:+.1f}, "
-                            f"INDEPENDENT t{it:+.1f} on n={inn}) "
-                            f"after cost {after:+.3f}"
-                        )
-                    zmean, _zse, zt, _zn = stats(sized)
-                    print(f"  {look:>4}{kind[:10]:>11}{horizon:>5}{mean:>+10.3f}{t:>+7.1f}"
-                          f"{after:>+12.3f}{hit:>7.1%}"
-                          f"{smean:>+15.3f}{st:>+7.1f}{flag}")
-                    print(f"  {'':>6}{'sized 1/vol':>9}{zmean:>+11.3f}{zt:>+7.1f}"
-                          f"   independent t{it:>+6.1f} on n={inn}")
-
-                    if look == lookbacks[0] and horizon == HORIZONS[0] and kind == "slope":
-                        # Volatility regime, on the shortest pair only, to keep
-                        # the table readable.
-                        paired = sorted(zip(vols, plain, strict=True))
-                        fifth = len(paired) // 5
-                        for b, name in enumerate(("quietest", "quiet", "mid", "fast", "fastest")):
-                            chunk = paired[b * fifth : (b + 1) * fifth]
-                            if len(chunk) < 100:
+                for kind in ("slope", "ema slope", "ema zscore"):
+                    for hours_ahead in HORIZONS:
+                        horizon = spans(hours_ahead)
+                        plain: list[float] = []
+                        sized: list[float] = []
+                        stretched: list[float] = []
+                        vols: list[float] = []
+                        ratios: list[float] = []
+                        start = max(look, vol_bars) + 1
+                        for k in range(start, len(values) - horizon):
+                            slope = (values[k] - values[k - look]) / look
+                            sigma = sigmas[k]
+                            if sigma <= 0:
                                 continue
-                            m, _s, tt, _nn = stats([g for _v, g in chunk])
-                            regime_rows.append((label, frame, name, m, tt, spread_vol))
+                            if kind == "slope":
+                                signal = slope
+                            elif kind == "ema slope":
+                                signal = emas[look][k]
+                            else:
+                                signal = zemas[look][k]
+                            side = 1.0 if signal > 0 else (-1.0 if signal < 0 else 0.0)
+                            if side == 0.0:
+                                continue
+                            # Return to FOLLOWING the slope. Fade is the negative.
+                            got = side * (values[k + horizon] - values[k])
+                            plain.append(got)
+                            # Sized by `1 / forecast vol`, which is the quantity a
+                            # desk actually earns: return per unit of risk taken,
+                            # rather than return per trade regardless of size.
+                            sized.append(got / sigma)
+                            vols.append(sigma)
+                            # Overstretch: how far price went over the lookback
+                            # against what this volatility implies it should have.
+                            #
+                            # **The `sqrt(look)` matters.** The proposal was
+                            # `slope * N / sigma`, and `slope * N` is the total
+                            # travel, so dividing by one bar's `sigma` gives a
+                            # number that grows like `sqrt(N)` for *any* series -
+                            # a random walk would read as more overstretched the
+                            # longer the lookback, purely by arithmetic. Dividing
+                            # by `sigma * sqrt(N)` compares the travel to what a
+                            # random walk would have done over the same span, so
+                            # 1.0 means "exactly as far as chance" and the number
+                            # is comparable across lookbacks.
+                            ratio = abs(slope) * look / (sigma * math.sqrt(look))
+                            ratios.append(ratio)
+                        if len(plain) < 200:
+                            continue
+                        cells += 1
+                        mean, _se, t, n = stats(plain)
+                        after = mean - spread_vol
+                        hit = statistics.fmean(1.0 if v > 0 else 0.0 for v in plain)
+
+                        # The >1 standard deviation overstretch filter, measured on
+                        # this series' own distribution of the ratio rather than
+                        # assumed to be 1.0.
+                        cut = statistics.fmean(ratios) + statistics.stdev(ratios)
+                        stretched = [g for g, r in zip(plain, ratios, strict=True) if r >= cut]
+                        smean, _sse, st, sn = stats(stretched)
+                        cells += 1
+
+                        # The honest `t`: one observation per non-overlapping
+                        # window, where the window spans the signal's lookback as
+                        # well as the outcome's horizon.
+                        imean, it, inn = independent(plain, max(look, horizon))
+                        flag = ""
+                        if inn < LEAST_INDEPENDENT:
+                            # Not a weak test - no test. Say so rather than
+                            # print a number that will be read as one.
+                            flag = " (n too small)"
+                        elif abs(it) > 3 and abs(after) > 0:
+                            flag = " <-"
+                            survivors.append(
+                                f"{label} {frame} {kind} look={looks[look]:g}h "
+                                f"h={hours_ahead:g}h "
+                                f"follow {mean:+.3f} (overlapping t{t:+.1f}, "
+                                f"INDEPENDENT t{it:+.1f} on n={inn}) "
+                                f"after cost {after:+.3f}"
+                            )
+                        zmean, _zse, zt, _zn = stats(sized)
+                        print(
+                            f"  {looks[look]:>3g}h{kind[:10]:>11}{hours_ahead:>4g}h"
+                            f"{mean:>+10.3f}{t:>+7.1f}"
+                            f"{after:>+12.3f}{hit:>7.1%}"
+                            f"{smean:>+15.3f}{st:>+7.1f}{flag}"
+                        )
+                        tail = (
+                            f"   independent n={inn} - too few to test"
+                            if inn < LEAST_INDEPENDENT
+                            else f"   independent t{it:>+6.1f} on n={inn}"
+                        )
+                        print(f"  {'':>6}{'sized 1/vol':>9}{zmean:>+11.3f}{zt:>+7.1f}{tail}")
+
+                        if look == lookbacks[0] and hours_ahead == HORIZONS[0] and kind == "slope":
+                            # Volatility regime, on the shortest pair only, to keep
+                            # the table readable.
+                            paired = sorted(zip(vols, plain, strict=True))
+                            fifth = len(paired) // 5
+                            for b, name in enumerate(
+                                ("quietest", "quiet", "mid", "fast", "fastest")
+                            ):
+                                chunk = paired[b * fifth : (b + 1) * fifth]
+                                if len(chunk) < 100:
+                                    continue
+                                m, _s, tt, _nn = stats([g for _v, g in chunk])
+                                regime_rows.append((label, frame, name, m, tt, spread_vol))
 
             # How wide does it get in N bars - the excursion question, which is
             # what a stop and a target actually need.
-            for horizon in HORIZONS:
+            for hours_ahead in HORIZONS:
+                horizon = spans(hours_ahead)
                 widest = []
                 for k in range(1, len(values) - horizon):
                     window = values[k : k + horizon + 1]
                     widest.append(max(window) - min(window))
-                excursions[(f"{label} {frame}", horizon)] = widest
+                excursions[(f"{label} {frame}", hours_ahead, horizon)] = widest
             print()
 
     print("=== how wide does the distance get in N bars? ===")
     print("  the full range travelled within the window, in volatility units")
-    print(f"  {'series':<16}{'N':>5}{'median':>9}{'p90':>9}{'p99':>9}{'max':>9}{'vs sqrt(N)':>12}")
-    for (series, horizon), widest in excursions.items():
+    print(
+        f"  {'series':<16}{'span':>5}{'median':>9}{'p90':>9}{'p99':>9}{'max':>9}{'vs sqrt(N)':>12}"
+    )
+    for (series, hours_ahead, horizon), widest in excursions.items():
         widest.sort()
         n = len(widest)
         med = widest[n // 2]
-        print(f"  {series:<16}{horizon:>5}{med:>9.2f}{widest[int(n * 0.9)]:>9.2f}"
-              f"{widest[int(n * 0.99)]:>9.2f}{widest[-1]:>9.2f}"
-              f"{med / math.sqrt(horizon):>12.2f}")
+        print(
+            f"  {series:<16}{hours_ahead:>4g}h{med:>9.2f}{widest[int(n * 0.9)]:>9.2f}"
+            f"{widest[int(n * 0.99)]:>9.2f}{widest[-1]:>9.2f}"
+            f"{med / math.sqrt(horizon):>12.2f}"
+        )
 
     print("\n=== by volatility regime, shortest lookback and horizon ===")
     print("  fading is said to break in high-vol breakouts; this is the test")
