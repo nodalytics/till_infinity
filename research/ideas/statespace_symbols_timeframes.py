@@ -71,6 +71,7 @@ import gzip
 import math
 import os
 import statistics
+from collections import Counter
 from pathlib import Path
 
 from till_infinity.structures.statespace.diagnostics import residuals
@@ -146,6 +147,10 @@ class RandomWalk:
         self.noise = noise
         self.last: float | None = None
         self.at: float | None = None
+        #: The bar length, learned as the smallest gap seen between readings,
+        #: so `band` can diffuse per bar without being told the timeframe.
+        self.step: float = 0.0
+        self.when_last: float | None = None
         self.seen = 0
         self.loglike = 0.0
         self.last_standardised = 0.0
@@ -168,16 +173,48 @@ class RandomWalk:
     def predict(self, when: float) -> None:
         self.at = when
 
+    def at_time(self, when: float) -> float:
+        """The last reading, at every horizon. **Flat is the point.**
+
+        A random walk has no view beyond one bar, which is exactly why it is
+        the right null here: a member carrying real structure has to separate
+        from a flat line as `h` grows, and if it cannot then it has no
+        structure.
+        """
+        return self.value
+
+    def band(self, when: float, sigmas: float = 2.0) -> tuple[float, float]:
+        """Widening as `sqrt(h)`, which is the other half of the null.
+
+        A flat forecast with a *fixed* band would be a straw man - it would lose
+        the coverage test at every horizon for a reason that has nothing to do
+        with its forecast. The honest null diffuses: variance proportional to
+        elapsed time. The bar length is learned from the intervals it has seen
+        rather than passed in, so the null needs no parameter the members do not
+        have.
+        """
+        bars = 1.0
+        if self.step > 0 and self.at is not None:
+            bars = max((float(when) - self.at) / self.step, 0.0)
+        half = sigmas * self.noise * math.sqrt(max(bars, 1.0))
+        return (self.value - half, self.value + half)
+
     def update(self, measured: float, noise: float, when: float | None = None) -> float:
         innovation = 0.0 if self.last is None else measured - self.last
         if self.last is not None:
-            spread = math.sqrt(self.noise**2 + (noise if noise > 0 else 0.0) ** 2)
+            # `noise` is the measurement VARIANCE by the `Filter` contract.
+            spread = math.sqrt(self.noise**2 + max(noise, 0.0))
             self.last_standardised = innovation / spread if spread > 0 else 0.0
             self.loglike += (
                 -0.5 * (innovation / self.noise) ** 2
                 - 0.5 * math.log(2.0 * math.pi)
                 - math.log(self.noise)
             )
+        if when is not None and self.when_last is not None and when > self.when_last:
+            gap = when - self.when_last
+            self.step = gap if self.step <= 0 else min(self.step, gap)
+        if when is not None:
+            self.when_last = when
         self.last = measured
         self.seen += 1
         return innovation
@@ -294,6 +331,67 @@ def drive(build, times: list[float], values: list[float], record: bool = False):
     return engine.loglike, engine.seen, rows
 
 
+#: The horizons the h-step arm scores. One is kept so the new arm can be checked
+#: against the old one; fifty is where a random walk has nothing left to say.
+HORIZONS = (1, 5, 20, 50)
+
+
+def ahead(build, times: list[float], values: list[float]) -> dict[int, tuple]:
+    """Score each member `h` bars ahead, not one. `{h: (loglike/pt, rmse, cover)}`
+
+    **Why this arm exists.** Every other number in this harness is a one-step
+    predictive likelihood, and that is the objective a random walk is best at -
+    it was always going to win there, and it did, 16 of 39 series. The desk does
+    not trade one bar ahead. A random walk has **no view at all** beyond one
+    bar: its forecast is flat and its band grows as `sqrt(h)`, so a member with
+    any real structure should separate from it as `h` grows, and nowhere else.
+
+    This is also the only arm where `swarm`'s anchor can show anything. The
+    anchor exists so that extrapolation far ahead returns the level rather than
+    decaying to zero, and at `h = 1` it has barely moved - the member was
+    measured on the one horizon where its distinguishing feature does nothing.
+
+    `at_time` and `band` are **side-effect free on every member**, checked
+    rather than assumed, so the filter can be asked about the future without
+    being advanced into it. That is what makes this honest: the member sees data
+    up to `k` and nothing after it.
+    """
+    engine = build()
+    out: dict[int, list] = {h: [[], [], []] for h in HORIZONS}
+    biggest = max(HORIZONS)
+    for k, (when, value) in enumerate(zip(times, values, strict=True)):
+        engine.predict(when)
+        engine.update(value, NOISE, when)
+        if k < 30 or k + biggest >= len(values):
+            continue
+        for h in HORIZONS:
+            future = times[k + h]
+            truth = values[k + h]
+            guess = engine.at_time(future)
+            low, high = engine.band(future)
+            # The band is +/- two sigma, so this recovers the member's own
+            # h-step spread - which is the quantity being tested as much as the
+            # point forecast is.
+            spread = max((high - low) / 4.0, 1e-9)
+            total = math.sqrt(spread * spread + NOISE)
+            error = truth - guess
+            out[h][0].append(
+                -0.5 * (error / total) ** 2
+                - 0.5 * math.log(2.0 * math.pi)
+                - math.log(total)
+            )
+            out[h][1].append(error * error)
+            out[h][2].append(1.0 if low <= truth <= high else 0.0)
+    return {
+        h: (
+            statistics.fmean(v[0]) if v[0] else float("nan"),
+            math.sqrt(statistics.fmean(v[1])) if v[1] else float("nan"),
+            statistics.fmean(v[2]) if v[2] else float("nan"),
+        )
+        for h, v in out.items()
+    }
+
+
 def grids():
     """The four models as `(name, {label: factory})`.
 
@@ -392,6 +490,7 @@ def main() -> None:
         "inside_band",
     ]
     table: dict[tuple[str, str], dict[str, float]] = {}
+    multi_table: dict[tuple[str, str], dict[str, dict]] = {}
     edges: list[str] = []
 
     with gzip.open(RESULTS, "wt", newline="") as handle:
@@ -415,6 +514,7 @@ def main() -> None:
 
                 print(f"=== {symbol} {timeframe}: {len(values)} bars ===")
                 scores: dict[str, float] = {}
+                horizons: dict[str, dict] = {}
                 for name, builds in grids():
                     best = (-math.inf, None)
                     for label, build in builds.items():
@@ -450,6 +550,13 @@ def main() -> None:
                     ):
                         edges.append(f"{symbol} {timeframe} {name}: {params}")
 
+                    multi = ahead(builds[params], times[half:], values[half:])
+                    horizons[name] = multi
+                    cells = "".join(
+                        f"{multi[h][0]:>9.3f}" for h in HORIZONS if h in multi
+                    )
+                    print(f"    {'h-step loglike/pt':<24}{cells}")
+
                     for point in points:
                         writer.writerow(
                             {
@@ -461,6 +568,7 @@ def main() -> None:
                             }
                         )
                 table[(symbol, timeframe)] = scores
+                multi_table[(symbol, timeframe)] = horizons
                 if scores:
                     print(f"  -> best: {max(scores, key=lambda k: scores[k])}\n")
 
@@ -471,6 +579,45 @@ def main() -> None:
         cells = "".join(f"{scores.get(n, float('nan')):>15.3f}" for n in names)
         best = max(scores, key=lambda k: scores[k]) if scores else "-"
         print(f"  {symbol:<8}{timeframe:<5}{cells}   {best}")
+
+    print("\n=== h-step ahead: where a random walk has nothing left to say ===")
+    print("  held-out log-likelihood a point at each horizon. A random walk's")
+    print("  forecast is flat beyond one bar, so a member with real structure")
+    print("  should separate from it as h grows - and nowhere else.\n")
+    names_h = [n for n, _ in grids()]
+    print(f"  {'series':<14}{'member':<28}" + "".join(f"{f'h={h}':>9}" for h in HORIZONS))
+    wins = {h: Counter() for h in HORIZONS}
+    for (symbol, timeframe), per in multi_table.items():
+        for name in names_h:
+            if name not in per:
+                continue
+            cells = "".join(f"{per[name][h][0]:>9.3f}" for h in HORIZONS)
+            print(f"  {symbol + ' ' + timeframe:<14}{name:<28}{cells}")
+        for h in HORIZONS:
+            ranked = [(per[n][h][0], n) for n in names_h if n in per]
+            if ranked:
+                wins[h][max(ranked)[1]] += 1
+        print()
+    print("  wins by horizon:")
+    for h in HORIZONS:
+        tally = ", ".join(f"{n} {c}" for n, c in wins[h].most_common())
+        print(f"    h={h:<4} {tally}")
+
+    print("\n=== and the h-step coverage, which is the band's own test ===")
+    print(f"  {'member':<28}" + "".join(f"{f'h={h}':>9}" for h in HORIZONS))
+    for name in names_h:
+        cells = []
+        for h in HORIZONS:
+            vals = [
+                per[name][h][2]
+                for per in multi_table.values()
+                if name in per and not math.isnan(per[name][h][2])
+            ]
+            cells.append(f"{statistics.fmean(vals):>9.1%}" if vals else f"{'-':>9}")
+        print(f"  {name:<28}" + "".join(cells))
+    print("  (nominal 95%. A member whose band is honest at h=1 and not at h=50")
+    print("   is one whose widening rate is wrong, which is a different fault")
+    print("   from a bad point forecast.)")
 
     print("\n=== selection, the one clean experiment ===")
     print("  `S4D-Real LTI` against `S6 selective`: the same model, one parameter apart.")

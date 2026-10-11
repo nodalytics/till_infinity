@@ -1471,6 +1471,118 @@ very nearly pure diffusion, with a hint of trending that grows with the horizon.
 `band(t + h)`. Until that exists, every ranking in this file is a ranking at one
 bar and should be read as such.
 
+## Fade the slope, or follow it? Follow, on the daily - and the fades were an artefact
+
+`research/ideas/slope_fade.py`, 2026-10-11. Asked for: forecast volatility and
+**invert** the recent slope, try a one-to-two week lookback, size by
+`1/forecast vol`, filter on overstretch above one standard deviation, add an EMA
+over slopes and an EMA over z-scores, and check by volatility regime.
+
+1,800 cells - five symbols by four timeframes by five lookbacks by three signal
+flavours by three horizons - of which **4.9 are expected above `|t| = 3` by
+chance**. So the list matters less than whether the survivors cluster.
+
+### The correction that changed the answer
+
+The first run found fading a one-to-two week slope on 15m bars with
+`t = -10.8`, on usdjpy **and on v75**. A generated series showing the same
+effect as a market is the synthetic control doing its job, and the cause was
+overlapping windows: at `look = 960` and `h = 50`, consecutive observations
+share 1,010 bars out of 1,010, so ten thousand of them are nothing like ten
+thousand independent draws. Overstating `t` by about `sqrt(overlap)` is how this
+kind of test manufactures significance.
+
+`independent()` now steps by the horizon and keeps one observation per
+non-overlapping window. **Every long-lookback fade disappeared.** The table still
+prints the overlapping `t` beside it, because the gap between the two is the
+most instructive number in the harness.
+
+### What survives
+
+**Following the slope on daily bars, on usdjpy, in nine neighbouring cells:**
+
+| signal | look | h | follow R | independent t | after cost |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| slope | 10 | 5 | +0.151 | +3.9 | +0.102 |
+| slope | 20 | 5 | +0.177 | +4.9 | +0.129 |
+| ema slope | 5 | 5 | +0.137 | +4.1 | +0.089 |
+| ema slope | 10 | 5 | +0.157 | **+4.7** | +0.109 |
+| ema slope | 20 | 5 | +0.156 | +4.3 | +0.108 |
+| ema zscore | 5 | 5 | +0.138 | +3.9 | +0.089 |
+| ema zscore | 10 | 5 | +0.158 | +4.5 | +0.110 |
+| ema zscore | 20 | 5 | +0.166 | +4.6 | +0.118 |
+
+All three signal flavours, all three lookbacks, the same horizon, the same sign,
+and **positive after one spread**. That is the pattern a real effect makes and an
+isolated square does not. eurusd 1d agrees on two cells, `t` +3.1 and +3.4.
+
+**The EMA variants are the best of the three**, slightly: `ema slope` and
+`ema zscore` reach `t = +4.7` where the raw slope reaches +4.9 at one lookback
+and +3.9 at another. Smoothing helps a little and standardising before smoothing
+helps about as much as smoothing alone, which is worth knowing because the
+z-score version is the more expensive one to compute.
+
+**v75 produced no survivors at all**, which is the control working: the
+surviving effects are on markets and not on a generator.
+
+### The one surviving fade is exactly eaten by the spread
+
+gbpusd 15m, `ema slope` and `ema zscore`, `look` 5 and 10 at `h = 5`:
+`follow` is -0.113 to -0.147 at independent `t` of -3.0 to -3.2, so fading earns
+that much gross. The 15m spread there is 0.113 volatility units. **The edge and
+the cost are the same number**, which is the third time in this file that a real
+effect has turned out to be the size of the spread.
+
+### Volatility regime: no structure, and the claim is not supported
+
+"Fading breaks in high-vol breakouts" is testable and does not hold here. On
+eurusd 15m the fade is **strongest in the quietest regime** - `follow` -0.166 at
+`t = -4.0` - and also negative in the fastest, -0.181, with the `fast` bucket
+*positive* at +0.106. eurusd 1h runs the other way: positive in the two quiet
+buckets, negative in `fast`. The sign flips across regimes and timeframes without
+order.
+
+### How wide does it get in N bars - the useful table
+
+The full range travelled inside the window, in volatility units. This is the
+number a stop and a target actually need and it was the easiest of the four
+questions to answer:
+
+| series | N | median | p90 | p99 | max |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| eurusd 15m | 5 | 3.45 | 8.37 | 17.65 | 44.71 |
+| eurusd 15m | 20 | 8.75 | 19.26 | 35.72 | 66.57 |
+| eurusd 15m | 50 | 15.57 | 31.70 | 58.43 | 88.95 |
+| eurusd 1h | 50 | 20.07 | 37.48 | 62.33 | 127.40 |
+| eurusd 4h | 50 | 19.99 | 37.29 | 62.39 | 90.06 |
+
+**A trade held 50 bars on eurusd 15m sits through 15.6 volatility units of
+wandering at the median and 58 at the 99th percentile.** Against that, the
+scalper strategies' `max_against_vol = 1.5` and `trail_vol = 0.5` are sized for
+a completely different horizon - which is consistent, since those are scalps,
+and is worth having written down the moment anyone proposes holding one longer.
+
+The range grows faster than `sqrt(N)`: the ratio runs 1.54, 1.96, 2.20 at 15m
+across N of 5, 20, 50. A random walk's expected range is about `1.6*sqrt(N)`
+times the per-step size, so 15m is near that and the longer timeframes sit
+above it.
+
+### What this says about the proposal
+
+**Invert the slope: no.** The fades either vanish under the overlap correction or
+are the size of the spread. The direction that survives is **follow**, which is
+consistent with the diffusion measurement that preceded it - this series travels
+at 1.00 to 1.07 times a `sqrt(h)` walk, faintly *trending*, and a fade wants the
+opposite.
+
+**Forecast volatility: yes, and it was never the doubtful half.** Speed predicts
+the next move's size with a 3.12x spread at one bar and 2.03x at fifty, which is
+what makes `1/sigma` sizing and the overstretch ratio meaningful.
+
+**One-to-two weeks: on daily bars it is the 5-10 bar lookback**, which is where
+following works. On 15m it is 480-960 bars, where the apparent effect was the
+overlap artefact.
+
 ## Members not written
 
 Each already names the null it must beat, in `family.PENDING`. Do not add one

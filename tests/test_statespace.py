@@ -2391,12 +2391,13 @@ class TestSwarmLikelihood:
         from till_infinity.structures.statespace.swarm import Swarm
 
         spread = 0.5
+        variance = spread * spread  # `noise` is a variance, per the contract
         engine = Swarm(noise=1e-9, wander=0.0, drift=0.0, scale=0.0)
-        engine.update(100.0, spread, 0.0)  # seeds, scores nothing
+        engine.update(100.0, variance, 0.0)  # seeds, scores nothing
         assert engine.loglike == 0.0
 
         # One further reading, offset so the density is not at its peak.
-        engine.update(101.0, spread, 3600.0)
+        engine.update(101.0, variance, 3600.0)
         expected = (
             -0.5 * ((101.0 - 100.0) / spread) ** 2
             - 0.5 * math.log(2.0 * math.pi)

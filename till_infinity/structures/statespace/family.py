@@ -274,7 +274,21 @@ class Filter(Protocol):
 
     def update(self, measured: float, noise: float, when: float | None = None) -> float:
         """Fold in one noisy reading. Returns the innovation, which is what every
-        scoring question here needs."""
+        scoring question here needs.
+
+        **`noise` is the measurement VARIANCE `R`, in the subject's units
+        squared** - not a standard deviation. The contract did not say, and the
+        members disagreed: `linear` computes `s = p00 + noise`, treating it as a
+        variance, while `selective` and `swarm` used it directly as a spread. A
+        harness passing 0.4 was therefore giving three members a standard
+        deviation of 0.632 and two of them 0.400, which made every comparison
+        between the two groups unfair by 58%.
+
+        That is the **fourth** quantity in this package to mean two things under
+        one name - after `loglike`, `last_standardised` and `existence` - and the
+        first to be an *argument* rather than an accessor. The rule below now
+        covers both.
+        """
         ...
 
     def at_time(self, when: float) -> float:

@@ -306,7 +306,10 @@ class Swarm:
             return 0.0
 
         np = _numpy()
-        spread = noise if noise > 0.0 else self.noise
+        # `noise` is a **variance** by the `Filter` contract; `self.noise`
+        # is a standard deviation. Taking the root is what makes a harness
+        # able to pass one number to every member and mean one thing.
+        spread = math.sqrt(noise) if noise > 0.0 else self.noise
         innovation = measured - self.value
         z = innovation / spread if spread > 0.0 else 0.0
 

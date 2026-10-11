@@ -365,7 +365,10 @@ class Selective:
             return 0.0
 
         innovation = measured - self.value
-        spread = noise if noise > 0.0 else self.noise
+        # `noise` is a **variance** by the `Filter` contract; `self.noise`
+        # is a standard deviation. Taking the root is what makes a harness
+        # able to pass one number to every member and mean one thing.
+        spread = math.sqrt(noise) if noise > 0.0 else self.noise
         z = innovation / spread if spread > 0.0 else 0.0
 
         # Scored before the state moves, which is the only order that gives a
