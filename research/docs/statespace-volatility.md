@@ -242,3 +242,104 @@ wrong: a generated series that shows the same effect as a market is still the
 fastest way to catch a method artefact. The correction is that it is **also** a
 market, so "no effect on v75" is a finding about v75 and not only a clean bill
 of health for the method.
+
+## Is volatility rough? The Hurst exponent of realised variance
+
+Asked on 2026-10-11, after the rough-volatility paper. The harness is
+`research/ideas/volatility_roughness.py`: realised volatility over
+non-overlapping windows, then the second moment of its log increments against
+the lag, which scales as `L^(2H)` for a fractional process. Brownian volatility
+gives `H = 0.5`; the rough literature finds `H ~ 0.1`.
+
+### What it measures, after three attempts at the noise
+
+The naive estimator **diagnoses itself as broken**. `H` rises monotonically with
+the realised-variance window - xauusd 15m reads 0.034, 0.064, 0.118 at 4h, 8h
+and 24h - and goes *negative* at short windows, which is not a valid exponent.
+That is the Cont and Das objection exactly: a realised variance is a noisy
+estimate of a variance, the noise is independent across windows so it inflates
+every lag equally, and a pure power law with no intercept has nowhere to put it
+but the exponent. Estimating over more bars lowers the noise and `H` rises
+toward its true value.
+
+The fix is to subtract a noise floor. **Two ways of getting that floor are
+wrong, and both were tried here.**
+
+`b = 4/n` from `Var(log RV) ~ 2/n` is **bar-counting**, which is what this
+package forbids (`statespace/__init__.py`). The same four hours of the same
+market is three bars at 1h and sixteen at 15m, and the formula claims the 1h
+estimate is five times noisier *for the same four hours*. It also assumes iid
+normal returns. Measured, it put the floor above the signal everywhere and every
+cell returned `nan` at "noise 100%".
+
+A **half-split** - first half of the window against the second - is worse,
+because it is circular. Its spread is
+
+    Var(d) = Var(log sigma_A - log sigma_B) + 2 Var(e)
+
+and adjacent non-overlapping windows are *exactly what the lag-1 moment is taken
+over*. A floor built from consecutive windows can never be below the shortest
+lag, so nothing can survive subtracting it. That is why the `nan`s looked like a
+numerical problem and were a logical one.
+
+What works is to hold the volatility fixed and vary only the data:
+**interleave**. Two estimates built from alternate bars of the *same window*
+cover the same span of the same time, so the true volatility over them is one
+number and their spread is pure estimation error with no contribution from the
+volatility's own movement. Done at 2-way and 4-way thinning, the scaling of the
+error with data density is measured rather than assumed:
+
+    Var(e_k) = c k^p,   p = log2(Var(e_4) / Var(e_2))
+
+**`p` comes out 0.66 to 1.35 against sampling theory's 1**, which is the check
+that the floor is measuring what it claims. The floor is then `2 Var(e_1)`,
+doubled because the increment spans two independent windows.
+
+### The numbers, and why none of them should be quoted yet
+
+`H mixed` is the interleave-corrected exponent, `noise` the floor as a share of
+the shortest-lag moment:
+
+| series | 4h | 8h | 24h | noise |
+|---|---|---|---|---|
+| eurusd 15m | 0.068 | 0.044 | 0.095 | 34-40% |
+| xauusd 15m | 0.059 | 0.098 | 0.176 | 42-49% |
+| usdjpy 15m | 0.080 | 0.118 | 0.134 | 38-42% |
+| eurusd 1h | - | - | 0.058 | 56% |
+| usdjpy 1h | - | - | 0.105 | 49% |
+| v75, v25 | 0.008-0.026 | | | 89-96% |
+
+Three readings, two of them good.
+
+**The correction is real and sizeable.** A third to a half of what the naive
+estimator was reading on FX was estimation error, and removing it raises `H` by
+roughly half - 0.096 to 0.134 on usdjpy, 0.118 to 0.176 on gold. The corrected
+numbers land in the rough literature's range rather than at zero.
+
+**The synthetic controls read zero, and that is the estimator working.** v75 and
+v25 are generated with constant volatility, so there is no stochastic volatility
+process to be rough and the honest answer is `H` undefined with the floor
+accounting for everything. They report 0.008-0.026 at 89-96% noise. An estimator
+that manufactures `H` out of estimation noise would have given them the same
+0.1 as the FX series, and this one does not.
+
+**But `H` still drifts with the window, so the measurement is not finished.**
+Gold goes 0.059 to 0.176 across 4h to 24h - a factor of three, after the
+correction. The criterion for a scale-aware estimator is **not** a
+better-looking number, it is that `H` stops moving when the realised-variance
+window changes, because the roughness of volatility is not a function of how
+finely it was measured. That does not hold. The drift has the same sign as
+before - rising with the window - which says the correction is still incomplete
+at short windows, where the noise share is highest.
+
+The cross-timeframe check agrees with that reading. At the *same* 24h window,
+eurusd reads 0.095 on 15m bars and 0.058 on 1h bars; usdjpy 0.134 and 0.105. The
+coarser feed reads lower, which is the residual of the same bias: fewer
+observations inside the window, more unremoved noise.
+
+So the defensible statement is **`H` is small and positive on FX, somewhere
+near or above 0.1, and bounded below by these numbers** - not a value. A single
+Hurst exponent is not quoted from this and nothing is built on one. The next
+move, if this is worth more, is a floor that does not assume the volatility is
+constant *within* the window either, since that assumption is what biases the
+short-window cells and it is the only one left.
