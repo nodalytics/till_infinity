@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import statistics
 
 import pytest
 
@@ -4910,3 +4911,140 @@ class TestSeasonal:
         )
         member.predict(0.0, control=-0.9)
         assert member.softness == pytest.approx(0.01)
+
+
+# ------------------------------------------- peaks, troughs, and their distances
+
+
+class TestNodes:
+    """`displacements.sequence` computed peak and trough identity internally
+    from the start and threw it away, keeping only the unsigned move between
+    consecutive nodes. These expose it, because a **like-node** distance -
+    peak to peak - is signed, and its sign is the structural reading a swing
+    size has already discarded."""
+
+    HOUR = 3_600.0
+
+    def _zigzag(self, legs, *, bars=6, start=100.0):
+        """A clean alternating series. `legs` are signed leg sizes."""
+        times, values = [0.0], [start]
+        for size in legs:
+            for _ in range(bars):
+                times.append(times[-1] + self.HOUR)
+                values.append(values[-1] + size / bars)
+        return times, values
+
+    def test_the_nodes_alternate_peak_and_trough(self):
+        from till_infinity.structures.statespace.displacements import nodes
+
+        times, values = self._zigzag([3, -2, 3, -2, 3, -2, 3, -2])
+        found = nodes(times, values, values, values, span=2)
+        kinds = [node.kind for node in found]
+        assert len(found) >= 6
+        assert all(a != b for a, b in itertools.pairwise(kinds)), kinds
+
+    def test_two_peaks_in_a_row_keep_the_more_extreme(self):
+        """The detector can fire twice inside one structure.
+
+        Keeping both would make the alternation a property of the threshold
+        rather than of the market. Keeping the *earlier* one would keep a
+        level the later one has already exceeded, so the sequence would stop
+        being a sequence of extremes.
+        """
+        from till_infinity.structures.statespace.displacements import PEAK, nodes
+
+        # Two highs with only a shallow dip between them, the second higher.
+        times = [i * self.HOUR for i in range(40)]
+        values = [100.0] * 40
+        values[10] = 105.0
+        values[20] = 107.0
+        found = nodes(times, values, values, values, span=3)
+        peaks = [node for node in found if node.kind == PEAK]
+        assert len(peaks) == 1, [(n.index, n.level) for n in found]
+        assert peaks[0].level == pytest.approx(107.0)
+
+    def test_a_like_node_step_is_signed_where_a_swing_size_is_not(self):
+        """The whole reason this exists.
+
+        A rising market and a flat range with the same swing sizes are
+        **identical** in the displacement sequence, because its `size` is an
+        absolute value. The step between consecutive peaks tells them apart.
+        """
+        from till_infinity.structures.statespace.displacements import (
+            HIGHER_HIGH,
+            PEAK,
+            nodes,
+            sequence,
+            steps,
+        )
+
+        rising = self._zigzag([3, -2, 3, -2, 3, -2, 3, -2])
+        flat = self._zigzag([3, -3, 3, -3, 3, -3, 3, -3])
+
+        # The unsigned sizes are nearly the same in both.
+        sizes = []
+        for times, values in (rising, flat):
+            moves = sequence(times, values, values, values, span=2, unit=1.0)
+            sizes.append(statistics.median([m.size for m in moves]))
+        assert sizes[0] == pytest.approx(sizes[1], rel=0.3), sizes
+
+        # The signed steps are not.
+        up = steps(nodes(*(rising[0], *[rising[1]] * 3), span=2), unit=1.0, kind=PEAK)
+        level = steps(nodes(*(flat[0], *[flat[1]] * 3), span=2), unit=1.0, kind=PEAK)
+        assert all(step.rise > 0 for step in up), [s.rise for s in up]
+        assert all(step.label == HIGHER_HIGH for step in up)
+        assert statistics.fmean([abs(s.rise) for s in level]) < 1e-6, [s.rise for s in level]
+
+    def test_peak_to_peak_is_a_full_cycle_not_a_swing(self):
+        """Consecutive peaks are two swings apart.
+
+        So a peak-to-peak duration is a period and roughly twice a swing
+        length. Stating it matters because a feature that conflates the two
+        means different things at different timeframes - which is exactly how
+        `statespace-peaks-and-troughs.md` found the "cycle length" to be a
+        fixed *bar* count rather than a duration.
+        """
+        from till_infinity.structures.statespace.displacements import (
+            PEAK,
+            nodes,
+            structure,
+        )
+
+        times, values = self._zigzag([3, -2] * 8)
+        found = nodes(times, values, values, values, span=2)
+        read = structure(found, unit=1.0)
+        assert read
+        assert read["period_hours"] == pytest.approx(2 * read["swing_hours"], rel=0.1)
+        peaks = [n for n in found if n.kind == PEAK]
+        assert len(peaks) >= 4
+
+    def test_agreement_is_reported_with_the_drift_it_has_to_beat(self):
+        """A pure trend gives agreement 1.0 and drift 1.0, so a gain of zero.
+
+        Any upward drift produces higher highs *and* higher lows because
+        everything is rising, so the agreement alone says nothing. Measured,
+        the gap between them is +0.151 on real markets and +0.158 on a random
+        walk - which is why the pair is returned together and never the one
+        without the other.
+        """
+        from till_infinity.structures.statespace.displacements import nodes, structure
+
+        times, values = self._zigzag([3, -2] * 10)
+        read = structure(nodes(times, values, values, values, span=2), unit=1.0)
+        assert read["agreement"] == pytest.approx(1.0)
+        assert read["drift"] == pytest.approx(1.0)
+        assert read["agreement"] - read["drift"] == pytest.approx(0.0, abs=1e-9)
+
+    def test_the_same_detector_feeds_both_views(self):
+        """`sequence` is built on `nodes`, so the two cannot disagree.
+
+        Before this they were two copies of the same loop, and a fix to one
+        would have silently left the other reading a different set of pivots.
+        """
+        from till_infinity.structures.statespace.displacements import nodes, sequence
+
+        times, values = self._zigzag([3, -2] * 9)
+        found = nodes(times, values, values, values, span=2)
+        moves = sequence(times, values, values, values, span=2, unit=1.0)
+        assert len(moves) == max(len(found) - 1, 0)
+        assert [m.ended for m in moves] == [node.at for node in found[1:]]

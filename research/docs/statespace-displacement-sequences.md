@@ -297,3 +297,18 @@ one value and nowhere else is a fit rather than a finding.
 The harness is `research/ideas/displacement_symmetry.py`. It reads the pulled
 broker cache under either spelling and falls back to the local files, so it
 runs whether or not the bridge is up.
+
+**Since this was written, the obvious explanation for these nulls was tested
+and is wrong.** The displacement `size` is an absolute value, so a trend and a
+range with the same swing sizes are identical in it - which looked like reason
+enough for the ratios to carry nothing. `statespace-peaks-and-troughs.md`
+builds the **signed** like-node distance, peak to peak and trough to trough,
+and it is null too: the peak-to-peak separation's spread matches a random
+walk's, the higher-high-with-higher-low agreement gains +0.151 over its drift
+where a walk gains +0.158, and 3 of 312 forward cells clear cost at a largest
+|t| of 0.64.
+
+What these quantities share is not that they discard direction. It is that
+they are arithmetic rearrangements of an **alternating sequence produced by a
+thresholded detector**, which has strong structure of its own. Null the next
+one against a walk before reasoning about it.
