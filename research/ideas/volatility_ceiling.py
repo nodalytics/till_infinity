@@ -1,54 +1,32 @@
-"""Close the gap on the one quantity that is forecastable. Baseline captures 11%.
+"""Closing the gap on volatility, with every horizon in time rather than in bars.
 
-The oracle harness measured a ceiling and how little of it is reached: ranking by
-a twenty-bar mean absolute move captures **10.7% to 13.4%** of the dispersion a
-perfect volatility forecast would capture. Direction is a coin in every test here;
-volatility is not. So the whole of the available improvement is in this one place,
-and it is a seven-to-nine-fold gap rather than a few percent.
+**Converted 2026-10-11, and the conversion is the point of this version.** The
+first run of this harness counted bars: a twenty-bar window, HAR spans of
+5/22/110 bars, horizons of 1/5/20 bars. Stated that way a span is a span *times
+a timeframe* - `har (5/22/110)` is 1.25h, 5.5h and 27h at 15m and 5d, 22d and
+110d at 1d - so its headline result, that HAR-Parkinson wins intraday and loses
+on daily bars, **had a confound in it**: the estimators being compared across
+timeframes were not the same estimators.
 
-## Five things the baseline is doing wrong, each with a fix
+`statespace/__init__.py` now carries this as a package rule and the statespace
+modules obey it. This harness did not, so it does now: windows and horizons are
+hours, converted per series from its own median bar spacing and trading
+coverage.
 
-**1. It aggregates in the wrong unit.** The Cboe methodology blends *variances*,
-weighted by time, and takes the square root **once at the end**. The baseline
-averages absolute moves, which is an L1 measure that does not add over time - so
-combining horizons with it is not an approximation of the right thing, it is a
-different thing. `rv` here is `sqrt(mean(move^2))`.
+It also **uses** the library rather than reimplementing it. `parkinson`,
+`garman_klass`, `har`, `rolling` and `ema` moved into
+`statespace/inputs.py` with tests; a harness that kept its own copies would be
+measuring code nobody else runs.
 
-**2. It throws away the high and the low.** A close-to-close estimator sees two
-numbers a bar; the bar also has a high and a low, and the range carries far more
-information about how far price travelled. Parkinson's estimator is around five
-times as efficient as close-to-close for the same sample, and Garman-Klass adds
-the open. **The data has had `high` and `low` all along and no estimator here has
-used them.**
+## What is being measured, unchanged
 
-**3. It weights every one of its twenty bars equally.** A flat window says a bar
-twenty ago matters as much as the last one and a bar twenty-one ago not at all.
-An exponential weighting says neither. RiskMetrics' `lambda = 0.94` is the
-standard to beat.
-
-**4. It uses one lookback.** Volatility has structure at several time scales, and
-Corsi's HAR-RV exploits exactly that: regress future realised variance on a
-short, a medium and a long realised variance together. It is the standard
-benchmark in this literature and it is hard to beat, which is the point of
-including it.
-
-**5. It ignores liquidity, which is the other thing the desk has been reading
-about.** Two measures from the microstructure literature need no order book:
-**Amihud illiquidity**, `|return| / volume`, and **Roll's implied spread**,
-`2*sqrt(-cov(dp_t, dp_t-1))` when that covariance is negative. Illiquidity
-predicts volatility, and both are computable from what the seqlab files already
-carry.
-
-## How this is scored
-
-Against the oracle, exactly as before, so the numbers are comparable to the
-10.7% already on record: rank the bars by each forecast, rank them by the
-realised future move, and report what share of the oracle's quintile spread the
-forecast captures. Plus Spearman rank correlation against the realised move,
-which is the same question without the bucketing.
-
-**Variance, not volatility, is regressed and blended** throughout - the root is
-taken once, where it is reported.
+Each estimator is a **variance**, aggregated in variance with the root taken
+once - the Cboe lesson. They are scored against the realised future move by the
+share of the oracle's quintile spread they capture, and against the only honest
+denominator: what a **perfect** sigma could capture, which is far below the
+oracle because a realised move is `sigma * z` and `|z|` is unforecastable. On
+eurusd that ceiling is 10.8% of the oracle at 15m, so the baseline's 6.9% was
+never 11% of achievable - it was 64% of it.
 
 Runs on the lab. Production has two cores and a 2.6GB container limit, and
 research on it OOM-killed the live desk three times - see `research/starving.md`.
@@ -61,6 +39,15 @@ import os
 import statistics
 from pathlib import Path
 
+from till_infinity.structures.statespace.inputs import (
+    bar_hours,
+    coverage,
+    garman_klass,
+    har,
+    parkinson,
+    rolling,
+)
+
 SYMBOLS = (
     ("eurusd", "EURUSD"),
     ("xauusd", "XAUUSD"),
@@ -69,16 +56,28 @@ SYMBOLS = (
     ("v75", "Volatility_75_Index"),
 )
 FRAMES = ("15m", "1h", "1d")
-HORIZONS = (1, 5, 20)
+
+#: Forecast horizons in **hours**. "The next four hours" means the same thing on
+#: every series; "the next twenty bars" does not.
+HORIZONS = (1.0, 4.0, 24.0)
+
+#: The estimator's own lookback, in hours. Five hours rather than twenty bars,
+#: which was five hours at 15m and twenty days at 1d.
+LOOKBACK = float(os.environ.get("LOOKBACK", "5.0"))
+
+#: HAR's three spans, in hours. The literature's 1 day / 1 week / 1 month on
+#: daily data, stated as the time it is rather than the bar counts it was.
+HAR_HOURS = (24.0, 5 * 24.0, 22 * 24.0)
+
+#: RiskMetrics' decay, per **hour** of half-life rather than per observation.
+#: `lambda = 0.94` on daily data is a half-life near 11 days; that is what is
+#: held fixed here, and the per-bar decay is derived from it.
+EWMA_HALFLIFE = 11 * 24.0
 
 LIMIT = int(os.environ.get("LIMIT", "20000"))
 
-#: RiskMetrics' decay. Not fitted, so it is a benchmark rather than a result.
-LAMBDA = 0.94
-
 
 def load(stem: str, frame: str):
-    """`(times, open, high, low, close, volume)`."""
     import numpy as np
 
     path = Path(f"data/seqlab/{stem}.{frame}.npz")
@@ -89,15 +88,19 @@ def load(stem: str, frame: str):
         if not {"time", "open", "high", "low", "close"} <= keys:
             return None
         order = np.argsort(bundle["time"])
-        got = {k: bundle[k][order].tolist() for k in ("time", "open", "high", "low", "close")}
-        got["volume"] = bundle["volume"][order].tolist() if "volume" in keys else [0.0] * len(order)
+        got = {
+            k: bundle[k][order].tolist()
+            for k in ("time", "open", "high", "low", "close")
+        }
+        got["volume"] = (
+            bundle["volume"][order].tolist() if "volume" in keys else [0.0] * len(order)
+        )
     if len(got["close"]) > LIMIT:
         got = {k: v[-LIMIT:] for k, v in got.items()}
     return got
 
 
 def spearman(xs: list[float], ys: list[float]) -> float:
-    """Rank correlation. The bucketing-free version of the same question."""
     n = len(xs)
     if n < 30:
         return 0.0
@@ -118,182 +121,30 @@ def spearman(xs: list[float], ys: list[float]) -> float:
     return num / den if den > 0 else 0.0
 
 
-def captured(forecast: list[float], truth: list[float]) -> tuple[float, float, float]:
-    """`(share of the oracle's spread, forecast spread, oracle spread)`.
-
-    The same metric the oracle harness used, so 10.7% stays comparable.
-    """
+def captured(forecast: list[float], truth: list[float]) -> float:
+    """Share of the oracle's quintile spread this forecast captures."""
     n = len(forecast)
     if n < 100:
-        return 0.0, 0.0, 0.0
+        return 0.0
     paired = list(zip(forecast, truth, strict=True))
-    by_guess = sorted(paired, key=lambda p: p[0])
-    by_truth = sorted(paired, key=lambda p: p[1])
 
     def spread(ordered):
         lo = statistics.fmean(p[1] for p in ordered[: n // 5])
         hi = statistics.fmean(p[1] for p in ordered[4 * n // 5 :])
         return hi / max(lo, 1e-12)
 
-    got, ceiling = spread(by_guess), spread(by_truth)
-    share = (got - 1.0) / max(ceiling - 1.0, 1e-12)
-    return share, got, ceiling
-
-
-def estimators(bars: dict, window: int = 20) -> dict[str, list[float]]:
-    """Every forecast, as a **variance** series aligned to each bar.
-
-    Each entry at index `k` uses bars up to and including `k` and nothing after
-    it. Returned as variances; the root is taken once, when reported.
-    """
-    close = bars["close"]
-    high, low, open_ = bars["high"], bars["low"], bars["open"]
-    volume = bars["volume"]
-    n = len(close)
-
-    moves = [0.0] + [
-        math.log(close[k] / close[k - 1]) if close[k - 1] > 0 and close[k] > 0 else 0.0
-        for k in range(1, n)
-    ]
-    squares = [m * m for m in moves]
-
-    out: dict[str, list[float]] = {}
-
-    # 0. the baseline, in its own L1 unit, squared only so it can sit in a
-    #    variance table. This is what captured 10.7%.
-    flat_abs = [0.0] * n
-    run = 0.0
-    for k in range(1, n):
-        if k <= window:
-            run = statistics.fmean(abs(m) for m in moves[1 : k + 1])
-        else:
-            run += (abs(moves[k]) - abs(moves[k - window])) / window
-        flat_abs[k] = run
-    out["baseline mean|r|"] = [v * v for v in flat_abs]
-
-    # 1. realised variance: the same window, aggregated in the right unit.
-    rv = [0.0] * n
-    run = 0.0
-    for k in range(1, n):
-        if k <= window:
-            run = statistics.fmean(squares[1 : k + 1])
-        else:
-            run += (squares[k] - squares[k - window]) / window
-        rv[k] = run
-    out["realised variance"] = list(rv)
-
-    # 2. exponentially weighted, RiskMetrics.
-    ewma = [0.0] * n
-    run = squares[1] if n > 1 else 0.0
-    for k in range(1, n):
-        run = LAMBDA * run + (1.0 - LAMBDA) * squares[k]
-        ewma[k] = run
-    out[f"ewma lambda={LAMBDA}"] = ewma
-
-    # 3. Parkinson: the high-low range, which the baseline never looked at.
-    #    `(1/(4 ln 2)) * mean(ln(high/low)^2)`.
-    park_bar = [
-        (math.log(high[k] / low[k]) ** 2) / (4.0 * math.log(2.0))
-        if high[k] > 0 and low[k] > 0 and high[k] >= low[k]
-        else 0.0
-        for k in range(n)
-    ]
-    park = [0.0] * n
-    run = 0.0
-    for k in range(1, n):
-        if k <= window:
-            run = statistics.fmean(park_bar[1 : k + 1])
-        else:
-            run += (park_bar[k] - park_bar[k - window]) / window
-        park[k] = run
-    out["parkinson (high-low)"] = park
-
-    # 4. Garman-Klass, which adds the open.
-    gk_bar = []
-    for k in range(n):
-        if high[k] > 0 and low[k] > 0 and open_[k] > 0 and close[k] > 0 and high[k] >= low[k]:
-            hl = math.log(high[k] / low[k])
-            co = math.log(close[k] / open_[k])
-            gk_bar.append(0.5 * hl * hl - (2.0 * math.log(2.0) - 1.0) * co * co)
-        else:
-            gk_bar.append(0.0)
-    gk = [0.0] * n
-    run = 0.0
-    for k in range(1, n):
-        if k <= window:
-            run = statistics.fmean(gk_bar[1 : k + 1])
-        else:
-            run += (gk_bar[k] - gk_bar[k - window]) / window
-        gk[k] = max(run, 0.0)
-    out["garman-klass (ohlc)"] = gk
-
-    # 5. HAR: a short, a medium and a long realised variance, blended. The
-    #    weights are the literature's equal-ish starting point rather than a
-    #    fit, so this is a benchmark and not a tuned model.
-    def rolling(source: list[float], span: int) -> list[float]:
-        got = [0.0] * n
-        run = 0.0
-        for k in range(1, n):
-            if k <= span:
-                run = statistics.fmean(source[1 : k + 1])
-            else:
-                run += (source[k] - source[k - span]) / span
-            got[k] = run
-        return got
-
-    short, medium, long = rolling(squares, 5), rolling(squares, 22), rolling(squares, 110)
-    out["har (5/22/110)"] = [
-        (short[k] + medium[k] + long[k]) / 3.0 for k in range(n)
-    ]
-
-    # 6. Parkinson at three scales, the same idea on the better estimator.
-    p5, p22, p110 = rolling(park_bar, 5), rolling(park_bar, 22), rolling(park_bar, 110)
-    out["har-parkinson"] = [(p5[k] + p22[k] + p110[k]) / 3.0 for k in range(n)]
-
-    # 7. Amihud illiquidity: |return| / volume. Needs real volume, which not
-    #    every venue reports - `context/activity.py` records that at length.
-    amihud = [0.0] * n
-    usable = sum(1 for v in volume if v and v > 0) > n * 0.5
-    if usable:
-        ratio = [
-            abs(moves[k]) / volume[k] if volume[k] and volume[k] > 0 else 0.0
-            for k in range(n)
-        ]
-        amihud = rolling(ratio, window)
-    out["amihud |r|/volume"] = amihud
-
-    # 8. Roll's implied spread from the serial covariance of price changes.
-    #    Only defined where that covariance is negative, which is the bid-ask
-    #    bounce it is measuring.
-    roll = [0.0] * n
-    for k in range(window + 1, n):
-        window_moves = moves[k - window + 1 : k + 1]
-        mean = statistics.fmean(window_moves)
-        cov = statistics.fmean(
-            (window_moves[i] - mean) * (window_moves[i - 1] - mean)
-            for i in range(1, len(window_moves))
-        )
-        roll[k] = 2.0 * math.sqrt(-cov) if cov < 0 else 0.0
-    out["roll implied spread"] = [v * v for v in roll]
-
-    return out
+    got = spread(sorted(paired, key=lambda p: p[0]))
+    ceiling = spread(sorted(paired, key=lambda p: p[1]))
+    return (got - 1.0) / max(ceiling - 1.0, 1e-12)
 
 
 def achievable(sigma: list[float], seed: int = 20261011) -> float:
-    """What share of the oracle a **perfect** variance forecast could capture.
+    """What a **perfect** sigma could capture. The honest denominator.
 
-    **This is the number that was missing, and without it the gap was
-    overstated.** The oracle ranks bars by the *realised* future move, and a
-    realised move is `sigma * z` where `z` is a fresh standard normal. `z` is
-    unforecastable by construction, so even perfect knowledge of `sigma` cannot
-    reproduce the oracle's ordering - the ceiling it measures includes
-    irreducible noise.
-
-    So "the baseline captures 10.7% of the oracle" does **not** imply that nine
-    tenths is available. This estimates how much actually is: take the fitted
-    `sigma` as if it were the truth, draw `sigma * z` from it, and ask what
-    share of *that* oracle a perfect `sigma` captures. The honest denominator
-    for every other row in the table.
+    A realised move is `sigma * z` with `z` a fresh standard normal, and `|z|`
+    is unforecastable, so the oracle's ceiling is mostly irreducible noise. Take
+    the fitted sigma as truth, draw from it, and ask what share of *that* oracle
+    a perfect sigma gets.
     """
     import random
 
@@ -302,56 +153,131 @@ def achievable(sigma: list[float], seed: int = 20261011) -> float:
     if len(usable) < 200:
         return float("nan")
     drawn = [s * rng.gauss(0.0, 1.0) for s in usable]
-    share, _got, _ceiling = captured(usable, [abs(d) for d in drawn])
-    return share
+    return captured(usable, [abs(d) for d in drawn])
+
+
+def estimators(bars: dict, bar: float, cover: float) -> dict[str, list[float]]:
+    """Every forecast as a variance series, with spans converted from hours.
+
+    `bar` and `cover` come from the series itself, so a span of five hours is
+    five hours of trading on every one of them.
+    """
+    close, high, low, open_ = bars["close"], bars["high"], bars["low"], bars["open"]
+    volume = bars["volume"]
+    n = len(close)
+
+    def spans(hours: float) -> int:
+        return max(round(hours * max(cover, 1e-9) / bar), 2)
+
+    moves = [0.0] + [
+        math.log(close[k] / close[k - 1]) if close[k - 1] > 0 and close[k] > 0 else 0.0
+        for k in range(1, n)
+    ]
+    squares = [m * m for m in moves]
+    park_bar = parkinson(high, low)
+    gk_bar = garman_klass(open_, high, low, close)
+    window = spans(LOOKBACK)
+
+    out: dict[str, list[float]] = {}
+
+    # The baseline, in its own L1 unit, squared so it can sit in a variance
+    # table. This is the estimator everything else has to beat.
+    flat = rolling([abs(m) for m in moves], window)
+    out["baseline mean|r|"] = [v * v for v in flat]
+
+    out["realised variance"] = rolling(squares, window)
+    out["parkinson (high-low)"] = rolling(park_bar, window)
+    out["garman-klass (ohlc)"] = rolling(gk_bar, window)
+
+    # EWMA with a **time** half-life, so the decay is the same per hour on
+    # every series rather than the same per bar.
+    decay = 0.5 ** (bar / max(EWMA_HALFLIFE, 1e-9))
+    ewma = [0.0] * n
+    run = squares[1] if n > 1 else 0.0
+    for k in range(1, n):
+        run = decay * run + (1.0 - decay) * squares[k]
+        ewma[k] = run
+    out[f"ewma halflife={EWMA_HALFLIFE / 24:g}d"] = ewma
+
+    triple = tuple(spans(h) for h in HAR_HOURS)
+    out[f"har {'/'.join(f'{h / 24:g}d' for h in HAR_HOURS)}"] = har(squares, triple)
+    out["har-parkinson"] = har(park_bar, triple)
+
+    # Amihud needs real traded size, which a CFD volume is not - it is a tick
+    # count. Kept to record that rather than to expect anything.
+    if sum(1 for v in volume if v and v > 0) > n * 0.5:
+        ratio = [
+            abs(moves[k]) / volume[k] if volume[k] and volume[k] > 0 else 0.0
+            for k in range(n)
+        ]
+        out["amihud |r|/volume"] = rolling(ratio, window)
+
+    # Roll's implied spread, from the serial covariance of price changes.
+    roll = [0.0] * n
+    for k in range(window + 1, n):
+        recent = moves[k - window + 1 : k + 1]
+        mean = statistics.fmean(recent)
+        cov = statistics.fmean(
+            (recent[i] - mean) * (recent[i - 1] - mean) for i in range(1, len(recent))
+        )
+        roll[k] = 2.0 * math.sqrt(-cov) if cov < 0 else 0.0
+    out["roll implied spread"] = [v * v for v in roll]
+
+    return out
 
 
 def main() -> None:
-    print("Closing the gap on volatility. The baseline captures 10.7% of the ceiling.")
-    print("All estimators are variances; the root is taken once, at reporting.")
-    print("'captured' is the share of the oracle's quintile spread, so it is")
-    print("directly comparable to the 10.7% already on record.\n")
+    print("Volatility, with every window and horizon in HOURS rather than bars.")
+    print(f"lookback {LOOKBACK:g}h, HAR {'/'.join(f'{h / 24:g}d' for h in HAR_HOURS)},")
+    print(f"horizons {'/'.join(f'{h:g}h' for h in HORIZONS)}.")
+    print("'captured' is the share of what a PERFECT sigma could capture.\n")
 
     for label, stem in SYMBOLS:
         for frame in FRAMES:
             bars = load(stem, frame)
             if bars is None or len(bars["close"]) < 1000:
                 continue
-            close = bars["close"]
+            times, close = bars["time"], bars["close"]
+            bar = bar_hours(times)
+            cover = coverage(times, bar)
+            if bar <= 0:
+                continue
             n = len(close)
-            moves = [0.0] + [
-                math.log(close[k] / close[k - 1]) if close[k - 1] > 0 else 0.0
-                for k in range(1, n)
-            ]
-            got = estimators(bars)
-            print(f"=== {label} {frame}: {n} bars ===")
-            # The honest denominator: what a perfect sigma could capture.
+            got = estimators(bars, bar, cover)
             ceiling = achievable(got["har-parkinson"])
-            print(f"  a PERFECT sigma forecast would capture {ceiling:.1%} of the"
-                  f" realised-move oracle - that is the real denominator")
-            print(f"  {'estimator':<24}" + "".join(f"{f'h={h}':>24}" for h in HORIZONS))
-            print(f"  {'(of oracle / of achievable)':<24}")
+
+            print(f"=== {label} {frame}: {n} bars, bar={bar:g}h, coverage={cover:.3f} ===")
+            print(f"  a perfect sigma captures {ceiling:.1%} of the realised-move oracle")
+            if ceiling < 0.02:
+                print("  * too small to divide by: cells show the RAW share of the oracle")
+            print(f"  {'estimator':<26}" + "".join(f"{f'{h:g}h':>18}" for h in HORIZONS))
             for name, series in got.items():
-                if all(v == 0.0 for v in series):
-                    print(f"  {name:<24}" + f"{'(no data)':>24}" * len(HORIZONS))
-                    continue
                 cells = []
-                for horizon in HORIZONS:
+                for hours in HORIZONS:
+                    ahead = max(round(hours * cover / bar), 1)
                     forecast, truth = [], []
-                    for k in range(130, n - horizon):
+                    start = max(round(max(HAR_HOURS) * cover / bar), 50)
+                    for k in range(start, n - ahead):
                         if series[k] <= 0:
                             continue
                         forecast.append(series[k])
-                        truth.append(abs(close[k + horizon] / close[k] - 1.0))
+                        truth.append(abs(close[k + ahead] / close[k] - 1.0))
                     if len(forecast) < 200:
-                        cells.append(f"{'-':>24}")
+                        cells.append(f"{'-':>18}")
                         continue
-                    share, _mine, _ceiling = captured(forecast, truth)
+                    share = captured(forecast, truth)
                     rho = spearman(forecast, truth)
-                    # Both: the raw share, and the share of what is achievable.
-                    reach = share / ceiling if ceiling and ceiling == ceiling else float("nan")
-                    cells.append(f"{share:>8.1%}/{reach:>6.0%} rho{rho:>+6.2f}")
-                print(f"  {name:<24}" + "".join(cells))
+                    # **Guard the denominator.** Where a perfect sigma captures
+                    # almost nothing - v75's ceiling is 0.5%, because its
+                    # generated volatility does not autocorrelate - dividing by
+                    # it turns noise into "-176% of achievable", which is not a
+                    # number anyone should read. Report the raw share there and
+                    # mark it.
+                    if not (ceiling == ceiling) or ceiling < 0.02:
+                        cells.append(f"{share:>10.1%}* rho{rho:>+5.2f}")
+                    else:
+                        cells.append(f"{share / ceiling:>11.0%} rho{rho:>+5.2f}")
+                print(f"  {name:<26}" + "".join(cells))
             print()
 
 

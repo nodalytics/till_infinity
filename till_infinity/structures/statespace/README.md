@@ -2311,6 +2311,78 @@ Lagrangian meshes all need a PDE to solve. Local volatility calibration by SQP
 or semi-smooth Newton is the right machinery for a hundred parameters and this
 package fits one to five, where a grid is both sufficient and auditable.
 
+## Converting the harnesses to time reversed the volatility headline
+
+Done 2026-10-11, after the package rule was written: `research/ideas/` counted
+bars everywhere, so the harnesses were the one place still breaking it.
+`volatility_ceiling.py` is converted and **its headline result changed**, which
+is the clearest demonstration of why the rule exists.
+
+### What the confound was
+
+`har (5/22/110)` meant 5, 22 and 110 **bars**: 1.25h, 5.5h and 27h at 15m, and
+5, 22 and 110 **days** at 1d. So "HAR-Parkinson wins intraday and loses on
+daily" was partly a statement about the spans being different lengths of time on
+the two series - the estimators being compared were not the same estimators.
+
+Stated in time - `1d/5d/22d`, the literature's own spans - the ranking inverts.
+Share of what a perfect sigma could capture, eurusd:
+
+| estimator | 15m, 1h ahead | 1h, 1h ahead | 1h, 24h ahead |
+| --- | ---: | ---: | ---: |
+| baseline mean `\|r\|` | 98% | 63% | 8% |
+| **parkinson (high-low)** | **107%** | **90%** | 12% |
+| **garman-klass (ohlc)** | **106%** | **90%** | 13% |
+| har 1d/5d/22d | 66% | 40% | 52% |
+| har-parkinson | 62% | 43% | **58%** |
+| ewma, 11d half-life | 47% | 42% | 51% |
+
+**HAR-Parkinson is no longer the best single change**, and the earlier claim that
+it was - 64% to 79% - is withdrawn. With the spans in time it is *worse* than
+the baseline at short horizons and better only at 24h.
+
+### The finding underneath, which the bar counts were hiding
+
+**Match the estimator's span to the forecast horizon.** A short horizon wants a
+short-span range estimator - Parkinson or Garman-Klass, 90-107% - and a long
+horizon wants a long-span multi-scale or time-decayed one - HAR or EWMA, 51-58%
+at 24h where the short estimators collapse to 8-13%.
+
+Obvious in hindsight, and the bar-counted version could not see it because a bar
+count accidentally couples the span to the timeframe: HAR's 5/22/110 bars *was*
+a short-span estimator at 15m, which is why it looked good there.
+
+**And the range beats the close at every short horizon**, 90% against 63% at 1h
+and 107% against 98% at 15m. That part survives the conversion and is the
+durable result: the high and the low carry information the close does not, and
+this package had the data for it from the start.
+
+### The denominator is estimator-dependent, which the >100% cells expose
+
+Parkinson reading **107% of achievable** is not a forecast beating perfection.
+`achievable` simulates `sigma * z` taking **`har-parkinson` as the true sigma**,
+so any estimator that is a *better* sigma than that one exceeds the ceiling
+built from it - which is informative, since it says Parkinson is the better
+sigma, and means the percentage is not a true fraction.
+
+Fixing it properly needs a sigma that is not one of the candidates - a
+simulation with a known generating process, which `paths.simulate` provides and
+this harness does not use. Recorded rather than fixed, and the cells above 100%
+should be read as "better than the estimator the ceiling was built from" rather
+than as a share.
+
+### And v75 cannot be scored this way at all
+
+Its perfect-sigma ceiling is **0.5%**, because the generator's volatility varies
+without autocorrelating. Dividing by that turned noise into cells reading
+**-176% of achievable**, which is not a number anyone should read, so the
+harness now guards the denominator and prints the raw share with a mark where
+the ceiling is below 2%.
+
+That is the synthetic control doing its third useful thing today: it is a
+control for direction, **not** for volatility work, and it says so loudly enough
+to break a table.
+
 ## Members not written
 
 Each already names the null it must beat, in `family.PENDING`. Do not add one
