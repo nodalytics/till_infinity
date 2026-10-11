@@ -423,3 +423,48 @@ settling that. And the **pricing-kernel** work derives serial correlation in
 returns, volatility smiles and crash-like patterns endogenously from declining
 relative risk aversion - a *rational* mechanism for the short-horizon serial
 correlation we measure, which is worth having beside the microstructure one.
+
+---
+
+## 10. A DNN surrogate for a multiphysics solver - the thinnest of the set
+
+Rana, Islam, Surja, Ali, Mukherjee, Biswas, Neogi and Afikuzzaman, *Multiphysics
+Modelling of Tri-Hybrid Nanofluid Transport over a Quadratically Radiative Riga
+Surface*, Computation 14:248 (2026). `.secrets/computation-14-00248.pdf`.
+
+Said plainly, because inflating it would be the error this file exists to
+avoid: this is further from the problem than any of the others, and almost all
+of it - Riga surfaces, electroosmotic forcing, Brownian thermophoresis,
+nanoparticle volume fractions - transfers not at all. The structure is: solve
+the coupled PDEs with a finite-difference method in FORTRAN, use that solver to
+generate a training set, fit a feed-forward network to it, and report
+`RMSE < 3.2e-2` with `R^2 > 0.987`.
+
+Two things are worth keeping, and the second is a warning rather than a method.
+
+* **A generator whose ground truth you control is a validation instrument.**
+  The surrogate is trainable *and checkable* only because the solver can
+  produce as much labelled data as wanted with the answer known. This package
+  has the same instrument and has used it for one thing: `paths.simulate`
+  generates a path with the latent truth attached, and `diagnostics.fit_jerk`
+  recovers parameters from it. Nothing else uses it. The obvious extension is
+  `ranking.py`: train and score it on **simulated** series where the true
+  conditional magnitude is known, which separates "the model cannot find the
+  ordering" from "the market has no ordering to find". Right now those two are
+  confounded in every result in `statespace-rank-then-map.md`, and the second
+  is the interesting one.
+
+* **It validates only in-distribution, and that is the shape to recognise.**
+  Every figure overlays DNN predictions on the numerical curves the DNN was
+  trained against, and the residual histograms are centred at `1e-4` with
+  standard deviations to match. None of it is held out in *parameter* space.
+  Fluids 11:251 - the other surrogate paper in this file - makes a point of
+  reporting interpolation and extrapolation separately, and that contrast is
+  the lesson: a surrogate's accuracy on its own training distribution is close
+  to uninformative, and uniformly excellent residuals are bug shape #10 in the
+  `finding-bugs` skill rather than a result.
+
+The second point generalises to this desk directly. A member fitted and scored
+on one stretch of one instrument is a surrogate validated in-distribution, and
+the leave-one-instrument-out design in `rank_then_map.py` exists precisely
+because that is not enough.
