@@ -122,7 +122,7 @@ derived per series:
   asserts "a change every 12.5 hours" at 3m and "every 250 days" at 1d - the
   same member believing wildly different things about the world depending on
   what it was handed.
-* `smoothing.lagged(hours=...)`, `focus.Paired.hours_since_reset`,
+* `smoothing.lagged(hours=...)`, `paired.Paired.hours_since_reset`,
   `changepoint.run_hours`, and every rate in `rates.py`.
 
 **Two exceptions, and they are not horizons.** `MAX_RUN` truncates a posterior

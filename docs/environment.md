@@ -57,7 +57,6 @@ To change a setting:
 | `JOURNAL` | `1` | Whether `run` starts the journal writer. | restart |
 | `AGENTS_ENABLED` | `0` | Whether `run` starts the agents. Off because they are the only part needing a paid credential. | restart |
 | `TRADING_ENABLED` | `0` | Whether `run` starts the trading service at all. Orders also need `TRADING_LIVE`. | trades |
-| `MCFL_ENABLED` | `0` | Whether `run` starts the MCFL pattern alerts (alert-only; see [Pattern alerts](#pattern-alerts-mcfl)). | restart |
 | `BACKFILL_ON_START` | `1` | Pull history at start when the store holds too little for levels to form, rather than collecting for days first. | restart |
 | `SYMBOLS` | *(all)* | Narrow collection to these instruments (comma-separated feed names). Unset collects the whole catalogue. `STRUCTURES_FEEDS` falls back to it. | restart |
 | `INTERVALS` | *(all)* | Narrow collection to these intervals, e.g. `1m,5m,15m,1h`. | restart |
@@ -378,26 +377,13 @@ wins over it.
 | `NOTIFY_COOLDOWN_S` | `900` | The same finding at most once per this many seconds. | restart |
 | `NOTIFY_MAX_PER_HOUR` | `20` | Hourly ceiling on messages. | restart |
 
-## Pattern alerts (mcfl)
+## Retired: pattern alerts (mcfl)
 
-Alert-only: publishes cards to `alerts`, never reaches `trading`. Off unless `MCFL_ENABLED=1`.
-Example cards: `docs/img/mcfl/`. The market mirror (`M1`, with `B` folded in) sends one BTC card
-per daily close however many alts signal, and one exit card when the last of that day's trades ends,
-so it cannot fill the hourly notification cap.
-
-| Variable | Default | What it does | Change |
-|---|---|---|---|
-| `MCFL_PAUSE_FILE` | `.data/mcfl.off` | While this file exists nothing is fetched or sent. Removing it resumes without replaying what was missed. | live |
-| `MCFL_PATTERNS` | `DISPLACE_C_LOW12,M1,B` | Patterns that alert. Opt-in: `DISPLACE_C_LOW12_X`, `DISPLACE_C`, `BREACH_REVERT`, `DELIVERY_SHIFT`, `BOS`, `CLOSE_REVERT`, `SWEEP_SHIFT`, `INDUCEMENT`, `BREAKER`, `PROTECTED`. `till-infinity mcfl patterns` lists them with their evidence. | restart |
-| `MCFL_TIMEFRAMES` | `15m,1h,4h,1d` | Timeframes alerted on. | restart |
-| `MCFL_ALT_COINS` | *(the 344 validated coins)* | The alt universe fetched for the DISPLACE_C trade and the market mirror. | restart |
-| `MCFL_ALT_TIMEFRAMES` | `4h,1d` | Timeframes the alt universe is fetched on (2,408 kline requests a day by default). | restart |
-| `MCFL_MAJOR_PIVOT` | `10` | Bars either side of a 15m major swing for a BOS alert. | restart |
-| `MCFL_MAJOR_MOVE_ATR` | `3.0` | ATR away from the major swing before its break counts. | restart |
-| `MCFL_CHARTS` | `1` | Attach a chart image to each card (needs the `chart` extra). | restart |
-| `MCFL_BINANCE_URL` | `https://data-api.binance.vision/api/v3` | Binance spot's API host for the alt universe. | restart |
-| `MCFL_DIR` | `.data/mcfl` | Where the service keeps its state (sent alerts, open paper trades). | state |
-| `MCFL_DERIVE_1D` | *(auto)* | Build 1d from stored 1h/4h bars; on by default only when `INTERVALS` is set without `1d`. | restart |
+The `mcfl` service was retired on 2026-10-11 and moved to
+`research/retire/mcfl/`, superseded by `structures/statespace`. Its
+`MCFL_*` settings are **gone, not merely ignored** - nothing reads them, so
+a deployment that still sets them is setting nothing. The settings they
+were, and what they did, are in that directory's own history.
 
 ## Journal
 

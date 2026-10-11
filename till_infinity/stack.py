@@ -28,12 +28,6 @@ absence should never be a surprise and whose presence always is a choice:
 `TRADING_ENABLED=1` starts it, and `TRADING_LIVE=1` is separately required
 before an order reaches an account. Neither is implied by the other.
 
-**Pattern alerts (`mcfl`) are off unless asked for.** They poll a few hundred
-alt coins on their own schedule and add cards to the alert channel, which is a
-choice a deployment should make rather than inherit: `MCFL_ENABLED=1` starts
-them. They are alert-only - no path to `trading` - and can be paused without a
-restart by creating `MCFL_PAUSE_FILE` (see `mcfl/service.py`).
-
 Everything else runs. If a service fails to start, the others carry on and the
 run reports which one is missing - a stack that dies because one collector
 cannot reach a venue would be less useful than the collector it replaced.
@@ -54,7 +48,6 @@ from pathlib import Path
 
 from . import agents as ag
 from . import journal as jr
-from . import mcfl as mc
 from . import news as nw
 from . import notifications as nt
 from . import prices as px
@@ -75,9 +68,6 @@ ORDER: tuple[str, ...] = (
     "trading",
     "agents",
     "structures",
-    # Before prices, like every consumer of `prices.bars`, and after
-    # notifications, which must be subscribed to `alerts` before it publishes.
-    "mcfl",
     "prices",
     "news",
 )
@@ -125,8 +115,6 @@ class Plan:
     agents: bool = False
     #: Off by default: the only part that can lose money. See the docstring.
     trading: bool = False
-    #: Off by default: pattern alerts poll their own coin universe. Alert-only.
-    mcfl: bool = False
     notifications: bool = True
     structures: bool = True
     prices: bool = True
@@ -152,7 +140,6 @@ class Plan:
             redis_url=os.environ.get("TILL_REDIS_URL") or None,
             agents=truthy("AGENTS_ENABLED"),
             trading=truthy("TRADING_ENABLED"),
-            mcfl=truthy("MCFL_ENABLED"),
             notifications=truthy("NOTIFICATIONS_ENABLED", "1"),
             structures=truthy("STRUCTURES_ENABLED", "1"),
             prices=truthy("PRICES_ENABLED", "1"),
@@ -662,9 +649,6 @@ class Stack:
 
     async def _run_trading(self, book) -> None:
         await td.listen(self.bus, journal=book)
-
-    async def _run_mcfl(self, _book) -> None:
-        await mc.watch(self.bus)
 
     async def _run_structures(self, book) -> None:
         watcher = sx.Watcher(self.bus, journal=book)

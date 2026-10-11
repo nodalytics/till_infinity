@@ -1,4 +1,4 @@
-"""FOCuS as the detector, a filter member as the forecaster, paired.
+"""A filter member, watched by the FOCuS detector that was already here.
 
 Romano, Eckley, Fearnhead and Rigaill, *Fast Online Changepoint Detection via
 Functional Pruning CUSUM statistics*, JMLR 24 (2023), arXiv:2110.08205. Asked
@@ -7,8 +7,7 @@ that the two do different jobs:
 
 * **FOCuS detects.** It maximises a CUSUM likelihood ratio over *every*
   candidate change location and *every* change magnitude at once - exactly, not
-  approximately - at an expected cost logarithmic in the number of
-  observations, and it comes with a threshold, so the false-alarm rate is a
+  approximately - and it comes with a threshold, so the false-alarm rate is a
   choice rather than an emergent property of a hazard prior nobody fitted.
 * **A filter member forecasts.** It answers `value`, `sd`, `band` and
   `loglike`: a predictive distribution. FOCuS yields a *statistic*, not a
@@ -17,6 +16,25 @@ that the two do different jobs:
   insists on.
 
 So the pairing is the answer rather than the choice, and `Paired` is it.
+
+## This module used to contain a second FOCuS, and that was the bug
+
+`structures/learning/focus.py` already implements it - the same statistic, the
+same convex-hull pruning, and **tested against an O(n^2) brute-force reference
+on every step**, which is a stronger guarantee than anything written here was
+going to carry. Writing another one was duplication, and it was caught the way
+duplication usually is here: not by review but by a *collision*. The
+persistence registry keys classes by module basename and class name
+(`shared/codec.py`), so two modules called `focus` holding two classes called
+`Focus` both resolve to `focus.Focus`, one silently shadowed the other, and
+restoring the origins detectors tried to build this class for the other one's
+saved state. Two tests caught it in CI.
+
+So the detector here is the existing one, and this module is named for what it
+actually contributes. It runs **two instances**, up and down: that module is
+one-sided on purpose - "moves got bigger" and "moves got smaller" are different
+events - and both matter when the quantity being watched is a signed
+innovation.
 
 ## FOCuS runs on the standardised innovations, which is what makes this work
 
@@ -35,23 +53,6 @@ That also makes the detector agnostic to the member. Anything satisfying
 watched by a frequentist detector is not redundant, because they are detecting
 different things: BOCPD asks whether the *level* changed and this asks whether
 the *model* did.
-
-## The pruning, and why the hull is the whole algorithm
-
-For a change at `tau` with post-change mean free, the Gaussian log likelihood
-ratio at time `t` maximises to
-
-    Q_t(tau) = (S_t - S_tau)^2 / (2 (t - tau))
-
-on standardised data, where `S` is the cumulative sum. Evaluating every `tau` is
-`O(t)` a step. The functional-pruning insight is that `Q_t` as a function of the
-post-change mean is a quadratic per candidate, and a candidate dominated by
-another can never become the maximiser again - so the survivors are the points
-`(i, S_i)` on a **convex hull**, and the hull stays small.
-
-Two hulls, because a rise and a fall are different events and a desk wants to
-know which: the lower hull maximises the upward statistic and the upper hull the
-downward one.
 
 ## What this is not
 
@@ -76,120 +77,14 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-HOUR = 3600.0
+from ..learning.focus import THRESHOLD, Focus
 
-#: Threshold on the FOCuS statistic. `Q` is a maximised log likelihood ratio,
-#: so `2Q` is chi-squared-ish with one degree of freedom under the null and a
-#: threshold of 10 corresponds to a nominal `p` near 1e-3 per observation -
-#: before any correction for maximising over candidates, which this does not
-#: attempt. **Not calibrated**, and the right way to set it is the realised
-#: false-alarm rate on a series known to have no changes, which the Deriv
-#: synthetics are the closest thing to.
-THRESHOLD = 10.0
+HOUR = 3600.0
 
 #: Readings before the detector is allowed to fire. A hull of two points will
 #: happily report a large statistic, and a member's first few innovations are
 #: not standard normal anyway - `linear` takes its first reading as its state.
 WARMUP = 20
-
-
-@dataclass(slots=True)
-class Focus:
-    """The FOCuS statistic over standardised observations, both directions.
-
-    `update` returns the current statistic. `where` is the candidate change
-    point that attains it, as an index, so a caller can say *when* rather than
-    only *whether*.
-    """
-
-    #: Cumulative sum of the observations seen.
-    total: float = 0.0
-    seen: int = 0
-    #: `(index, cumulative sum)` on each hull. Small by construction.
-    _lower: list[tuple[int, float]] = field(default_factory=list)
-    _upper: list[tuple[int, float]] = field(default_factory=list)
-    #: The maximising candidate from the last `update`, and its direction.
-    where: int = 0
-    side: int = 0
-
-    def __post_init__(self) -> None:
-        if not self._lower:
-            self._lower = [(0, 0.0)]
-        if not self._upper:
-            self._upper = [(0, 0.0)]
-
-    @staticmethod
-    def _quadratic(total: float, seen: int, point: tuple[int, float]) -> float:
-        """`(S_t - S_i)^2 / (2 (t - i))`, the maximised log likelihood ratio."""
-        span = seen - point[0]
-        if span <= 0:
-            return 0.0
-        gap = total - point[1]
-        return gap * gap / (2.0 * span)
-
-    def _prune(self, hull: list[tuple[int, float]], upward: bool) -> None:
-        """Drop candidates that can never maximise again.
-
-        The convex-hull condition: three consecutive points where the middle one
-        lies on the wrong side of the line joining its neighbours can be
-        removed, because any later `t` that prefers it prefers one of them
-        more. This is the functional pruning - without it the candidate set is
-        the whole series and the cost is linear.
-        """
-        hull.append((self.seen, self.total))
-        while len(hull) >= 3:
-            (i1, s1), (i2, s2), (i3, s3) = hull[-3], hull[-2], hull[-1]
-            left = (s2 - s1) * (i3 - i2)
-            right = (s3 - s2) * (i2 - i1)
-            # Keep the hull convex in the direction the statistic cares about.
-            if (left >= right) if upward else (left <= right):
-                del hull[-2]
-            else:
-                break
-
-    def update(self, value: float) -> float:
-        """Fold in one standardised observation and return the statistic."""
-        if not math.isfinite(value):
-            return 0.0
-        self.total += value
-        self.seen += 1
-        self._prune(self._lower, upward=True)
-        self._prune(self._upper, upward=False)
-
-        best, at, side = 0.0, 0, 0
-        for point in self._lower:
-            if self.total - point[1] <= 0:
-                continue
-            got = self._quadratic(self.total, self.seen, point)
-            if got > best:
-                best, at, side = got, point[0], 1
-        for point in self._upper:
-            if self.total - point[1] >= 0:
-                continue
-            got = self._quadratic(self.total, self.seen, point)
-            if got > best:
-                best, at, side = got, point[0], -1
-        self.where, self.side = at, side
-        return best
-
-    def reset(self) -> None:
-        """Start again from here. Called after a detection is acted on."""
-        self.total = 0.0
-        self.seen = 0
-        self._lower = [(0, 0.0)]
-        self._upper = [(0, 0.0)]
-        self.where = 0
-        self.side = 0
-
-    @property
-    def candidates(self) -> int:
-        """How many survive pruning. The claim about cost, observable.
-
-        Logarithmic in expectation, so this should stay small while `seen`
-        grows - and a test asserts exactly that, because a hull that grows
-        linearly is the pruning being broken in a way nothing else would show.
-        """
-        return len(self._lower) + len(self._upper)
 
 
 @dataclass(slots=True)
@@ -206,7 +101,10 @@ class Paired:
     warmup: int = WARMUP
 
     _member: object = field(default=None, repr=False)
-    _focus: Focus = field(default_factory=Focus, repr=False)
+    #: Two one-sided detectors. The innovations are signed, and a member that
+    #: has started reading high is a different failure from one reading low.
+    _up: Focus = field(default=None, repr=False)
+    _down: Focus = field(default=None, repr=False)
     #: Statistic from the last reading, and how many times it has fired.
     statistic: float = 0.0
     detections: int = 0
@@ -220,6 +118,10 @@ class Paired:
     def __post_init__(self) -> None:
         if self._member is None:
             self._member = self.build()
+        if self._up is None:
+            self._up = Focus(threshold=self.threshold, up=True)
+        if self._down is None:
+            self._down = Focus(threshold=self.threshold, up=False)
 
     # ----------------------------------------------------- the member's view
 
@@ -279,6 +181,23 @@ class Paired:
     # -------------------------------------------------------------- the pair
 
     @property
+    def side(self) -> int:
+        """Which direction the evidence points, `+1` high, `-1` low, `0` none."""
+        if self.statistic <= 0.0:
+            return 0
+        return 1 if self._up.statistic >= self._down.statistic else -1
+
+    @property
+    def where(self) -> int:
+        """The candidate reading the statistic attains, as an index."""
+        return self._up.at if self.side >= 0 else self._down.at
+
+    @property
+    def candidates(self) -> int:
+        """Surviving candidates across both hulls. The cost claim, observable."""
+        return len(self._up.hull) + len(self._down.hull)
+
+    @property
     def hours_since_reset(self) -> float:
         """How long the current model has stood. In **hours**, not readings.
 
@@ -310,15 +229,20 @@ class Paired:
                 self._reset_at = when
 
         got = float(getattr(self._member, "last_standardised", 0.0))
-        self.statistic = self._focus.update(got)
+        if not math.isfinite(got):
+            got = 0.0
+        self._up.update(got, 1.0)
+        self._down.update(got, 1.0)
+        self.statistic = max(self._up.statistic, self._down.statistic)
 
-        if self._focus.seen >= self.warmup and self.statistic >= self.threshold:
+        if self._up.seen >= self.warmup and self.statistic >= self.threshold:
             self.detections += 1
             # Carry the likelihood forward, rebuild, and start the detector
             # again from here.
             self._loglike += float(getattr(self._member, "loglike", 0.0))
             self._member = self.build()
-            self._focus.reset()
+            self._up.reset()
+            self._down.reset()
             self._reset_at = when if when is not None else self._read_at
             # Seed the fresh member with the reading that caused the detection,
             # so it starts from the new regime rather than from nothing.

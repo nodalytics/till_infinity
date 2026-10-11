@@ -22,7 +22,6 @@ from rich.table import Table
 
 from . import agents as ag
 from . import journal as jr
-from . import mcfl as mc
 from . import news as nw
 from . import notifications as nt
 from . import prices as px
@@ -2327,7 +2326,6 @@ def journal_export(db, out, kind, hours, limit):
 @click.option("--redis", "redis_url", metavar="URL", help="Redis. Default: TILL_REDIS_URL.")
 @click.option("--agents/--no-agents", default=None, help="Override AGENTS_ENABLED.")
 @click.option("--notify/--no-notify", default=None, help="Override NOTIFICATIONS_ENABLED.")
-@click.option("--mcfl/--no-mcfl", default=None, help="Override MCFL_ENABLED (pattern alerts).")
 @click.option("-s", "--symbol", multiple=True, help="Instrument; repeatable.")
 @click.option("-i", "--interval", multiple=True, help="Interval; repeatable.")
 @click.option("--for", "duration", type=float, help="Stop after this many seconds.")
@@ -2336,7 +2334,7 @@ def journal_export(db, out, kind, hours, limit):
 @click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only.")
 @click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs.")
 def run_command(
-    redis_url, agents, notify, mcfl, symbol, interval, duration, once, verbose, quiet, log_file
+    redis_url, agents, notify, symbol, interval, duration, once, verbose, quiet, log_file
 ):
     """Run every service together - the end-to-end path.
 
@@ -2355,8 +2353,6 @@ def run_command(
         plan.agents = agents
     if notify is not None:
         plan.notifications = notify
-    if mcfl is not None:
-        plan.mcfl = mcfl
     if symbol:
         plan.symbols = tuple(symbol)
     if interval:
@@ -2385,71 +2381,6 @@ def run_command(
     console.print(f"\n{escape(str(status))} in {status.elapsed:.0f}s")
     if status.failed:
         raise SystemExit(1)
-
-
-@main.group()
-def mcfl() -> None:
-    """MCFL pattern alerts - alert-only, never a trade."""
-
-
-@mcfl.command("patterns")
-def mcfl_patterns():
-    """Every pattern, whether it is on, and the evidence each timeframe carries."""
-    settings = mc.Settings.from_env()
-    table = Table(title="mcfl patterns", show_lines=True)
-    for column in ("pattern", "on", "classes", "1d", "4h", "1h", "15m"):
-        table.add_column(column, overflow="fold")
-    from .mcfl import registry as rg
-
-    for name, p in rg.PATTERNS.items():
-        klass = p.classes[0]
-        cells = [
-            rg.evidence(name, tf, klass).badge if tf in p.timeframes else "-"
-            for tf in ("1d", "4h", "1h", "15m")
-        ]
-        table.add_row(
-            name, "yes" if name in settings.patterns else "", ", ".join(p.classes), *cells
-        )
-    console.print(table)
-    paused = settings.pause_file.exists()
-    console.print(
-        f"timeframes {', '.join(settings.timeframes)} · alt universe "
-        f"{len(settings.alt_coins)} coins on {', '.join(settings.alt_timeframes)} · "
-        f"{'[yellow]PAUSED[/]' if paused else 'running'} ({escape(str(settings.pause_file))})"
-    )
-
-
-@mcfl.command("watch")
-@click.option("--redis", "redis_url", metavar="URL", help="Redis. Default: TILL_REDIS_URL.")
-@click.option("--group", default="mcfl", show_default=True, help="Consumer group name.")
-@click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
-@click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only.")
-@click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs.")
-def mcfl_watch(redis_url, group, verbose, quiet, log_file):
-    """Publish pattern alerts from `prices.bars` and the alt universe, forever.
-
-    Alert-only: it publishes to `alerts` and nothing else. Pause it without a
-    restart by creating MCFL_PAUSE_FILE (default .data/mcfl.off).
-    """
-    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
-    url = redis_url or os.environ.get("TILL_REDIS_URL") or None
-    bus = Bus(redis_url=url)
-    if url is None:
-        console.print(
-            "[yellow]no redis configured[/] - an in-process bus only hears "
-            "publishers inside this command. Set TILL_REDIS_URL or pass --redis."
-        )
-
-    async def go() -> None:
-        try:
-            await mc.watch(bus, group=group)
-        finally:
-            await bus.close()
-
-    try:
-        run(go())
-    except KeyboardInterrupt:
-        console.print("stopped")
 
 
 @main.command("project")

@@ -2813,53 +2813,41 @@ class TestChangepoint:
         assert len(engine.observation()[0]) == len(engine.state())
 
 
-class TestFocus:
-    """FOCuS as the detector, and paired with a member as the forecaster."""
+class TestPaired:
+    """A member watched by the FOCuS detector that `learning/focus.py` holds.
 
-    def test_it_fires_on_a_shift_and_not_on_noise(self):
-        """A detector that never fires and one that always does are both
-        useless; this checks the same threshold does neither."""
-        import random
+    **The detector's own tests live in `test_focus.py`** and check it against an
+    `O(n^2)` brute-force reference, which is why this module uses it rather than
+    carrying a second implementation. The second one collided with it in the
+    persistence registry - both resolved to `focus.Focus` - and two CI tests
+    caught that. What is tested here is the pairing.
+    """
 
-        from till_infinity.structures.statespace.focus import THRESHOLD, Focus
+    def test_it_runs_both_directions_and_keeps_the_hulls_small(self):
+        """Two one-sided detectors, and the cost claim made observable.
 
-        rng = random.Random(5)
-        detector = Focus()
-        fired = None
-        for i in range(600):
-            value = rng.gauss(0.0, 1.0) + (0.0 if i < 300 else 1.2)
-            got = detector.update(value)
-            if fired is None and i >= 20 and got >= THRESHOLD:
-                fired = i
-        assert fired is not None, "never detected a 1.2 sigma shift"
-        assert 300 <= fired <= 400, fired
-
-        quiet = Focus()
-        worst = max(quiet.update(rng.gauss(0.0, 1.0)) for _ in range(600))
-        assert worst < THRESHOLD, worst
-
-    def test_the_pruning_keeps_the_hull_small(self):
-        """The cost claim, made observable.
-
-        FOCuS is worth preferring over an `O(R)` posterior because its expected
-        cost is logarithmic, and that is entirely the pruning. A hull that grew
-        linearly would still give the right statistic while quietly being the
-        naive algorithm, which nothing else here would reveal.
+        `learning/focus.py` is one-sided on purpose, so a signed innovation
+        needs both. And FOCuS is worth preferring over an `O(R)` posterior
+        entirely because of the pruning: a hull that grew linearly would still
+        give the right statistic while quietly being the naive algorithm.
         """
         import random
 
-        from till_infinity.structures.statespace.focus import Focus
+        from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.paired import Paired
 
         rng = random.Random(13)
-        detector = Focus()
+        pair = Paired(lambda: Gaussian(jerk=1e-4))
         sizes = []
-        for i in range(20000):
-            detector.update(rng.gauss(0.0, 1.0))
-            if i in (100, 1000, 10000, 19999):
-                sizes.append(detector.candidates)
-        # Two hundredfold more data must not mean two hundredfold more work.
+        for i in range(4000):
+            when = i * 900.0
+            pair.predict(when)
+            pair.update(100.0 + rng.gauss(0.0, 0.3), 0.09, when)
+            if i in (100, 1000, 3999):
+                sizes.append(pair.candidates)
         assert sizes[-1] < 4 * sizes[0], sizes
         assert sizes[-1] < 100, sizes
+        assert pair.side in (-1, 0, 1)
 
     def test_pairing_helps_on_a_step_and_costs_nothing_without_one(self):
         """The null for `Paired` is the member alone, on the **same** series.
@@ -2869,7 +2857,7 @@ class TestFocus:
         """
         import random
 
-        from till_infinity.structures.statespace.focus import Paired
+        from till_infinity.structures.statespace.paired import Paired
         from till_infinity.structures.statespace.linear import Gaussian
 
         build = lambda: Gaussian(jerk=1e-4)  # noqa: E731
@@ -2905,7 +2893,7 @@ class TestFocus:
         reset for, and the rebuilt member would start from nothing."""
         import random
 
-        from till_infinity.structures.statespace.focus import Paired
+        from till_infinity.structures.statespace.paired import Paired
         from till_infinity.structures.statespace.linear import Gaussian
 
         rng = random.Random(4)
@@ -2924,7 +2912,7 @@ class TestFocus:
         and the hazard."""
         import random
 
-        from till_infinity.structures.statespace.focus import Paired
+        from till_infinity.structures.statespace.paired import Paired
         from till_infinity.structures.statespace.linear import Gaussian
 
         rng = random.Random(6)
@@ -2940,7 +2928,7 @@ class TestFocus:
     def test_paired_satisfies_the_contract_it_delegates(self):
         """So it can be scored against the member alone without a special case."""
         from till_infinity.structures.statespace.family import Filter
-        from till_infinity.structures.statespace.focus import Paired
+        from till_infinity.structures.statespace.paired import Paired
         from till_infinity.structures.statespace.linear import Gaussian
 
         paired = Paired(lambda: Gaussian(jerk=1e-4))
