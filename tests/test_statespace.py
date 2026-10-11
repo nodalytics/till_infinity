@@ -2705,13 +2705,79 @@ class TestInputsAreMeasuredInTime:
         # Seven per window - high, low, rv, parkinson, slope, ema_slope,
         # ema_z - plus the two blends. `position` is a method rather than a
         # stored feature because it is a ratio of two that are stored, and
-        # `gk` is absent because no opens were given.
+        # `gk` is absent because no opens were given. The counted-event
+        # features are **off by default** because they were measured and
+        # carry nothing; `counted=True` adds them.
         assert len(got) == 7 * len(WEEKS) + 2
         assert got.of("rv_4w") == 0.0  # a flat series has no realised vol
         assert got.of("parkinson_4w") == 0.0
         assert "har_parkinson" in got.names
+        assert "spikes_4w" not in got.names, "counted features default off"
         with pytest.raises(KeyError):
             got.of("not_a_feature")
+
+    def test_the_counted_features_are_opt_in_and_say_why(self):
+        """**Measured, null, and therefore off by default.**
+
+        Over 1,020 cells on six instruments and two timeframes, every family
+        of counted-event feature came within 0.032 of its own rotated control
+        and within 0.015 of zero net of a trailing standard deviation. They
+        are kept because the measurement is worth more than the code, and
+        defaulted off because 48 features widen the multiple-comparison
+        surface for every caller of `Features`.
+        """
+        from till_infinity.structures.statespace.inputs import WEEKS, Features
+
+        times = [i * 900.0 for i in range(400)]
+        closes = [100.0 + (i % 7) * 0.1 for i in range(400)]
+        highs = [c + 0.3 for c in closes]
+        lows = [c - 0.3 for c in closes]
+
+        off = Features(times, closes, highs, lows, windows=WEEKS)
+        on = Features(times, closes, highs, lows, windows=WEEKS, counted=True)
+        assert len(on.names()) > len(off.names())
+        assert "spikes_4w" in on.names()
+        assert "spikes_4w" not in off.names()
+        # The features that were always there must be identical either way.
+        for name in off.names():
+            assert name in on.names()
+            assert off.at(300).of(name) == pytest.approx(on.at(300).of(name))
+
+    def test_a_pivot_is_counted_where_it_is_confirmed_not_where_it_happened(self):
+        """**The leak this feature would have had.**
+
+        A swing high at bar `k` is only knowable at `k + span`, once `span`
+        bars have failed to exceed it. Marking it at `k` would be a feature
+        that knows the future - the same shape as the cross-resolution bug
+        this project has already paid for at `t = +20.8` on five symbols.
+        """
+        from till_infinity.structures.statespace.inputs import pivots
+
+        # A single, unmistakable peak at index 20.
+        highs = [1.0] * 41
+        highs[20] = 5.0
+        lows = [0.0] * 41
+
+        flags = pivots(highs, lows, span=5)
+        assert not flags[20], "marked at the peak, which nobody could know yet"
+        assert flags[25], "should be confirmed five bars later"
+        assert sum(flags[:25]) == 0, "nothing may be flagged before confirmation"
+
+    def test_the_counted_rates_are_per_hour_on_every_timeframe(self):
+        """The same market sampled twice must give the same rate.
+
+        One spike every ten bars of 15m is one every 2.5 hours; one every ten
+        bars of 1h is one every ten. If these came out equal the feature would
+        be counting bars, which is what the package forbids.
+        """
+        from till_infinity.structures.statespace.inputs import per_hour
+
+        flags = [i % 10 == 0 for i in range(400)]
+        quick = per_hour(flags, span=40, bar=0.25)
+        slow = per_hour(flags, span=40, bar=1.0)
+        assert quick[-1] == pytest.approx(4.0 * slow[-1], rel=1e-9)
+        # Four spikes per ten hours of 15m bars is 0.4 an hour.
+        assert slow[-1] == pytest.approx(0.1, rel=1e-6)
 
     def test_time_since_an_event_is_hours_not_bars(self):
         """Same portability argument, and `inf` rather than a plausible number
