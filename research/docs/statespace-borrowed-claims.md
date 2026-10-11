@@ -250,3 +250,89 @@ memory down when it contradicts the context" is a learned sigmoid
 approximating what an interacting multiple model does in closed form:
 reweight each component by how well it predicted. `switching.py` and
 `symmetry.py` both do it, and theirs is the exact version.
+
+## The maths and information-theory survey, and one bound worth having
+
+A different source family - eight domains, each with papers and URLs rather
+than assertions. Much of it is already answered here: topological data
+analysis measured null against a GARCH control, and the Wasserstein regime
+work is the same Horvath paper reviewed above, whose own novelty rate of
+0.0-0.2% of bars is the caveat.
+
+One item is worth more than everything else reviewed today, because **it does
+not need an edge to be true.**
+
+### Leverage, from non-ergodicity
+
+Under multiplicative dynamics the time-average growth rate of a leveraged
+position is `g(l) = l*(mu - r) - l^2 * sigma^2 / 2`, a downward parabola. It
+peaks at the Kelly leverage `l* = (mu - r)/sigma^2` and crosses back through
+zero at `l_crit = 2*l*`. Above `l_crit` the time-average growth rate is not
+merely worse, it is **negative** - so ruin is certain given enough time,
+however positive the expectation looks.
+
+That is a bound from the drift and the volatility alone. Computed on daily
+bars, with the drift's own standard error propagated:
+
+| instrument | years | sigma/yr | l* | +/- | l_crit |
+| --- | --- | --- | --- | --- | --- |
+| BTCUSD | 15.5 | 0.845 | 1.53 | 0.30 | **3.06** |
+| ETHUSD | 11.1 | 1.073 | 1.08 | 0.28 | **2.17** |
+| XAUUSD | 15.7 | 0.170 | 2.97 | 1.49 | 5.94 |
+| XAGUSD | 15.7 | 0.335 | 0.92 | 0.75 | 1.83 |
+| EURUSD | 55.7 | 0.098 | 1.95 | 1.37 | 3.89 |
+| GBPUSD | 33.3 | 0.090 | 0.03 | 1.92 | 0.06 |
+| USDJPY | 55.7 | 0.102 | -0.95 | 1.31 | -1.90 |
+| USDCHF | 55.7 | 0.112 | -1.90 | 1.20 | -3.81 |
+| Volatility_75_Index | 7.7 | 0.745 | 0.31 | 0.48 | 0.62 |
+| Volatility_100_Index | 7.7 | 0.981 | 0.25 | 0.37 | 0.49 |
+| Step_Index | 7.3 | 0.062 | -9.62 | 5.98 | -19.23 |
+
+**The error bars decide where this is usable.** The drift's standard error
+over a sample of `T` years is about `sigma/sqrt(T)`, so `l*` carries an error
+of `1/(sigma*sqrt(T))` - which *shrinks* as volatility rises. The ratio of
+estimate to error is 5.1 on BTC, 3.9 on ETH, 2.0 on gold, and **below one on
+every FX pair and every generated market.**
+
+So:
+
+* On **BTC and ETH** the bound is real and tight: above about 3x and 2.2x
+  respectively, long-run growth is negative. The survey's claim that optimal
+  BTC leverage is "~0.47x" does not reproduce - measured `l*` is 1.53 - but
+  its actionable half survives, because the 2x-10x it describes as common
+  straddles a critical leverage of 3.06.
+* On **FX** the drift is indistinguishable from zero over 33 to 56 years:
+  EURUSD's `l*` is 1.95 +/- 1.37 and GBPUSD's is 0.03 +/- 1.92. There is no
+  optimal leverage to compute, and `l_crit` inherits the same uncertainty.
+* On the **generated markets** `l*` sits at 0.07 to 0.36 with error bars
+  covering zero, and `Boom`, `Crash` and `Step` have negative drift outright,
+  so any long leverage on them is already past critical. `Step_Index` also
+  shows the formula's numerical weakness: a volatility of 0.062 puts `l*` at
+  -9.6 +/- 6.0, because dividing by `sigma^2` explodes when the volatility is
+  small.
+
+**What this does not do is replace the existing risk limit.** The desk's
+exposure is in FX and the synthetics, which is precisely where the bound is
+not estimable, so the daily-loss fraction stays what it is. The bound is a
+ceiling to respect where it is computable, not a sizing rule to adopt.
+
+### Three queued, with their priors
+
+* **Levy area for lead-lag.** The Levy area of a two-asset path is
+  `(1/2) * integral(X dY - Y dX)`, whose **sign** says which asset leads -
+  an asymmetry correlation cannot express. It needs no library and it is the
+  right shape for `relating`, whose hedge ratio is already a state, and for
+  the cross-impact measurement still pending in
+  `statespace-stat-arb-and-volume.md`.
+* **Wasserstein regime clustering against an HMM.** The paper claims
+  Wasserstein k-means "vastly outperforms" HMM regime detectors because HMMs
+  assume Gaussian emissions and returns have fat tails. This package now has
+  both halves - `distance.py` and two HMMs in `switching.py` and
+  `symmetry.py` - so it is a head-to-head rather than a claim, and it is the
+  natural next use of the metric.
+* **Lempel-Ziv complexity as a predictability gate.** A few dozen lines, and
+  the only reviewed statistic that asks whether the series is compressible at
+  all rather than which way it is going. The prior is unkind: every gate
+  measured at this desk has matched its rotated control, and
+  `till-infinity-measured-nulls` records the rolling-quantile family going
+  the same way. It is cheap enough to be worth the refutation.
