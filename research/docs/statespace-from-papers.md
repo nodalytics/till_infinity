@@ -468,3 +468,99 @@ The second point generalises to this desk directly. A member fitted and scored
 on one stretch of one instrument is a surrogate validated in-distribution, and
 the leave-one-instrument-out design in `rank_then_map.py` exists precisely
 because that is not enough.
+
+
+---
+
+## 11. Echo state networks *are* state-space models
+
+Singh and Raman, *Echo State Networks as State-Space Models: A Systems
+Perspective*, arXiv:2509.04422. The most directly on-topic of the eleven, and
+it validates a diagnostic built here the same day.
+
+**It says the thing `spectrum.py` does is the right thing to do.** The paper's
+central move is *small-signal linearization*: take a nonlinear reservoir,
+linearise it, and read the resulting LTI system's **poles and memory
+horizons**. That is exactly what `spectrum.py` computes - eigenvalues of `F`
+converted to half-lives in hours - and the paper's argument is that this is how
+you understand a nonlinear state-space model rather than an optional extra.
+
+It also says what to do about `selective.py`, which is nonlinear through its
+softplus and reports `eigenvalues()` as a *design constant*, `-(n+1)`. Those
+are the poles of the model as written; the poles that matter are the ones after
+the input-dependent `delta` has scaled them, and getting at those is a
+linearisation around the operating point. Measured today, `selective`'s
+realised half-lives at a one-hour step are **0.69h, 0.35h, 0.23h, 0.17h** -
+every mode under forty minutes - which says structurally that it cannot
+represent a daily horizon however it is fitted. That is a stronger statement
+than a disappointing likelihood and it needed no data.
+
+Four more things transfer:
+
+* **The echo-state property is input-to-state stability**, checkable from the
+  leak rate, the spectral scaling and the activation's Lipschitz constant.
+  `spectrum.stability` checks the linear members mechanically; the nonlinear
+  ones need this version, and `selective` currently has no stability argument
+  at all beyond the sign of its eigenvalues.
+* **A lifted/Koopman random-feature expansion rewrites a nonlinear SSM as a
+  linear one in an augmented state**, which buys transfer-function and
+  convolutional-kernel analysis - and with it, *when a reservoir can emulate a
+  structured SSM kernel*. That is the question `fractional.py` raises from the
+  other side: a sum of exponentials is a structured kernel, and whether
+  `selective` can already emulate it is answerable rather than arguable.
+* **EM for the hyperparameters** - leak rate, spectral radius, process and
+  measurement noise - which is the README's item 3 confirmed from outside, and
+  `diagnostics.fit_both` is the coordinate-ascent stand-in until the smoother
+  carries lag-one covariances.
+* **A hybrid subspace procedure that shapes the spectrum under contraction
+  constraints.** `fractional.py` chooses geometric half-lives by hand; this
+  says spectrum shaping is a design step with a stability side-condition, and
+  gives the form of the condition.
+
+**And the member it suggests.** An echo state network is a fixed random
+recurrent state with a *trained linear readout* - no fitting of the state
+dynamics at all. That is unusually well suited to this package's discipline,
+because the expensive half is fixed by construction and only the cheap half is
+learned. Its null is `linear` and `fractional` on held-out likelihood, and its
+spectrum is checkable before it is fitted.
+
+---
+
+## 12. A physical echo state network, and what two ESN papers in a row mean
+
+*Physical echo state network based on the nonlinearity and dynamic response of
+ambipolar heterostructure transistors*, Nature Communications 17:3321 (2026),
+`s41467-026-70171-2`. A hardware paper: the reservoir is built out of ambipolar
+organic-inorganic heterostructure transistors, whose saturation region supplies
+a tanh-like nonlinearity and whose dynamic response supplies the memory.
+
+Most of it does not transfer - this desk is not fabricating transistors - and
+saying so is the point of reading it. Three things do.
+
+* **Arriving second, it sharpens what the first one means.** arXiv:2509.04422
+  says an echo state network *is* a state-space model; this one says the state
+  dynamics can be an arbitrary physical process nobody designed, as long as its
+  spectrum is characterised. Together they describe a member whose dynamics are
+  **fixed and uncharacterised by choice** and whose only learned part is a
+  linear readout - which suits this package's discipline unusually well,
+  because the expensive half is not fitted and `spectrum.py` can characterise
+  it before a single reading.
+* **The nonlinearity and the memory are separable ingredients.** Theirs come
+  from two different device properties - the saturation curve and the transient
+  response - and that decomposition maps straight onto `selective.py`, which
+  has a softplus for one and a retention for the other. It says the two can be
+  measured and designed independently rather than tuned together, which is what
+  `selective`'s grid search currently does.
+* **They distinguish tasks that need the memory from tasks that do not** -
+  reporting what the device achieves *without* its dynamic mechanisms. That is
+  a null in hardware clothing, and it is the one this package would need before
+  building any reservoir member: **a memoryless nonlinear readout on the same
+  features**. If that matches, the recurrence bought nothing, and the finding
+  is about the features rather than the model - which is exactly the argument
+  `structures/learning/baseline.py` makes about the kNN.
+
+So: no new mechanism, one corroboration, and a null specified before the member
+it would test. Written down because an idea with its null attached is worth
+more than a mechanism without one, and because two independent arrivals at the
+reservoir idea in one week is the kind of coincidence worth recording rather
+than acting on.

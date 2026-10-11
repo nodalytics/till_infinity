@@ -60,32 +60,46 @@ an `n`-square measurement noise, and it is what cross-impact would require
 `i` is non-zero and about five times smaller than the self-response). A hedge
 does not need it; a cross-impact study does, and that is a different member.
 
-## The stated weight uncertainty is conditional, and the condition bites
+## The weights are centred, and the measurement that forced it
 
-`ratio_sds` is honest **only if the observation noise is white and
-independent**, which is the Kalman filter's standing assumption and not a
-property of a price series. Measured on a collinear basket of three random
-walks regressed in **levels**, the filter recovers weights of `0.924, -0.434,
-1.338` against a true `0.8, -0.5, 1.3` - good - while reporting standard
-deviations near **0.004**, which is thirty times smaller than the errors it
-actually made.
+An uncentred basket reports a confidence it has not earned. Measured on three
+random walks starting at 100, 50 and 20, the filter recovers
+`0.924, -0.434, 1.338` against a true `0.8, -0.5, 1.3` while stating standard
+deviations near **0.004** - thirty times smaller than the errors it made.
 
-That is not a bug in the recursion; it is the recursion correctly propagating
-an assumption that the data violates. A levels regression on near-collinear
-random walks has heavily autocorrelated residuals, and an autocorrelated
-residual fed to a filter that believes it is white produces exactly this: the
-right answer with an indefensible confidence interval.
+**My first diagnosis of that was wrong and the fix exposed it.** I read it as
+autocorrelated residuals fed to a filter that believes they are white, and
+added an innovation-based adaptive noise to correct it. The adaptation did
+**nothing**: `inflation` stayed at 1.000, which says the standardised
+innovations already have unit variance and the one-step predictive spread is
+exactly right. A correct one-step density and badly wrong weights are not a
+contradiction - they are the signature of something else.
 
-Two remedies, both the caller's:
+The something else is **collinearity with the intercept**. The observation row
+is `[1, x1, x2, x3]`, and a leg that sits near 100 with a little wander is
+almost a constant column, which is almost the intercept column. The filter
+learns the combinations it can see, leaves a persistent error along the
+direction it cannot, and shrinks its covariance anyway because it is genuinely
+gaining information in the directions that affect its forecast. Nothing about
+the arithmetic is wrong; the design matrix is near-singular.
 
-* **Regress returns rather than levels** where the relationship is a
-  co-movement rather than a cointegration. Spurious regression is the textbook
-  hazard of the levels form and it is not softened by putting a filter around
-  it.
-* **Check the innovations are white.** `diagnostics.py` runs Ljung-Box on
-  `last_standardised`, and a basket whose innovations fail it has a `ratio_sd`
-  that should not be quoted. This is the same rule the package applies to every
-  other member and the reason the test exists.
+Centring each leg on its own **running mean** removes it, and the effect is
+not marginal:
+
+| | max weight error | stated sd | ratio |
+|---|---|---|---|
+| levels, tight prior | 0.1242 | 0.0040 | **30.8x** |
+| levels, diffuse prior | 0.1242 | 0.0040 | 30.8x |
+| **centred legs** | **0.0048** | 0.0040 | **1.2x** |
+
+A diffuse prior changes nothing, which rules out the initialisation; centring
+makes the filter calibrated. So `centre` is on by default - the caller should
+not have to know this - and the running mean is causal, so nothing sees ahead.
+
+`adapt` stays, defaulted **off**, because it is a correct mechanism for the
+problem it addresses and this was not that problem. Keeping it with a measured
+"this did nothing here" is worth more than deleting it and rediscovering the
+idea later.
 
 ## What it does not do
 
@@ -149,6 +163,36 @@ class Relating:
     level_wander: float = LEVEL_WANDER
     ratio_wander: float = RATIO_WANDER
 
+    #: How fast the measurement noise adapts to the innovations it actually
+    #: sees. **This is the fix for the limitation below**, and zero disables
+    #: it, which is the control arm.
+    #:
+    #: Under a correct model the standardised innovation has unit variance, so
+    #: the realised `innovation^2 / S` is a direct read on whether `R` is big
+    #: enough. When the residuals are autocorrelated - which a levels
+    #: regression on collinear random walks guarantees - they are persistently
+    #: larger than `S` claims, and inflating `R` by that ratio is what makes
+    #: the covariance, and therefore `ratio_sds`, honest. It is the standard
+    #: innovation-based adaptive filter and it is not a fudge: it replaces an
+    #: assumed noise with a measured one.
+    #:
+    #: 0.02 is a half-life near thirty-five readings - slow, because a noise
+    #: estimate that chases its own innovations becomes a filter that explains
+    #: everything and predicts nothing.
+    #: **Off by default**, because the one case it was built for turned out
+    #: not to need it - see above. Correct mechanism, wrong illness.
+    adapt: float = 0.0
+    #: The running factor. One means the innovations are the size `S` claims.
+    inflation: float = 1.0
+
+    #: Regress on each leg's deviation from its own running mean rather than on
+    #: its level. **On by default**: an uncentred basket of near-constant legs
+    #: is collinear with the intercept, and the filter then states a confidence
+    #: thirty times too small. The mean is causal - it uses only readings
+    #: already seen - so this costs nothing in hindsight.
+    centre: bool = True
+    _means: list[float] = field(default_factory=list, repr=False)
+
     at: float | None = None
     seen: int = 0
     loglike: float = 0.0
@@ -173,6 +217,8 @@ class Relating:
             self.covariance = [[1.0 if i == j else 0.0 for j in range(size)] for i in range(size)]
         if not self._against:
             self._against = [0.0] * self.legs
+        if not self._means:
+            self._means = [0.0] * self.legs
 
     # ------------------------------------------------------------- the reading
 
@@ -275,6 +321,23 @@ class Relating:
         self.covariance[0][0] += self.level_wander * dt
         for i in range(1, self.legs + 1):
             self.covariance[i][i] += self.ratio_wander * dt
+        if self.centre and self._means:
+            # **Centring couples the intercept to the weights, and the
+            # coupling is derivable rather than tuned.** In centred
+            # coordinates the fitted value is `w0 + sum wi (xi - ai)`, so the
+            # same relationship written in levels has an intercept of
+            # `w0 - sum wi ai`. If a weight drifts by `dw`, the centred
+            # intercept must move by `dw * ai` to keep the fit - and with an
+            # anchor near 100 and a ratio drifting by one, that is a hundred
+            # units the intercept has to travel.
+            #
+            # Measured, without this the drifting-ratio fixture came out at
+            # **2.30 against a true 2.00**: the intercept could not move, so
+            # the filter over-steepened the slope instead. The induced
+            # variance is `sum (ratio_wander * ai^2)`, which is what the
+            # weights' own wander does to the intercept, and adding it is not
+            # a correction but the rest of the same model.
+            self.covariance[0][0] += sum(a * a for a in self._means) * self.ratio_wander * dt
 
     def update(
         self,
@@ -291,7 +354,8 @@ class Relating:
         constant, which is why the default is the value that makes that
         obvious rather than one that quietly works.
         """
-        legs = [float(against)] if isinstance(against, int | float) else list(against)
+        raw = [float(against)] if isinstance(against, int | float) else list(against)
+        legs = list(raw)
         if len(legs) != self.legs:
             raise ValueError(
                 f"this member has {self.legs} leg(s) and was given {len(legs)}. "
@@ -300,6 +364,22 @@ class Relating:
             )
         if when is not None and self.at is None:
             self.at = float(when)
+        if self.centre:
+            # **A fixed anchor from the first reading - not a running mean.**
+            # Two wrong versions came first and each failed differently. A mean
+            # starting at zero takes hundreds of bars to reach a leg priced
+            # near 100, by which time the covariance has collapsed; and a
+            # *running* mean of a random walk follows the walk, so `x - mean`
+            # is a short-term deviation and the regressor is no longer the leg.
+            # Both measured 32x against the uncentred 30.8x - no improvement,
+            # which is how I found out.
+            #
+            # Subtracting a constant is the only centring that leaves the
+            # regressor intact, and the first observation is the best causal
+            # constant there is.
+            if self.seen == 0:
+                self._means = list(raw)
+            legs = [v - m for v, m in zip(raw, self._means, strict=True)]
         self._against = legs
         row = self._row()
 

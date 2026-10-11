@@ -304,17 +304,57 @@ class TestSubjects:
             assert "measured" not in s.provenance.replace("never fitted", "")
 
     def test_one_model_serves_all_three(self):
-        """The thesis's central claim, as an assertion: the same filter takes the
-        same measurements for a level, an instrument and a relationship."""
+        """The thesis's central claim, refined by the thing that falsified it.
+
+        It used to assert that every subject's `filter()` is a `Gaussian`, and
+        that was true because `filter()` returned one unconditionally - the
+        claim could not have failed, which is what item 7 on the README's
+        priority list was complaining about.
+
+        Now `RELATION` asks for `relating.Relating`, and the old assertion is
+        false. **That is a real refinement rather than a broken test**, and the
+        distinction is worth stating precisely:
+
+        * at a **given** hedge ratio, a relationship *is* a level - a scalar
+          with a latent fair value, noisy observations and a distance - and the
+          thesis is exactly right;
+        * when the ratio is **unknown**, there is an extra latent quantity a
+          level does not have, and no amount of reinterpretation makes a
+          two-state filter estimate it from one series.
+
+        So what survives, and what is asserted here, is the interface claim:
+        the three subjects are served by filters that answer the same
+        questions. They are not served by the same class, and pretending they
+        were is what left the hedge ratio unimplemented for as long as it was.
+        """
         for s in SUBJECTS:
+            g = s.filter(at=0.0)
+            for i in range(30):
+                if s.member == "relating":
+                    # Its second leg is the thing it exists for. Handing it one
+                    # series is handing it a regression on a constant.
+                    g.update(1.0 + 0.1 * i, s.noise, i * HOUR, against=float(i))
+                else:
+                    g.update(1.0 + 0.1 * i, noise=s.noise, when=i * HOUR)
+            assert math.isfinite(g.value)
+            assert math.isfinite(g.rate)
+            assert math.isfinite(g.sd)
+            assert math.isfinite(g.loglike)
+            assert g.seen == 30
+            assert len(g.observation()[0]) == len(g.state())
+
+    def test_a_level_and_an_instrument_still_share_one_class(self):
+        """The half of the claim that did not change.
+
+        A level and an instrument differ in what the number *means*, not in
+        what has to be estimated, so they are the same filter with different
+        parameters - which is the part of the thesis the hedge ratio does not
+        touch.
+        """
+        for s in (LEVEL, INSTRUMENT):
             g = s.filter(at=0.0)
             assert isinstance(g, Gaussian)
             assert g.jerk == s.jerk
-            for i in range(30):
-                g.update(1.0 + 0.1 * i, noise=s.noise, when=i * HOUR)
-            assert math.isfinite(g.value)
-            assert math.isfinite(g.rate)
-            assert g.seen == 30
 
     def test_subjects_are_frozen(self):
         """A subject is a declaration, not state. Mutating one at runtime would
@@ -2813,6 +2853,200 @@ class TestChangepoint:
         assert len(engine.observation()[0]) == len(engine.state())
 
 
+class TestSpectrum:
+    """Eigenvalues, as durations and as a verdict."""
+
+    def test_every_member_that_states_its_transition_has_a_readable_spectrum(self):
+        """And the two findings the first run produced."""
+        pytest.importorskip("numpy")
+
+        from till_infinity.structures.statespace.family import members
+        from till_infinity.structures.statespace.fractional import Fractional
+        from till_infinity.structures.statespace.spectrum import spectrum
+
+        built = {**members(), "fractional": Fractional}
+        seen = {}
+        for name, build in built.items():
+            engine = build()
+            engine.predict(0.0)
+            engine.update(1.0, 0.1, 0.0)
+            got = spectrum(engine, 1.0)
+            if got is None:
+                continue
+            seen[name] = got
+            assert got.stability in {"stable", "marginal", "unstable"}
+            assert got.stability != "unstable", (
+                f"{name} has an eigenvalue outside the unit circle, which is a "
+                "state that grows without bound"
+            )
+            assert len(got.half_lives) == got.states
+
+        # `linear` is a triple integrator: three unit roots and no half-life.
+        assert all(math.isinf(h) for h in seen["kalman"].half_lives)
+        assert seen["kalman"].stability == "marginal"
+
+        # **And its eigenvector matrix is defective.** Three identical
+        # eigenvalues with one eigenvector is a Jordan block, so the modal
+        # decomposition is numerically meaningless - which is worth knowing
+        # before reading anything modal into its three states.
+        assert seen["kalman"].conditioning > 1e6, seen["kalman"].conditioning
+
+        # `reverting` keeps the level's unit root and gives the rate a
+        # half-life, which is the whole difference between the two members.
+        lives = sorted(seen["reverting"].half_lives)
+        assert math.isinf(lives[-1])
+        assert 0.5 < lives[0] < 5.0, lives
+
+    def test_a_member_whose_modes_are_all_short_cannot_reach_a_long_horizon(self):
+        """Structural, and visible before any data.
+
+        `selective`'s realised half-lives are all under an hour, so it cannot
+        represent a daily level however it is fitted. `fractional` spans the
+        ladder by construction. That is the comparison `reachable` exists for.
+        """
+        pytest.importorskip("numpy")
+
+        from till_infinity.structures.statespace.fractional import Fractional
+        from till_infinity.structures.statespace.selective import Selective
+        from till_infinity.structures.statespace.spectrum import reachable
+
+        quick = Selective()
+        quick.predict(0.0)
+        quick.update(1.0, 0.1, 0.0)
+        shortest, longest = reachable(quick, 1.0)
+        assert longest < 2.0, (shortest, longest)
+
+        wide = Fractional(fastest=1.0, slowest=672.0)
+        wide.predict(0.0)
+        wide.update(1.0, 0.1, 0.0)
+        shortest, longest = reachable(wide, 1.0)
+        assert shortest < 2.0
+        assert longest > 500.0, (shortest, longest)
+
+    def test_the_hedge_ratio_is_observable_only_because_the_leg_moves(self):
+        """**A true statement wearing an artifact's clothes.**
+
+        The observability matrix assumes `C` is constant, and `Relating`'s is
+        not - it carries the other leg. Frozen, it reports one hidden state of
+        two, and that is exactly right *if the leg does not move*: a pair whose
+        independent leg is constant has nothing to separate a level from a
+        slope with. The identifiability of a hedge ratio rests on the variation
+        in `x`, and this is where that is written down.
+        """
+        pytest.importorskip("numpy")
+
+        from till_infinity.structures.statespace.relating import Relating
+        from till_infinity.structures.statespace.spectrum import spectrum
+
+        engine = Relating()
+        engine.predict(0.0)
+        engine.update(1.0, 0.1, 0.0, against=3.0)
+        got = spectrum(engine, 1.0)
+        assert got is not None
+        assert got.states == 2
+        assert got.observable == 1, "a frozen C should not separate the two"
+        assert not got.fully_observable
+
+    def test_a_member_that_cannot_state_its_transition_declines(self):
+        """The same contract `smooth` uses."""
+        from till_infinity.structures.statespace.nulls import Walk
+        from till_infinity.structures.statespace.spectrum import spectrum
+
+        assert spectrum(Walk(), 1.0) is None
+
+
+class TestFractional:
+    """Long memory from a sum of short memories."""
+
+    def test_its_forecast_decays_fast_then_slowly(self):
+        """**The shape a single exponential cannot have.**
+
+        A power-law kernel falls quickly at first and then very slowly. One
+        exponential has a single time scale, so its decay is a straight line
+        in logs; a sum of them bends. The test is that bend, measured as the
+        ratio of successive half-lives of the forecast itself.
+        """
+        from till_infinity.structures.statespace.fractional import Fractional
+        from till_infinity.structures.statespace.reverting import Reverting
+
+        engine = Fractional()
+        engine.predict(0.0)
+        engine.update(10.0, 0.1, 0.0)
+        got = [engine.at_time(h * 3600.0) for h in (1, 6, 24, 168, 672)]
+        assert got == sorted(got, reverse=True), got
+        assert got[0] < 10.0
+        assert got[-1] > 0.0
+
+        # The first six hours lose more than the next 23 days, which is what
+        # "no typical scale" means in one sentence.
+        early = 10.0 - got[1]
+        late = got[1] - got[-1]
+        assert early > 0.6 * late, (early, late)
+
+        # A single reverting mode decays geometrically: equal time ratios give
+        # equal value ratios. This must not.
+        single = Reverting()
+        single.predict(0.0)
+        single.update(10.0, 0.1, 0.0)
+        ours = [engine.at_time(h * 3600.0) for h in (24, 168)]
+        assert ours[1] / ours[0] > 0.3, "decayed like one exponential"
+
+    def test_the_modes_are_geometric_and_span_the_range_asked_for(self):
+        from till_infinity.structures.statespace.fractional import Fractional
+
+        engine = Fractional(modes=5, fastest=1.0, slowest=672.0)
+        lives = engine.half_lives
+        assert len(lives) == 5
+        assert lives[0] == pytest.approx(1.0)
+        assert lives[-1] == pytest.approx(672.0)
+        ratios = [lives[i + 1] / lives[i] for i in range(4)]
+        for r in ratios:
+            assert r == pytest.approx(ratios[0], rel=1e-9)
+
+    def test_it_satisfies_the_family_contract(self):
+        import random
+
+        from till_infinity.structures.statespace.fractional import Fractional
+
+        rng = random.Random(2)
+        engine = Fractional()
+        level = 0.0
+        for i in range(300):
+            level += rng.gauss(0.0, 0.4)
+            engine.predict(i * 3600.0)
+            engine.update(level, 0.16, i * 3600.0)
+        assert engine.output() == (engine.value,)
+        assert len(engine.observation()[0]) == len(engine.state())
+        assert math.isfinite(engine.loglike)
+        assert math.isfinite(engine.sd)
+        low, high = engine.band(engine.at + 3600.0)
+        assert low < engine.at_time(engine.at + 3600.0) < high
+        for i in range(engine.modes):
+            for j in range(engine.modes):
+                assert engine.covariance[i][j] == pytest.approx(
+                    engine.covariance[j][i], rel=1e-12, abs=1e-15
+                )
+
+    def test_long_memory_in_the_level_is_not_clustering(self):
+        """**The prediction that failed, pinned so it stays failed.**
+
+        A sum of exponentials gives the mean memory at every scale. It does
+        not make the conditional variance depend on past magnitudes, so the
+        rollout does not cluster - +0.192 against `reverting`'s +0.190. The
+        member that would cluster is this device applied to log variance,
+        which is not written.
+        """
+        from till_infinity.structures.statespace.facts import measure, rollout
+        from till_infinity.structures.statespace.fractional import Fractional
+        from till_infinity.structures.statespace.paths import hourly
+
+        got = measure(rollout(Fractional, hourly(4000), noise=0.25, seed=5))
+        assert got.clustering < 0.5, (
+            "if this now clusters, the docstring's explanation is wrong and "
+            "the finding needs rewriting rather than the test relaxing"
+        )
+
+
 class TestRelating:
     """The hedge ratio as a state - what statistical arbitrage needed."""
 
@@ -2837,13 +3071,26 @@ class TestRelating:
             ys.append(5.0 + beta * x + rng.gauss(0.0, 0.5))
             betas.append(beta)
 
-        engine = Relating(ratio_wander=1e-5)
-        tracked = []
-        for i, (leg, dependent) in enumerate(zip(xs, ys, strict=True)):
-            engine.predict(i * 3600.0)
-            engine.update(dependent, 0.25, i * 3600.0, against=leg)
-            tracked.append(engine.ratio)
+        def fit(centre: bool):
+            engine = Relating(ratio_wander=1e-5, centre=centre)
+            seen = []
+            for i, (leg, dependent) in enumerate(zip(xs, ys, strict=True)):
+                engine.predict(i * 3600.0)
+                engine.update(dependent, 0.25, i * 3600.0, against=leg)
+                seen.append(engine.ratio)
+            return engine, seen
 
+        # **Both arms, because centring is a trade-off and this is the side it
+        # costs on.** Centring removes the intercept's collinearity with a
+        # near-constant leg, which is the common case and worth 30x in
+        # calibration - but here the ratio doubles over the sample, so in
+        # centred coordinates the intercept has to travel `dbeta * anchor`,
+        # a hundred units. The induced variance is added in `predict` and that
+        # took this from 2.30 to 1.94; the residual gap against the uncentred
+        # 1.998 is what centring costs when the weights move a long way.
+        centred, _ = fit(centre=True)
+        engine, tracked = fit(centre=False)
+        assert centred.ratio == pytest.approx(betas[-1], abs=0.10)
         assert engine.ratio == pytest.approx(betas[-1], abs=0.05)
 
         mx, my = statistics.fmean(xs), statistics.fmean(ys)
@@ -2882,34 +3129,73 @@ class TestRelating:
                     engine.covariance[j][i], rel=1e-12, abs=1e-15
                 )
 
-    def test_the_stated_weight_uncertainty_is_optimistic_in_levels(self):
-        """**A known limitation, pinned so it cannot be forgotten.**
+    def test_centring_the_legs_makes_the_uncertainty_honest(self):
+        """**The limitation, and its fix, measured side by side.**
 
-        A levels regression on collinear random walks has autocorrelated
-        residuals, and a filter that believes they are white reports the right
-        weights with an indefensible confidence. The remedy is the caller's -
-        regress returns, or check the innovations - but the limitation is
-        measured here so that nobody quotes `ratio_sd` from a levels fit
-        without meeting it first.
+        An uncentred basket of near-constant legs is collinear with the
+        intercept - a leg sitting near 100 with a little wander is almost the
+        constant column - so the filter learns the combinations it can see,
+        leaves a persistent error along the one it cannot, and shrinks its
+        covariance anyway because it really is gaining information in the
+        directions that affect its forecast. The weights come out wrong and
+        the stated confidence is thirty times too small.
+
+        It is fixed by subtracting a fixed anchor, and this test exists
+        because two other fixes did not work: an innovation-based adaptive
+        noise did nothing (the standardised innovations already had unit
+        variance, so `R` was not the problem), and a *running* mean of a
+        random walk follows the walk, which destroys the regressor rather
+        than centring it.
         """
         import random
 
         from till_infinity.structures.statespace.relating import Relating
 
-        rng = random.Random(11)
-        legs, truth = [100.0, 50.0, 20.0], (0.8, -0.5, 1.3)
-        engine = Relating(legs=3, ratio_wander=1e-8)
-        for i in range(4000):
-            legs = [v + rng.gauss(0.0, 0.7) for v in legs]
-            dependent = (
-                2.0 + sum(t * v for t, v in zip(truth, legs, strict=True)) + rng.gauss(0.0, 0.4)
-            )
-            engine.predict(i * 3600.0)
-            engine.update(dependent, 0.16, i * 3600.0, against=legs)
+        truth = (0.8, -0.5, 1.3)
 
-        errors = [abs(g - w) for g, w in zip(engine.ratios, truth, strict=True)]
-        stated = list(engine.ratio_sds)
-        assert max(errors) > 5.0 * max(stated), (errors, stated)
+        def fit(centre: bool):
+            rng = random.Random(11)
+            legs = [100.0, 50.0, 20.0]
+            engine = Relating(legs=3, ratio_wander=1e-8, centre=centre)
+            for i in range(4000):
+                legs = [v + rng.gauss(0.0, 0.7) for v in legs]
+                dependent = (
+                    2.0 + sum(t * v for t, v in zip(truth, legs, strict=True)) + rng.gauss(0.0, 0.4)
+                )
+                engine.predict(i * 3600.0)
+                engine.update(dependent, 0.16, i * 3600.0, against=legs)
+            error = max(abs(g - w) for g, w in zip(engine.ratios, truth, strict=True))
+            return error, max(engine.ratio_sds), engine
+
+        loose, stated_loose, _ = fit(centre=False)
+        tight, stated_tight, engine = fit(centre=True)
+
+        # Uncentred: the stated uncertainty is an order of magnitude too small.
+        assert loose > 10.0 * stated_loose, (loose, stated_loose)
+        # Centred: calibrated, and the weights are right.
+        assert tight < 3.0 * stated_tight, (tight, stated_tight)
+        for got, wanted in zip(engine.ratios, truth, strict=True):
+            assert got == pytest.approx(wanted, abs=0.02), engine.ratios
+
+    def test_the_adaptive_noise_is_inert_when_the_innovations_are_right(self):
+        """`adapt` is a correct mechanism for a problem this was not.
+
+        Kept, defaulted off, with the measurement that says so - because
+        deleting it would mean rediscovering the idea later, and because an
+        inflation of 1.000 is the evidence that ruled out the first diagnosis.
+        """
+        import random
+
+        from till_infinity.structures.statespace.relating import Relating
+
+        rng = random.Random(3)
+        engine = Relating(adapt=0.02)
+        leg = 10.0
+        for i in range(2000):
+            leg += rng.gauss(0.0, 0.5)
+            engine.predict(i * 3600.0)
+            engine.update(2.0 * leg + rng.gauss(0.0, 0.4), 0.16, i * 3600.0, against=leg)
+        assert engine.inflation == pytest.approx(1.0, abs=0.6), engine.inflation
 
     def test_a_basket_that_changes_width_is_refused(self):
         """A missing column is a different model, not the same one short a leg."""

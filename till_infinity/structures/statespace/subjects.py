@@ -58,8 +58,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .linear import Gaussian
-
 
 @dataclass(frozen=True, slots=True)
 class Subject:
@@ -83,9 +81,40 @@ class Subject:
     #: and a measured one is the goal; a blank is not allowed.
     provenance: str
 
-    def filter(self, *, at: float | None = None) -> Gaussian:
-        """A filter configured for this subject. Nothing is wired to it."""
-        return Gaussian(jerk=self.jerk, at=at, p00=1.0)
+    #: Which member this subject wants, by the name `family.members()` uses.
+    #: **Item 7 on the README's priority list**, which complained that
+    #: `filter()` always returned a `Gaussian` so *"no subject can declare that
+    #: it wants the reverting member - which is now the one with evidence
+    #: behind it"*. A subject and a member are composed here rather than paired
+    #: by hand at every call site.
+    member: str = "kalman"
+
+    #: Initial state variance, `P(0)`. Named because the list named it: a
+    #: subject that cannot say how uncertain it starts is a subject whose first
+    #: reading is being handled by a default nobody chose.
+    px0: float = 1.0
+
+    def filter(self, *, at: float | None = None) -> object:
+        """A filter configured for this subject. Nothing is wired to it.
+
+        Returns the member this subject asked for, carrying its own `jerk` and
+        `px0` where the member has them. A member that takes neither gets
+        neither, rather than being handed a parameter that means nothing to
+        it - which is why this inspects rather than assumes.
+        """
+        from .family import composable
+
+        built = composable()[self.member]
+        try:
+            engine = built(jerk=self.jerk, at=at, p00=self.px0)  # type: ignore[call-arg]
+        except TypeError:
+            # The member does not take the integrated-jerk parameters. That is
+            # a true statement about it - `reverting` has `theta`, `swarm` has
+            # `wander` - so it gets its own defaults and the subject's `jerk`
+            # is not silently forced into a field that does not mean the same
+            # thing.
+            engine = built(at=at)  # type: ignore[call-arg]
+        return engine
 
 
 #: **A level is a latent price, observed by touches.** The subject the desk
@@ -170,8 +199,11 @@ RELATION = Subject(
         "open - families.md is entirely univariate - and the Deriv synthetics "
         "case has three outcomes of which two are fatal: a shared stream makes "
         "the deviation zero, independent streams make it a random walk, and only "
-        "shared-plus-idiosyncratic is tradeable"
+        "shared-plus-idiosyncratic is tradeable. **The member now exists**: "
+        "`relating.Relating` carries the hedge ratio as a state, so this "
+        "subject's `member` is the one place that choice is written down"
     ),
+    member="relating",
 )
 
 #: Every subject, so a test can assert the invariants hold for all of them rather

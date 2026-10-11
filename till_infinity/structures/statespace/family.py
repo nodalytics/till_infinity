@@ -336,6 +336,26 @@ def members() -> dict[str, type]:
     }
 
 
+def composable() -> dict[str, type]:
+    """`members()` plus the ones that need more than one series.
+
+    **`members()` is the family scored against each other on one price
+    series**, and that is load-bearing: a dozen tests and every harness drive
+    all of them over one stream and compare likelihoods. `relating.Relating`
+    cannot be in it - regressing on a single series means regressing on a
+    constant, and adding it broke five tests the moment it was tried, which is
+    the family definition defending itself.
+
+    It still has to be nameable, because `subjects.RELATION` asks for it by
+    name and that composition is item 7 on the README's list. So the registry
+    a `Subject` resolves through is this one, and the registry the comparison
+    harnesses walk is the other.
+    """
+    from .relating import Relating
+
+    return {**members(), "relating": Relating}
+
+
 #: Members the spec names that are not written yet, with the null each will have
 #: to be scored against when it is. Written down now so that adding one without
 #: its null requires deleting a line that says it needs one.
