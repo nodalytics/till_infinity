@@ -54,6 +54,13 @@ SYMBOLS = (
     ("gbpusd", "GBPUSD"),
     ("usdjpy", "USDJPY"),
     ("v75", "Volatility_75_Index"),
+    # **BTC carries real volume**, and the FX and synthetic feeds do not - a
+    # CFD "volume" is a tick count, which is why `volatility_ceiling.py` keeps
+    # Amihud only to record that rather than to expect anything. Every
+    # volume-derived feature below is therefore measurable on exactly one of
+    # these six, and the comparison that matters is BTC with volume against
+    # BTC without it.
+    ("btcusd", "BTCUSD"),
 )
 FRAMES = ("15m", "1h")
 
@@ -81,18 +88,21 @@ def load(stem: str, frame: str):
     if not path.exists():
         return None
     with np.load(path) as bundle:
-        if not {"time", "close"} <= set(bundle.keys()):
+        keys = set(bundle.keys())
+        if not {"time", "close"} <= keys:
             return None
         order = np.argsort(bundle["time"])
         times = bundle["time"][order].tolist()
         closes = bundle["close"][order].tolist()
+        volumes = bundle["volume"][order].tolist() if "volume" in keys else [0.0] * len(order)
     first = 0
     while first < len(times) and times[first] < SINCE:
         first += 1
     times, closes = times[first:], closes[first:]
+    volumes = volumes[first:]
     if len(closes) > LIMIT:
-        times, closes = times[-LIMIT:], closes[-LIMIT:]
-    return times, closes
+        times, closes, volumes = times[-LIMIT:], closes[-LIMIT:], volumes[-LIMIT:]
+    return times, closes, volumes
 
 
 def logs(prices: list[float]) -> list[float]:
@@ -145,6 +155,48 @@ NAMES = (
     "newyork",
 )
 
+#: Volume features, appended when the feed carries real volume. Scale-free for
+#: the same reason everything else here is: a log volume against its own
+#: rolling mean means the same thing on BTC and on anything else that one day
+#: has traded size.
+VOLUME_NAMES = ("vol_z", "signed_flow", "amihud")
+
+#: Whether to append them. The harness runs both ways, which is the only way
+#: to say what volume is worth.
+WITH_VOLUME = os.environ.get("WITH_VOLUME", "1") != "0"
+
+
+def traded(volumes: list[float], values: list[float], span: int):
+    """Volume series the features are built from, or a flag saying there is none.
+
+    Returns `(has_volume, log volume, signed flow, trailing mean, trailing sd)`.
+    Split out of `build` because that function was doing two jobs and only one
+    of them is about volume.
+
+    **`has_volume` is measured, not assumed from the symbol.** A CFD "volume"
+    is a tick count rather than traded size, and every FX feed here reports
+    one - so this check passes on all six instruments and the features below
+    mean *activity* on five of them and *size* on BTC. That difference is the
+    measurement, and naming it here is what stops it being read as one thing.
+    """
+    if not (WITH_VOLUME and sum(1 for v in volumes if v > 0) > 0.9 * len(volumes)):
+        return False, [], [], [], []
+    logv = [math.log(v) if v > 0 else 0.0 for v in volumes]
+    rolling_mean = [0.0] * len(logv)
+    run = 0.0
+    for k in range(len(logv)):
+        run += logv[k]
+        if k >= span:
+            run -= logv[k - span]
+        rolling_mean[k] = run / min(k + 1, span)
+    flow = [0.0] * len(values)
+    for k in range(1, len(values)):
+        step = values[k] - values[k - 1]
+        flow[k] = (1.0 if step > 0 else -1.0 if step < 0 else 0.0) * logv[k]
+        if flow[k]:
+            flow[k] -= math.copysign(rolling_mean[k], flow[k])
+    return True, logv, flow, rolling_mean, trailing(logv, span)
+
 
 def build(stem: str, frame: str, horizon: float):
     """Rows of `(features, |move| as a z, raw |move|, trailing sd)`.
@@ -169,7 +221,7 @@ def build(stem: str, frame: str, horizon: float):
     got = load(stem, frame)
     if got is None or len(got[1]) < 3000:
         return []
-    times, closes = got
+    times, closes, volumes = got
     bar = bar_hours(times)
     if bar <= 0:
         return []
@@ -189,6 +241,11 @@ def build(stem: str, frame: str, horizon: float):
         return []
     low = reference[len(reference) // 3]
     high = reference[2 * len(reference) // 3]
+
+    # Volume features, when the feed has real volume. `has_volume` is measured
+    # rather than assumed from the symbol: a feed that reports a tick count
+    # would pass a name check and fail this one.
+    has_volume, logv, flow, rolling_mean, mean_v = traded(volumes, values, spans[WINDOWS[2]])
 
     rows = []
     for i in range(stride, len(values) - ahead, stride):
@@ -212,6 +269,24 @@ def build(stem: str, frame: str, horizon: float):
                 1.0 if hour >= 13 else 0.0,
             ]
         )
+        if has_volume:
+            spread_v = mean_v[i] if mean_v[i] > 0 else 1.0
+            # **Amihud is |move| per unit of TRADED SIZE**, not per unit of its
+            # logarithm. The first version divided by `log(volume)`, which is
+            # near zero whenever volume is near one and produced a feature with
+            # no bounded scale - which an SGD ranker cannot survive and which
+            # would have been reported as "volume does not help".
+            size = volumes[i] if volumes[i] > 0 else 1.0
+            amihud = abs(values[i] - values[i - 1]) / size
+            features.extend(
+                [
+                    (logv[i] - rolling_mean[i]) / max(spread_v, 1e-9),
+                    flow[i] / max(spread_v, 1e-9) if spread_v > 0 else 0.0,
+                    # Logged, because illiquidity spans orders of magnitude and
+                    # every other feature here is a z.
+                    math.log1p(amihud * 1e4),
+                ]
+            )
         move = abs(values[i + ahead] - values[i])
         rows.append((features, move / (unit * math.sqrt(horizon)), move, here))
     return rows
@@ -268,6 +343,17 @@ def fold(held: str, pools: dict) -> str | None:
     own_train, test = rows[:cut], rows[cut:]
     if len(test) < 200 or len(train_rows) < 1000:
         return None
+    # **One feature width across the fold.** BTC carries three volume columns
+    # that the FX feeds cannot, so a global ranker trained on a mixed pool
+    # would be fitting a vector of two different meanings. Rows of the wrong
+    # width are dropped from the training pool, and the fold says so.
+    width = len(test[0][0])
+    train_rows = [r for r in train_rows if len(r[0]) == width]
+    if len(train_rows) < 1000:
+        # No same-width partners - which is BTC's situation whenever the volume
+        # columns are on. Score the per-instrument arm anyway and say the
+        # global one could not be formed, rather than dropping the row.
+        return _own_only(held, own_train, test, width)
 
     # The global ranker: four instruments, never the fifth. The margin stands
     # in for the cost threshold the paper puts inside the loss.
@@ -295,9 +381,30 @@ def fold(held: str, pools: dict) -> str | None:
     sd_mae = calibrated(anchors, sd, truth)
 
     return (
-        f"  {held:<10}{len(test):>8}{spearman(scores, truth):>+9.3f}"
+        f"  {held:<10}{len(test):>8}{width:>6}{spearman(scores, truth):>+9.3f}"
         f"{spearman(mine, truth):>+10.3f}{spearman(direct, truth):>+10.3f}"
         f"{spearman(sd, truth):>+9.3f}{mae:>12.3f}{sd_mae:>9.3f}"
+    )
+
+
+def _own_only(held: str, own_train: list, test: list, width: int) -> str:
+    """The per-instrument arm alone, when no same-width pool exists."""
+    own = Ranker(margin=0.1)
+    own.fit([(f, z) for f, z, _r, _s in own_train], epochs=2, pairs=30_000, seed=7)
+    truth = [r for _f, _z, r, _s in test]
+    sd = [s for _f, _z, _r, s in test]
+    mine = [own.score(f) for f, _z, _r, _s in test]
+    step = max(len(own_train) // ANCHORS, 1)
+    anchors = own_train[::step][:ANCHORS]
+    model = RankThenMap(ranker=own)
+    model.anchor([(f, r) for f, _z, r, _s in anchors])
+    mapped = [model.predict(f) for f, _z, _r, _s in test]
+    mae = statistics.fmean(abs(a - b) for a, b in zip(mapped, truth, strict=True))
+    return (
+        f"  {held:<10}{len(test):>8}{width:>6}{'  no pool':>9}"
+        f"{spearman(mine, truth):>+10.3f}{'  -':>10}"
+        f"{spearman(sd, truth):>+9.3f}{mae:>12.3f}"
+        f"{calibrated(anchors, sd, truth):>9.3f}"
     )
 
 
@@ -324,6 +431,13 @@ def calibrated(anchors: list[tuple], sd: list[float], truth: list[float]) -> flo
 
 def main() -> None:
     print("Rank-then-map, scored leave-one-instrument-out.")
+    print(f"volume features: {'ON' if WITH_VOLUME else 'off'}.")
+    print("**Run it both ways.** With volume off, every feed has the same 12")
+    print("columns and BTC joins the global pool - which tests whether a model")
+    print("trained on FX and synthetics transfers to a different asset class.")
+    print("With volume on, only BTC gains the three volume columns, so the")
+    print("comparison that means anything is BTC's per-instrument score")
+    print("against its own score from the other run.")
     print("The ranker never sees the held-out instrument. Anchors come from")
     print("its own TRAINING period; everything is scored on its later one.")
     print("'sd' is the trailing standard deviation - the null that has beaten")
@@ -340,8 +454,9 @@ def main() -> None:
                 continue
             print(f"=== {frame}, horizon {horizon:g}h ===")
             print(
-                f"  {'held out':<10}{'n test':>8}{'GLOBAL':>9}{'per-inst':>10}"
-                f"{'one-step':>10}{'sd null':>9}{'mapped MAE':>12}{'sd MAE':>9}"
+                f"  {'held out':<10}{'n test':>8}{'cols':>6}{'GLOBAL':>9}"
+                f"{'per-inst':>10}{'one-step':>10}{'sd null':>9}"
+                f"{'mapped MAE':>12}{'sd MAE':>9}"
             )
             for held in pools:
                 line = fold(held, pools)

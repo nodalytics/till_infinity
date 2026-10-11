@@ -2813,6 +2813,130 @@ class TestChangepoint:
         assert len(engine.observation()[0]) == len(engine.state())
 
 
+class TestRelating:
+    """The hedge ratio as a state - what statistical arbitrage needed."""
+
+    def test_it_tracks_a_drifting_hedge_ratio_that_a_static_fit_cannot(self):
+        """**The reason this member exists.**
+
+        A pair's hedge ratio moves, and a static fit averages over the move.
+        If the filter cannot beat least squares on a drifting ratio it has
+        bought nothing over the spread somebody computed by hand.
+        """
+        import random
+        import statistics
+
+        from till_infinity.structures.statespace.relating import Relating
+
+        rng = random.Random(7)
+        xs, ys, betas, x = [], [], [], 100.0
+        for i in range(3000):
+            x += rng.gauss(0.0, 1.0)
+            beta = 1.0 + i / 3000
+            xs.append(x)
+            ys.append(5.0 + beta * x + rng.gauss(0.0, 0.5))
+            betas.append(beta)
+
+        engine = Relating(ratio_wander=1e-5)
+        tracked = []
+        for i, (leg, dependent) in enumerate(zip(xs, ys, strict=True)):
+            engine.predict(i * 3600.0)
+            engine.update(dependent, 0.25, i * 3600.0, against=leg)
+            tracked.append(engine.ratio)
+
+        assert engine.ratio == pytest.approx(betas[-1], abs=0.05)
+
+        mx, my = statistics.fmean(xs), statistics.fmean(ys)
+        sxx = sum((v - mx) ** 2 for v in xs)
+        sxy = sum((a - mx) * (b - my) for a, b in zip(xs, ys, strict=True))
+        static = sxy / sxx
+        ours = statistics.fmean(abs(t - b) for t, b in zip(tracked[500:], betas[500:], strict=True))
+        theirs = statistics.fmean(abs(static - b) for b in betas[500:])
+        assert ours < theirs / 10.0, (ours, theirs)
+
+    def test_a_basket_is_the_same_member(self):
+        """`legs=3`, because a pair is the `legs=1` case and not a special one."""
+        import random
+
+        from till_infinity.structures.statespace.relating import Relating
+
+        rng = random.Random(11)
+        legs, truth = [100.0, 50.0, 20.0], (0.8, -0.5, 1.3)
+        engine = Relating(legs=3, ratio_wander=1e-8)
+        for i in range(4000):
+            legs = [v + rng.gauss(0.0, 0.7) for v in legs]
+            dependent = (
+                2.0 + sum(t * v for t, v in zip(truth, legs, strict=True)) + rng.gauss(0.0, 0.4)
+            )
+            engine.predict(i * 3600.0)
+            engine.update(dependent, 0.16, i * 3600.0, against=legs)
+
+        for got, wanted in zip(engine.ratios, truth, strict=True):
+            assert got == pytest.approx(wanted, abs=0.2), (engine.ratios, truth)
+
+        # The covariance must stay symmetric; round-off breaks it, and a
+        # covariance that is no longer symmetric is no longer a covariance.
+        for i in range(4):
+            for j in range(4):
+                assert engine.covariance[i][j] == pytest.approx(
+                    engine.covariance[j][i], rel=1e-12, abs=1e-15
+                )
+
+    def test_the_stated_weight_uncertainty_is_optimistic_in_levels(self):
+        """**A known limitation, pinned so it cannot be forgotten.**
+
+        A levels regression on collinear random walks has autocorrelated
+        residuals, and a filter that believes they are white reports the right
+        weights with an indefensible confidence. The remedy is the caller's -
+        regress returns, or check the innovations - but the limitation is
+        measured here so that nobody quotes `ratio_sd` from a levels fit
+        without meeting it first.
+        """
+        import random
+
+        from till_infinity.structures.statespace.relating import Relating
+
+        rng = random.Random(11)
+        legs, truth = [100.0, 50.0, 20.0], (0.8, -0.5, 1.3)
+        engine = Relating(legs=3, ratio_wander=1e-8)
+        for i in range(4000):
+            legs = [v + rng.gauss(0.0, 0.7) for v in legs]
+            dependent = (
+                2.0 + sum(t * v for t, v in zip(truth, legs, strict=True)) + rng.gauss(0.0, 0.4)
+            )
+            engine.predict(i * 3600.0)
+            engine.update(dependent, 0.16, i * 3600.0, against=legs)
+
+        errors = [abs(g - w) for g, w in zip(engine.ratios, truth, strict=True)]
+        stated = list(engine.ratio_sds)
+        assert max(errors) > 5.0 * max(stated), (errors, stated)
+
+    def test_a_basket_that_changes_width_is_refused(self):
+        """A missing column is a different model, not the same one short a leg."""
+        from till_infinity.structures.statespace.relating import Relating
+
+        engine = Relating(legs=2)
+        engine.predict(0.0)
+        engine.update(10.0, 0.1, 0.0, against=[1.0, 2.0])
+        with pytest.raises(ValueError, match="leg"):
+            engine.update(11.0, 0.1, 3600.0, against=[1.0])
+
+    def test_it_satisfies_the_family_contract(self):
+        """Scored beside the members means answering what they answer."""
+        from till_infinity.structures.statespace.relating import Relating
+
+        engine = Relating()
+        for i in range(40):
+            engine.predict(i * 3600.0)
+            engine.update(100.0 + i, 0.09, i * 3600.0, against=float(i))
+        assert engine.output() == (engine.value,)
+        assert len(engine.state()) == 2
+        assert len(engine.observation()[0]) == len(engine.state())
+        assert math.isfinite(engine.loglike)
+        low, high = engine.band(engine.at + 3600.0)
+        assert low < engine.value < high
+
+
 class TestNulls:
     """The two floors, now in the library, and the defects the move exposed."""
 

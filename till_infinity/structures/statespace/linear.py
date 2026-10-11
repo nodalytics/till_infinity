@@ -108,6 +108,25 @@ class Gaussian:
     #: note: this has not been measured for any subject yet.
     jerk: float = 1e-6
 
+    #: `B`, the column that maps an exogenous input onto the state: how much of
+    #: `u` reaches value, rate and acceleration per hour. **Zero by default, so
+    #: a member with no input configured is bit-for-bit the member it was** -
+    #: which is the only way to add a term to a state equation that a dozen
+    #: measurements already depend on.
+    #:
+    #: `statespace/__init__.py` has written `x' = F x + B u` since the package
+    #: began and **no member implemented it**, while `inputs.py` grew a whole
+    #: exogenous channel - windows, slopes, EMAs, session shares - that nothing
+    #: consumed. That is bug shape #4, computed and read by nothing, in the two
+    #: halves of one unfinished idea. This is the half that was missing.
+    #:
+    #: A caution the evidence insists on: the inputs named for I8 - hour-of-day
+    #: share, activity - modulate **volatility**, not level, and volatility is
+    #: `Q`, not `B u`. Wiring them here would be putting a variance effect in a
+    #: mean term. `driven.Driven` is the other door, and `research/ideas/
+    #: input_channel.py` measures which one the channel actually helps through.
+    drive: tuple[float, float, float] = (0.0, 0.0, 0.0)
+
     #: When the state was last advanced, unix seconds, or None before the first
     #: time it was. **None rather than 0.0**, because the sentinel for "never
     #: advanced" must not be a valid value of the field: the first version used
@@ -162,8 +181,22 @@ class Gaussian:
 
     # ------------------------------------------------------------------ predict
 
-    def predict(self, when: float) -> None:
-        """Advance to `when`. Elapsed **time**, never a number of samples."""
+    def predict(self, when: float, control: float = 0.0) -> None:
+        """Advance to `when`, optionally with an exogenous input.
+
+        Elapsed **time**, never a number of samples.
+
+        `control` is `u` in `x' = F x + B u`, and `drive` is `B`. It enters
+        **after** the transition and scaled by `dt`, which is what makes it a
+        rate of contribution per hour rather than a per-call nudge - the same
+        rule every other quantity in this package obeys, and the one that keeps
+        a 15m bar and a 1h bar meaning the same thing.
+
+        It does **not** touch the covariance. A known input moves where the
+        state is, not how sure the filter is of it; a term that did both would
+        be a deterministic input and a noise, and the model has a separate
+        place for the second.
+        """
         if self.at is None:
             self.at = float(when)
             return
@@ -180,6 +213,13 @@ class Gaussian:
         half = 0.5 * dt * dt
         self.value = self.value + self.rate * dt + self.accel * half
         self.rate = self.rate + self.accel * dt
+
+        # x <- x + B u dt. Skipped entirely when there is no input, so the
+        # arithmetic of every existing measurement is untouched.
+        if control and any(self.drive):
+            self.value += self.drive[0] * control * dt
+            self.rate += self.drive[1] * control * dt
+            self.accel += self.drive[2] * control * dt
 
         # P <- F P F' + Q(dt). Written out because the symmetry is the invariant
         # worth being able to read, and three nested loops hide it.
