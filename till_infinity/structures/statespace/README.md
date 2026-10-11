@@ -2383,6 +2383,79 @@ That is the synthetic control doing its third useful thing today: it is a
 control for direction, **not** for volatility work, and it says so loudly enough
 to break a table.
 
+## The synthetics are a market, not a control - and the desk is losing on the other one
+
+Corrected 2026-10-11. This file has repeatedly called v75, v25 and v100 "the
+synthetic control", on the grounds that their volatility is generated so an
+effect found there is an effect found in the method. That is a fair *use* of
+them and it caught two artefacts - the 15m slope fade and the cross-resolution
+lookahead - but it is the wrong *description*. **The desk trades these feeds.**
+The journal has `fade-to-value` decisions on `volatility_50_index`, and
+`STRUCTURES_FORMATION` draws levels on them like anything else.
+
+So the measurements about them are statements about a live venue, and they
+should be read that way:
+
+* **"a perfect sigma captures 0.5% of the realised-move oracle on v75"** is not
+  a control behaving as expected. It says **volatility is not forecastable on
+  the synthetics** - the one quantity that *is* forecastable on FX, where the
+  same ceiling is 6.6% to 12.8%.
+* **"v75 produced no slope-fade survivors"** says the same about direction.
+* So on these feeds neither of the two things measured here is available. That
+  is a fact about an instrument class the desk has positions in.
+
+### What the journal says, which is the opposite of what that predicts
+
+Closed trades, from the desk's own record:
+
+| family | n | mean R | +/- | t | total R |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| synthetic | 847 | +0.039 | 0.081 | +0.5 | **+33.37** |
+| fx / metal / index | 674 | **-0.055** | 0.019 | **-2.9** | **-37.32** |
+
+The forecastable-volatility side is the **losing** side, significantly, and the
+unforecastable side is where the money is. That wants explaining before it is
+believed.
+
+**The standard errors explain most of it: 0.081 against 0.019.**
+`volatility_75_index` reads **+2.828 mean R over 24 trades** - roughly +68 R
+from one feed, more than the entire synthetic total - at `t = +1.0`. A handful
+of large winners, not an edge. Strip it and the synthetics are negative too.
+
+The FX side is the part that is real: **-0.055 at `t = -2.9` over 674 trades**,
+with `gold` at **-0.465** (`t = -3.4`) and `us30` at -0.389 the worst of it. And
+among the synthetics, `crash_500_index` (-0.142, `t = -3.0`) and
+`volatility_10_1s_index` (-0.127, `t = -2.5`) are significantly negative in
+their own right.
+
+### What follows
+
+**The desk is losing on the instruments where volatility is forecastable.** That
+is the finding, and it is not an argument for preferring the synthetics - it is
+an argument that the forecastable thing is not being used. Every strategy here
+sizes on `risk_vol` and a stop multiple; none of them reads a volatility
+forecast, and `README.md`'s improvement 1 - a time-varying `R` - is the first
+place one would enter.
+
+Three things to measure, in order, and all of them from data already held:
+
+1. **Per-feed sizing against per-feed volatility predictability.** If `gold` at
+   -0.465 R a trade is being sized as though its volatility were as
+   forecastable as eurusd's, that is a sizing error rather than a strategy
+   error.
+2. **Whether the synthetic profit survives dropping the top feed.** One feed
+   at +2.83 over 24 trades is a concentration, and the honest version of
+   "+33.37 R" quotes it with that feed removed.
+3. **Whether `crash_*` and `*_1s_*` belong in the book at all.** Two of them
+   are significantly negative on their own records, which is a cheaper decision
+   than any modelling.
+
+And the earlier use of these feeds stands even though the description was
+wrong: a generated series that shows the same effect as a market is still the
+fastest way to catch a method artefact. The correction is that it is **also** a
+market, so "no effect on v75" is a finding about v75 and not only a clean bill
+of health for the method.
+
 ## Members not written
 
 Each already names the null it must beat, in `family.PENDING`. Do not add one

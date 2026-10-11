@@ -2662,9 +2662,11 @@ class TestInputsAreMeasuredInTime:
         features = Features(times, closes, closes, closes, windows=WEEKS)
         got = features.at(300)
         assert len(got) == len(got.names)
-        # Six per window plus the two blends, and `position` is a method rather
-        # than a stored feature because it is a ratio of two that are stored.
-        assert len(got) == 6 * len(WEEKS) + 2
+        # Seven per window - high, low, rv, parkinson, slope, ema_slope,
+        # ema_z - plus the two blends. `position` is a method rather than a
+        # stored feature because it is a ratio of two that are stored, and
+        # `gk` is absent because no opens were given.
+        assert len(got) == 7 * len(WEEKS) + 2
         assert got.of("rv_4w") == 0.0  # a flat series has no realised vol
         assert got.of("parkinson_4w") == 0.0
         assert "har_parkinson" in got.names
@@ -3046,3 +3048,31 @@ class TestFocus:
         assert any(n.startswith("gk_") for n in names)
         without = Features(times, closes, closes, closes)
         assert not any(n.startswith("gk_") for n in without.names())
+
+    def test_the_slope_is_a_rate_per_hour_not_per_bar(self):
+        """The package rule applies to rates as much as to horizons.
+
+        `rolling(moves, span)` is the mean log move per *bar*, which is a slope
+        in bars and so not comparable across timeframes. Divided by the bar
+        length it is a log return an hour, and the same drift then measures the
+        same on every series: 2.977e-04 at 15m against 2.980e-04 at 1h.
+        """
+        from till_infinity.structures.statespace.inputs import Features
+
+        got = {}
+        for minutes, label in ((15, "15m"), (60, "1h")):
+            bars = int(60 / minutes * 24 * 40)
+            times = [i * minutes * 60.0 for i in range(bars)]
+            closes = [100.0 * (1.0 + 0.01 * (i * minutes / 1440.0)) for i in range(bars)]
+            built = Features(
+                times,
+                [c * 1.001 for c in closes],
+                [c * 0.999 for c in closes],
+                closes,
+            )
+            tag = built.windows[0].label()
+            got[label] = built.at(bars - 1).of(f"slope_{tag}")
+
+        # Different bar sizes, different windows, the same rate.
+        assert got["15m"] == pytest.approx(got["1h"], rel=0.05), got
+        assert got["15m"] > 0.0

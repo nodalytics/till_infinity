@@ -432,7 +432,20 @@ class Features:
             self._series[f"parkinson_{tag}"] = [math.sqrt(v) for v in rolling(park_bar, span)]
             if gk_bar is not None:
                 self._series[f"gk_{tag}"] = [math.sqrt(v) for v in rolling(gk_bar, span)]
-            self._series[f"ema_slope_{tag}"] = ema(moves, span)
+            # **The raw slope, per hour.** `rolling(moves, span)` is the mean
+            # log move per *bar* over the window, which is a slope in bars and
+            # therefore not comparable across timeframes - the package rule
+            # applies to a rate as much as to a horizon. Dividing by the bar
+            # length makes it a log return an hour, which means one thing
+            # everywhere.
+            #
+            # It is here as the **baseline the EMA variants have to beat**: the
+            # raw slope's survivors in `slope_fade.py` were killed by the
+            # stricter overlap correction and the EMA ones were not, so leaving
+            # it out would remove the comparison that result rests on.
+            per_bar = rolling(moves, span)
+            self._series[f"slope_{tag}"] = [v / self._bar for v in per_bar]
+            self._series[f"ema_slope_{tag}"] = [v / self._bar for v in ema(moves, span)]
             self._series[f"ema_z_{tag}"] = ema(self._zmoves, span)
 
         # The blend that won: three rungs of the ladder on the better
