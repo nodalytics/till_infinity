@@ -117,7 +117,11 @@ measures worst.
 ## What this changes
 
 * **Keep `driven`**, and fit its gain. The first thing the input channel has
-  done.
+  done - and since this was written, the second: `statespace-seasonal.md`
+  wired a time-of-day profile into the same wrapper through a `clock`
+  argument, worth +197 nats at the median across ten traded instruments, with
+  nothing on markets that have a known generator and no session. Two signals,
+  one lever, both measured positive, and they multiply.
 * **Keep `switching`**, which is the only member competitive with the walk,
   and fit its durations before quoting any balance share.
 * **Do not use `panel` on an arbitrary set of instruments.** It needs a basket
