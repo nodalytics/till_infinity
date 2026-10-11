@@ -47,7 +47,7 @@ import os
 import statistics
 from pathlib import Path
 
-from till_infinity.structures.statespace.seasonal import Seasonal
+from till_infinity.structures.statespace.seasonal import Profile, Seasonal
 
 HOUR = 3600.0
 TAU = 2.0 * math.pi
@@ -205,83 +205,26 @@ def main() -> None:
 #: outside signal into `Q` - and the signal here is the clock.
 
 
-def profile_of_size(times, values, harmonics: int = 3):
-    """Fit a 24-hour harmonic profile to log innovation size.
+def score_driven(times, values, shape, *, use_shape: bool, door: str = "wander", slide: int = 0):
+    """A level filter whose **process** noise follows the clock, or does not.
 
-    Least squares on `log|step|` against `[1, cos, sin, cos2, sin2, ...]`,
-    which is a seasonal on the **log** scale so the profile multiplies the
-    spread rather than adding to it - the right scale for a quantity that
-    cannot go negative, and the one that makes the profile a ratio.
+    `door` says which noise the profile multiplies, and the distinction is the
+    whole result of this arm.
 
-    Returned as a callable, and fitted on the **first half only**, because a
-    profile fitted on everything and then scored on everything is a profile
-    scored on its own training data.
-    """
-    steps = [(times[i], abs(values[i] - values[i - 1])) for i in range(1, len(values))]
-    steps = [(t, v) for t, v in steps if v > 0]
-    if len(steps) < 500:
-        return None
-    half = len(steps) // 2
+    * `wander` scales `Q`, the level's own per-hour variance: the claim that
+      **price moves further during the busy hours**, which is what an
+      intraday volatility profile actually says.
+    * `noise` scales `R`, the measurement spread: the claim that **the quotes
+      are less reliable** during those hours. That one was tried first and it
+      made every cell worse, by 2 to 62 nats, because it is close to the
+      opposite of the truth - it tells the filter to *distrust* the readings
+      precisely when they carry the most information.
 
-    def basis(when: float) -> list[float]:
-        hours = (when % 86400.0) / HOUR
-        row = [1.0]
-        for j in range(1, harmonics + 1):
-            angle = TAU * j * hours / 24.0
-            row.extend((math.cos(angle), math.sin(angle)))
-        return row
+    The profile is fitted to a standard deviation, so it enters `Q` squared:
+    a three-fold profile in size is a ninefold one in variance.
 
-    width = 1 + 2 * harmonics
-    normal = [[0.0] * width for _ in range(width)]
-    target = [0.0] * width
-    for when, size in steps[:half]:
-        row = basis(when)
-        value = math.log(size)
-        for i in range(width):
-            target[i] += row[i] * value
-            for j in range(width):
-                normal[i][j] += row[i] * row[j]
-
-    # Gauss-Jordan with partial pivoting. Seven unknowns, so the explicit
-    # solve is cheaper than pulling in a dependency and it keeps the harness
-    # runnable on a machine with nothing installed.
-    for col in range(width):
-        pivot = max(range(col, width), key=lambda r: abs(normal[r][col]))
-        if abs(normal[pivot][col]) < 1e-12:
-            return None
-        normal[col], normal[pivot] = normal[pivot], normal[col]
-        target[col], target[pivot] = target[pivot], target[col]
-        scale = normal[col][col]
-        normal[col] = [v / scale for v in normal[col]]
-        target[col] /= scale
-        for row_index in range(width):
-            if row_index == col:
-                continue
-            factor = normal[row_index][col]
-            if factor == 0.0:
-                continue
-            normal[row_index] = [
-                a - factor * b for a, b in zip(normal[row_index], normal[col], strict=True)
-            ]
-            target[row_index] -= factor * target[col]
-
-    middle = target[0]
-
-    def shape(when: float) -> float:
-        row = basis(when)
-        fitted = sum(a * b for a, b in zip(row, target, strict=True))
-        # Relative to the mean level, so the profile multiplies by one on
-        # average and the comparison is not a change of overall scale.
-        return math.exp(fitted - middle)
-
-    return shape, half
-
-
-def score_driven(times, values, shape, *, use_shape: bool, slide: int = 0):
-    """A level filter whose measurement noise follows the clock, or does not.
-
-    Scored on the **second half only**, which is the half the profile was not
-    fitted on.
+    Scored on the **second half only**, the half the profile was not fitted
+    on.
     """
     if slide:
         times = times[: len(times) - slide]
@@ -290,9 +233,16 @@ def score_driven(times, values, shape, *, use_shape: bool, slide: int = 0):
     base = statistics.pstdev(steps) or 1e-9
     start = len(times) // 2
 
-    member = Seasonal(periods=PERIODS, harmonics=HARMONICS, seasonal_on=False)
+    member = Seasonal(
+        periods=PERIODS, harmonics=HARMONICS, seasonal_on=False, level_wander=base * base
+    )
     for when, value in zip(times, values, strict=True):
-        noise = base * (shape(when) if use_shape else 1.0)
+        factor = shape(when) if use_shape else 1.0
+        noise = base
+        if door == "wander":
+            member.level_wander = base * base * factor * factor
+        else:
+            noise = base * factor
         member.predict(when)
         member.update(value, noise, when)
         if member.seen == start:
@@ -302,10 +252,14 @@ def score_driven(times, values, shape, *, use_shape: bool, slide: int = 0):
 
 def variance_arm() -> None:
     print("\n== the same component on the spread instead of the level")
-    print("   a 24h profile fitted to log innovation size on the first half,")
-    print("   fed back as measurement noise, scored on the second half only")
+    print("   a 24h profile fitted to log innovation size on the first half of")
+    print("   each series and scored on the second. 'through Q' lets price move")
+    print("   further in the busy hours; 'through R' distrusts the quotes instead,")
+    print("   which was the first attempt and the wrong door. 'harm' is how many")
+    print("   harmonics the spacing can carry - 4h bars visit six hours of the day.")
     print(
-        f"{'instrument':<22}{'frame':<6}{'gain':>10}{'slid':>10}{'profile hi/lo':>15}{'peak h':>8}"
+        f"{'instrument':<22}{'frame':<6}{'through Q':>11}{'slid':>10}"
+        f"{'through R':>11}{'hi/lo':>8}{'peak h':>7}{'harm':>6}"
     )
     rows: list[tuple[str, float, float]] = []
     for name in TRADED + GENERATED:
@@ -317,28 +271,32 @@ def variance_arm() -> None:
             logs = [math.log(c) for c in closes if c > 0]
             if len(logs) != len(times):
                 continue
-            fitted = profile_of_size(times, logs)
+            # Fitted on the first half only; `score_driven` scores the second.
+            half_point = len(times) // 2
+            fitted = Profile.fit(times[:half_point], logs[:half_point])
             if fitted is None:
                 continue
-            shape, _ = fitted
+            shape = fitted.at
 
             gaps = [times[i] - times[i - 1] for i in range(1, min(len(times), 500))]
             bar = statistics.median(gaps) / HOUR if gaps else 1.0
             half = max(round(12.0 / bar), 1)
 
-            driven = score_driven(times, logs, shape, use_shape=True)
             flat = score_driven(times, logs, shape, use_shape=False)
-            slid = score_driven(times, logs, shape, use_shape=True, slide=half)
+            through_q = score_driven(times, logs, shape, use_shape=True, door="wander")
+            through_r = score_driven(times, logs, shape, use_shape=True, door="noise")
+            slid = score_driven(times, logs, shape, use_shape=True, door="wander", slide=half)
             slid_flat = score_driven(times, logs, shape, use_shape=False, slide=half)
 
-            profile = [shape(h * HOUR) for h in range(24)]
+            profile = fitted.shape()
             peak = max(range(24), key=lambda h: profile[h])
             label = f"*{name}" if name in GENERATED else name
             print(
-                f"{label:<22}{frame:<6}{driven - flat:>10.1f}{slid - slid_flat:>10.1f}"
-                f"{max(profile) / max(min(profile), 1e-9):>15.2f}{peak:>8}"
+                f"{label:<22}{frame:<6}{through_q - flat:>11.1f}"
+                f"{slid - slid_flat:>10.1f}{through_r - flat:>11.1f}"
+                f"{fitted.extent():>8.2f}{peak:>7}{fitted.harmonics:>6}"
             )
-            rows.append((label, driven - flat, slid - slid_flat))
+            rows.append((label, through_q - flat, slid - slid_flat))
 
     traded = [(a, b) for label, a, b in rows if not label.startswith("*")]
     made = [(a, b) for label, a, b in rows if label.startswith("*")]

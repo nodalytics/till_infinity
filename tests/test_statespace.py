@@ -4482,3 +4482,66 @@ class TestSeasonal:
         member.update(1932.5, 0.1, 0.0)
         assert member.anchor == pytest.approx(1932.5)
         assert member.value == pytest.approx(1932.5, rel=1e-3)
+
+    def test_the_profile_recovers_a_planted_intraday_shape(self):
+        """`Profile` is where the seasonal actually lives.
+
+        The level arm lost to its own matched null on all 26 cells measured,
+        because a daily pattern in how far the market moves says nothing
+        about which way - and the level member observes the way. The same
+        profile on `Q` gained on every traded instrument.
+
+        So this checks the piece that works: fit a profile to a series with a
+        planted volatility peak and get the peak back, in the right hour.
+        """
+        import random
+
+        from till_infinity.structures.statespace.seasonal import Profile
+
+        rng = random.Random(5)
+        times, values = [], []
+        level = 0.0
+        for i in range(20_000):
+            when = float(i) * self.HOUR
+            hour = (when % 86_400.0) / self.HOUR
+            # A bump of about 2x centred on 14:00.
+            scale = 1.0 + math.exp(-((hour - 14.0) ** 2) / 18.0)
+            level += rng.gauss(0.0, 0.001 * scale)
+            times.append(when)
+            values.append(level)
+
+        fitted = Profile.fit(times, values)
+        assert fitted is not None
+        assert fitted.extent() == pytest.approx(2.0, abs=0.4), fitted.extent()
+        shape = fitted.shape()
+        assert max(range(24), key=lambda h: shape[h]) == 14, shape
+
+    def test_the_profile_enters_the_variance_squared(self):
+        """A threefold profile in size is a ninefold one in variance.
+
+        Fitted to a standard deviation and used on `Q`, which is a variance.
+        Getting the exponent wrong is the difference between a profile that
+        helps and one that overshoots every busy hour by its own square.
+        """
+        from till_infinity.structures.statespace.seasonal import Profile
+
+        # One harmonic, amplitude chosen so the profile is e^cos: peak e, trough 1/e.
+        made = Profile(weights=(0.0, 1.0, 0.0), harmonics=1)
+        peak = made.at(0.0)
+        assert made.wander(1.0, 0.0) == pytest.approx(peak * peak)
+
+    def test_the_profile_refuses_rather_than_returning_a_flat_one(self):
+        """Too little data gives `None`, not a profile that happens to be flat.
+
+        A silently flat profile is indistinguishable from a real one that is
+        flat - which is what the generated markets give, at 1.04 to 1.08 -
+        and conflating "could not fit" with "no seasonal here" would make the
+        control unreadable.
+        """
+        from till_infinity.structures.statespace.seasonal import Profile
+
+        times = [float(i) * self.HOUR for i in range(100)]
+        values = [float(i) for i in range(100)]
+        assert Profile.fit(times, values) is None
+        assert not Profile().fitted
+        assert Profile().at(12.0 * self.HOUR) == 1.0
