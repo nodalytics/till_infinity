@@ -1764,6 +1764,102 @@ known states, so the honest form of this arm runs there. **Not fixed, recorded**
 the arm is marked in the harness as measuring the wrong quantity rather than
 left to be read as a result.
 
+## Correcting "87% of the volatility is on the table". It was about 36%, and it is now 21%
+
+`research/ideas/volatility_ceiling.py`, 2026-10-11. **This corrects a claim made
+twice in this file and once in a merged commit message**, and the error is the
+same shape as the others here: the wrong denominator.
+
+### What was wrong
+
+The oracle harness ranked bars by the **realised** future move and found that a
+twenty-bar mean absolute move captured 10.7% of that spread. I read the
+remaining 89% as available. It is not.
+
+A realised move is `sigma * z` where `z` is a fresh standard normal. **`z` is
+unforecastable by construction**, so even perfect knowledge of `sigma` cannot
+reproduce an ordering built from `sigma * z` - and the dispersion of `|z|`
+dominates. Measured by simulation, taking a fitted `sigma` as if it were truth:
+
+**a perfect `sigma` forecast captures 10.8% of the realised-move oracle on
+eurusd 15m, and 9.5% at 1h.**
+
+So the oracle's ceiling was almost entirely irreducible noise, and the baseline
+was never at 11% of what is achievable - it was at **64%** of it.
+
+### Against the honest denominator
+
+Share of what a perfect `sigma` could capture, eurusd:
+
+| estimator | 15m h=1 | 15m h=20 | 1h h=1 |
+| --- | ---: | ---: | ---: |
+| baseline, mean `\|r\|` over 20 bars | 64% | 44% | 24% |
+| realised variance, same window | 65% | 41% | 23% |
+| EWMA, `lambda = 0.94` | 61% | 39% | 38% |
+| Parkinson, high-low | 67% | 43% | 28% |
+| Garman-Klass, OHLC | 66% | 44% | 30% |
+| HAR, 5/22/110 closes | 72% | 47% | 44% |
+| **HAR-Parkinson** | **79%** | **53%** | **53%** |
+| Amihud, `\|r\|/volume` | -1% | -1% | 8% |
+| Roll implied spread | 36% | 23% | 16% |
+
+### What actually improves it
+
+**Multi-scale blending is the robust gain.** HAR - a short, a medium and a long
+realised variance together - wins or ties on every series. That is Corsi's model
+and it is the standard benchmark precisely because it is hard to beat.
+
+**The high-low range helps intraday and hurts on daily.** Parkinson and
+Garman-Klass add a few points at 15m and 1h, and on usdjpy 1d they are *worse*
+than the close-only baseline - 4.6% against 6.0% of the oracle. A daily bar's
+extremes include thin-liquidity spikes that are not representative of the path;
+an intraday bar's range is mostly genuine travel. **The data has carried `high`
+and `low` all along and nothing here had used them.**
+
+**The best single change is HAR-Parkinson**, and the honest size of it is: from
+64% to 79% of achievable at 15m, and from 24% to 53% at 1h. So roughly a fifth
+of the remaining gap at the fast end and half of it at the slow end - a real
+improvement, and not the sevenfold one advertised.
+
+### The two liquidity measures, and why one fails
+
+**Amihud illiquidity, `|return|/volume`, is worthless here: -1% to 8%.** The
+reason is in `context/activity.py`, which sets out at length that these venues
+do not report traded size - a CFD "volume" is a tick count. Amihud needs real
+volume and there is none, so this is a data limitation rather than a finding
+about the measure.
+
+**Roll's implied spread reaches 16% to 36% of achievable**, which is real signal
+from price changes alone and still well below the variance estimators. It
+measures bid-ask bounce, so it is a liquidity proxy that happens to correlate
+with volatility rather than a volatility estimator - and that it works at all is
+the one thing the liquidity reading contributed to this.
+
+### And the retail liquidity material, against what the desk already has
+
+Four references on liquidity zones, voids and sweeps. Checked before proposing
+anything, and the desk has implemented and **measured** most of it:
+
+| the concept | here |
+| --- | --- |
+| liquidity zone | a level. `drawing/` draws them seven ways |
+| liquidity void, imbalance, fair-value gap | **`drawing/gaps.py`** - three bars where the first's high sits below the third's low |
+| price returns to fill the void | **already measured and it is a coin**: `research/docs/imbalance.md` has gap *edges* at first touch at **50.2%** against a 49.6% placebo and a **51.5% breakeven** |
+| liquidity sweep or grab | `Outcome.TRAP`, and `sweep_rate` is its decayed share |
+| stops resting beyond a level | `liquidity_beyond_vol`, the next level out |
+| wick rejection | `wick_above_vol`, `wick_below_vol`, `wick_n` per level |
+
+None of the four references gives a quantitative criterion for any of it - the
+fxopen piece offers volume profile peaks, consolidation and prior
+support/resistance, with no threshold for any of the three.
+
+**The one open question is specific and already written down**: `gaps.py` emits
+the **midpoint** of the untraded range while the 50.2% study measured the
+**edges**, and `config.py` records that "what production draws is not the price
+that study measured". So the testable residue of the void literature is whether
+the midpoint behaves differently from the edge, on a pass that is attributed 204
+times in 32,603 level calls.
+
 ## Members not written
 
 Each already names the null it must beat, in `family.PENDING`. Do not add one
