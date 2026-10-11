@@ -4609,3 +4609,212 @@ class TestSymmetry:
 
         member = Symmetry()
         assert member.expected_ratio > math.exp(member.value)
+
+
+# -------------------------------------------- a seasonal, locked to the clock
+
+
+class TestSeasonal:
+    """`seasonal.py` was the package's one missing classical component. The
+    thing worth testing is not that it filters - every member here does - but
+    that it stays **locked to wall-clock time** and stays **honest about its
+    spare parameters**, because those are the two ways a seasonal goes wrong."""
+
+    HOUR = 3_600.0
+
+    def _series(self, bars: int, amplitude: float, seed: int, step: float = 1.0):
+        """A level walk plus a known daily shape, hourly."""
+        import random
+
+        rng = random.Random(seed)
+        times, values = [], []
+        level = 100.0
+        for i in range(bars):
+            when = i * step * self.HOUR
+            level += rng.gauss(0.0, 0.05)
+            hours = when / self.HOUR
+            shape = amplitude * (
+                math.cos(2 * math.pi * hours / 24.0) + 0.4 * math.sin(4 * math.pi * hours / 24.0)
+            )
+            times.append(when)
+            values.append(level + shape + rng.gauss(0.0, 0.1))
+        return times, values
+
+    def _run(self, times, values, **settings):
+        from till_infinity.structures.statespace.seasonal import Seasonal
+
+        member = Seasonal(periods=(24.0,), harmonics=3, wander=1e-5, **settings)
+        for when, value in zip(times, values, strict=True):
+            member.predict(when)
+            member.update(value, 0.1, when)
+        return member
+
+    def test_it_recovers_a_planted_daily_shape(self):
+        times, values = self._series(3000, 1.0, 7)
+        member = self._run(times, values)
+        # True amplitude is sqrt(1 + 0.16) = 1.077 over the two harmonics.
+        assert member.amplitude == pytest.approx(1.08, abs=0.2), member.amplitude
+        base = member.at or 0.0
+        shape = [member.profile(base + h * self.HOUR, period=24.0) for h in range(24)]
+        assert max(shape) - min(shape) > 1.8, shape
+
+    def test_a_flat_series_makes_it_lose_to_its_own_matched_null(self):
+        """**The property that makes the amplitude readable.**
+
+        Six extra states always explain something, so a seasonal that could
+        only ever win would be useless as evidence. With the matched null -
+        the same filter, same level noise, same anchor, harmonics not
+        observed - a flat series costs the full member about 39 nats, so the
+        comparison cannot be won by flexibility alone.
+        """
+        times, values = self._series(3000, 0.0, 11)
+        full = self._run(times, values, seasonal_on=True)
+        flat = self._run(times, values, seasonal_on=False)
+        assert full.loglike < flat.loglike, (full.loglike, flat.loglike)
+
+        times, values = self._series(3000, 1.0, 11)
+        full = self._run(times, values, seasonal_on=True)
+        flat = self._run(times, values, seasonal_on=False)
+        assert full.loglike > flat.loglike + 1000.0, (full.loglike, flat.loglike)
+
+    def test_the_fitted_shape_is_the_same_at_two_bar_sizes(self):
+        """A 24-hour seasonal is a day at 1h and a day at 4h.
+
+        This is the whole reason the rotation takes `dt` in hours. The
+        textbook form carries one state per period *step* - twenty-three for
+        hourly data - which is a bar count in disguise, and a twenty-four-bar
+        seasonal would be a day at 1h and four days at 4h.
+        """
+        hourly = self._run(*self._series(2400, 1.0, 3, step=1.0))
+        coarse = self._run(*self._series(600, 1.0, 3, step=4.0))
+        base_one, base_two = hourly.at or 0.0, coarse.at or 0.0
+        one = [hourly.profile(base_one + h * self.HOUR, period=24.0) for h in range(24)]
+        two = [coarse.profile(base_two + h * self.HOUR, period=24.0) for h in range(24)]
+        span_one = max(one) - min(one)
+        span_two = max(two) - min(two)
+        assert span_one == pytest.approx(span_two, rel=0.45), (span_one, span_two)
+
+    def test_the_rotation_does_not_feed_the_seasonal(self):
+        """Each harmonic is an exact plane rotation, so it cannot gain energy.
+
+        A seasonal that grows is not a seasonal, and a general matrix product
+        would lose the orthogonality to rounding over thousands of steps -
+        which is why the transition is applied as explicit 2x2 blocks.
+        """
+        from till_infinity.structures.statespace.seasonal import Seasonal
+
+        member = Seasonal(periods=(24.0,), harmonics=2, wander=0.0, level_wander=0.0)
+        member.at = 0.0
+        member.values = [0.0, 1.0, 0.0, 0.5, 0.0]
+        for step in range(1, 4001):
+            member.predict(step * 0.37 * self.HOUR)
+        kept = math.sqrt(
+            member.values[1] ** 2
+            + member.values[2] ** 2
+            + member.values[3] ** 2
+            + member.values[4] ** 2
+        )
+        assert kept == pytest.approx(math.sqrt(1.0 + 0.25), rel=1e-9), kept
+
+    def test_a_weekend_gap_rotates_by_the_gap(self):
+        """Sixty-three hours of nothing is sixty-three hours of rotation.
+
+        The continuous form needs no special case for a gap, which is the
+        other half of why the trigonometric version was chosen: a dummy
+        seasonal has to be told how many steps the market was shut.
+        """
+        from till_infinity.structures.statespace.seasonal import Seasonal
+
+        one = Seasonal(periods=(24.0,), harmonics=1, wander=0.0, level_wander=0.0)
+        one.at = 0.0
+        one.values = [0.0, 1.0, 0.0]
+        one.predict(63.0 * self.HOUR)
+
+        many = Seasonal(periods=(24.0,), harmonics=1, wander=0.0, level_wander=0.0)
+        many.at = 0.0
+        many.values = [0.0, 1.0, 0.0]
+        for step in range(1, 64):
+            many.predict(step * self.HOUR)
+
+        assert one.values[1] == pytest.approx(many.values[1], abs=1e-9)
+        assert one.values[2] == pytest.approx(many.values[2], abs=1e-9)
+
+    def test_it_anchors_on_the_first_reading(self):
+        """The level starts at the first price, not at zero.
+
+        Third member to need this. An uncentred level has to travel the
+        price's whole magnitude before the seasonal sees anything but the
+        gap, and the harmonics absorb that journey - the defect `relating`
+        was 30x overconfident from and `panel` fixes the same way.
+        """
+        from till_infinity.structures.statespace.seasonal import Seasonal
+
+        member = Seasonal()
+        assert member.anchor is None
+        member.predict(0.0)
+        member.update(1932.5, 0.1, 0.0)
+        assert member.anchor == pytest.approx(1932.5)
+        assert member.value == pytest.approx(1932.5, rel=1e-3)
+
+    def test_the_profile_recovers_a_planted_intraday_shape(self):
+        """`Profile` is where the seasonal actually lives.
+
+        The level arm lost to its own matched null on all 26 cells measured,
+        because a daily pattern in how far the market moves says nothing
+        about which way - and the level member observes the way. The same
+        profile on `Q` gained on every traded instrument.
+
+        So this checks the piece that works: fit a profile to a series with a
+        planted volatility peak and get the peak back, in the right hour.
+        """
+        import random
+
+        from till_infinity.structures.statespace.seasonal import Profile
+
+        rng = random.Random(5)
+        times, values = [], []
+        level = 0.0
+        for i in range(20_000):
+            when = float(i) * self.HOUR
+            hour = (when % 86_400.0) / self.HOUR
+            # A bump of about 2x centred on 14:00.
+            scale = 1.0 + math.exp(-((hour - 14.0) ** 2) / 18.0)
+            level += rng.gauss(0.0, 0.001 * scale)
+            times.append(when)
+            values.append(level)
+
+        fitted = Profile.fit(times, values)
+        assert fitted is not None
+        assert fitted.extent() == pytest.approx(2.0, abs=0.4), fitted.extent()
+        shape = fitted.shape()
+        assert max(range(24), key=lambda h: shape[h]) == 14, shape
+
+    def test_the_profile_enters_the_variance_squared(self):
+        """A threefold profile in size is a ninefold one in variance.
+
+        Fitted to a standard deviation and used on `Q`, which is a variance.
+        Getting the exponent wrong is the difference between a profile that
+        helps and one that overshoots every busy hour by its own square.
+        """
+        from till_infinity.structures.statespace.seasonal import Profile
+
+        # One harmonic, amplitude chosen so the profile is e^cos: peak e, trough 1/e.
+        made = Profile(weights=(0.0, 1.0, 0.0), harmonics=1)
+        peak = made.at(0.0)
+        assert made.wander(1.0, 0.0) == pytest.approx(peak * peak)
+
+    def test_the_profile_refuses_rather_than_returning_a_flat_one(self):
+        """Too little data gives `None`, not a profile that happens to be flat.
+
+        A silently flat profile is indistinguishable from a real one that is
+        flat - which is what the generated markets give, at 1.04 to 1.08 -
+        and conflating "could not fit" with "no seasonal here" would make the
+        control unreadable.
+        """
+        from till_infinity.structures.statespace.seasonal import Profile
+
+        times = [float(i) * self.HOUR for i in range(100)]
+        values = [float(i) for i in range(100)]
+        assert Profile.fit(times, values) is None
+        assert not Profile().fitted
+        assert Profile().at(12.0 * self.HOUR) == 1.0
