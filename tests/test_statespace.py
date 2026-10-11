@@ -272,11 +272,22 @@ class TestGaussian:
 
 
 class TestSubjects:
-    def test_all_three_subjects_are_specified(self):
+    def test_every_subject_is_specified(self):
         """A subject that cannot say what its state means in words has not been
-        specified, whatever its numbers are. I8 is this complaint."""
-        assert len(SUBJECTS) == 3
-        assert {s.name for s in SUBJECTS} == {"level", "instrument", "relation"}
+        specified, whatever its numbers are. I8 is this complaint.
+
+        Four now: `spread` joined on 2026-10-11, because every cost gate here
+        uses a constant and the SEC's payment-for-order-flow study finds the
+        number moves with the composition of the flow. A cost that is
+        forecast is a different gate from a cost that is averaged.
+        """
+        assert len(SUBJECTS) == 4
+        assert {s.name for s in SUBJECTS} == {
+            "level",
+            "instrument",
+            "relation",
+            "spread",
+        }
         for s in SUBJECTS:
             assert s.quantity, s.name
             assert s.measurement, s.name
@@ -298,23 +309,65 @@ class TestSubjects:
         assert "measured" in LEVEL.provenance
         assert "placeholder" in LEVEL.provenance, "its jerk is not measured"
 
-    def test_the_other_two_claim_nothing(self):
-        for s in (INSTRUMENT, RELATION):
+    def test_the_others_claim_nothing(self):
+        from till_infinity.structures.statespace.subjects import SPREAD
+
+        for s in (INSTRUMENT, RELATION, SPREAD):
             assert "placeholder" in s.provenance
             assert "measured" not in s.provenance.replace("never fitted", "")
 
     def test_one_model_serves_all_three(self):
-        """The thesis's central claim, as an assertion: the same filter takes the
-        same measurements for a level, an instrument and a relationship."""
+        """The thesis's central claim, refined by the thing that falsified it.
+
+        It used to assert that every subject's `filter()` is a `Gaussian`, and
+        that was true because `filter()` returned one unconditionally - the
+        claim could not have failed, which is what item 7 on the README's
+        priority list was complaining about.
+
+        Now `RELATION` asks for `relating.Relating`, and the old assertion is
+        false. **That is a real refinement rather than a broken test**, and the
+        distinction is worth stating precisely:
+
+        * at a **given** hedge ratio, a relationship *is* a level - a scalar
+          with a latent fair value, noisy observations and a distance - and the
+          thesis is exactly right;
+        * when the ratio is **unknown**, there is an extra latent quantity a
+          level does not have, and no amount of reinterpretation makes a
+          two-state filter estimate it from one series.
+
+        So what survives, and what is asserted here, is the interface claim:
+        the three subjects are served by filters that answer the same
+        questions. They are not served by the same class, and pretending they
+        were is what left the hedge ratio unimplemented for as long as it was.
+        """
         for s in SUBJECTS:
+            g = s.filter(at=0.0)
+            for i in range(30):
+                if s.member == "relating":
+                    # Its second leg is the thing it exists for. Handing it one
+                    # series is handing it a regression on a constant.
+                    g.update(1.0 + 0.1 * i, s.noise, i * HOUR, against=float(i))
+                else:
+                    g.update(1.0 + 0.1 * i, noise=s.noise, when=i * HOUR)
+            assert math.isfinite(g.value)
+            assert math.isfinite(g.rate)
+            assert math.isfinite(g.sd)
+            assert math.isfinite(g.loglike)
+            assert g.seen == 30
+            assert len(g.observation()[0]) == len(g.state())
+
+    def test_a_level_and_an_instrument_still_share_one_class(self):
+        """The half of the claim that did not change.
+
+        A level and an instrument differ in what the number *means*, not in
+        what has to be estimated, so they are the same filter with different
+        parameters - which is the part of the thesis the hedge ratio does not
+        touch.
+        """
+        for s in (LEVEL, INSTRUMENT):
             g = s.filter(at=0.0)
             assert isinstance(g, Gaussian)
             assert g.jerk == s.jerk
-            for i in range(30):
-                g.update(1.0 + 0.1 * i, noise=s.noise, when=i * HOUR)
-            assert math.isfinite(g.value)
-            assert math.isfinite(g.rate)
-            assert g.seen == 30
 
     def test_subjects_are_frozen(self):
         """A subject is a declaration, not state. Mutating one at runtime would
@@ -2665,13 +2718,79 @@ class TestInputsAreMeasuredInTime:
         # Seven per window - high, low, rv, parkinson, slope, ema_slope,
         # ema_z - plus the two blends. `position` is a method rather than a
         # stored feature because it is a ratio of two that are stored, and
-        # `gk` is absent because no opens were given.
+        # `gk` is absent because no opens were given. The counted-event
+        # features are **off by default** because they were measured and
+        # carry nothing; `counted=True` adds them.
         assert len(got) == 7 * len(WEEKS) + 2
         assert got.of("rv_4w") == 0.0  # a flat series has no realised vol
         assert got.of("parkinson_4w") == 0.0
         assert "har_parkinson" in got.names
+        assert "spikes_4w" not in got.names, "counted features default off"
         with pytest.raises(KeyError):
             got.of("not_a_feature")
+
+    def test_the_counted_features_are_opt_in_and_say_why(self):
+        """**Measured, null, and therefore off by default.**
+
+        Over 1,020 cells on six instruments and two timeframes, every family
+        of counted-event feature came within 0.032 of its own rotated control
+        and within 0.015 of zero net of a trailing standard deviation. They
+        are kept because the measurement is worth more than the code, and
+        defaulted off because 48 features widen the multiple-comparison
+        surface for every caller of `Features`.
+        """
+        from till_infinity.structures.statespace.inputs import WEEKS, Features
+
+        times = [i * 900.0 for i in range(400)]
+        closes = [100.0 + (i % 7) * 0.1 for i in range(400)]
+        highs = [c + 0.3 for c in closes]
+        lows = [c - 0.3 for c in closes]
+
+        off = Features(times, closes, highs, lows, windows=WEEKS)
+        on = Features(times, closes, highs, lows, windows=WEEKS, counted=True)
+        assert len(on.names()) > len(off.names())
+        assert "spikes_4w" in on.names()
+        assert "spikes_4w" not in off.names()
+        # The features that were always there must be identical either way.
+        for name in off.names():
+            assert name in on.names()
+            assert off.at(300).of(name) == pytest.approx(on.at(300).of(name))
+
+    def test_a_pivot_is_counted_where_it_is_confirmed_not_where_it_happened(self):
+        """**The leak this feature would have had.**
+
+        A swing high at bar `k` is only knowable at `k + span`, once `span`
+        bars have failed to exceed it. Marking it at `k` would be a feature
+        that knows the future - the same shape as the cross-resolution bug
+        this project has already paid for at `t = +20.8` on five symbols.
+        """
+        from till_infinity.structures.statespace.inputs import pivots
+
+        # A single, unmistakable peak at index 20.
+        highs = [1.0] * 41
+        highs[20] = 5.0
+        lows = [0.0] * 41
+
+        flags = pivots(highs, lows, span=5)
+        assert not flags[20], "marked at the peak, which nobody could know yet"
+        assert flags[25], "should be confirmed five bars later"
+        assert sum(flags[:25]) == 0, "nothing may be flagged before confirmation"
+
+    def test_the_counted_rates_are_per_hour_on_every_timeframe(self):
+        """The same market sampled twice must give the same rate.
+
+        One spike every ten bars of 15m is one every 2.5 hours; one every ten
+        bars of 1h is one every ten. If these came out equal the feature would
+        be counting bars, which is what the package forbids.
+        """
+        from till_infinity.structures.statespace.inputs import per_hour
+
+        flags = [i % 10 == 0 for i in range(400)]
+        quick = per_hour(flags, span=40, bar=0.25)
+        slow = per_hour(flags, span=40, bar=1.0)
+        assert quick[-1] == pytest.approx(4.0 * slow[-1], rel=1e-9)
+        # Four spikes per ten hours of 15m bars is 0.4 an hour.
+        assert slow[-1] == pytest.approx(0.1, rel=1e-6)
 
     def test_time_since_an_event_is_hours_not_bars(self):
         """Same portability argument, and `inf` rather than a plausible number
@@ -2811,6 +2930,584 @@ class TestChangepoint:
         assert math.isfinite(engine.loglike)
         assert engine.output() == (engine.value,)
         assert len(engine.observation()[0]) == len(engine.state())
+
+
+class TestSpectrum:
+    """Eigenvalues, as durations and as a verdict."""
+
+    def test_every_member_that_states_its_transition_has_a_readable_spectrum(self):
+        """And the two findings the first run produced."""
+        pytest.importorskip("numpy")
+
+        from till_infinity.structures.statespace.family import members
+        from till_infinity.structures.statespace.fractional import Fractional
+        from till_infinity.structures.statespace.spectrum import spectrum
+
+        built = {**members(), "fractional": Fractional}
+        seen = {}
+        for name, build in built.items():
+            engine = build()
+            engine.predict(0.0)
+            engine.update(1.0, 0.1, 0.0)
+            got = spectrum(engine, 1.0)
+            if got is None:
+                continue
+            seen[name] = got
+            assert got.stability in {"stable", "marginal", "unstable"}
+            assert got.stability != "unstable", (
+                f"{name} has an eigenvalue outside the unit circle, which is a "
+                "state that grows without bound"
+            )
+            assert len(got.half_lives) == got.states
+
+        # `linear` is a triple integrator: three unit roots and no half-life.
+        assert all(math.isinf(h) for h in seen["kalman"].half_lives)
+        assert seen["kalman"].stability == "marginal"
+
+        # **And its eigenvector matrix is defective.** Three identical
+        # eigenvalues with one eigenvector is a Jordan block, so the modal
+        # decomposition is numerically meaningless - which is worth knowing
+        # before reading anything modal into its three states.
+        assert seen["kalman"].conditioning > 1e6, seen["kalman"].conditioning
+
+        # `reverting` keeps the level's unit root and gives the rate a
+        # half-life, which is the whole difference between the two members.
+        lives = sorted(seen["reverting"].half_lives)
+        assert math.isinf(lives[-1])
+        assert 0.5 < lives[0] < 5.0, lives
+
+    def test_a_member_whose_modes_are_all_short_cannot_reach_a_long_horizon(self):
+        """Structural, and visible before any data.
+
+        `selective`'s realised half-lives are all under an hour, so it cannot
+        represent a daily level however it is fitted. `fractional` spans the
+        ladder by construction. That is the comparison `reachable` exists for.
+        """
+        pytest.importorskip("numpy")
+
+        from till_infinity.structures.statespace.fractional import Fractional
+        from till_infinity.structures.statespace.selective import Selective
+        from till_infinity.structures.statespace.spectrum import reachable
+
+        quick = Selective()
+        quick.predict(0.0)
+        quick.update(1.0, 0.1, 0.0)
+        shortest, longest = reachable(quick, 1.0)
+        assert longest < 2.0, (shortest, longest)
+
+        wide = Fractional(fastest=1.0, slowest=672.0)
+        wide.predict(0.0)
+        wide.update(1.0, 0.1, 0.0)
+        shortest, longest = reachable(wide, 1.0)
+        assert shortest < 2.0
+        assert longest > 500.0, (shortest, longest)
+
+    def test_the_hedge_ratio_is_observable_only_because_the_leg_moves(self):
+        """**A true statement wearing an artifact's clothes.**
+
+        The observability matrix assumes `C` is constant, and `Relating`'s is
+        not - it carries the other leg. Frozen, it reports one hidden state of
+        two, and that is exactly right *if the leg does not move*: a pair whose
+        independent leg is constant has nothing to separate a level from a
+        slope with. The identifiability of a hedge ratio rests on the variation
+        in `x`, and this is where that is written down.
+        """
+        pytest.importorskip("numpy")
+
+        from till_infinity.structures.statespace.relating import Relating
+        from till_infinity.structures.statespace.spectrum import spectrum
+
+        engine = Relating()
+        engine.predict(0.0)
+        engine.update(1.0, 0.1, 0.0, against=3.0)
+        got = spectrum(engine, 1.0)
+        assert got is not None
+        assert got.states == 2
+        assert got.observable == 1, "a frozen C should not separate the two"
+        assert not got.fully_observable
+
+    def test_a_member_that_cannot_state_its_transition_declines(self):
+        """The same contract `smooth` uses."""
+        from till_infinity.structures.statespace.nulls import Walk
+        from till_infinity.structures.statespace.spectrum import spectrum
+
+        assert spectrum(Walk(), 1.0) is None
+
+
+class TestFractional:
+    """Long memory from a sum of short memories."""
+
+    def test_its_forecast_decays_fast_then_slowly(self):
+        """**The shape a single exponential cannot have.**
+
+        A power-law kernel falls quickly at first and then very slowly. One
+        exponential has a single time scale, so its decay is a straight line
+        in logs; a sum of them bends. The test is that bend, measured as the
+        ratio of successive half-lives of the forecast itself.
+        """
+        from till_infinity.structures.statespace.fractional import Fractional
+        from till_infinity.structures.statespace.reverting import Reverting
+
+        engine = Fractional()
+        engine.predict(0.0)
+        engine.update(10.0, 0.1, 0.0)
+        got = [engine.at_time(h * 3600.0) for h in (1, 6, 24, 168, 672)]
+        assert got == sorted(got, reverse=True), got
+        assert got[0] < 10.0
+        assert got[-1] > 0.0
+
+        # The first six hours lose more than the next 23 days, which is what
+        # "no typical scale" means in one sentence.
+        early = 10.0 - got[1]
+        late = got[1] - got[-1]
+        assert early > 0.6 * late, (early, late)
+
+        # A single reverting mode decays geometrically: equal time ratios give
+        # equal value ratios. This must not.
+        single = Reverting()
+        single.predict(0.0)
+        single.update(10.0, 0.1, 0.0)
+        ours = [engine.at_time(h * 3600.0) for h in (24, 168)]
+        assert ours[1] / ours[0] > 0.3, "decayed like one exponential"
+
+    def test_the_modes_are_geometric_and_span_the_range_asked_for(self):
+        from till_infinity.structures.statespace.fractional import Fractional
+
+        engine = Fractional(modes=5, fastest=1.0, slowest=672.0)
+        lives = engine.half_lives
+        assert len(lives) == 5
+        assert lives[0] == pytest.approx(1.0)
+        assert lives[-1] == pytest.approx(672.0)
+        ratios = [lives[i + 1] / lives[i] for i in range(4)]
+        for r in ratios:
+            assert r == pytest.approx(ratios[0], rel=1e-9)
+
+    def test_it_satisfies_the_family_contract(self):
+        import random
+
+        from till_infinity.structures.statespace.fractional import Fractional
+
+        rng = random.Random(2)
+        engine = Fractional()
+        level = 0.0
+        for i in range(300):
+            level += rng.gauss(0.0, 0.4)
+            engine.predict(i * 3600.0)
+            engine.update(level, 0.16, i * 3600.0)
+        assert engine.output() == (engine.value,)
+        assert len(engine.observation()[0]) == len(engine.state())
+        assert math.isfinite(engine.loglike)
+        assert math.isfinite(engine.sd)
+        low, high = engine.band(engine.at + 3600.0)
+        assert low < engine.at_time(engine.at + 3600.0) < high
+        for i in range(engine.modes):
+            for j in range(engine.modes):
+                assert engine.covariance[i][j] == pytest.approx(
+                    engine.covariance[j][i], rel=1e-12, abs=1e-15
+                )
+
+    def test_long_memory_in_the_level_is_not_clustering(self):
+        """**The prediction that failed, pinned so it stays failed.**
+
+        A sum of exponentials gives the mean memory at every scale. It does
+        not make the conditional variance depend on past magnitudes, so the
+        rollout does not cluster - +0.192 against `reverting`'s +0.190. The
+        member that would cluster is this device applied to log variance,
+        which is not written.
+        """
+        from till_infinity.structures.statespace.facts import measure, rollout
+        from till_infinity.structures.statespace.fractional import Fractional
+        from till_infinity.structures.statespace.paths import hourly
+
+        got = measure(rollout(Fractional, hourly(4000), noise=0.25, seed=5))
+        assert got.clustering < 0.5, (
+            "if this now clusters, the docstring's explanation is wrong and "
+            "the finding needs rewriting rather than the test relaxing"
+        )
+
+
+class TestSwitching:
+    """Balance and imbalance as two regimes, mixed each step."""
+
+    @staticmethod
+    def _alternating(seed: int = 8):
+        import random
+
+        rng = random.Random(seed)
+        values, phase = [], []
+        level, anchor = 100.0, 100.0
+        for block in range(12):
+            trending = block % 3 == 2
+            for _ in range(120 if trending else 400):
+                if trending:
+                    level += rng.gauss(0.25, 0.3)
+                else:
+                    level += -0.3 * (level - anchor) + rng.gauss(0.0, 0.3)
+                values.append(level)
+                phase.append(1 if trending else 0)
+            if trending:
+                anchor = level
+        return values, phase
+
+    def test_it_is_sharp_about_imbalance_and_weak_about_balance(self):
+        """**The measured asymmetry, pinned rather than smoothed over.**
+
+        During a trend it is 98.5% sure, because trending is something a
+        reverting model genuinely cannot do. During rotation it is barely past
+        a coin, because the imbalance regime *is* a random walk and a random
+        walk fits a noisy rotation acceptably - which is the finding this desk
+        keeps producing from other directions.
+        """
+        import statistics
+
+        from till_infinity.structures.statespace.switching import Switching
+
+        values, phase = self._alternating()
+        engine = Switching()
+        seen = []
+        for i, value in enumerate(values):
+            engine.predict(i * 3600.0)
+            engine.update(value, 0.09, i * 3600.0)
+            seen.append(engine.balance)
+
+        rotating = statistics.fmean(seen[i] for i in range(len(seen)) if phase[i] == 0)
+        trending = statistics.fmean(seen[i] for i in range(len(seen)) if phase[i] == 1)
+        assert trending < 0.1, trending
+        assert rotating > trending * 5.0, (rotating, trending)
+        # And the weak half is weak: this is evidence of imbalance, not of
+        # balance, and the test says so rather than asserting a number it
+        # does not reach.
+        assert rotating < 0.8, rotating
+
+    def test_the_regime_durations_are_hours_not_bars(self):
+        """A probability per bar would be a different model per timeframe."""
+        from till_infinity.structures.statespace.switching import Switching
+
+        engine = Switching(balance_hours=24.0, imbalance_hours=4.0)
+        quick = engine._switch(0.25)
+        slow = engine._switch(1.0)
+        # Leaving is likelier over a longer step, and each row sums to one.
+        assert slow[0][1] > quick[0][1]
+        for row in (*quick, *slow):
+            assert sum(row) == pytest.approx(1.0)
+        # Over a step equal to the duration, about 63% have left.
+        full = engine._switch(24.0)
+        assert full[0][1] == pytest.approx(1.0 - math.exp(-1.0), rel=1e-9)
+
+    def test_the_mixture_spread_carries_the_disagreement(self):
+        """Two regimes disagreeing about the value *is* uncertainty.
+
+        Dropping the between-component term is how a switching model reports
+        confidence it does not have.
+        """
+        from till_infinity.structures.statespace.switching import Switching
+
+        engine = Switching()
+        engine.means = [100.0, 110.0]
+        engine.variances = [1.0, 1.0]
+        engine.weights = [0.5, 0.5]
+        # Within-component spread alone would be 1.0; the gap adds 25.
+        assert engine.sd == pytest.approx(math.sqrt(26.0), rel=1e-9)
+
+    def test_it_satisfies_enough_of_the_contract_to_be_scored(self):
+        import random
+
+        from till_infinity.structures.statespace.switching import Switching
+
+        rng = random.Random(3)
+        engine = Switching()
+        level = 100.0
+        for i in range(400):
+            level += rng.gauss(0.0, 0.4)
+            engine.predict(i * 3600.0)
+            engine.update(level, 0.16, i * 3600.0)
+        assert engine.output() == (engine.value,)
+        assert len(engine.observation()[0]) == len(engine.state())
+        assert math.isfinite(engine.loglike)
+        assert 0.0 <= engine.balance <= 1.0
+        low, high = engine.band(engine.at + 3600.0)
+        assert low < engine.at_time(engine.at + 3600.0) < high
+
+
+class TestPanel:
+    """Many instruments at once - the vector observation the family lacked."""
+
+    @staticmethod
+    def _run(size: int, shift: float = 2.0, seed: int = 5):
+        import random
+        import statistics
+
+        from till_infinity.structures.statespace.panel import Panel
+
+        rng = random.Random(seed)
+        base = [100.0 - 8 * k for k in range(size)]
+        factor = 0.0
+        panel = Panel(size=size, wander=1e-2, idio_wander=1e-4, theta=0.05)
+        after = []
+        for i in range(3000):
+            factor += rng.gauss(0.0, 0.3)
+            seen = [base[k] + factor + rng.gauss(0.0, 0.15) for k in range(size)]
+            if i > 1500:
+                seen[size - 1] += shift
+            panel.predict(i * 3600.0)
+            panel.update(seen, 0.0225, i * 3600.0)
+            if i > 1800:
+                after.append([abs(panel.spread_of(k)) for k in range(size)])
+        means = [statistics.fmean(row[k] for row in after) for k in range(size)]
+        return panel, means, factor
+
+    def test_the_solver_matches_numpy(self):
+        """The module rule: anything hand-written arrives with a reference."""
+        numpy = pytest.importorskip("numpy")
+
+        from till_infinity.structures.statespace.panel import _solve
+
+        rng = numpy.random.default_rng(3)
+        a = rng.normal(size=(5, 5))
+        a = a @ a.T + 5.0 * numpy.eye(5)  # symmetric positive definite
+        b = rng.normal(size=(5, 3))
+        ours = _solve(a.tolist(), b.tolist())
+        theirs = numpy.linalg.solve(a, b)
+        for i in range(5):
+            for j in range(3):
+                assert ours[i][j] == pytest.approx(theirs[i][j], rel=1e-9, abs=1e-12)
+
+    def test_separating_a_dislocation_needs_panel_width(self):
+        """**The property that makes this a panel rather than a pair.**
+
+        One instrument is shifted and the others are not. A factor model has
+        to decide how much of that shift was the factor, and with `n`
+        instruments the contamination is about `1/n` - so a pair cannot tell a
+        dislocation from a factor move and a wide panel can. Measured, the
+        separation goes 2.0x at three instruments to 10.3x at sixteen.
+        """
+        import statistics
+
+        ratios = {}
+        for size in (3, 8, 16):
+            _panel, means, _factor = self._run(size)
+            others = statistics.fmean(means[:-1])
+            ratios[size] = means[-1] / max(others, 1e-9)
+
+        assert ratios[3] < ratios[8] < ratios[16], ratios
+        assert ratios[3] < 3.0, ratios
+        assert ratios[16] > 6.0, ratios
+
+    def test_the_idiosyncratics_revert_to_where_they_live(self):
+        """Reverting to zero fought the instruments' permanent level gaps.
+
+        The instruments sit at 100, 92, 84 and so on; those offsets land in
+        the idiosyncratics at initialisation and are not dislocations.
+        Reverting to zero made the filter fight them every step and produced
+        z-scores of 610 when the only real dislocation was 2.0.
+        """
+        panel, means, _factor = self._run(8, shift=0.0)
+        # With no dislocation, every instrument should sit near its anchor.
+        assert max(means) < 6.0, means
+        assert len(panel.anchors) == 8
+
+    def test_it_tracks_the_common_factor(self):
+        import statistics
+
+        panel, _means, factor = self._run(8, shift=0.0)
+        # The factor carries the shared walk plus the mean base level.
+        expected = factor + statistics.fmean(100.0 - 8 * k for k in range(8))
+        assert panel.factor == pytest.approx(expected, abs=2.0)
+
+    def test_a_panel_that_changes_width_is_refused(self):
+        from till_infinity.structures.statespace.panel import Panel
+
+        panel = Panel(size=3)
+        panel.predict(0.0)
+        panel.update([1.0, 2.0, 3.0], 0.1, 0.0)
+        with pytest.raises(ValueError, match="instruments"):
+            panel.update([1.0, 2.0], 0.1, 3600.0)
+
+    def test_it_satisfies_enough_of_the_contract_to_be_scored(self):
+        panel, _means, _factor = self._run(4, shift=0.0)
+        assert len(panel.state()) == 5  # factor plus four idiosyncratics
+        assert len(panel.observation()) == 4
+        assert len(panel.observation()[0]) == len(panel.state())
+        assert math.isfinite(panel.loglike)
+        low, high = panel.band(panel.at + 3600.0)
+        assert low < panel.at_time(panel.at + 3600.0) < high
+        assert panel.half_life() > 0
+
+
+class TestRelating:
+    """The hedge ratio as a state - what statistical arbitrage needed."""
+
+    def test_it_tracks_a_drifting_hedge_ratio_that_a_static_fit_cannot(self):
+        """**The reason this member exists.**
+
+        A pair's hedge ratio moves, and a static fit averages over the move.
+        If the filter cannot beat least squares on a drifting ratio it has
+        bought nothing over the spread somebody computed by hand.
+        """
+        import random
+        import statistics
+
+        from till_infinity.structures.statespace.relating import Relating
+
+        rng = random.Random(7)
+        xs, ys, betas, x = [], [], [], 100.0
+        for i in range(3000):
+            x += rng.gauss(0.0, 1.0)
+            beta = 1.0 + i / 3000
+            xs.append(x)
+            ys.append(5.0 + beta * x + rng.gauss(0.0, 0.5))
+            betas.append(beta)
+
+        def fit(centre: bool):
+            engine = Relating(ratio_wander=1e-5, centre=centre)
+            seen = []
+            for i, (leg, dependent) in enumerate(zip(xs, ys, strict=True)):
+                engine.predict(i * 3600.0)
+                engine.update(dependent, 0.25, i * 3600.0, against=leg)
+                seen.append(engine.ratio)
+            return engine, seen
+
+        # **Both arms, because centring is a trade-off and this is the side it
+        # costs on.** Centring removes the intercept's collinearity with a
+        # near-constant leg, which is the common case and worth 30x in
+        # calibration - but here the ratio doubles over the sample, so in
+        # centred coordinates the intercept has to travel `dbeta * anchor`,
+        # a hundred units. The induced variance is added in `predict` and that
+        # took this from 2.30 to 1.94; the residual gap against the uncentred
+        # 1.998 is what centring costs when the weights move a long way.
+        centred, _ = fit(centre=True)
+        engine, tracked = fit(centre=False)
+        assert centred.ratio == pytest.approx(betas[-1], abs=0.10)
+        assert engine.ratio == pytest.approx(betas[-1], abs=0.05)
+
+        mx, my = statistics.fmean(xs), statistics.fmean(ys)
+        sxx = sum((v - mx) ** 2 for v in xs)
+        sxy = sum((a - mx) * (b - my) for a, b in zip(xs, ys, strict=True))
+        static = sxy / sxx
+        ours = statistics.fmean(abs(t - b) for t, b in zip(tracked[500:], betas[500:], strict=True))
+        theirs = statistics.fmean(abs(static - b) for b in betas[500:])
+        assert ours < theirs / 10.0, (ours, theirs)
+
+    def test_a_basket_is_the_same_member(self):
+        """`legs=3`, because a pair is the `legs=1` case and not a special one."""
+        import random
+
+        from till_infinity.structures.statespace.relating import Relating
+
+        rng = random.Random(11)
+        legs, truth = [100.0, 50.0, 20.0], (0.8, -0.5, 1.3)
+        engine = Relating(legs=3, ratio_wander=1e-8)
+        for i in range(4000):
+            legs = [v + rng.gauss(0.0, 0.7) for v in legs]
+            dependent = (
+                2.0 + sum(t * v for t, v in zip(truth, legs, strict=True)) + rng.gauss(0.0, 0.4)
+            )
+            engine.predict(i * 3600.0)
+            engine.update(dependent, 0.16, i * 3600.0, against=legs)
+
+        for got, wanted in zip(engine.ratios, truth, strict=True):
+            assert got == pytest.approx(wanted, abs=0.2), (engine.ratios, truth)
+
+        # The covariance must stay symmetric; round-off breaks it, and a
+        # covariance that is no longer symmetric is no longer a covariance.
+        for i in range(4):
+            for j in range(4):
+                assert engine.covariance[i][j] == pytest.approx(
+                    engine.covariance[j][i], rel=1e-12, abs=1e-15
+                )
+
+    def test_centring_the_legs_makes_the_uncertainty_honest(self):
+        """**The limitation, and its fix, measured side by side.**
+
+        An uncentred basket of near-constant legs is collinear with the
+        intercept - a leg sitting near 100 with a little wander is almost the
+        constant column - so the filter learns the combinations it can see,
+        leaves a persistent error along the one it cannot, and shrinks its
+        covariance anyway because it really is gaining information in the
+        directions that affect its forecast. The weights come out wrong and
+        the stated confidence is thirty times too small.
+
+        It is fixed by subtracting a fixed anchor, and this test exists
+        because two other fixes did not work: an innovation-based adaptive
+        noise did nothing (the standardised innovations already had unit
+        variance, so `R` was not the problem), and a *running* mean of a
+        random walk follows the walk, which destroys the regressor rather
+        than centring it.
+        """
+        import random
+
+        from till_infinity.structures.statespace.relating import Relating
+
+        truth = (0.8, -0.5, 1.3)
+
+        def fit(centre: bool):
+            rng = random.Random(11)
+            legs = [100.0, 50.0, 20.0]
+            engine = Relating(legs=3, ratio_wander=1e-8, centre=centre)
+            for i in range(4000):
+                legs = [v + rng.gauss(0.0, 0.7) for v in legs]
+                dependent = (
+                    2.0 + sum(t * v for t, v in zip(truth, legs, strict=True)) + rng.gauss(0.0, 0.4)
+                )
+                engine.predict(i * 3600.0)
+                engine.update(dependent, 0.16, i * 3600.0, against=legs)
+            error = max(abs(g - w) for g, w in zip(engine.ratios, truth, strict=True))
+            return error, max(engine.ratio_sds), engine
+
+        loose, stated_loose, _ = fit(centre=False)
+        tight, stated_tight, engine = fit(centre=True)
+
+        # Uncentred: the stated uncertainty is an order of magnitude too small.
+        assert loose > 10.0 * stated_loose, (loose, stated_loose)
+        # Centred: calibrated, and the weights are right.
+        assert tight < 3.0 * stated_tight, (tight, stated_tight)
+        for got, wanted in zip(engine.ratios, truth, strict=True):
+            assert got == pytest.approx(wanted, abs=0.02), engine.ratios
+
+    def test_the_adaptive_noise_is_inert_when_the_innovations_are_right(self):
+        """`adapt` is a correct mechanism for a problem this was not.
+
+        Kept, defaulted off, with the measurement that says so - because
+        deleting it would mean rediscovering the idea later, and because an
+        inflation of 1.000 is the evidence that ruled out the first diagnosis.
+        """
+        import random
+
+        from till_infinity.structures.statespace.relating import Relating
+
+        rng = random.Random(3)
+        engine = Relating(adapt=0.02)
+        leg = 10.0
+        for i in range(2000):
+            leg += rng.gauss(0.0, 0.5)
+            engine.predict(i * 3600.0)
+            engine.update(2.0 * leg + rng.gauss(0.0, 0.4), 0.16, i * 3600.0, against=leg)
+        assert engine.inflation == pytest.approx(1.0, abs=0.6), engine.inflation
+
+    def test_a_basket_that_changes_width_is_refused(self):
+        """A missing column is a different model, not the same one short a leg."""
+        from till_infinity.structures.statespace.relating import Relating
+
+        engine = Relating(legs=2)
+        engine.predict(0.0)
+        engine.update(10.0, 0.1, 0.0, against=[1.0, 2.0])
+        with pytest.raises(ValueError, match="leg"):
+            engine.update(11.0, 0.1, 3600.0, against=[1.0])
+
+    def test_it_satisfies_the_family_contract(self):
+        """Scored beside the members means answering what they answer."""
+        from till_infinity.structures.statespace.relating import Relating
+
+        engine = Relating()
+        for i in range(40):
+            engine.predict(i * 3600.0)
+            engine.update(100.0 + i, 0.09, i * 3600.0, against=float(i))
+        assert engine.output() == (engine.value,)
+        assert len(engine.state()) == 2
+        assert len(engine.observation()[0]) == len(engine.state())
+        assert math.isfinite(engine.loglike)
+        low, high = engine.band(engine.at + 3600.0)
+        assert low < engine.value < high
 
 
 class TestNulls:

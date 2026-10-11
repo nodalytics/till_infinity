@@ -182,6 +182,66 @@ LOG_JERK_LOW = -12.0
 LOG_JERK_HIGH = 2.0
 
 
+def fit_both(
+    run: Callable[[float, float], float],
+    *,
+    noise_low: float = -4.0,
+    noise_high: float = 2.0,
+    rounds: int = 8,
+    tolerance: float = 0.01,
+) -> tuple[float, float, float]:
+    """Fit `jerk` and the measurement noise together. `(jerk, noise, loglike)`.
+
+    Item 3 on `README.md`'s priority list, which asks for *"the route to `jerk`
+    **and** `R` together rather than measuring one and searching the other"*.
+
+    ## Why this is coordinate ascent and not EM, which the list asked for
+
+    The list says EM, and EM is the right answer in principle: the E-step is
+    the smoothed posterior and the M-step for the noise covariances is closed
+    form. **It is not available here yet**, and the reason is concrete rather
+    than a preference. The M-step for `Q` needs the smoothed **lag-one
+    cross-covariances** `P(t, t-1 | T)`, and `smoothing.Smoothed` returns the
+    smoothed states and the standard deviation of the observed component -
+    not the full covariance, and not the cross terms. Extending the smoother
+    to carry them is the prerequisite, and it is written down rather than done
+    because doing it badly would be worse than the alternative below.
+
+    What this does instead is alternate a one-dimensional search on each
+    parameter until neither moves. It has one property EM does not: it
+    maximises the **exact marginal likelihood** rather than a lower bound on
+    it, so there is no gap between what is being maximised and what is being
+    reported. It has one EM does: each round cannot decrease the likelihood,
+    because each half is a maximisation of the same objective with the other
+    held fixed.
+
+    What it lacks is EM's rate - a 2-D coordinate ascent crawls along a
+    diagonal ridge, and `jerk` and `R` trade off against each other almost
+    exactly, which is a diagonal ridge. `rounds` is capped for that reason and
+    the returned likelihood says how far it got.
+
+    `run(jerk, noise)` must drive a **fresh** filter each time, for the same
+    reason `fit_jerk` says so: reusing one makes the answer depend on the order
+    candidates were tried in.
+    """
+    jerk = 10.0 ** ((LOG_JERK_LOW + LOG_JERK_HIGH) / 2.0)
+    noise = 10.0 ** ((noise_low + noise_high) / 2.0)
+    best = run(jerk, noise)
+    for _ in range(rounds):
+        jerk, got = fit_jerk(lambda j, n=noise: run(j, n), tolerance=tolerance)
+        noise, got = fit_jerk(
+            lambda n, j=jerk: run(j, n),
+            low=noise_low,
+            high=noise_high,
+            tolerance=tolerance,
+        )
+        if got - best < tolerance:
+            best = max(best, got)
+            break
+        best = got
+    return jerk, noise, best
+
+
 def fit_jerk(
     run: Callable[[float], float],
     *,

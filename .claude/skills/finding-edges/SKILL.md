@@ -167,6 +167,66 @@ what the naive estimator read on FX was estimation error. When a correction is
 that large, the uncorrected version of every nearby measurement is suspect too,
 and that is a reason to go back through them rather than to publish the one.
 
+## Reading outside finance, which is where most of this year's ideas came from
+
+A standing part of the work, not an aside. The best structural ideas this desk
+has adopted came from papers with no financial content at all, and the pattern
+in which ones transferred is consistent enough to use as a filter.
+
+**What to read.** Physics, mathematics, biology, chemistry, numerical
+analysis, machine learning - anything where people model a **latent state
+observed through noise**, which is most of science. The search terms that
+work are the package's own vocabulary rather than the market's: state-space,
+filtering, long memory, changepoint, surrogate model, identifiability,
+structure-preserving discretisation, spectrum, observability.
+
+**What has actually transferred**, as evidence rather than encouragement:
+
+* A **chromatography** paper on predicting retention times across
+  laboratories gave the rank-then-map architecture - predict the *order*, map
+  the order to the value with a handful of anchors - because retention times
+  do not transfer between instruments and retention order does. That is the
+  portability problem exactly, and this desk had the result in miniature
+  (AUC 0.5005 for a level's raw record against 0.6006 for `|record - 0.5|`)
+  and had not generalised it.
+* **Two fluid-dynamics papers** independently said to handle a discontinuity
+  by widening rather than cutting. Measured here, that **lost** to resetting
+  by an order of magnitude - and the reason it lost was the useful part: a
+  shock in a conservation law is a *localised* failure of a valid model, and
+  the member in question was losing 68 nats a bar continuously.
+* An **echo-state-network** paper said poles and memory horizons are how you
+  understand a nonlinear state-space model. Applied, it found one member whose
+  every mode is under forty minutes - so it structurally cannot represent a
+  daily horizon, which no likelihood would have said.
+* A **market-microstructure review** supplied the `H0 ~ 3/4` that a roughness
+  harness here had been predicting from without a source.
+
+**What has not transferred**, which is the more useful half. A lattice-Boltzmann
+paper, a nanofluid surrogate paper and a hardware reservoir paper yielded one
+corroboration each and no mechanism. The tell is reliable: a paper transfers
+when it is about **the shape of an inference problem** - what is latent, what
+is observed, what is identifiable, what the spectrum is - and does not when it
+is about the *substance* of its own domain, however sophisticated.
+
+**Three rules that keep this honest.**
+
+1. **Write the null before the idea.** Every entry in
+   `research/docs/statespace-from-papers.md` carries the null it would need
+   here, written when the paper was read rather than when the measurement was
+   designed. An idea without one is how a reading list becomes a backlog.
+2. **Say what you did not read.** Summarising a paywalled paper from its
+   abstract is fine; implying you read it is not. Two entries in that file say
+   so explicitly, and the file is more useful for it.
+3. **A cross-domain result is still a cell in the multiple-comparison
+   surface.** Borrowing from twelve papers and testing twelve ideas is twelve
+   tests, and the one that works needs the same evidence as a cell in any
+   other grid.
+
+**And the ambition is legitimate.** A state-space model is a very general
+object - most of applied science is filtering something - so the chance that
+the right structure for a market already exists in another field is high. The
+chance that it arrives ready to use is low, which is what the nulls are for.
+
 ## Where the work runs
 
 **Never on the production instance.** It has two cores and a 2.6GB container

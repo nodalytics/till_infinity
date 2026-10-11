@@ -147,6 +147,11 @@ class Yielding:
     def loglike(self) -> float:
         return float(getattr(self._member, "loglike", 0.0))
 
+    @loglike.setter
+    def loglike(self, value: float) -> None:
+        """Forwarded to the member, so a harness can zero it at a boundary."""
+        self._member.loglike = float(value)  # type: ignore[union-attr]
+
     @property
     def last_standardised(self) -> float:
         return float(getattr(self._member, "last_standardised", 0.0))

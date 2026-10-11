@@ -468,3 +468,197 @@ The second point generalises to this desk directly. A member fitted and scored
 on one stretch of one instrument is a surrogate validated in-distribution, and
 the leave-one-instrument-out design in `rank_then_map.py` exists precisely
 because that is not enough.
+
+
+---
+
+## 11. Echo state networks *are* state-space models
+
+Singh and Raman, *Echo State Networks as State-Space Models: A Systems
+Perspective*, arXiv:2509.04422. The most directly on-topic of the eleven, and
+it validates a diagnostic built here the same day.
+
+**It says the thing `spectrum.py` does is the right thing to do.** The paper's
+central move is *small-signal linearization*: take a nonlinear reservoir,
+linearise it, and read the resulting LTI system's **poles and memory
+horizons**. That is exactly what `spectrum.py` computes - eigenvalues of `F`
+converted to half-lives in hours - and the paper's argument is that this is how
+you understand a nonlinear state-space model rather than an optional extra.
+
+It also says what to do about `selective.py`, which is nonlinear through its
+softplus and reports `eigenvalues()` as a *design constant*, `-(n+1)`. Those
+are the poles of the model as written; the poles that matter are the ones after
+the input-dependent `delta` has scaled them, and getting at those is a
+linearisation around the operating point. Measured today, `selective`'s
+realised half-lives at a one-hour step are **0.69h, 0.35h, 0.23h, 0.17h** -
+every mode under forty minutes - which says structurally that it cannot
+represent a daily horizon however it is fitted. That is a stronger statement
+than a disappointing likelihood and it needed no data.
+
+Four more things transfer:
+
+* **The echo-state property is input-to-state stability**, checkable from the
+  leak rate, the spectral scaling and the activation's Lipschitz constant.
+  `spectrum.stability` checks the linear members mechanically; the nonlinear
+  ones need this version, and `selective` currently has no stability argument
+  at all beyond the sign of its eigenvalues.
+* **A lifted/Koopman random-feature expansion rewrites a nonlinear SSM as a
+  linear one in an augmented state**, which buys transfer-function and
+  convolutional-kernel analysis - and with it, *when a reservoir can emulate a
+  structured SSM kernel*. That is the question `fractional.py` raises from the
+  other side: a sum of exponentials is a structured kernel, and whether
+  `selective` can already emulate it is answerable rather than arguable.
+* **EM for the hyperparameters** - leak rate, spectral radius, process and
+  measurement noise - which is the README's item 3 confirmed from outside, and
+  `diagnostics.fit_both` is the coordinate-ascent stand-in until the smoother
+  carries lag-one covariances.
+* **A hybrid subspace procedure that shapes the spectrum under contraction
+  constraints.** `fractional.py` chooses geometric half-lives by hand; this
+  says spectrum shaping is a design step with a stability side-condition, and
+  gives the form of the condition.
+
+**And the member it suggests.** An echo state network is a fixed random
+recurrent state with a *trained linear readout* - no fitting of the state
+dynamics at all. That is unusually well suited to this package's discipline,
+because the expensive half is fixed by construction and only the cheap half is
+learned. Its null is `linear` and `fractional` on held-out likelihood, and its
+spectrum is checkable before it is fitted.
+
+---
+
+## 12. A physical echo state network, and what two ESN papers in a row mean
+
+*Physical echo state network based on the nonlinearity and dynamic response of
+ambipolar heterostructure transistors*, Nature Communications 17:3321 (2026),
+`s41467-026-70171-2`. A hardware paper: the reservoir is built out of ambipolar
+organic-inorganic heterostructure transistors, whose saturation region supplies
+a tanh-like nonlinearity and whose dynamic response supplies the memory.
+
+Most of it does not transfer - this desk is not fabricating transistors - and
+saying so is the point of reading it. Three things do.
+
+* **Arriving second, it sharpens what the first one means.** arXiv:2509.04422
+  says an echo state network *is* a state-space model; this one says the state
+  dynamics can be an arbitrary physical process nobody designed, as long as its
+  spectrum is characterised. Together they describe a member whose dynamics are
+  **fixed and uncharacterised by choice** and whose only learned part is a
+  linear readout - which suits this package's discipline unusually well,
+  because the expensive half is not fitted and `spectrum.py` can characterise
+  it before a single reading.
+* **The nonlinearity and the memory are separable ingredients.** Theirs come
+  from two different device properties - the saturation curve and the transient
+  response - and that decomposition maps straight onto `selective.py`, which
+  has a softplus for one and a retention for the other. It says the two can be
+  measured and designed independently rather than tuned together, which is what
+  `selective`'s grid search currently does.
+* **They distinguish tasks that need the memory from tasks that do not** -
+  reporting what the device achieves *without* its dynamic mechanisms. That is
+  a null in hardware clothing, and it is the one this package would need before
+  building any reservoir member: **a memoryless nonlinear readout on the same
+  features**. If that matches, the recurrence bought nothing, and the finding
+  is about the features rather than the model - which is exactly the argument
+  `structures/learning/baseline.py` makes about the kNN.
+
+So: no new mechanism, one corroboration, and a null specified before the member
+it would test. Written down because an idea with its null attached is worth
+more than a mechanism without one, and because two independent arrivals at the
+reservoir idea in one week is the kind of coincidence worth recording rather
+than acting on.
+
+---
+
+## 13. Three in-house idea sets, and what survives contact with this package
+
+Reviewed 2026-10-11 from internal research material held elsewhere in the
+workspace. Summarised rather than cited, and every item is stated with the
+null it would need here - which is the thing most of them lack, several of
+them say so, and that honesty is why they are worth reading.
+
+### Liquidity as a switching state, not a level
+
+One set models liquidity as cycling through named regimes - thin, building,
+deep, **draining** - and argues the transition into draining precedes price
+moves, with the *side* that drains revealing direction.
+
+What transfers is the shape rather than the claim: that is a **switching
+state-space model whose observed quantity is depth rather than price**, and
+`switching.py` is now the machinery for it. Two regimes already work; four is
+the same interacting-multiple-model recursion with a wider transition matrix.
+The signed version - bid-side versus ask-side withdrawal - is a second state
+rather than a second model.
+
+**The null is awkward and must be named first.** Depth withdrawal and
+volatility rise together, so "draining predicts a move" has to beat a trailing
+standard deviation before it means anything, exactly as every magnitude claim
+here does. And this desk has no order-book depth on most feeds - the FX
+"volume" is a tick count - so the measurement is available on crypto and
+nowhere else.
+
+### Repricing latency is a transport delay, and `B u` can carry one
+
+Another argues that thin markets reprice **5 to 60 minutes** after an event
+that logically affects them, and that the delay is tradeable.
+
+The transferable part is that a repricing lag is a **transport delay in the
+state equation**: `x' = F x + B u(t - tau)`, with `tau` a duration. `linear`
+now takes `control`, so the only missing piece is the delay, and it is one
+parameter - fittable by the same likelihood search as everything else, which
+makes `tau` a *measurement* rather than an assertion.
+
+This desk has the adjacent number already: volatility runs **2.42x** on a
+scheduled print and **0.79x** in the two hours before. That is the response,
+not the latency, and the latency is what a delayed `B u` would estimate.
+
+### The physics material: two strong results and one caution
+
+A third set applies physical models to fill dynamics. Two of its results are
+strong enough to be worth importing as *questions*:
+
+* **A path-integral action ranks fills at Spearman 0.94**, which is a very
+  high rank correlation for anything in this domain and far above anything
+  measured here. The quantity is a kinetic action accumulated along the price
+  path - and `facts.py` now computes path-like statistics, so the ingredient
+  exists.
+* **A Hawkes fit gives a branching ratio of 0.944**, near-critical, with a
+  92x fill rate in the top intensity decile. Self-excitation at that level is
+  the same long-memory phenomenon Lillo describes, approached from the event
+  side, and it is the strongest argument yet for the long-memory kernel
+  `fractional.py` only half-implements.
+
+The caution is in the same material and is the reason to read it carefully: a
+quantum-tunnelling model came out **inverted** (`r = -0.247`), a symmetry-
+breaking breakout test came out at **51.2% continuation, exactly random**, and
+the authors say so. A set of physics analogies produces some strong results and
+some null ones, and the discipline that separates them is the one this package
+already applies.
+
+**The null for any of them here is the same**: a Hawkes intensity must beat a
+trailing standard deviation at forecasting magnitude, and a path action must
+beat it at the same job, because that is the null nothing in this repository
+has beaten.
+
+### The pattern catalogues, and the strategy repository
+
+Two of the named sources are a general technical-analysis text and a
+chart-pattern encyclopedia, and one is a large open-source trading repository
+with a very large number of hand-written entry conditions. **I have not read
+the books here**, and saying so matters more than a plausible summary would.
+
+What transfers without reading them is methodological, and it is a warning
+rather than an idea. A catalogue of patterns is a catalogue of *hypotheses*
+with published hit rates, and the hit rates are almost never quoted against a
+**base rate** - which is the control that has already killed the strongest
+pattern claim this desk tested, "price is drawn to a level": reached 44.9% of
+the time against **49.5%** for an arbitrary price the same distance away. A
+pattern with a 65% continuation rate in a market that continues 63% of the
+time is a pattern with nothing in it.
+
+The same applies with more force to a strategy repository whose entry logic is
+hundreds of conjoined conditions. That is a very large search over a fixed
+history, and the honest way to borrow from it is to take **one** condition, ask
+what state-space quantity it is a proxy for, and measure that quantity against
+its own control. Taking the conjunction would be importing the search.
+
+**So nothing from these three goes in as a feature.** What goes in is the
+question they each pose, with the control attached, and the controls are the
+same three this package already uses.

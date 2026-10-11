@@ -151,6 +151,15 @@ LADDER = (
     Window(4 * WEEK, "4w"),
 )
 
+#: How many times its own trailing body a bar must have to count as a spike.
+#: Three, which is roughly a 99th percentile for a Gaussian body and is not
+#: fitted - the harness sweeps it.
+SPIKE = 3.0
+
+#: How many times its body a wick must be to count as a long one. Two is the
+#: usual reading of a rejection candle and is likewise not fitted.
+WICK = 2.0
+
 #: Fewest bars a window must span to mean anything. Two, because one bar is the
 #: bar itself and a "range" over it is that bar's own high and low - which is
 #: already a feature and does not need a window to say so.
@@ -290,6 +299,156 @@ def rolling(source: Sequence[float], span: int) -> list[float]:
     return out
 
 
+def spiking(
+    opens: Sequence[float] | None,
+    closes: Sequence[float],
+    span: int,
+    multiple: float = SPIKE,
+) -> list[bool]:
+    """Bars whose **body** is unusually large for this series.
+
+    The body is `|close - open|`, or `|close - previous close|` when there are
+    no opens - a feed without them is not a reason to drop the feature, and
+    close-to-close is the same quantity measured across the gap.
+
+    "Unusually" is against the series' own trailing mean body over `span`,
+    which makes it scale-free and comparable across instruments. Causal: bar
+    `k` is judged against bars before it.
+    """
+    n = len(closes)
+    bodies = [0.0] * n
+    for k in range(1, n):
+        bodies[k] = (
+            abs(closes[k] - opens[k]) if opens is not None else abs(closes[k] - closes[k - 1])
+        )
+    typical = rolling(bodies, span)
+    return [
+        k > 0 and typical[k - 1] > 0 and bodies[k] > multiple * typical[k - 1] for k in range(n)
+    ]
+
+
+def wicking(
+    opens: Sequence[float] | None,
+    highs: Sequence[float],
+    lows: Sequence[float],
+    closes: Sequence[float],
+    multiple: float = WICK,
+) -> list[bool]:
+    """Bars with a **long wick** - a rejection, in the usual reading.
+
+    Either wick longer than `multiple` times the body. No window is needed:
+    this is a comparison within the bar, so it is already scale-free and
+    already causal.
+
+    A doji - a body at or near zero - would make every bar a wick, so the body
+    is floored at a thousandth of the bar's range. That is the degenerate case
+    this feature has, and leaving it unhandled would make a quiet session read
+    as continuous rejection.
+    """
+    n = len(closes)
+    out = [False] * n
+    for k in range(n):
+        top = opens[k] if opens is not None else closes[k - 1] if k else closes[k]
+        body_high, body_low = max(top, closes[k]), min(top, closes[k])
+        span = highs[k] - lows[k]
+        if span <= 0:
+            continue
+        body = max(abs(closes[k] - top), span / 1000.0)
+        upper = highs[k] - body_high
+        lower = body_low - lows[k]
+        out[k] = max(upper, lower) > multiple * body
+    return out
+
+
+def pivots(highs: Sequence[float], lows: Sequence[float], span: int) -> list[bool]:
+    """Swing highs and lows, **marked where they are confirmed**, not where they are.
+
+    This is the one of the three that can leak, and the leak is the whole
+    difficulty. A pivot at bar `k` is only *knowable* at `k + span`, once
+    `span` bars have failed to exceed it. Marking it at `k` would be a feature
+    that knows the future - which is the shape of the cross-resolution bug this
+    project has already paid for once, at `t = +20.8` on five symbols.
+
+    So the flag is set at `k + span`: "a swing was confirmed here". A caller
+    counting pivots over a window is counting confirmations, which is the only
+    version of the count that existed at the time.
+    """
+    n = len(highs)
+    out = [False] * n
+    if span < 1:
+        return out
+    for k in range(span, n - span):
+        high, low = highs[k], lows[k]
+        # **Strict, and the test caught why.** With `<=` a flat stretch makes
+        # every bar both a swing high and a swing low, because every
+        # neighbour ties with it - a synthetic fixture of constant lows
+        # flagged thirty consecutive pivots. A flat series has no swings, and
+        # strict comparison is what says so.
+        up = all(highs[j] < high for j in range(k - span, k + span + 1) if j != k)
+        down = all(lows[j] > low for j in range(k - span, k + span + 1) if j != k)
+        if up or down:
+            out[k + span] = True
+    return out
+
+
+def pivot_levels(
+    highs: Sequence[float],
+    lows: Sequence[float],
+    span: int,
+) -> tuple[list[float], list[float]]:
+    """`(last confirmed swing high, last confirmed swing low)` at each bar.
+
+    **Not the same thing as the rolling high and low**, which `Features`
+    already carries as `high_<tag>` and `low_<tag>`. The difference matters:
+
+    * a rolling high is *the highest price in the window*. It always exists,
+      it can be the current bar, and it moves whenever a new extreme is made.
+    * a swing high is *a turning point* - a bar higher than `span` bars on
+      both sides. It may not exist in a window at all, it is only knowable
+      `span` bars later, and it does **not** move when price makes a new high
+      without turning.
+
+    A desk reading "the last swing high" is reading the second. Both are
+    useful and they answer different questions, which is why this is here
+    rather than folded into `_running`.
+
+    Carried forward between pivots, so the level is the most recent one
+    confirmed - and zero before the first, which a caller should treat as
+    absent rather than as a price.
+    """
+    n = len(highs)
+    tops = [0.0] * n
+    bottoms = [0.0] * n
+    if span < 1:
+        return tops, bottoms
+    top = bottom = 0.0
+    for k in range(n):
+        middle = k - span
+        if span <= middle < n - span:
+            high, low = highs[middle], lows[middle]
+            window = range(middle - span, middle + span + 1)
+            if all(highs[j] < high for j in window if j != middle):
+                top = high
+            if all(lows[j] > low for j in window if j != middle):
+                bottom = low
+        tops[k] = top
+        bottoms[k] = bottom
+    return tops, bottoms
+
+
+def per_hour(flags: Sequence[bool], span: int, bar: float) -> list[float]:
+    """Count of `flags` over the trailing `span` bars, **as a rate per hour**.
+
+    The whole point of the three features above, and the package rule applied
+    to a count: "eleven spikes in the window" is eleven per 2.75 hours at 15m
+    and eleven per 11 hours at 1h, which is two different statements. A rate
+    per hour is one.
+    """
+    counts = rolling([1.0 if f else 0.0 for f in flags], span)
+    hours = max(span * bar, 1e-9)
+    return [c * span / hours for c in counts]
+
+
 def parkinson(highs: Sequence[float], lows: Sequence[float]) -> list[float]:
     """Per-bar Parkinson variance: `ln(high/low)^2 / (4 ln 2)`.
 
@@ -395,7 +554,27 @@ class Features:
     _bar: float = field(default=0.0, init=False)
     #: The share of calendar time this series trades - near 5/7 for FX, near 1
     #: for crypto and the synthetics. Inferred, never declared.
+    #: Build the counted-event features - spiking bodies, long wicks,
+    #: confirmed pivots, their EMAs and the distances to the last swing.
+    #:
+    #: **Off by default, because they were measured and carry nothing.** Over
+    #: 1,020 cells on six instruments and two timeframes, every family's rank
+    #: correlation with the next move's size was within 0.032 of its own
+    #: rotated control, and **net of a trailing standard deviation every one
+    #: was within 0.015 of zero** - see
+    #: `research/docs/statespace-counted-events.md`.
+    #:
+    #: Kept rather than deleted because the measurement is worth more than the
+    #: code, and a null that is easy to re-run is a null that stays checked.
+    #: Off rather than on because 48 features widen the multiple-comparison
+    #: surface for everything built on `Features`, and features that measure
+    #: nothing should not charge that to every caller.
+    counted: bool = False
+
     _coverage: float = field(default=1.0, init=False)
+    #: The three counted-event streams, kept so `since_last` need not rebuild
+    #: them. Flags, not rates: a rate has a window and "hours since" does not.
+    _events: dict[str, list[bool]] = field(default_factory=dict, init=False)
     #: Every feature as a causal series, built once. See `_build`.
     _series: dict[str, list[float]] = field(default_factory=dict, init=False)
     _moves: list[float] = field(default_factory=list, init=False)
@@ -443,19 +622,71 @@ class Features:
         # shortest span actually built six lines below, so the z-scores reacted
         # more slowly than the window they are named for.
         shortest = min((w.bars(self._bar, self._coverage) for w in self.windows), default=20)
-        sigma = [math.sqrt(v) for v in rolling(squares, max(shortest, 2))]
+        # **Clamped, because a running-sum rolling mean can go slightly
+        # negative.** `rolling` adds and subtracts to stay `O(n)`, so a window
+        # of near-zero squares can cancel to `-1e-20` - and `math.sqrt` raises
+        # rather than returning a tiny number. It surfaced on a real series
+        # only after the counted-event features put `Features` on a code path
+        # with long flat stretches, which is how a latent domain error waits.
+        sigma = [math.sqrt(max(v, 0.0)) for v in rolling(squares, max(shortest, 2))]
         self._zmoves = [moves[k] / sigma[k] if sigma[k] > 0 else 0.0 for k in range(n)]
 
+        # **Counted events, as rates per hour.** Spiking bodies, long wicks and
+        # confirmed pivots - each a count over the window divided by the hours
+        # the window spans, so "three pivots an hour" means the same thing on
+        # every timeframe. The pivot flag is set where a swing is *confirmed*
+        # rather than where it happened, which is what keeps it causal.
+        shortest_span = max(shortest, 2)
+        spikes = spiking(self.opens, closes, shortest_span)
+        wicks = wicking(self.opens, self.highs, self.lows, closes)
+        reach = max(shortest_span // 2, 1)
+        swings = pivots(self.highs, self.lows, reach)
+        tops, bottoms = pivot_levels(self.highs, self.lows, reach)
+
+        # **Distance, in hours since the last event.** Not a rate and not a
+        # count: a rate says how often, this says how long it has been, and
+        # the two come apart exactly where it matters - a market that has not
+        # spiked in eight hours is in a different state from one averaging the
+        # same rate with a spike a minute ago. One feature each rather than one
+        # per window, because "hours since" has no window.
         self._series = {}
+        self._events = {"spike": spikes, "wick": wicks, "pivot": swings}
+        if self.counted:
+            # **Untested, unlike the rates above.** The counted-event
+            # measurement covered the spike, wick and pivot *rates*; these
+            # two distances were added after it and have not been scored,
+            # so they are behind the same flag for a different reason.
+            # **Distance to the last swing, in volatility units** - the reading a
+            # desk takes from a pivot, as opposed to how many there were.
+            #
+            # Both sides are **logs**. The first version divided a *price*
+            # difference by `sigma`, which is a standard deviation of *log*
+            # returns, and reported 267 volatility units on a series whose swings
+            # are under a percent - the same unit mismatch that once read a spread
+            # of 136 volatility units on a market that trades. Zero before the
+            # first pivot, which means absent rather than "at the price".
+            unit = [max(v, 1e-12) for v in sigma]
+            self._series["to_swing_high"] = [
+                math.log(tops[k] / closes[k]) / unit[k] if tops[k] > 0 and closes[k] > 0 else 0.0
+                for k in range(n)
+            ]
+            self._series["to_swing_low"] = [
+                math.log(closes[k] / bottoms[k]) / unit[k]
+                if bottoms[k] > 0 and closes[k] > 0
+                else 0.0
+                for k in range(n)
+            ]
         for window in self.windows:
             span = window.bars(self._bar, self._coverage)
             tag = window.label()
             self._series[f"high_{tag}"] = _running(self.highs, span, max)
             self._series[f"low_{tag}"] = _running(self.lows, span, min)
-            self._series[f"rv_{tag}"] = [math.sqrt(v) for v in rolling(squares, span)]
-            self._series[f"parkinson_{tag}"] = [math.sqrt(v) for v in rolling(park_bar, span)]
+            self._series[f"rv_{tag}"] = [math.sqrt(max(v, 0.0)) for v in rolling(squares, span)]
+            self._series[f"parkinson_{tag}"] = [
+                math.sqrt(max(v, 0.0)) for v in rolling(park_bar, span)
+            ]
             if gk_bar is not None:
-                self._series[f"gk_{tag}"] = [math.sqrt(v) for v in rolling(gk_bar, span)]
+                self._series[f"gk_{tag}"] = [math.sqrt(max(v, 0.0)) for v in rolling(gk_bar, span)]
             # **The raw slope, per hour.** `rolling(moves, span)` is the mean
             # log move per *bar* over the window, which is a slope in bars and
             # therefore not comparable across timeframes - the package rule
@@ -471,6 +702,21 @@ class Features:
             self._series[f"slope_{tag}"] = [v / self._bar for v in per_bar]
             self._series[f"ema_slope_{tag}"] = [v / self._bar for v in ema(moves, span)]
             self._series[f"ema_z_{tag}"] = ema(self._zmoves, span)
+            if self.counted:
+                spike_rate = per_hour(spikes, span, self._bar)
+                wick_rate = per_hour(wicks, span, self._bar)
+                pivot_rate = per_hour(swings, span, self._bar)
+                self._series[f"spikes_{tag}"] = spike_rate
+                self._series[f"wicks_{tag}"] = wick_rate
+                self._series[f"pivots_{tag}"] = pivot_rate
+                # **EMAs of the rates**, which answer a different question from the
+                # rates: a window says how many events there were, an exponential
+                # average weights the recent ones more and so says whether the
+                # count is *becoming* unusual. Same span, so the pair is a level
+                # and its smoothing rather than two windows.
+                self._series[f"ema_spikes_{tag}"] = ema(spike_rate, span)
+                self._series[f"ema_wicks_{tag}"] = ema(wick_rate, span)
+                self._series[f"ema_pivots_{tag}"] = ema(pivot_rate, span)
 
         # The blend that won: three rungs of the ladder on the better
         # per-bar estimator. Spans come from the windows actually resolved, so
@@ -478,8 +724,8 @@ class Features:
         spans = sorted({w.bars(self._bar, self._coverage) for w in self.windows})
         if len(spans) >= 3:
             triple = (spans[0], spans[len(spans) // 2], spans[-1])
-            self._series["har"] = [math.sqrt(v) for v in har(squares, triple)]
-            self._series["har_parkinson"] = [math.sqrt(v) for v in har(park_bar, triple)]
+            self._series["har"] = [math.sqrt(max(v, 0.0)) for v in har(squares, triple)]
+            self._series["har_parkinson"] = [math.sqrt(max(v, 0.0)) for v in har(park_bar, triple)]
 
     @property
     def bar(self) -> float:
@@ -493,6 +739,17 @@ class Features:
     def names(self) -> tuple[str, ...]:
         """Every feature, in a stable order. Built once, so this is a key list."""
         return tuple(self._series)
+
+    def since_last(self, kind: str, index: int) -> float:
+        """Hours since the last `spike`, `wick` or `pivot` strictly before `index`.
+
+        `inputs.since` does the arithmetic; this names the three event streams
+        so a caller need not rebuild them. Returns the age of the series when
+        nothing has happened yet, which is a true statement rather than a
+        zero that would read as "just now".
+        """
+        flags = self._events[kind]
+        return since(flags[:index], max(index - 1, 0), self._bar)
 
     def at(self, index: int) -> Exogenous:
         """`u` for bar `index`, from bars **strictly before** it.
