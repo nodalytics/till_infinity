@@ -167,3 +167,111 @@ nothing else, when it could separate "the model cannot find the ordering" from
 "the market has no ordering"; and `Paired`'s threshold is still uncalibrated
 against a stationary stream, which `focus.py` names as the right measurement
 and skips.
+
+---
+
+## The panel: the vector observation, built
+
+Added 2026-10-11, after the limit above was named. `relating.Relating` puts the
+other legs in the observation **row**, which is a regression - one leg
+explained by the others - and cannot hold a matrix. `panel.Panel` is the member
+with a genuinely vector observation: `n` readings at a time, an `n + 1` state,
+and the cross terms kept.
+
+### A factor plus reverting idiosyncratics, and why the first version failed
+
+The first build was `n` correlated random walks. It did not work, for the
+reason that is obvious afterwards: **a random walk absorbs a dislocation**.
+Instrument 2 was given a persistent 2.0 shift halfway through a 3,000-bar
+fixture and its mean absolute residual afterwards was 1.31 - against 1.31 and
+1.34 for the two that had not moved. Nothing separated, because a free walk has
+no level to be away from.
+
+The model that works is the classical one:
+
+    value_i(t) = factor(t) + idio_i(t)
+    factor  random-walks      - what they share
+    idio_i  reverts           - what makes a deviation temporary
+
+and the reversion is what makes `idio_i` a spread rather than a second walk.
+`theta` is a half-life in hours, which is the number a pairs desk actually
+wants: how long a dislocation takes to close.
+
+**Reverting to zero was the second mistake.** Instruments sit at permanent
+different levels, those offsets land in the idiosyncratics at initialisation,
+and a target of zero makes the filter fight them every step - z-scores of
+**610, 105 and 505** when the only dislocation was 2.0. Each idiosyncratic
+reverts to its own anchor now, fixed at the first reading. Same shape as
+`Relating`'s centring: a quantity that reverts has to revert to where it lives.
+
+### The property that makes it a panel rather than a pair
+
+A factor model has to decide how much of a one-instrument shift was the factor,
+and the contamination is about `1/n`. So separation is a function of **width**:
+
+| instruments | dislocated \|z\| | others | ratio |
+|---|---|---|---|
+| 3 | 22.0 | 11.0 | **2.0x** |
+| 8 | 22.2 | 3.6 | **6.2x** |
+| 16 | 25.8 | 2.5 | **10.3x** |
+
+**A pair cannot tell a dislocation from a factor move.** That is not a defect
+of the implementation; it is what two observations of one factor can support,
+and it is the strongest argument for a panel over a pair that this desk has.
+
+### What it enables and what it still does not
+
+It enables cross-impact, which needs the matrix a regression cannot hold -
+`Panel.correlation(i, j)` is the estimated correlation of two latent values,
+in both directions. It does not fit `theta`, the factor wander or the
+idiosyncratic wander; `diagnostics.fit_both` is the pattern and this does not
+use it. And it is one factor, not several: a panel spanning genuinely
+different asset classes wants more, which is a `k`-factor generalisation of
+the same recursion.
+
+---
+
+## Choosing the basket, which was the second limit
+
+`relating.Relating` does not pick its own legs. The obvious remedy - fit every
+candidate and keep the best - is also the oldest way to manufacture a result,
+so the question measured was not *which basket wins* but **does the winner keep
+winning**. Harness: `research/ideas/basket_choice.py`.
+
+Three arms. **chosen**: best training likelihood, scored on held-out data.
+**random**: a basket of the same size drawn blind, same held-out data.
+**oracle**: best on the held-out data, which nobody could pick. The oracle is
+there because `random` alone cannot tell "selection does not work" from "no
+basket works".
+
+Six instruments on a 1h clock, baskets of one, two and three legs:
+
+| legs | candidates | captured |
+|---|---|---|
+| 1 | 5 | **100%** |
+| 2 | 10 | **100%** |
+| 3 | 10 | **100%** |
+
+**The basket chosen on the training period is the one that wins on the test
+period, every time.** Selection generalises completely here, and the gap it
+captures is real: a blind basket loses 100 to 150 nats against the chosen one
+on a base of about 15,000.
+
+### Why this result needs its caveat more than most
+
+Uniformity is bug shape #10 in the `finding-bugs` skill - *the result that is
+too good* - and 100% in every cell of every width is exactly that shape. Here
+the mechanism is visible and benign: with five to ten candidates the ranking
+by likelihood is stable between periods because it is driven by which
+instrument is genuinely most related, and that does not change in half a
+sample.
+
+**Selection bias is a function of the candidate count**, and this tested five
+to ten. A desk screening hundreds of pairs is in a different regime, and this
+measurement says nothing about it. Two cells read `nan` because the random
+draw happened to *be* the oracle, which is itself a reminder of how small the
+surface is.
+
+So: choosing works at this width, and the experiment that matters next is the
+same one with a hundred candidates, where the maximum of a pile of noise
+starts to look like skill.

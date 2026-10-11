@@ -272,11 +272,22 @@ class TestGaussian:
 
 
 class TestSubjects:
-    def test_all_three_subjects_are_specified(self):
+    def test_every_subject_is_specified(self):
         """A subject that cannot say what its state means in words has not been
-        specified, whatever its numbers are. I8 is this complaint."""
-        assert len(SUBJECTS) == 3
-        assert {s.name for s in SUBJECTS} == {"level", "instrument", "relation"}
+        specified, whatever its numbers are. I8 is this complaint.
+
+        Four now: `spread` joined on 2026-10-11, because every cost gate here
+        uses a constant and the SEC's payment-for-order-flow study finds the
+        number moves with the composition of the flow. A cost that is
+        forecast is a different gate from a cost that is averaged.
+        """
+        assert len(SUBJECTS) == 4
+        assert {s.name for s in SUBJECTS} == {
+            "level",
+            "instrument",
+            "relation",
+            "spread",
+        }
         for s in SUBJECTS:
             assert s.quantity, s.name
             assert s.measurement, s.name
@@ -298,8 +309,10 @@ class TestSubjects:
         assert "measured" in LEVEL.provenance
         assert "placeholder" in LEVEL.provenance, "its jerk is not measured"
 
-    def test_the_other_two_claim_nothing(self):
-        for s in (INSTRUMENT, RELATION):
+    def test_the_others_claim_nothing(self):
+        from till_infinity.structures.statespace.subjects import SPREAD
+
+        for s in (INSTRUMENT, RELATION, SPREAD):
             assert "placeholder" in s.provenance
             assert "measured" not in s.provenance.replace("never fitted", "")
 
@@ -3111,6 +3124,214 @@ class TestFractional:
             "if this now clusters, the docstring's explanation is wrong and "
             "the finding needs rewriting rather than the test relaxing"
         )
+
+
+class TestSwitching:
+    """Balance and imbalance as two regimes, mixed each step."""
+
+    @staticmethod
+    def _alternating(seed: int = 8):
+        import random
+
+        rng = random.Random(seed)
+        values, phase = [], []
+        level, anchor = 100.0, 100.0
+        for block in range(12):
+            trending = block % 3 == 2
+            for _ in range(120 if trending else 400):
+                if trending:
+                    level += rng.gauss(0.25, 0.3)
+                else:
+                    level += -0.3 * (level - anchor) + rng.gauss(0.0, 0.3)
+                values.append(level)
+                phase.append(1 if trending else 0)
+            if trending:
+                anchor = level
+        return values, phase
+
+    def test_it_is_sharp_about_imbalance_and_weak_about_balance(self):
+        """**The measured asymmetry, pinned rather than smoothed over.**
+
+        During a trend it is 98.5% sure, because trending is something a
+        reverting model genuinely cannot do. During rotation it is barely past
+        a coin, because the imbalance regime *is* a random walk and a random
+        walk fits a noisy rotation acceptably - which is the finding this desk
+        keeps producing from other directions.
+        """
+        import statistics
+
+        from till_infinity.structures.statespace.switching import Switching
+
+        values, phase = self._alternating()
+        engine = Switching()
+        seen = []
+        for i, value in enumerate(values):
+            engine.predict(i * 3600.0)
+            engine.update(value, 0.09, i * 3600.0)
+            seen.append(engine.balance)
+
+        rotating = statistics.fmean(seen[i] for i in range(len(seen)) if phase[i] == 0)
+        trending = statistics.fmean(seen[i] for i in range(len(seen)) if phase[i] == 1)
+        assert trending < 0.1, trending
+        assert rotating > trending * 5.0, (rotating, trending)
+        # And the weak half is weak: this is evidence of imbalance, not of
+        # balance, and the test says so rather than asserting a number it
+        # does not reach.
+        assert rotating < 0.8, rotating
+
+    def test_the_regime_durations_are_hours_not_bars(self):
+        """A probability per bar would be a different model per timeframe."""
+        from till_infinity.structures.statespace.switching import Switching
+
+        engine = Switching(balance_hours=24.0, imbalance_hours=4.0)
+        quick = engine._switch(0.25)
+        slow = engine._switch(1.0)
+        # Leaving is likelier over a longer step, and each row sums to one.
+        assert slow[0][1] > quick[0][1]
+        for row in (*quick, *slow):
+            assert sum(row) == pytest.approx(1.0)
+        # Over a step equal to the duration, about 63% have left.
+        full = engine._switch(24.0)
+        assert full[0][1] == pytest.approx(1.0 - math.exp(-1.0), rel=1e-9)
+
+    def test_the_mixture_spread_carries_the_disagreement(self):
+        """Two regimes disagreeing about the value *is* uncertainty.
+
+        Dropping the between-component term is how a switching model reports
+        confidence it does not have.
+        """
+        from till_infinity.structures.statespace.switching import Switching
+
+        engine = Switching()
+        engine.means = [100.0, 110.0]
+        engine.variances = [1.0, 1.0]
+        engine.weights = [0.5, 0.5]
+        # Within-component spread alone would be 1.0; the gap adds 25.
+        assert engine.sd == pytest.approx(math.sqrt(26.0), rel=1e-9)
+
+    def test_it_satisfies_enough_of_the_contract_to_be_scored(self):
+        import random
+
+        from till_infinity.structures.statespace.switching import Switching
+
+        rng = random.Random(3)
+        engine = Switching()
+        level = 100.0
+        for i in range(400):
+            level += rng.gauss(0.0, 0.4)
+            engine.predict(i * 3600.0)
+            engine.update(level, 0.16, i * 3600.0)
+        assert engine.output() == (engine.value,)
+        assert len(engine.observation()[0]) == len(engine.state())
+        assert math.isfinite(engine.loglike)
+        assert 0.0 <= engine.balance <= 1.0
+        low, high = engine.band(engine.at + 3600.0)
+        assert low < engine.at_time(engine.at + 3600.0) < high
+
+
+class TestPanel:
+    """Many instruments at once - the vector observation the family lacked."""
+
+    @staticmethod
+    def _run(size: int, shift: float = 2.0, seed: int = 5):
+        import random
+        import statistics
+
+        from till_infinity.structures.statespace.panel import Panel
+
+        rng = random.Random(seed)
+        base = [100.0 - 8 * k for k in range(size)]
+        factor = 0.0
+        panel = Panel(size=size, wander=1e-2, idio_wander=1e-4, theta=0.05)
+        after = []
+        for i in range(3000):
+            factor += rng.gauss(0.0, 0.3)
+            seen = [base[k] + factor + rng.gauss(0.0, 0.15) for k in range(size)]
+            if i > 1500:
+                seen[size - 1] += shift
+            panel.predict(i * 3600.0)
+            panel.update(seen, 0.0225, i * 3600.0)
+            if i > 1800:
+                after.append([abs(panel.spread_of(k)) for k in range(size)])
+        means = [statistics.fmean(row[k] for row in after) for k in range(size)]
+        return panel, means, factor
+
+    def test_the_solver_matches_numpy(self):
+        """The module rule: anything hand-written arrives with a reference."""
+        numpy = pytest.importorskip("numpy")
+
+        from till_infinity.structures.statespace.panel import _solve
+
+        rng = numpy.random.default_rng(3)
+        a = rng.normal(size=(5, 5))
+        a = a @ a.T + 5.0 * numpy.eye(5)  # symmetric positive definite
+        b = rng.normal(size=(5, 3))
+        ours = _solve(a.tolist(), b.tolist())
+        theirs = numpy.linalg.solve(a, b)
+        for i in range(5):
+            for j in range(3):
+                assert ours[i][j] == pytest.approx(theirs[i][j], rel=1e-9, abs=1e-12)
+
+    def test_separating_a_dislocation_needs_panel_width(self):
+        """**The property that makes this a panel rather than a pair.**
+
+        One instrument is shifted and the others are not. A factor model has
+        to decide how much of that shift was the factor, and with `n`
+        instruments the contamination is about `1/n` - so a pair cannot tell a
+        dislocation from a factor move and a wide panel can. Measured, the
+        separation goes 2.0x at three instruments to 10.3x at sixteen.
+        """
+        import statistics
+
+        ratios = {}
+        for size in (3, 8, 16):
+            _panel, means, _factor = self._run(size)
+            others = statistics.fmean(means[:-1])
+            ratios[size] = means[-1] / max(others, 1e-9)
+
+        assert ratios[3] < ratios[8] < ratios[16], ratios
+        assert ratios[3] < 3.0, ratios
+        assert ratios[16] > 6.0, ratios
+
+    def test_the_idiosyncratics_revert_to_where_they_live(self):
+        """Reverting to zero fought the instruments' permanent level gaps.
+
+        The instruments sit at 100, 92, 84 and so on; those offsets land in
+        the idiosyncratics at initialisation and are not dislocations.
+        Reverting to zero made the filter fight them every step and produced
+        z-scores of 610 when the only real dislocation was 2.0.
+        """
+        panel, means, _factor = self._run(8, shift=0.0)
+        # With no dislocation, every instrument should sit near its anchor.
+        assert max(means) < 6.0, means
+        assert len(panel.anchors) == 8
+
+    def test_it_tracks_the_common_factor(self):
+        import statistics
+
+        panel, _means, factor = self._run(8, shift=0.0)
+        # The factor carries the shared walk plus the mean base level.
+        expected = factor + statistics.fmean(100.0 - 8 * k for k in range(8))
+        assert panel.factor == pytest.approx(expected, abs=2.0)
+
+    def test_a_panel_that_changes_width_is_refused(self):
+        from till_infinity.structures.statespace.panel import Panel
+
+        panel = Panel(size=3)
+        panel.predict(0.0)
+        panel.update([1.0, 2.0, 3.0], 0.1, 0.0)
+        with pytest.raises(ValueError, match="instruments"):
+            panel.update([1.0, 2.0], 0.1, 3600.0)
+
+    def test_it_satisfies_enough_of_the_contract_to_be_scored(self):
+        panel, _means, _factor = self._run(4, shift=0.0)
+        assert len(panel.state()) == 5  # factor plus four idiosyncratics
+        assert len(panel.observation()) == 4
+        assert len(panel.observation()[0]) == len(panel.state())
+        assert math.isfinite(panel.loglike)
+        low, high = panel.band(panel.at + 3600.0)
+        assert low < panel.at_time(panel.at + 3600.0) < high
+        assert panel.half_life() > 0
 
 
 class TestRelating:

@@ -187,6 +187,43 @@ INSTRUMENT = Subject(
 #: Nothing here is built. The subject is declared so that the shared filter is
 #: not quietly specialised to levels before the other two arrive, which is how a
 #: "general" model ends up with a level-shaped hole in it.
+#: **The cost, as a quantity with its own dynamics.** Every cost gate on this
+#: desk uses a constant - one spread, or 4bp - and the SEC's payment-for-order-
+#: flow study (DERA, January 2025) finds the number moves, and moves with the
+#: *composition of the flow* rather than with volatility alone: after the
+#: shock they measure, implied spreads, trade sizes and return volatility all
+#: rise together for about $4.8 million a day in extra cost.
+#:
+#: A gate that forecasts the spread is a different gate from one that averages
+#: it, and this is the subject that would carry it. `reverting` is the member
+#: it asks for: a spread mean-reverts to a level set by the venue and the
+#: session, and a random walk would let it wander to zero or to infinity,
+#: neither of which a spread does.
+#:
+#: **The null is hard and is named here so it cannot be forgotten**: a trailing
+#: average of the spread, out of sample. Nothing in this repository has beaten
+#: a trailing average of the thing it is forecasting.
+SPREAD = Subject(
+    name="spread",
+    quantity="the fair cost of crossing, for this instrument at this venue",
+    measurement="the realised spread, in volatility units of the instrument",
+    units="volatility units of the instrument's own bar move",
+    jerk=1e-4,
+    noise=0.25,
+    provenance=(
+        "both placeholders. The spread is the one quantity here that is "
+        "*observed* rather than inferred - the broker quotes it - so `noise` "
+        "is about how well a bar's recorded spread represents the spread that "
+        "would have been paid, which is a question about the feed rather than "
+        "about the market. Roll's implied spread from the serial covariance of "
+        "price changes is the independent estimate, and the disagreement "
+        "between the two is itself a measurement: the broker's number is the "
+        "one the desk is charged"
+    ),
+    member="reverting",
+)
+
+
 RELATION = Subject(
     name="relation",
     quantity="the fair spread between this set of instruments",
@@ -208,4 +245,4 @@ RELATION = Subject(
 
 #: Every subject, so a test can assert the invariants hold for all of them rather
 #: than for whichever one was added first.
-SUBJECTS: tuple[Subject, ...] = (LEVEL, INSTRUMENT, RELATION)
+SUBJECTS: tuple[Subject, ...] = (LEVEL, INSTRUMENT, RELATION, SPREAD)
