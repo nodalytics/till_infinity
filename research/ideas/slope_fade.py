@@ -79,7 +79,7 @@ FRAMES = ("15m", "1h", "4h", "1d")
 #: expressed in time and converted per timeframe - 480 bars of 15m is a week,
 #: 5 bars of 1d is.
 LOOKBACKS = (5, 10, 20)
-WEEKS = (1.0, 2.0)
+WEEKS = (1.0, 2.0, 3.0, 4.0)
 
 #: Horizons to hold for, in bars.
 HORIZONS = (5, 20, 50)
@@ -159,16 +159,23 @@ def independent(values: list[float], overlap: int) -> tuple[float, float, int]:
 
     This is the correction that decides whether anything in this harness is
     real. A trade opened at bar `k` and held `h` bars shares `h` bars of its
-    outcome with the trade opened at `k+1`, so consecutive observations are not
-    independent draws - and with a lookback of 960 and a horizon of 50 on 15m
-    bars, neighbouring observations share 1,010 bars out of 1,010. Treating
-    10,000 of those as 10,000 independent samples overstates `t` by roughly
-    `sqrt(overlap)`, which is how an overlapping-window test manufactures
-    significance from nothing.
+    outcome with the one opened at `k+1`, so consecutive observations are not
+    independent draws. Treating ten thousand of them as ten thousand samples
+    overstates `t` by roughly `sqrt(overlap)`, which is how an
+    overlapping-window test manufactures significance from nothing.
 
-    Stepping by the overlap keeps one observation per independent window. It
-    throws away most of the data, which is the honest price: what is left is a
-    number that means what it says.
+    **The overlap is `max(look, horizon)`, not the horizon.** Two observations
+    are independent only when they share neither their *outcome* window nor
+    their *signal* window, and a slope over `look` bars is shared by every
+    observation within `look` of it. Stepping by the horizon alone leaves a
+    4-week lookback on 15m bars sharing 1,870 of its 1,920 signal bars with its
+    neighbour - which still inflates `t`, just less obviously.
+
+    The consequence is worth stating plainly: a 4-week lookback on 15m bars,
+    over the 20,000 bars available, yields about **ten** independent
+    observations. That is not a small sample, it is no sample, and it is the
+    honest reason the long-lookback results cannot be tested here rather than a
+    reason they are false.
     """
     step = max(overlap, 1)
     sample = values[::step]
@@ -321,9 +328,9 @@ def main() -> None:
                     cells += 1
 
                     # The honest `t`: one observation per non-overlapping
-                    # window. The overlap is the horizon, which is what two
-                    # neighbouring trades actually share.
-                    imean, it, inn = independent(plain, horizon)
+                    # window, where the window spans the signal's lookback as
+                    # well as the outcome's horizon.
+                    imean, it, inn = independent(plain, max(look, horizon))
                     flag = ""
                     if abs(it) > 3 and abs(after) > 0:
                         flag = " <-"
