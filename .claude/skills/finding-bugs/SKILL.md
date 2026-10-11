@@ -287,8 +287,16 @@ that vanished on conversion. A noise floor was derived as `4/n` from
 times noisier when sampled at 1h than at 15m. And a 5-day trading week was
 hardcoded where crypto has 7.
 
+**And the sharper version: two conversions of the same duration.** `cumsum_time.py`
+turned hours into bars by dividing by the bar size in one place and by dividing
+by the bar size *and multiplying by trading coverage* in another. Both look
+right alone. Together the feature windows were twice the evaluation stride on
+FX, the rows overlapped, and a `z` of **-7.3** was really -2.5. The finding
+survived; its significance was inflated threefold.
+
 **The check.** Grep the module for integer windows and ask what each is in
-**hours**. `statespace/__init__.py` carries the rule and `inputs.py` the
+**hours**. Where a duration becomes a bar count more than once, make it one
+function and call it twice. `statespace/__init__.py` carries the rule and `inputs.py` the
 conversion - `bar_hours` and `coverage` infer both from the series' own
 timestamps, so nothing needs a per-instrument constant. A span that cannot be
 stated as a duration is a span that cannot be compared across timeframes.

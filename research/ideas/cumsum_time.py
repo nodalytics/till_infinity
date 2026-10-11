@@ -249,10 +249,26 @@ def ema_span(hours: float, bar: float) -> int:
 
 
 def families(
-    times: list[float], values: list[float], hours: float, unit: float, bar: float
+    times: list[float],
+    values: list[float],
+    hours: float,
+    unit: float,
+    bar: float,
+    cover: float = 1.0,
 ) -> dict[str, list[float]]:
-    """Every feature at one window, all defined by the **duration** `hours`."""
-    span = max(round(hours / max(bar, 1e-9)), 2)
+    """Every feature at one window, all defined by the **duration** `hours`.
+
+    **`coverage` belongs in this conversion and leaving it out broke the
+    stride.** A window of `hours` *calendar* hours holds `hours * coverage / bar`
+    bars, because a market that trades half the time puts half as many bars in a
+    given stretch of clock. The first version divided by `bar` alone, so the
+    spans here were `1 / coverage` times longer than the cumsum's own
+    timestamp-located window - about twice, on FX - while the evaluation stride
+    used the coverage-corrected number. The windows therefore overlapped almost
+    completely, and overlapping windows are how this project has produced a
+    `t` of -10.8 before. One conversion, used everywhere.
+    """
+    span = max(round(hours * max(cover, 1e-9) / max(bar, 1e-9)), 2)
     decay = ema_span(hours, bar)
     cumsum = over_time(times, values, hours, unit)
     slope = slope_over(times, values, span, unit)
@@ -376,6 +392,7 @@ def portability(label: str, stem: str) -> None:
         got["bar"] = bar
         got["values"] = logs(got["close"])
         got["unit"] = per_root_hour(got["values"], bar)
+        got["cover"] = coverage(got["time"], bar)
         feeds[frame] = got
     names = [f for f in FRAMES if f in feeds]
 
@@ -397,8 +414,8 @@ def portability(label: str, stem: str) -> None:
         print(f"    {'by DURATION':<14}{header}")
         rows: dict[str, list[float]] = {}
         for hours in usable:
-            fa = families(a["time"], a["values"], hours, a["unit"], a["bar"])
-            fb = families(b["time"], b["values"], hours, b["unit"], b["bar"])
+            fa = families(a["time"], a["values"], hours, a["unit"], a["bar"], a["cover"])
+            fb = families(b["time"], b["values"], hours, b["unit"], b["bar"], b["cover"])
             for name in fa:
                 rows.setdefault(name, []).append(agree(fa[name], fb[name], at))
         for name, got in rows.items():
@@ -436,12 +453,15 @@ def predictive(label: str, stem: str, frame: str) -> None:
     for hours in WINDOWS:
         if hours < LEAST * bar:
             continue
-        built = families(times, values, hours, unit, bar)
-        sd = trailing(values, max(round(hours * cover / bar), 2))
+        span = max(round(hours * cover / bar), 2)
+        built = families(times, values, hours, unit, bar, cover)
+        sd = trailing(values, span)
         for name, feature in built.items():
             for horizon in HORIZONS:
                 ahead = max(round(horizon * cover / bar), 1)
-                stride = max(round(hours * cover / bar), ahead, 1)
+                # Step by the longer of the feature's own window and the
+                # horizon, so no two rows share a window or an outcome.
+                stride = max(span, ahead)
                 rows = []
                 for i in range(stride, len(values) - ahead, stride):
                     if feature[i] == 0.0:
