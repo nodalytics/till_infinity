@@ -63,9 +63,16 @@ believed for a while and the reason it was believed is the useful part.
    `jerk` beat the true one on 25 seeds out of 25, which is impossible for a
    correct RTS because its mean is the minimum-mean-square estimator at the
    true parameters.
-   **What is left is the fixed-lag form**, which bounds latency by the lag
-   rather than by the end of the series — the only version a desk could read,
-   and even then probably should not.
+   ~~**What is left is the fixed-lag form**~~ — written 2026-10-11,
+   `smoothing.lagged`. It bounds latency by the lag rather than by the end of
+   the series, which is the only version a desk could read. **The lag is a
+   duration, not a count**: `lagged(hours=...)` converts through the series' own
+   spacing and `coverage`, because a lag of ten observations is two and a half
+   hours at 15m and ten days at 1d. That conversion was itself wrong until the
+   audit on the same day - it divided by the median spacing alone, which reads
+   `hours` as *trading* time while `Window.bars` reads it as calendar, so
+   `lagged(hours=2)` and the `2h` rung of the ladder were different lags on
+   anything that closes.
 2. ~~**A stable state equation (I3).**~~ Written — `reverting.py`, an integrated
    Ornstein-Uhlenbeck where the rate reverts at `theta` instead of
    random-walking. Measured first, held out, on eurusd 4h: **+0.96 nats per
@@ -94,8 +101,10 @@ believed for a while and the reason it was believed is the useful part.
    All of it measured on **closes, not touches**, so it sets the direction and
    none of the constants.
 
-3. **EM**, which needs the smoother first because the E-step *is* the smoothed
-   posterior. `diagnostics.fit_jerk` searches one parameter; EM fits the set,
+3. **EM — still open, and now the oldest thing on this list.** It needs the
+   smoother first because the E-step *is* the smoothed posterior, and the
+   smoother has been written and verified since, so the blocker is gone and the
+   work has not been done. `diagnostics.fit_jerk` searches one parameter; EM fits the set,
    with a closed-form M-step for the noise covariances. That is the route to
    `jerk` **and** `R` together rather than measuring one and searching the other.
 4. ~~**An end-to-end exercise on real bars.**~~ Run —
@@ -142,12 +151,48 @@ believed for a while and the reason it was believed is the useful part.
    slope and its variance against numpy, Ljung-Box and Jarque-Bera against
    numpy. That audit exists because `smoothing._gain` was wrong and was checked
    against nothing. **Anything added here arrives with its reference.**
-7. **`Subject` carries no `PX0` / `PX` / `PY`.** And `Subject.filter()` always
+7. **`Subject` carries no `PX0` / `PX` / `PY` — still open.** Checked again on
+   2026-10-11: `Subject.filter()` still ends `return Gaussian(...)`, hardcoded. And `Subject.filter()` always
    returns a `Gaussian`, so no subject can declare that it wants the reverting
    member — which is now the one with evidence behind it. `family.py` says a member is
    identified by which of the three distributions changes, and `subjects.py`
    still describes its state in prose. Making the three explicit per subject is
    what would let a subject and a member be composed rather than paired by hand.
+
+### Where this list actually stands, 2026-10-11
+
+Checked against the code rather than against the prose above, because a list
+that marks its own items is a list that drifts.
+
+| | status |
+|---|---|
+| 1. the smoother, and the fixed-lag form | **done** - `smoothing.smooth`, `smoothing.lagged` |
+| 2. a stable state equation (I3) | **done** - `reverting.py` |
+| 3. EM | **open**, and no longer blocked |
+| 4. an end-to-end exercise on real bars | **done**, but see below |
+| 5. the smoother is linear-only | **done** |
+| 6. a reference for anything hand-written | **a standing rule, and newly in arrears** |
+| 7. a subject composing with a member | **open** |
+
+Three things the list does not say, and all three are debts rather than plans:
+
+* **Item 2's first follow-up (I8) is open.** `reverting` left autocorrelation at
+  `p = 1.22e-04`, and the named candidates were quantities the desk already
+  computes - hour-of-day share, activity. `inputs.py` now *builds* those as an
+  exogenous channel, and **no member consumes it**: `B` is not wired. So the
+  input channel exists and the thing it was built for has not been done.
+* **Item 4's follow-up is open.** Everything measured since has been on **bar
+  closes**, and the note under item 4 is explicit that a close is not a touch -
+  reading the fitted `jerk` as a correction to `DRIFT_VOL_PER_HOUR` would be a
+  number validated without checking what it is a number about. The touch prices
+  are in the episode record, 250k of them, and nothing has used them.
+* **Item 6 is in arrears, including from today.** The rule is that anything
+  hand-written arrives with an independent reference. `ranking.Mapping` has
+  tests that pin its *behaviour* - robustness to a bad anchor, the monotone
+  fallback - but its `_least_squares` is a hand-rolled Gauss-Jordan normal-
+  equations solve checked against nothing. numpy is importable here. That is
+  the same shape as `smoothing._gain`, which was 19% wrong while looking right,
+  and it is the reason the rule exists.
 
 ## Velocity is two variables, and only one of them is learnable
 
