@@ -137,6 +137,37 @@ Touches arrive when they arrive; a hazard per hour converts to a per-observation
 probability from the gap that actually elapsed, and a window in hours spans the
 bars that actually fall inside it.
 
+### Why the definition of time is the thing, and not a detail
+
+Everything above is one claim: **how time is defined decides what a measurement
+means**, so it is part of the model rather than part of the plumbing. Three
+definitions are available and this package uses the first:
+
+* **clock time** - hours, what is used here. Portable across timeframes and
+  across instruments, and the only one in which "this level has held for two
+  days" is the same sentence on every series.
+* **event time** - one unit per observation, which is what a bar count is. Not
+  portable: the same number is a different horizon on every series, which is
+  the defect this rule exists to prevent.
+* **volume or tick time** - one unit per unit traded. The subordination idea,
+  and what VPIN's volume buckets are. `D2` proposes it as
+  `delta = dt * activity`, and it is not used because a CFD volume is a tick
+  count rather than traded size.
+
+**And portability of the window is necessary, not sufficient.** Muhle-Karbe,
+Ouazzani Chahdi, Rosenbaum and Szymanski (2026) hit the same problem from the
+other side: Hurst exponent estimates for order flow are "strongly scale
+dependent... close to 0.5 at high frequencies and increase steadily as the
+sampling frequency decreases", and their fix is an *estimator* that accounts for
+both components, under which estimates become "remarkably stable across
+aggregation scales".
+
+So there are two halves to this and only one is done. A window stated in hours
+means the same thing on every series; an **estimator** computed over it may
+still answer differently at 15m than at 1d for reasons that have nothing to do
+with the market. Every cross-timeframe table in `research/docs/statespace-*.md`
+carries that caveat, including the ones whose spans are correctly in hours.
+
 ## The models live here too
 
 Not only the improvements. The spec lists the family - Kalman, particle, HMM,
