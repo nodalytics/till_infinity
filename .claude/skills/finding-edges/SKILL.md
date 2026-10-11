@@ -138,6 +138,35 @@ deeper than its own shuffles. Near 0.50 means the depth is variance and position
 sizing, not a losing run - which is the case for most of this desk's
 instruments, where the drift is tiny against a per-trade sd and sizes vary 10-25x.
 
+## When the fix is to the measurement, not the model
+
+Most of the work here is measuring, and a measurement can be wrong in a way
+that looks like a result. The defence is to decide **in advance what the fixed
+estimator must do**, so a better-looking number cannot be mistaken for a
+correct one.
+
+**State the criterion before the fix.** Measuring the roughness of volatility,
+the criterion was that the exponent *stops moving* when the estimation window
+changes - because the roughness of volatility is not a function of how finely it
+was measured. The correction raised every number into the range the literature
+reports, which was tempting and not sufficient: the exponent still drifted by a
+factor of three across windows, so no value was quoted and nothing was built on
+one. A number in the expected range is the weakest possible evidence, since
+that is what a bug tuned until it looked right also produces.
+
+**Keep a control that must read nothing.** The Deriv synthetics are generated
+with constant volatility, so there is no rough-volatility process in them and
+the honest answer is "undefined, all noise". They came back 0.008-0.026 at
+89-96% noise while FX read 0.04-0.18. An estimator manufacturing a result out
+of estimation error would have given them the same answer as the real markets.
+A control that **must** come back empty catches what a control that should come
+back smaller does not.
+
+**Expect the correction to be the size of the effect.** A third to a half of
+what the naive estimator read on FX was estimation error. When a correction is
+that large, the uncorrected version of every nearby measurement is suspect too,
+and that is a reason to go back through them rather than to publish the one.
+
 ## Where the work runs
 
 **Never on the production instance.** It has two cores and a 2.6GB container

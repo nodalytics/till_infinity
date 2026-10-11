@@ -241,7 +241,7 @@ class CcxtSource(Source):
         # perpetual do not exist on spot at all.
         kind = (getattr(self.settings, "ccxt_market_type", "") or "swap").strip()
         # Per-exchange extras, deep-merged by ccxt into its own description.
-        # Nothing in the prices service sets them; `mcfl` uses them to keep
+        # Nothing in the prices service sets them; the retired `mcfl` used them to keep
         # Binance's market load to spot and to point it at the public
         # market-data host. Absent, the constructor is exactly what it was.
         overrides = getattr(self.settings, "ccxt_overrides", None) or {}

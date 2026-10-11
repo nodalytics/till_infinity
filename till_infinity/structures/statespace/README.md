@@ -1,13 +1,31 @@
-# statespace: what is known, what is measured, and what is not done
+# statespace: the package, its members, and what is not done
 
 `__init__.py` is the contract - what this package is for, the rule that nothing
-in it publishes, and what a state space can honestly claim about a market. This
-file is the working record underneath it: every measurement taken, every
-reference read, every idea carried, and every mistake worth not repeating.
+in it publishes, that every horizon is expressed in time rather than in bars,
+and what a state space can honestly claim about a market. This file is the
+**design** record underneath it: the members, what each one costs, the borrowed
+ideas worth testing, and the work carried deliberately rather than forgotten.
 
-**The rule from the package docstring applies to every line here: nothing
-publishes until it has beaten a named null on held-out data.** Order within each
-section is the order worth doing them in.
+**The rule applies to every line here: nothing publishes until it has beaten a
+named null on held-out data.** Order within each section is the order worth
+doing them in.
+
+## The measurements live in research/docs
+
+This file held the design *and* the entire measurement record and reached 2,586
+lines, which is past the point where either is findable. The studies moved to
+where this repository keeps studies - beside `pca-residuals.md`, `peering.md`
+and `imbalance.md`, which are cited from code the same way:
+
+| | |
+| --- | --- |
+| **`statespace-measured.md`** | the members against each other and against a random-walk null, on seven symbols and four horizons. **S4D-Real *is* the random walk once its grid is wide enough**, and `reverting` is the only member that beats it |
+| **`statespace-signals.md`** | what signals a move. Everything predicts **size** and nothing predicts **direction**; speed 3.12x, the residual beats the covariance, and three separate real effects were the size of the spread |
+| **`statespace-volatility.md`** | the one forecastable quantity, and two corrections to how much of it is available - both of mine, in opposite directions |
+| **`statespace-method.md`** | the six times an effect appeared and was not there. Four were my bugs and none was caught by reading the code |
+| **`statespace-reading.md`** | every reference read and what it gave: S4 to Mamba-3, HiPPO, LMU, BOCPD, FOCuS, Cboe, candlestick liquidity, order flow, kinetic modelling |
+
+What stays below is the part that describes the code rather than the market.
 
 ## What is in this file
 
@@ -165,399 +183,6 @@ held-out because a switching model carries more parameters.
 Measured on bar returns, not on a level's rate. Repeating it on a level's rate
 is task 3 and it is **not** blocked: `entry` on the episode record is the touch
 price, 250k of them since 2026-10-02.
-
-## The deep state-space family, and the three ideas from it that transfer
-
-Reviewed 2026-10-10 from IBM's *What are state space models?* (Bergmann, 7 July
-2025), asked for because the article names RNNs, CNNs, Mamba and S4 and none of
-them appears anywhere in this package.
-
-They are absent because this package is the **classical** half of the field:
-`A` and `C` are written down from what a level is, and the Kalman recursion is
-exact given them. The article's half learns `A`, `B` and `C` as neural network
-weights by backpropagation, and is explicit about the price — it needs "a great
-deal of training data" and is "not interpretable". Both are disqualifying here:
-this desk has ~10^5 touches, not 10^9 tokens, and a gate that cannot say why it
-refused cannot be journalled.
-
-That is a refusal of the deep *models*. It is not a refusal of the ideas
-underneath them, and three of those are cheap on data already in hand.
-
-### The two halves are the same recursion
-
-The article's continuous form is `h'(t) = A h(t) + B x(t)`, `y(t) = C h(t) + D x(t)`,
-discretised to `h_t = Abar h_{t-1} + Bbar x_t`, `y_t = Cbar h_t`. So a discretised
-SSM **is** a linear RNN whose hidden state is the state vector — the article says
-so outright — and one with a fixed `Abar` unrolls into a 1-D convolution kernel
-`(Cbar Bbar, Cbar Abar Bbar, Cbar Abar^2 Bbar, ...)` trainable by FFT. RNN, CNN
-and SSM are three readings of one recursion rather than three models, which is
-worth knowing before reaching for any of the three by name.
-
-`D` is the direct input-to-output term; the article notes it is usually dropped.
-This package drops it for the stronger reason in I1 — there is no input at all.
-
-### D1. The transition as a chosen memory rather than a chosen physics — HiPPO
-
-**The one to do first**, and the article's sharpest number: on sequential MNIST,
-replacing a random `A` with the **HiPPO** matrix moved accuracy from 60% to 98%.
-Nothing was learned differently. The transition was chosen rather than guessed.
-
-Both members here choose `A` from physics. `linear` is an integrated jerk — a
-local Taylor expansion of where the level is going; `reverting` is an integrated
-OU — the same with a pull-back. Both describe the level **now**. HiPPO-LegS
-instead chooses `A` so that the state is the optimal least-squares projection of
-the *whole history so far* onto Legendre polynomials, in closed form and needing
-no dependency:
-
-    A[n,k] = -sqrt(2n+1)*sqrt(2k+1)   for n > k
-             -(n+1)                   for n = k
-             0                        for n < k
-
-**Checked against the reference, 2026-10-10** — `srush/annotated-s4` and
-`state-spaces/s4`. The formula above is right, to 8.9e-16 at N = 2, 3, 4 and 6
-against `make_HiPPO`, which builds it as `tril(sqrt(2n+1) sqrt(2k+1)) -
-diag(n)` and negates. Two things it was missing:
-
-**HiPPO specifies `B` as well**, and leaving it out would have left half the
-model to guess: `B[n] = sqrt(2n+1)`.
-
-**The eigenvalues are the diagonal, because the matrix is lower-triangular** —
-so HiPPO-LegS at N = 4 has spectrum `-1, -2, -3, -4`, which is *exactly*
-`selective.eigenvalues()` and exactly Mamba's S4D-Real. **S4D-Real is HiPPO with
-the coupling thrown away and the time constants kept**, which is why the paper
-finds it ties with the full matrix, and it means D1's gain over `selective` is
-the off-diagonal coupling alone and not the decay rates. That lowers the
-expected prize and sharpens what is being tested: whether a level's history
-wants its basis coefficients *coupled*.
-
-**It is non-normal**, verified - `A Aᵀ != Aᵀ A` - which is the whole reason S4
-carries NPLR/DPLR machinery: add a rank-one `P Pᵀ` with `P[n] = sqrt(n + 0.5)`
-to make it normal, then diagonalise. **None of that is needed here.** DPLR
-exists to get an `O(N log N)` convolution kernel at N in the dozens and to keep
-gradients stable through it; at N = 4 with no backpropagation, the dense matrix
-is four rows and the direct recursion is correct and fast.
-
-For a level touched forty times across three weeks, "the entire touch history
-compressed into k numbers, optimally" is a different claim from "position, rate
-and acceleration right now" — and it is nearer the claim this desk's levels are
-supposed to embody, that a level **is** its history.
-
-**Which measure.** `state-spaces/s4`'s `transition()` implements `legs`, `legt`,
-`lmu`, `lagt`, `glagt`, `fourier`/`fout`, `fourier_decay`, `fourier2`, `random`
-and `diagonal`. Three are worth trying and they encode different beliefs about
-what a level remembers:
-
-| measure | what it remembers |
-| --- | --- |
-| `legs` | the whole history, scaled - every touch ever, older ones coarser |
-| `legt` | a sliding window - touches inside it, nothing before |
-| `fout` | an oscillatory basis - see D4 |
-
-`legs` first, because "a level is all of its history" is the desk's own claim.
-`legt` is the honest rival: a level that was last respected in March may simply
-be a different level.
-
-**Null:** `linear` and `reverting` on held-out one-step predictive likelihood over
-the same measurement series, scored exactly as I5 was. It is a drop-in: same
-`Filter` protocol, same `smooth` factory, a different `A` and `C`. Legendre
-Memory Units (Voelker, Kajic and Eliasmith 2019) are the same idea a generation
-earlier and are `lmu` in that list.
-
-### D2. Selectivity — and the Mamba paper says our data is the case it hurts
-
-**Demoted on 2026-10-10 after reading the paper rather than the summary of it**
-(Gu and Dao, arXiv:2312.00752). The summary version of this idea was the second
-thing to do here. The paper's own limitations section moves it down, and the
-sentence that does it is this:
-
-> the selection mechanism helps on discrete modalities, "but this conversely can
-> impede their performance on data that LTI SSMs excel on"
-
-They are not speculating. Replacing S4 with the selective S6 layer
-**"significantly hampers performance"** on long-form audio waveforms, and their
-conclusion is that "layers closer to the raw audio signal should be LTI" —
-selection only earns its place once an outer layer has tokenised and compressed
-the signal. Structured SSMs have "a strong inductive bias toward continuous-time
-data modalities such as perceptual signals", and selection exists to fix their
-weakness on **text and DNA**.
-
-A price series is the first kind and not the second. A level's position is a
-continuous-time quantity sampled irregularly, with no vocabulary and nothing to
-retrieve by content. So this package sits in the regime the authors say
-selection impedes, and `linear` and `reverting` being LTI is a match to the data
-rather than a limitation to fix.
-
-**What the paper corrects in the earlier note here.** Selectivity is not
-"making `delta` input-dependent". `B`, `C` and `delta` become input-dependent in
-Algorithm 2; **`A` stays a fixed parameter**, and the authors say they left
-selective `A` untested, hypothesising it would be similar. That matters twice: it
-means D1 and D2 compose rather than compete — a chosen `A` survives selectivity —
-and it means the ablation below is about `B`, `C` and `delta` only.
-
-**And `mamba3.py` has since done it**, so "A stays fixed" is true of the paper
-and not of the line of work. Mamba-3 makes the decay data-dependent per head and
-per timestep, through a heavy-tailed map - `1 + x` for `x >= 0`, `1 / (1 - x)`
-for `x < 0` - clamped to at most `-A_floor` with `A_floor = 1e-4`, under the
-comment that it "can improve stability during WSD training and at higher
-learning rates". The clamp is the part that transfers: it is the guard that
-keeps the decay strictly negative, and `reverting`'s `theta` needs the same one
-for the same reason.
-
-**The one fragment that still transfers, and it has a theorem.** Their Theorem 1:
-with one state, `A = -1`, `B = 1` and `delta = softplus(param + Linear(x))`, the
-recurrence becomes
-
-    g_t = sigmoid(Linear(x_t))
-    h_t = (1 - g_t) h_{t-1} + g_t x_t
-
-which is **an exponentially weighted moving average whose decay is a function of
-the input**. This desk is full of EWMAs with fixed decay. So the cheapest
-possible version of this idea is not a new member at all: take one existing
-fixed-decay average and let its decay depend on activity rather than on the
-clock. Large `delta` resets the state onto the current input; small `delta`
-keeps the state and ignores the input — which is the behaviour wanted across a
-regime break, where a level's older history should stop counting.
-
-`dt` here is clock time between touches and a level does not age by the clock:
-one untouched across a dead weekend has advanced less than `dt` says, one
-untouched through an NFP print more. `regime` and per-feed volatility are
-already computed, so `delta = dt * activity` costs one parameter and no new data.
-
-**Null:** the same member on clock `dt`, held out — and on this data the null is
-expected to win. Run it anyway, because "the paper says our modality is the
-other one" is an argument and not a measurement, but do not run it before D1 and
-D3, and do not read a loss as a surprise.
-
-**What is not worth copying at all.** The selection mechanism's cost is that a
-time-varying `Abar` cannot be unrolled into a convolution, which is why Mamba
-needs a hardware-aware parallel scan that keeps `delta, A, B, C` in SRAM and
-recomputes intermediate states in the backward pass instead of storing them.
-That is an answer to a problem created by selectivity, at sequence lengths this
-desk does not have. Taking the scan without the selectivity would be taking the
-cost without the reason.
-
-### D3. One state, several measurements — MIMO
-
-The article's worked example reads a two-state system through a `C` with four
-output rows, and names MIMO explicitly. This package runs a filter per
-`(level, interval)` row. `drawing/confluence.py` already argues the other way in
-prose — "evidence gathered at three resolutions of one price is evidence about
-one price" — and MIMO is the arithmetic for exactly that: one state per level,
-one `C` row per resolution, several measurements updating one state.
-
-It also answers part of the matrix question that started `subjects.py`. The first
-useful matrix is **not** instruments side by side; it is resolutions of one level
-stacked, and it needs no data that is not already recorded.
-
-**Null:** the independent per-interval filters on the same held-out measurements.
-If the resolutions are independent the stacked `C` buys nothing — which is the
-same shape of test as the cross-instrument innovation correlation.
-
-### The neural family member exists: `selective.py`
-
-**Written on 2026-10-10, after this table had said "declined as an
-architecture".** Asked for directly - "we can have a neural architectural
-family like mamba inside our statespace lib" - and the decline was aimed at the
-wrong half. The architecture is a recurrence and it costs nothing to write; what
-needs an autodiff framework is the *training*, and only that is still declined.
-
-`family.members()` now answers `{kalman, reverting, robust, selective}`.
-`Selective` is S6 with `A` a fixed diagonal `-(n+1)` - S4D-Real, the best of the
-four initialisations the paper ablates and tied with random - and `B`, `C` and
-`delta` affine in one scalar, five parameters in total, which the same
-likelihood search that fits `theta` and `jerk` can fit. The paper's `Linear`
-layers are thousands of weights fitted by backpropagation; this is five numbers
-fitted by grid. Smaller claim, and the one checkable here.
-
-Three things it taught while being written, all pinned by tests:
-
-* **Theorem 1 is exact.** `1 - exp(-softplus(z)) == sigmoid(z)` to 1.1e-16 over
-  `z` in `[-8, 12]`, so a one-state selective SSM **is** an exponentially
-  weighted average whose decay depends on its input. That is the single most
-  reusable thing in either paper, because this desk is full of fixed-decay
-  averages and the cheapest experiment in this document is letting one of their
-  decays depend on activity instead of on the clock.
-* **It cannot be smoothed, and that is honest.** A selective SSM is a
-  deterministic map with no posterior covariance, so `smooth` returns None for
-  it - the same contract a member that cannot state its own `F` already has. It
-  *can* state `F`; the missing piece is the covariance.
-* **A zero-length step folds in nothing.** `delta` is its only entry channel,
-  so two venues printing the same instant give a Kalman member two pieces of
-  evidence and give this one none. Mamba has no notion of two tokens at one
-  position and neither does this.
-
-### D4. An oscillatory state, which is the one the desk already believes in
-
-**New on 2026-10-10, and the best-motivated idea in this document** because
-four independent things point at it and none of them is a paper's headline
-number.
-
-1. **The Mamba paper's own audio result.** Complex-valued parameters were used
-   in exactly one experiment - long-form audio - and the authors conclude they
-   help "continuous modalities" and not discrete ones like text or DNA. A price
-   series is a continuous modality. The same section is where they say layers
-   near a raw signal "should be LTI".
-2. **`mamba3.py` applies data-dependent rotary angles to `B` and `C`**, carried
-   in the decode state and passed to the kernel. The file does not call it a
-   complex eigenvalue, but a rotation applied to the input and output maps is
-   what a complex conjugate pair *is*.
-3. **HiPPO already has the basis**, and it is not speculative:
-   `fourier_diag`/`foud` builds `A = 2*pi*(-diag(d, 1) + diag(d, -1))` with the
-   frequencies interleaved - a skew-symmetric tridiagonal, which is a pure
-   rotation generator. `fourier`/`fout` and `fourier_decay` are the damped
-   relatives.
-4. **Every member here is purely decaying.** `linear` integrates, `reverting`
-   pulls back, `selective` averages. **Not one of them can turn around.** If a
-   level's approach oscillates, a state space that cannot represent an
-   oscillation is the wrong one, and this is the only gap in the family that no
-   pending member fills either.
-
-   The weaker version of this leg, and it was checked before being written down:
-   the desk's own cycle strategies do **not** support the premise.
-   `cycle-scalp` is `-0.021 +/-0.024 R` over 600 closed trades - t of -0.9, so
-   indistinguishable from zero - `cycle-turn` has never traded, and
-   `cycle-turn-scalp` has two. So "this desk already believes in cycles" is true
-   of the code and **not** of the record: no evidence either way, which is
-   weaker than the premise wanted and stronger than a refutation.
-
-A complex conjugate pair is two states, the same count `reverting` already uses,
-so this is not a request for more parameters - it is the same budget spent on a
-rotation rather than on a pull-back. That makes the comparison clean.
-
-**Null:** `reverting` on held-out one-step likelihood, which is the current
-winner and also the natural rival: both say "the rate does not run away", and
-they disagree about whether it decays to zero or circles.
-
-**What would make it false:** a measurement on the levels themselves rather
-than on strategies that trade them. The check above used strategy P&L, which is
-entry, exit and sizing on top of the question being asked; the direct version is
-whether a level's *rate* has negative autocorrelation at any lag - an
-oscillation - on the episode series. That is the same shape as the
-speed-and-direction measurement and it is not done.
-
-### `mamba_ssm/modules/` read through, for what else is borrowable
-
-| module | what it is | here |
-| --- | --- | --- |
-| `mamba_simple.py` | Mamba-1 | **read**, and it corrected this package's ZOH claim |
-| `mamba2.py`, `ssd_minimal.py` | Mamba-2 / state space duality | **noted, not adopted.** Mamba-2's trade is a *scalar* `A` per head instead of a diagonal one, which is what lets the recurrence become a matmul and gives the duality with attention. It buys speed by collapsing every state to one decay rate - the opposite direction from D1, where the whole point is that the basis carries several timescales. At N = 4 we have no speed problem to trade for it |
-| `mamba3.py` | Mamba-3 | **the richest file.** Data-dependent `A` (superseding the paper's "A is fixed"), an implemented `is_mimo` mode at `mimo_rank=4`, a trapezoidal discretisation term, rotary angles on `B`/`C`, and RMS-norm on `B`/`C` with learned biases. Three of those feed D2, D3 and D4 |
-| `block.py` | norm, mixer, residual, then norm, MLP, residual | **a real idea, cheap to try.** Residual stacking means layer two models what layer one could not. Here that is a second filter on the first's **residual series** - and `diagnostics.residuals` already produces exactly that series, to test whether it is white. If it is not white, something is left to model, and a stacked member is the thing that would model it. One line of plumbing, no new maths |
-| `mha.py` | multi-head attention, for hybrid stacks | **not transferable**: there is no attention here and nothing to attend over. The *hybrid* idea - different mixers in one stack - is already this package's `members()` plus the switching model in I9 |
-| `mlp.py` | GatedMLP | no |
-
-**`is_mimo=True` is the find.** D3 was argued from the article's worked example
-and from `drawing/confluence.py`; the reference has it implemented, with a
-rank-`R` input and output projection per head rather than a full matrix, and a
-chunk-size note recommending `64/mimo_rank`. A low-rank coupling is a better
-first shape than a dense one for the same reason the third state lost in I5:
-fewer things to estimate from the same touches.
-
-### LMU, and the parameter a desk can actually reason about
-
-`compneuro.uwaterloo.ca/publications/voelker2019lmu.html` - abstract only on the
-web page, so the matrices below are from `state-spaces/s4`'s `transition()`,
-whose `lmu` branch carries the comment "equivalent to LegT up to normalization":
-
-    A[i,j] = (2i + 1) * (-1 if i < j else (-1)^(i-j+1))
-    B[i]   = (2i + 1) * (-1)^i
-
-both divided by **theta**, which the source leaves as a commented-out `/ theta`
-on the shared factor.
-
-**That `theta` is the point.** The abstract's claim is that the state "linearly
-maps onto sliding windows of time via the Legendre polynomials up to degree
-d - 1" - so `theta` is a **memory window in time units** and `d` is how finely
-that window is resolved. Compare what this package currently asks a user to
-choose: `jerk`, a spectral density in value units squared per hour to the fifth,
-whose production counterpart was picked once and never fitted.
-
-"This level's state summarises the last 72 hours, at four degrees of detail" is a
-sentence a trading desk can argue with. "The third derivative has spectral
-density 1e-4" is not, and `DRIFT_VOL_PER_HOUR = 0.02` is what happens when
-nobody can.
-
-So LMU/LegT is worth writing **for its parameterisation** even if it ties, and
-it is a different experiment from D1: `legs` compresses all history, `legt` and
-`lmu` summarise a window and forget what is behind it. For a level that may
-simply have stopped mattering, forgetting is a feature.
-
-Careful about one collision: `reverting.theta` is a mean-reversion **rate**, per
-hour, and LMU's `theta` is a **window length**, in hours. Same letter, reciprocal
-units, and they will end up in the same config if nobody says so first.
-
-### Read against the reference implementation, not only the paper
-
-`state-spaces/mamba`, `mamba_ssm/modules/mamba_simple.py`, 2026-10-10. Worth
-doing separately: the paper says what the model is, the code says what the
-authors ran, and they differ in one place that had already made it into
-`selective.py` as a wrong comment.
-
-**Two things confirmed.** `A` really is `-(n+1)`: the code builds
-`arange(1, d_state + 1)`, stores `A_log = log(A)` and uses `A = -exp(A_log)` in
-forward, so `eigenvalues()` here matches the implementation and not just the
-ablation table. And the step size's bias is set to `dt + log(-expm1(-dt))` so
-that `softplus(bias)` recovers a chosen `dt` - exactly `INERT`, which was
-already `log(e - 1)` and is now written as `inverse_softplus(1.0)` because that
-form generalises to any target.
-
-**One thing corrected, and it was mine.** `selective.py` described its
-discretisation as "zero-order hold, which is what Mamba uses". Wrong twice:
-
-* the reference computes `dB = einsum("bd,bn->bdn", dt, B)`, which is plainly
-  `delta * B` - **Euler, not ZOH**
-* and the form here, `1 - exp(delta * A)`, is exact ZOH only at `A = -1`. Exact
-  ZOH carries a `1/|A|`: at `delta = 0.5` this member's entry weight is 0.632
-  against ZOH's 0.316 for `A = -2`, and 0.865 against 0.216 for `A = -4`
-
-The form is still the right one *here*, for a reason the reference does not
-have: weights summing to one make every state a normalised exponential average
-that converges to the reading, so their mean is an estimate and `C` can be
-fixed. Mamba's `C` is learned and absorbs whatever scale the states settle at,
-so it does not care. Three tests pin this rather than a comment asserting it.
-
-**`dt_min = 0.001` to `dt_max = 0.1`, log-uniform, floored at 1e-4.** Kept as
-`REFERENCE_DELTA` for the *shape* a grid over `drift` should take - log-uniform
-across orders of magnitude - and explicitly not as the values: theirs is a step
-per token in a sequence with no clock, and `delta` here multiplies real elapsed
-hours.
-
-**`D` exists in the implementation**, which the article said was usually
-dropped: `D` is a parameter of ones and the output is `y = C h + D * x` before
-the gate. In this package's terms that is a direct pass-through of the current
-reading to the output - a blend of the filtered state with the raw touch. It is
-*not* adopted, and the reason is sharper than I1's "there is no input": the
-whole purpose of a filter here is that a reading is noisy, so a skip connection
-from it to the output is the one thing a level estimator should not have. Worth
-knowing it is there, because a reader comparing this to the reference will
-notice its absence.
-
-**A depthwise causal `conv1d` of width 4 sits before the SSM**, with SiLU after
-it. In our terms, a four-tap local smoother on the touch series ahead of the
-state update. Noted, not adopted: it is a fifth parameter set on a member that
-cannot yet beat a two-state LTI null with five.
-
-Not transferable: `use_fast_path`, the fused `selective_scan_fn`, the BLH/BDL
-layout choices, and the gated `z` branch with `out_proj`, which exist because
-there is a neural network around the recurrence. There is not one here.
-
-### Noted and declined
-
-| from the papers | status here |
-| --- | --- |
-| Mamba, selective SSM (S6) | **written** — `selective.py`, above |
-| trained `A`,`B`,`C` by backpropagation | **declined**, in the article's own words: a great deal of training data, and not interpretable. The same wall `family.PENDING` records for PyDPF |
-| S4, DSS, S5 — structured SSMs | **declined**: their structure is a trained `A`, and we have ~10^5 touches and need an explainable refusal |
-| recurrence/convolution duality, FFT training | **noted, little use here**: it needs uniform `delta` and time-invariance *and the whole sequence known in advance* — true in a backtest, false live, and our touches are irregular besides |
-| hardware-aware parallel scan | **declined, and for a specific reason**: it answers a problem *created* by selectivity, at sequence lengths this desk does not have. Taking the scan without the selectivity is taking the cost without the reason |
-| zero-order hold, bilinear, Euler | **already stronger**: `reverting.py` uses the exact closed form, with `-expm1(-theta*dt)` where the naive expression cancels, and `tests/test_statespace.py` checks it against both a van Loan reference and quadrature. `selective.py` uses ZOH, as Mamba does, because with a diagonal `A` it is exact |
-| expectation maximization, N4SID | **already named** — I11 and `family.PENDING`. Note the paper's condition: both want linear *time-invariant* dynamics, so they apply to `linear` and `reverting` and **not** to `robust` or `selective`, whose gains depend on their input |
-| HiPPO, Legendre Memory Units | **adopted as D1** |
-| state expansion `N` | **corroborates I5 from outside.** The paper's ablation raises `N` from 1 to 16 and gains almost nothing while `B` and `C` are not selective — 9.88 to 9.81 — and 1.0 perplexity once they are. Our own I5 found a third state estimable and still 0.138 nats a point worse. Two independent measurements saying more state buys nothing without selection |
-
-What would move the first row: a reason to accept a gate that cannot explain its
-refusal, which this desk does not have, and an order of magnitude more data than
-the 250k episodes it does.
 
 ## numpy is available here, and three hand-rolled things should go
 
@@ -758,81 +383,6 @@ written:
    in this package represents that, and a level the desk itself has been
    defending is the case where it matters most.
 
-## Measured on eurusd, 3m to 1d: selection loses, and the LTI basis wins the fast end
-
-`research/ideas/statespace_eurusd_timeframes.py`, run on the lab 2026-10-10.
-Fitted by grid on the first half of each series, scored on the **second half**,
-held-out one-step predictive log-likelihood **a point** so the timeframes are
-comparable. 6,000 bars each. There is no eurusd 5m on the lab - `data/fine`
-carries 5m only for the boom/crash indices - so 3m and 15m bracket it.
-
-| timeframe | `linear` I3 jerk | `reverting` I2 OU | **S4D-Real LTI** | **S6 selection on** |
-| --- | ---: | ---: | ---: | ---: |
-| 3m | -24.07 | -8.49 | **-4.60** | -10.47 |
-| 15m | -6.56 | -3.06 | **-2.36** | -19.00 |
-| 30m | -3.99 | -2.36 | **-2.20** | -2.73 |
-| 1h | -2.81 | **-1.98** | -2.21 | -2.33 |
-| 4h | -3.61 | **-2.49** | -4.56 | -4.59 |
-| 1d | -3.32 | **-2.10** | -2.15 | -2.15 |
-
-Three findings, and the first was predicted, the second was not.
-
-**1. Selection loses, on five of six timeframes.** The sixth is 1d, where the
-grid picked `scale = 0.1` and it changed the score by 0.0000 - a tie reported as
-a win by a harness comparing floats, not a result. This is the clean experiment
-the harness was built for: `S4D-Real LTI` is `selective` with `scale = 0`, so
-the last two columns are **the same model one parameter apart**. Gu and Dao said
-selection "can impede their performance on data that LTI SSMs excel on" and that
-layers near a raw continuous signal "should be LTI". On eurusd closes they are
-right, and at 15m they are right by 16.6 nats a point.
-
-**2. The four-state LTI basis is the best model at 3m, 15m and 30m** - better
-than the integrated jerk and better than the integrated OU, by 0.16 to 3.9 nats
-a point. That is new. It arrived as a by-product: `selective`'s own nested null
-*is* S4D-Real, so writing the neural member handed this package a multi-timescale
-LTI member it did not have and would not have thought to write. **It deserves to
-be a class of its own rather than a special case of the member it beats.**
-
-**3. There is a crossover between 30m and 1h**, and it reads as a real structural
-claim rather than noise: the fast end wants **several decay rates at once** - a
-basis - and the slow end wants **mean reversion** in one. `reverting` wins 1h,
-4h and 1d; the basis wins everything faster. If that survives a second series it
-says the right model is timeframe-dependent, which is not what either camp
-assumes.
-
-### What is wrong with this measurement
-
-* **Bars are not touches.** A close moves because price moved; a level is not
-  supposed to. Sets the direction, none of the constants - the same caveat every
-  harness here carries. The version on touches uses the episode record's `entry`
-  and is not written.
-* **`drift = 1.5` was the top of the grid in every single `selective` fit.** The
-  member wanted a larger step multiplier than it was offered, so **both
-  selective columns are lower bounds** and the LTI win at the fast end may be
-  understated. Widen it before quoting these numbers again. `theta = 2.0` at 1d
-  is the same problem on `reverting`, and `theta = 0.1` at 15m and 30m is the
-  *bottom* edge.
-* **Unequal search.** 5 candidates for `linear`, 20 for `reverting`, 20 for the
-  LTI arm, 80 for S6. More search for S6 and it still lost, which only
-  strengthens that conclusion - but `linear` is undersearched and its last place
-  is not established.
-* **One split, chronological.** No rolling origin, so this is one sample of the
-  answer, not its distribution.
-
-### The 15m pathology is worth naming
-
-S6 scored **-19.00** at 15m against the LTI arm's -2.36 - an order of magnitude
-worse, where elsewhere the gap is fractions of a nat. The mechanism is a feedback
-loop and it is visible in the code: a large innovation opens `delta`, a large
-`delta` resets the state onto that reading, and a state sitting on an outlier
-makes the next innovation large too. Selection on an unrobustified residual is
-positive feedback.
-
-**Which is also the fix, and it is already in the family.** `robust` exists to
-bound the influence of a surprising reading. Composing them - selection reading a
-Huber-gated `z` rather than a raw one - is the one version of S6 this data might
-not reject, and it costs no new parameter.
-
 ## `selective`'s trade-offs, and what fixes each one
 
 Asked 2026-10-10: what are the trade-offs and how do we improve on them. Seven,
@@ -1030,89 +580,6 @@ putting all the members in one table. Any new accessor added to `Filter` should
 arrive with a test that it means the same thing on every member, not only that it
 exists.
 
-## What the four quantities showed on real data
-
-285,688 held-out points, 24 series of four symbols, 3m to 1d. Coverage
-recomputed on a **predictive** band - `sqrt(sd^2 + R)` - because the harness's own
-column compared a state band on three members against a fitted predictive spread
-on the fourth, which is the same comparability trap again.
-
-| model | cover +/-2 | RMSE | lag-1 autocorrelation of `z` |
-| --- | ---: | ---: | ---: |
-| `linear` | 68.6% | 50.25 | **+0.323** |
-| `reverting` | 79.4% | 2.84 | +0.092 |
-| **S4D-Real LTI** | **94.2%** | **2.53** | **+0.031** |
-| S6 selective | 91.4% | 14.44 | +0.071 |
-
-**Three independent criteria agree, which is the finding.** S4D-Real fits best,
-is the only member whose two-sigma band is honest - 94.2% against a nominal 95%,
-where `linear` claims far more than it knows - and has the whitest residuals.
-Autocorrelation is scale-free, so that last column is comparable even where the
-`|z|` column was not, and `linear`'s **+0.32** is the diagnostic saying its state
-equation is wrong rather than merely imprecise.
-
-**Every member is still misspecified**, which is what `__init__.py`'s fourth
-principle says to expect: no residual series is white and none is normal. The
-honest reading is a ranking of wrongness, not a model that works.
-
-**`existence` was identical across all four at 0.958** - as it must be, since it
-decays on elapsed time alone and they were fed one timeline. That is a check
-passed rather than a result, and it is the cheap confirmation that the harness
-drove every member on the same clock.
-
-## Can these track where a trend changed, and what happens when price returns?
-
-Asked 2026-10-10, about a specific case: the market trends up for five days,
-stalls, bounces the other way - can the models find the exact turn, and what do
-they say when price comes back to it? The answer is in three parts and only one
-of them is a gap in this package.
-
-**The stall is learnable and the reversal is not, and that is measured.** A trend
-change is a sign change in the rate. On 999 eurusd 4h returns, **speed is 8.1x as
-persistent as signed velocity** - the sum of the first five autocorrelations is
-+0.381 against -0.047 - and consecutive directions agree 49.499% against 50%
-+/- 3.102%. So "the trend stalled" is a statement about speed, which carries
-structure; "and will bounce the other way" is a statement about direction, which
-is a coin. A member tracking the signed rate is tracking the half with nothing
-in it.
-
-**No member can represent the turn itself.** `linear` integrates, `reverting`
-pulls back, `selective` averages, `swarm` anchors - all purely decaying. They can
-notice a turn *after* it has happened, as the old rate decays and a new one
-builds, and none of them can produce one. That is D4 and it is the only gap in
-the family that no pending member fills.
-
-**The exact point is a level, and that machinery already exists.** A turn becomes
-a level in `structures`, and `fade-to-value` already targets the displacement
-origin - where its 82% figure is a target hit rate and not an entry signal. The
-state space's job is not to find the turn; it is to say where that level is *now*
-and how well it is known.
-
-**What it says when price returns, which is the interesting half.** Four
-quantities, and each answers a different question about a five-day-old turn:
-
-| quantity | what it says on the return touch |
-| --- | --- |
-| `output()` | where the level is estimated to be now - it may have drifted, which is what `jerk` and `DRIFT_VOL_PER_HOUR` model |
-| `band(when)` | how precisely, and it has **widened** over the five days |
-| `existence` | whether it is still a level at all: a 7-day half-life puts a 5-day-old turn at about **0.63** |
-| `last_standardised` | **the signal.** Did the touch land where the level was expected? |
-
-That last row is the one worth building on. A return touch inside the band is the
-level confirming its own position; a touch far outside it is either a level that
-moved or a different level, and those are different trades. Bounding how much a
-surprising touch moves the state is exactly what `robust` is for.
-
-**And the "what does it do when it comes back" question is already answered
-250,412 times.** `reactions.Episode` follows every touch for `EPISODE_BARS` both
-ways and records `mfe_up_r`, `mfe_down_r`, `first`, `held_first`, `bars_up_*`,
-`bars_down_*`, `bars_opposite` and a `kind` - `whipsaw` among its values. The
-measurement is: condition those outcomes on the level's **age** and on its
-`existence`, and ask whether a five-day-old turn behaves differently from a
-five-hour-old one. No new data and no new member required, and it would settle
-whether `existence`'s seven-day half-life is the right clock or a guess that
-happens to match `engine.FORGET_FEED_SECONDS`.
-
 ## Multi-timeframe: not tried, and the results argue for it
 
 Asked 2026-10-10. **No** - every timeframe in the harness is fitted and scored
@@ -1131,638 +598,282 @@ this implemented as `is_mimo=True` at `mimo_rank=4` - low-rank rather than dense
 which is the better first shape for the same reason the third state lost in I5:
 fewer things to estimate from the same touches.
 
-## Liquidity on candlesticks: most of it is already tracked
+## How to use all of this to improve the members, in order
 
-Asked 2026-10-10 with a list of candlestick liquidity features. Checked against
-the codebase before proposing anything, and the honest answer is that the desk
-measures most of this already under different names:
+Asked 2026-10-11, after the measurements. Six changes, ordered by expected value
+over cost, and the first is free because the capability is already there.
 
-| the feature | here |
+### 1. Feed a time-varying `R`. It is already supported and was never used.
+
+`update(measured, noise, when)` takes the measurement variance **per call** on
+every member. **Every harness in this file passed a constant `NOISE = 0.4`.**
+
+So the single most justified change needs no library edit at all: pass
+`R_t` from the HAR-Parkinson forecast instead of a constant.
+
+And it explains a result that is otherwise just a defect. `linear` covers
+**19.3%** of readings in the quintile where it is most confident and 87.9% where
+it is least - its band is worst exactly where a caller would trust it. A filter
+whose `R` is constant while true volatility varies several-fold will do precisely
+that: in quiet periods it believes a noise level far above the truth and reports
+a band that is too *narrow* relative to what it should be, because the state has
+been over-smoothed.
+
+**Null:** the same member with constant `R`, on coverage and interval score
+rather than on point likelihood. Cost: a line in the caller.
+
+### 2. Scale the process noise with the same forecast.
+
+`jerk`, `sigma2` and `wander` are **fields**, set once. A level's drift rate
+should scale with market volatility for the same reason `R` should, and this one
+does need a member change - either per-call process noise or a `scale(factor)`
+that multiplies it.
+
+`DRIFT_VOL_PER_HOUR = 0.02` in production is a constant chosen once and applied
+at every timeframe, which is the same mistake one level up.
+
+**Null:** constant `q`.
+
+### 3. Give the members the high and the low. This is D3 with a reason.
+
+A bar is **three** observations of one state - high, low and close - and
+Parkinson's estimator being more efficient than close-to-close says the range is
+where the information is. The package has had `high` and `low` all along and no
+member has ever seen them.
+
+`C` already takes multiple rows and `output()` already returns a vector, so the
+machinery is in place: one `C` row for the close, one for the high, one for the
+low, with the high and low given larger `R` because they are extremes rather
+than consensus prices.
+
+**Null:** the same member on closes only. This is the first MIMO application
+with a measured reason behind it rather than an analogy.
+
+### 4. Score on the band, not the point.
+
+The random walk beats every member on the point forecast at every horizon, and
+`swarm` is the only member whose band is honest far out - 92.8% at `h = 50`
+against `reverting`'s 88.0%. **The members' value is the interval.** So the
+objective should be a proper interval score - CRPS, or the interval score with
+its coverage penalty - and not one-step predictive likelihood, which is the
+objective a martingale wins by default.
+
+This changes which member wins, and it is the metric that matches how the desk
+sizes. It is also the cheapest reframing in this list: the harness already
+records coverage and band width at four horizons.
+
+### 5. Robustify the measurement. `robust` was never in a single comparison.
+
+Roll's implied spread reaching 16-36% of the achievable volatility signal
+confirms that bid-ask bounce is a large part of the innovation at fast
+timeframes. That is a measurement artefact, not a level moving, and `robust`'s
+Huber gate exists to bound its influence - and the innovation-reversion harness
+found clipping at 2.5 sigma strengthening reversion and killing momentum, which
+is the gate separating the two.
+
+**Null:** `linear` and `reverting` unclipped, which is what every table here has
+used.
+
+### 6. The reframing: point the machinery at variance, not at price.
+
+This is the conclusion the measurements actually support, and it is larger than
+the five items above.
+
+**Price is a near-martingale.** It diffuses at 1.00 to 1.07 times `sqrt(h)`;
+direction is a coin in every test; the random walk wins the point forecast at
+every horizon on 17 to 21 of 39 series. There is very little for a state space
+to track, which is why the best member here is the one that tracks the least.
+
+**Log-variance is not.** It is persistent, it is forecastable - 79% of achievable
+with HAR-Parkinson - and HAR's win says it has structure at **several time
+scales** at once. That is a description of a quantity a multi-component state
+space is built for, and it is exactly what D1's HiPPO basis offers: several
+decay rates in one state, which is the thing that lost on price because price has
+no memory to compress.
+
+So `subjects.py` should carry a fourth subject - **VOLATILITY**, measured by
+realised variance over a bar, in log units so the state is unconstrained - and
+the members should be scored on forecasting it. Everything in this file that
+failed on price has a reason to work there:
+
+| what failed on price | why it should work on log-variance |
 | --- | --- |
-| wicks and their size | `wick_above_vol`, `wick_below_vol`, `wick_above_sd`, `wick_below_sd`, `wick_n`, per level, in `engine.py` |
-| buy-side liquidity above swing highs | `liquidity_beyond_vol` - the next level out, which `drawing/sweeps.py` defines as "a price where stops accumulate because it is a price everybody else can see too" |
-| sell-side liquidity below swing lows | the same, by side |
-| a liquidity grab - spike through and snap back | **`Outcome.TRAP`**, already recorded per side, and `sweep_rate` is its decayed share |
-| a stop needing to clear the wick | `engine.py` already sizes in "sigmas of wick spread a stop has to clear beyond the level's own average" |
+| the multi-timescale basis (D1, S4D-Real) | HAR's win **is** the multi-scale result |
+| `reverting`'s mean reversion | volatility mean-reverts; price does not |
+| a persistent state (`swarm`'s anchor) | variance has a level to return to |
+| the state space at all | there is something to track |
 
-**Two real gaps.** The body-to-wick *ratio* is not a named feature - the wick
-sizes are there and the small-body-long-wick shape is not. And the single-bar
-grab is not distinguished from the multi-bar sweep: `TRAP` is per interaction,
-and the multi-bar version - break, consolidate, reverse - is closer to
-`Episode.kind == "whipsaw"`, which is defined by R-multiples rather than by
-shape.
+**And the honest caveat**: this is an argument, not a measurement. The null is
+HAR-Parkinson itself, which is a linear regression on three realised variances
+and captures 79% - so a state space on log-variance has a high bar to clear and
+a cheap incumbent to beat. That is the right shape for this package: a named
+null that already works.
 
-### What Mazza (2012) actually found, which is not the folk version
+## Looking back in time: what was added, and the half that is still missing
 
-*Intraday Liquidity Dynamics and Price Movements*, 15-minute candlestick
-configurations against limit-order-book liquidity - spread, depth, order
-imbalance, dispersion, slope, plus activity and volatility.
+Asked 2026-10-11 whether these models support looking back to make decisions.
+Three mechanisms, and two of them were gaps until now.
 
-* **Dojis**: high-low volatility falls sharply, significant at 1%. Higher book
-  liquidity. Trading activity is **lower** while orders are **more aggressive**,
-  and asymmetrically: sellers aggressive immediately, buyers only 15 minutes
-  later. Gravestone tilts seller-aggressive, Dragonfly buyer-aggressive.
-* **Hammer family**: higher liquidity *just before* formation, and "not provided
-  by more depth: the book is more dense and the spread is lower". The Hanging
-  Man shows it only *after* it has fully appeared.
-* **Where the body sits in the range matters**: body near the high goes with more
-  liquidity at the ask, near the low with more at the bid, and more so when the
-  body is short.
-* Robust to 30 and 60 minute intervals for Dojis; the Hammer patterns lose
-  significance as the interval lengthens.
+### Fixed-lag smoothing, written: `smoothing.lagged`
 
-**The conclusion is about execution, not direction**: "traders might benefit from
-candlesticks analysis as a way to better time their order submissions in order to
-improve their transaction costs management." The paper does not establish a
-directional edge, and the effects are short-lived. That is a narrower and more
-usable claim than the folk version, which reads a long wick as a reversal signal.
+`smooth` conditions on the **whole** series, so its answer for ten minutes ago
+arrives when the series ends - which `smoothing.py` already called "fine for a
+study, useless live". `lagged` conditions on exactly `lag` measurements past
+each point, so the answer for ten minutes ago arrives `lag` bars after it:
+late, bounded, and usable.
 
-**The caveat that decides how much transfers.** Mazza's measures come from a
-limit order book. This desk has no book - bid, ask and volume, no depth, no
-dispersion, no slope, no order imbalance. What survives is **spread**, **high-low
-volatility** and **activity**, which is enough for the Doji result and not enough
-for most of the rest.
+It is the same Rauch-Tung-Striebel recursion run over a window rather than over
+everything, so it is the same algorithm conditioned on less - **not** an
+approximation of a different one. Two things stated because they are easy to
+assume away:
 
-### The state-space reading of all of it, which is the part worth building
+* **it is not equal to `smooth` at the same point**, and it converges on it as
+  the lag grows. Measured: the worst gap falls 0.337, 0.268, 0.241, 0.045,
+  0.0006 across lags of 1, 3, 10, 30, 100. The test asserts that monotone
+  convergence, which is the only honest check of a fixed-lag smoother.
+* **every measurement gets an estimate**, with the `delay` that was actually
+  available - fewer than `lag` while the window fills and zero for the last
+  bar, which has no future at all. Returned rather than dropped, because a
+  caller zipping output to input would otherwise misalign silently.
 
-**A wick is a measurement outlier, not information about where the level is.** It
-says where stops were. Two consequences, and both are already half-built here:
+`revision` is the quantity worth watching: how far hindsight moved the estimate.
+A revision much larger than the filter's own standard deviation means the filter
+was confidently wrong at the time, which is a statement about the process noise
+rather than about the smoother.
 
-1. **The filter should not move its state on a wick.** That is bounded influence,
-   which is `robust`. And it is not theoretical: the S6 member's -128.86 at
-   xauusd 4h and -570.31 at usdjpy 3m are a feedback loop in which a large
-   innovation opens `delta`, the state resets onto the outlier, and the next
-   innovation is larger still. Selection reading a Huber-gated residual is the
-   version of that member this data might not reject.
-2. **The wick belongs to a different quantity.** `subjects.py` names three -
-   LEVEL, INSTRUMENT, RELATION - and this argues for a fourth, measured by wick
-   excursions rather than by touch prices, with its own `jerk` and its own
-   noise. A level says where price is agreed; liquidity says where stops are
-   resting. They are different states with different time constants and one
-   filter should not be asked to carry both.
+**What a desk would use it for**: *where was this level ten bars ago, given what
+has happened since* is a better basis for placing a stop than where the filter
+thought it was at the time.
 
-And one structural point that ties back to the trend question: **a Hammer and a
-Hanging Man are the same shape.** The name depends entirely on the preceding
-trend. That is a state-dependent reading of an identical measurement, which is
-what a switching model is - I9, and the HMM member's job.
+### The input channel: `u` is written, `B` is not
 
-## Seven symbols, 3m to 1d, scored properly: S4D-Real wins and the anchor needs the particles
+`I1` has said since this package started that "there is no input; `B` and `u` do
+not exist here". `inputs.py` closes the `u` half.
 
-`research/ideas/statespace_symbols_timeframes.py`, 2026-10-10, after the
-log-sum-exp fix. Four FX pairs and three Deriv synthetics - **the synthetics are
-the control that matters**, because their volatility is generated and stationary
-by construction, so a member winning only there is describing a simulator.
+**Every window is measured in hours, never bars**, which was the specific ask
+and is the right call. "200 bars" is not a horizon, it is a horizon times a
+timeframe - ten hours at 3m and eight months at 1d - so a feature defined that
+way means something different on every series, and this file's whole habit of
+comparing across timeframes would be comparing definitions.
 
-39 series. Wins by member:
+**And the week is seven calendar days, with `coverage` doing the rest.** The
+first version hardcoded five days, on the grounds that a trading week is five
+and the weekend is a closed market rather than a quiet one. That is right for FX
+and **wrong for crypto and for the Deriv synthetics, which trade all seven** - it
+silently shortened every crypto window by two sevenths. A constant cannot be
+right for both and a per-symbol calendar table is one more thing to keep in step
+with reality, so the window is **calendar** hours and the conversion uses the
+series' own coverage: `(n - 1) * bar_hours / span_hours`, the share of the
+calendar it actually trades.
 
-| member | series won |
-| --- | ---: |
-| **S4D-Real LTI** | **21** |
-| `reverting` | 8 |
-| S6 selective | 6, every one of them a tie or within 0.002 |
-| `swarm` | 2 - v25 15m and v75 15m |
-| `anchored`, `count = 1` | **0, and catastrophically** |
+Measured on the real files, which is the test of the inference:
 
-### The anchor cannot be had without the particles, and that is structural
-
-`count = 1` was written to answer "fix the extrapolation without the particle
-part". It scores between **-71 and -101,256** a point. That is not a close loss
-or a tuning failure, and the reason is worth more than the member:
-
-**a zero eigenvalue cannot be driven by the recurrence** - the entry weight
-`1 - exp(delta * A)` is exactly zero there - so the anchor is a random walk, and
-with one particle there is nothing to reweight and nothing to resample. **The
-anchor is therefore never corrected toward the data.** The deviations track, the
-anchor drifts off, and `value = anchor + deviations` drifts with it.
-
-So the ensemble is not an optional extra that buys uncertainty on top of a
-working point estimate. **It is the anchor's only correction mechanism.** The
-alternative - a gain that pulls a persistent component toward each reading - is
-precisely a Kalman update on that state, which is what `linear` and `reverting`
-already are. Asked to separate the two fixes, the measurement says they do not
-separate.
-
-### What `swarm` is actually good at, which is not the likelihood
-
-It wins two series of 39, and it is **the best-calibrated member where it runs**:
-96.8% coverage at v75 15m against S4D-Real's 94.3%, on a nominal 95%. That is
-what it was built for and it delivers it - an inferred spread that widens in a
-gap, where `selective`'s is a fitted constant.
-
-The honest summary is that `swarm` buys **honest uncertainty at a small cost in
-fit**, and on this data S4D-Real's fit is better. Which of those a caller wants
-depends on whether it sizes on the band or only reads the point, and this desk
-sizes on the band.
-
-**Its first score is withdrawn.** The run before the log-sum-exp fix had it
-winning 18 of 24; that number was inflated by the missing shift and should not be
-quoted.
-
-### Selection, over 39 series rather than six
-
-Still essentially never: six nominal wins, all ties or within 0.002 a point, and
-the failures remain catastrophic - **-128.86** at xauusd 4h and **-570.31** at
-usdjpy 3m against LTI arms at -6.74 and -2.69. The feedback loop is unchanged: a
-large innovation opens `delta`, the state resets onto the outlier, the next
-innovation is larger. The paper's own limitation holds on seven symbols.
-
-### The synthetics behave differently, and in a readable way
-
-On v25, v75 and v100, `reverting` wins 1h and 4h where it loses those on FX, and
-the whole field is closer together - v75 4h has S4D-Real at **-0.145** against
-`linear`'s -0.883, the widest relative gap anywhere. A generated volatility
-process is more nearly the thing these models assume, which is the expected
-result and is the reason to keep them in the table: a member that cannot win on
-a stationary generator has no business being trusted on a market.
-
-### Still at the grid edge
-
-`drift = 4.0` and `wander = 2.0` pin at the top for nearly every fit, and
-`noise = 2.0` often. **Every selective and swarm number here is a lower bound**
-and the grids want another widening before these are quoted as final.
-
-## What the market does when the model is uncertain, and what signals a move
-
-Measured 2026-10-10 on the 285,688 held-out points, conditioning the **next**
-move on each quantity at the time. Asked as: what does the market do when
-uncertainty is high or low, and what gives a signal that a movement - up or
-down - is about to happen.
-
-**One answer covers all of it: every quantity predicts the size of the next move
-and none of them predicts its direction.**
-
-Ratio of mean `|next move|` in the highest bucket against the lowest, over
-quintiles of 71,374 points on the best-calibrated member:
-
-| conditioned on | ratio | and the direction? |
-| --- | ---: | --- |
-| **`loglike_step`** - how surprised the model was | **2.18x** | coin |
-| **`last_standardised`**, `\|z\|` | **2.02x** | coin |
-| disagreement between the four members | 1.24x | coin |
-| `sd` - the model's own prior uncertainty | 1.24x | coin |
-
-`continue` - the next two moves sharing a sign - sat between **48.3% and 49.6%**
-in every bucket of every cut. Including the signed test, which is the one that
-would have been an edge: bucketed by **signed** `z`, the most negative quintile
-and the most positive both give `|next|` near 1.5, with mean next moves of
-`+0.034` and `-0.013`. A surprise above the model and a surprise below it are
-followed by moves of the same size in no particular direction.
-
-### The realised surprise beats the expected uncertainty, by about 2x
-
-This is the finding worth building on. `sd` is what the model *thinks* it does
-not know; `|z|` and `loglike_step` are what just surprised it. The residual is
-nearly twice the signal that the covariance is - 2.0x against 1.24x - which is
-volatility clustering stated in state-space terms: **what just happened predicts
-the next move's size better than what the model expected to happen.**
-
-So the usable signal here is **residual-based, not covariance-based**, and it is
-direction-free, which matches what was asked for - "it could be an up or down
-volatile movement". A reading the filter found surprising is followed by a move
-1.8 vol units on average against 0.9 for an unsurprising one.
-
-### A safety finding: two members are overconfident exactly when they claim precision
-
-Coverage of the two-sigma band, by quintile of the member's own `sd`:
-
-| member | lowest `sd` bucket | highest |
+| series | coverage | 1 week in bars, 15m |
 | --- | ---: | ---: |
-| `linear` | **19.3%** | 87.9% |
-| `reverting` | **34.0%** | 95.1% |
-| S4D-Real LTI | 86.6% | 93.9% |
-
-When `linear` is most confident its band fails **four times out of five**. That
-is worse than useless to a desk that sizes on the band, and it is not visible in
-an average - pooled, `linear` covers 68.6%. The failure is concentrated in
-precisely the states where a caller would trust it most.
-
-### The `existence` cut is confounded, and the confound is the lesson
-
-Bucketing by `existence` sorted the points by **timeframe**: the median gap in
-the five buckets came out 24.00h, 4.00h, 1.00h, 0.25h and 0.05h. Within a
-regularly sampled bar series `existence` is nearly constant - it decays on the
-clock and every bar restores it - so it varies mainly *between* timeframes. The
-`|next|` and `continue` columns were identical across two different members,
-which is the giveaway: they were properties of the data, not of the model.
-
-**`existence` cannot be tested on bar data.** It needs genuinely irregular gaps,
-which is the touch series - `reactions.Episode`, 250,412 of them - where a level
-can go untouched for five days and then be hit. That is the measurement that
-would say whether the seven-day half-life is right or is just
-`engine.FORGET_FEED_SECONDS` borrowed.
-
-### What else could signal a move, and is not yet tested
-
-* **Speed rather than uncertainty.** Speed is 8.1x as persistent as signed
-  velocity, and `rate` is on every member. Untested as a size predictor, and it
-  is the obvious companion to `|z|`.
-* **The band *narrowing*, not its level.** This measured the level of `sd`. A
-  squeeze - `sd` contracting and then expanding - is the classic version and is
-  a different variable. `linear` also exposes `sd_rate` and `sd_accel`, which
-  are uncertainty about the *rate*, and neither has been looked at.
-* **A rolling Ljung-Box breaking.** Residuals that suddenly correlate are a
-  state equation that has just stopped describing the series, which is a regime
-  change by definition. `diagnostics.residuals` already computes it; nothing
-  calls it on a rolling window.
-* **The wick subject.** Mazza's one directly usable result is that Dojis go with
-  sharply *lower* high-low volatility and higher book liquidity, and this desk
-  can compute spread, high-low and activity even without a book.
-
-## Is the innovation's reversion bigger than the spread? Mostly no
-
-`research/ideas/statespace_innovation_reversion.py`, 2026-10-10. The four-step
-plan, executed in the order where the first step can kill the rest.
-
-**1. The cost gate. 3m fails, eurusd 15m passes, and the sign is not stable.**
-"Edge" is the predicted move for a two-sigma surprise divided by the median
-spread, so below 1.0 the effect sits inside the cost of taking it.
-
-| series | best t | edge, spreads | verdict |
-| --- | ---: | ---: | --- |
-| eurusd 3m | **-7.1** | 0.16 - 0.85 | **strongest effect, least tradeable** |
-| eurusd 15m | -5.2 | 1.15 - **2.42** | clears the spread at h = 2, 5, 10 |
-| eurusd 1h | -2.2 | up to 3.41 | weak t, wide bands |
-| gbpusd 3m | -5.8 | - | same sign as eurusd |
-| usdjpy 3m | **+5.8** | 0.13 - 1.00 | **sign flips: momentum, not reversion** |
-| xauusd | -3.2 | 0.07 - 0.83 | nothing consistent, signs flip |
-
-The first row is the lesson. eurusd 3m has the best statistics in the whole
-table and the worst cost ratio, because the 3m spread is **0.343 volatility
-units** - a third of a typical bar. A statistical effect that lives inside the
-spread is microstructure, and the fact that it is strongest where the spread is
-widest relative to the move is the signature of bid-ask bounce rather than of a
-view about price.
-
-**And the sign is not stable across symbols**: eurusd and gbpusd revert at 3m,
-usdjpy trends, xauusd does neither consistently. That is not one phenomenon. The
-search covered roughly 150 cells - five symbols by three timeframes by five
-horizons by clipped and raw - so eurusd 15m surviving is **a candidate, not an
-edge**, and it needs a different period before it is anything.
-
-**2. Robustifying works, and for the predicted reason.** Clipping the innovation
-at 2.5 sigma strengthens reversion where it exists - eurusd 3m `t` from -4.6 to
--6.1 at h=1 and -5.6 to -7.1 at h=5, eurusd 15m h=10 edge from 1.58 to 2.42 -
-and **kills momentum where that is what is there**: usdjpy 3m from `t = +5.8` to
-`+1.6`. So **large innovations carry continuation and small ones carry
-reversion**, and the Huber gate separates them. That is exactly what `robust`
-was written for and this is the first measurement of it doing the job.
-
-**3. Ten bars beats one, confirmed.** On eurusd 15m the clipped edge runs 0.92,
-1.30, 1.54, **2.42**, 0.98 across h = 1, 2, 5, 10, 20. It accrues to ten bars
-and then decays, so the natural horizon there is about two and a half hours and
-not a bar.
-
-**4. Cross-resolution confirmation buys nothing, and the first version of that
-test was invalid.** With the 15m innovation correctly lagged by one 15m bar, the
-"3m and 15m agreeing" slope has the same sign and a *weaker* `t` than 3m alone -
--2.2 against -4.8 on eurusd - because only 58-61% of bars agree and the sample
-shrinks. Requiring confirmation costs more than it buys.
-
-**The version before the lag reported slopes of +0.43 to +0.73 at `t` of +14.5
-to +20.8, uniformly positive on all five symbols including the synthetic
-generator.** A 15m bar stamped at T does not close until T+15m, so attaching its
-innovation to 3m bars from T onward used up to twelve minutes of the future. An
-effect that strong, that uniform, and present on a generated series is the
-signature of leakage - and the agreement rate falling from 73% to 59% once the
-lag was added is how much was leaking.
-
-### And the unit error before it, which is the same kind of mistake
-
-The first run of this harness reported the median spread as **136 volatility
-units** on usdjpy 3m. A spread 136 times the typical bar move would mean the
-market is untradeable, which is how it announced itself: `spread` in the seqlab
-npz is in **points**, not price, and dividing as though it were price inflated
-the cost by `1/tick` - a factor of 100,000 on EURUSD. `tick_size` now infers it
-from the series as the smallest non-zero absolute change, which recovers 1e-5
-for EURUSD, 1e-3 for USDJPY and 1e-2 for XAUUSD and the synthetics.
-
-**Both mistakes were caught by the result being physically absurd rather than by
-reading the code.** That is worth keeping as a habit: a number that cannot be
-true about a market is a faster check than a review.
-
-## One-step scoring is the wrong objective, and it favours the wrong member
-
-Noted 2026-10-10: the desk trades many bars ahead, and **every comparison in
-this file was scored on one-step predictive likelihood.** That is the objective a
-random walk is best at, and it is the objective `at_time` is irrelevant to.
-
-It matters most for the member it was supposed to favour. `swarm`'s anchor exists
-precisely so that extrapolation far ahead returns the level rather than decaying
-to zero, and one-step scoring cannot see that: at `h = 1` the anchor has barely
-moved. So `swarm` was measured on the one horizon where its distinguishing
-feature does nothing.
-
-The signals do survive longer horizons, which is the encouraging half - ratio of
-the next move's size, highest signal quintile against lowest:
-
-| signal | h=1 | h=5 | h=20 | h=50 |
-| --- | ---: | ---: | ---: | ---: |
-| speed | 3.13 | 2.89 | 2.39 | **2.03** |
-| `\|z\|` | 2.02 | 1.85 | 1.59 | 1.47 |
-| `sd` | 1.25 | 1.23 | 1.16 | 1.08 |
-| squeeze | 1.53 | 1.45 | 1.25 | 1.17 |
-
-**Speed still gives 2.03x at fifty bars.** And the series itself diffuses at
-1.00, 1.04, 1.06 and 1.07 times a `sqrt(h)` random walk over those horizons - so
-very nearly pure diffusion, with a hint of trending that grows with the horizon.
-
-**What this requires:** an `h`-step scoring arm in the harness, comparing
-`at_time(t + h)` against the realised close `h` bars later and the coverage of
-`band(t + h)`. Until that exists, every ranking in this file is a ranking at one
-bar and should be read as such.
-
-## Fade the slope, or follow it? Follow, on the daily - and the fades were an artefact
-
-`research/ideas/slope_fade.py`, 2026-10-11. Asked for: forecast volatility and
-**invert** the recent slope, try a one-to-two week lookback, size by
-`1/forecast vol`, filter on overstretch above one standard deviation, add an EMA
-over slopes and an EMA over z-scores, and check by volatility regime.
-
-1,800 cells - five symbols by four timeframes by five lookbacks by three signal
-flavours by three horizons - of which **4.9 are expected above `|t| = 3` by
-chance**. So the list matters less than whether the survivors cluster.
-
-### The correction that changed the answer
-
-The first run found fading a one-to-two week slope on 15m bars with
-`t = -10.8`, on usdjpy **and on v75**. A generated series showing the same
-effect as a market is the synthetic control doing its job, and the cause was
-overlapping windows: at `look = 960` and `h = 50`, consecutive observations
-share 1,010 bars out of 1,010, so ten thousand of them are nothing like ten
-thousand independent draws. Overstating `t` by about `sqrt(overlap)` is how this
-kind of test manufactures significance.
-
-`independent()` now steps by the horizon and keeps one observation per
-non-overlapping window. **Every long-lookback fade disappeared.** The table still
-prints the overlapping `t` beside it, because the gap between the two is the
-most instructive number in the harness.
-
-### What survives
-
-**Following the slope on daily bars, on usdjpy, in nine neighbouring cells:**
-
-| signal | look | h | follow R | independent t | after cost |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| slope | 10 | 5 | +0.151 | +3.9 | +0.102 |
-| slope | 20 | 5 | +0.177 | +4.9 | +0.129 |
-| ema slope | 5 | 5 | +0.137 | +4.1 | +0.089 |
-| ema slope | 10 | 5 | +0.157 | **+4.7** | +0.109 |
-| ema slope | 20 | 5 | +0.156 | +4.3 | +0.108 |
-| ema zscore | 5 | 5 | +0.138 | +3.9 | +0.089 |
-| ema zscore | 10 | 5 | +0.158 | +4.5 | +0.110 |
-| ema zscore | 20 | 5 | +0.166 | +4.6 | +0.118 |
-
-All three signal flavours, all three lookbacks, the same horizon, the same sign,
-and **positive after one spread**. That is the pattern a real effect makes and an
-isolated square does not. eurusd 1d agrees on two cells, `t` +3.1 and +3.4.
-
-**The EMA variants are the best of the three**, slightly: `ema slope` and
-`ema zscore` reach `t = +4.7` where the raw slope reaches +4.9 at one lookback
-and +3.9 at another. Smoothing helps a little and standardising before smoothing
-helps about as much as smoothing alone, which is worth knowing because the
-z-score version is the more expensive one to compute.
-
-**v75 produced no survivors at all**, which is the control working: the
-surviving effects are on markets and not on a generator.
-
-### The one surviving fade is exactly eaten by the spread
-
-gbpusd 15m, `ema slope` and `ema zscore`, `look` 5 and 10 at `h = 5`:
-`follow` is -0.113 to -0.147 at independent `t` of -3.0 to -3.2, so fading earns
-that much gross. The 15m spread there is 0.113 volatility units. **The edge and
-the cost are the same number**, which is the third time in this file that a real
-effect has turned out to be the size of the spread.
-
-### Volatility regime: no structure, and the claim is not supported
-
-"Fading breaks in high-vol breakouts" is testable and does not hold here. On
-eurusd 15m the fade is **strongest in the quietest regime** - `follow` -0.166 at
-`t = -4.0` - and also negative in the fastest, -0.181, with the `fast` bucket
-*positive* at +0.106. eurusd 1h runs the other way: positive in the two quiet
-buckets, negative in `fast`. The sign flips across regimes and timeframes without
-order.
-
-### How wide does it get in N bars - the useful table
-
-The full range travelled inside the window, in volatility units. This is the
-number a stop and a target actually need and it was the easiest of the four
-questions to answer:
-
-| series | N | median | p90 | p99 | max |
-| --- | ---: | ---: | ---: | ---: | ---: |
-| eurusd 15m | 5 | 3.45 | 8.37 | 17.65 | 44.71 |
-| eurusd 15m | 20 | 8.75 | 19.26 | 35.72 | 66.57 |
-| eurusd 15m | 50 | 15.57 | 31.70 | 58.43 | 88.95 |
-| eurusd 1h | 50 | 20.07 | 37.48 | 62.33 | 127.40 |
-| eurusd 4h | 50 | 19.99 | 37.29 | 62.39 | 90.06 |
-
-**A trade held 50 bars on eurusd 15m sits through 15.6 volatility units of
-wandering at the median and 58 at the 99th percentile.** Against that, the
-scalper strategies' `max_against_vol = 1.5` and `trail_vol = 0.5` are sized for
-a completely different horizon - which is consistent, since those are scalps,
-and is worth having written down the moment anyone proposes holding one longer.
-
-The range grows faster than `sqrt(N)`: the ratio runs 1.54, 1.96, 2.20 at 15m
-across N of 5, 20, 50. A random walk's expected range is about `1.6*sqrt(N)`
-times the per-step size, so 15m is near that and the longer timeframes sit
-above it.
-
-### What this says about the proposal
-
-**Invert the slope: no.** The fades either vanish under the overlap correction or
-are the size of the spread. The direction that survives is **follow**, which is
-consistent with the diffusion measurement that preceded it - this series travels
-at 1.00 to 1.07 times a `sqrt(h)` walk, faintly *trending*, and a fade wants the
-opposite.
-
-**Forecast volatility: yes, and it was never the doubtful half.** Speed predicts
-the next move's size with a 3.12x spread at one bar and 2.03x at fifty, which is
-what makes `1/sigma` sizing and the overstretch ratio meaningful.
-
-**One-to-two weeks: on daily bars it is the 5-10 bar lookback**, which is where
-following works. On 15m it is 480-960 bars, where the apparent effect was the
-overlap artefact.
-
-## Are these models finding structure in randomness?
-
-Asked on 2026-10-11, and it is the right question. **Mostly yes, and this file
-now contains six demonstrations of it - four of them mine.** Written down as a
-section rather than a footnote because the methodological lesson outlasts every
-number above it.
-
-### The six times structure appeared and was not there
-
-| what was claimed | how large | what it was |
-| --- | --- | --- |
-| fading a 1-2 week slope at 15m | `t = -10.8` | overlapping windows; gone at `t` on independent ones |
-| the same, on **v75** | `t = -10.7` | a *generated* series, so there was nothing to find |
-| 3m and 15m innovations confirming each other | `t = +20.8` | lookahead: a 15m bar stamped at T closes at T+15m |
-| `swarm` winning 18 of 24 series | - | a log-sum-exp missing its shift, inflating every step |
-| `S4D-Real` winning 21 of 39 | - | too narrow a grid; it **is** the random walk once `drift` is free |
-| the innovation reverting at 3m | `t = -7.1` | real, and 0.16 spreads wide - inside the cost |
-
-Three were my bugs, two were method artefacts, one was real and unusable. Not
-one of them was caught by reading the code.
-
-### What caught them, which is the transferable part
-
-**The synthetic control.** v75, v25 and v100 have *generated* volatility. A
-method that finds an effect there is finding it in its own machinery - and when
-the 15m fade appeared on v75 as strongly as on usdjpy, that was the end of it.
-After the overlap correction v75 produces **no survivors at all**, which is the
-control working in the other direction: it now says the surviving effects are
-properties of markets.
-
-**Counting the cells.** The slope harness tests 2,250 of them, so **6.1 are
-expected above `|t| = 3` by chance**. It found nine. A list of survivors whose
-length matches the noise rate is not evidence, and printing the expected count
-beside the found count is what makes that impossible to forget.
-
-**Asking whether survivors cluster.** Noise scatters; structure does not. The one
-effect that survived everything is six cells in a single corner - usdjpy daily,
-`h = 5`, two related signals, three adjacent lookbacks, same sign, positive after
-cost. That is a different object from nine cells sprinkled across five symbols.
-
-**Correcting the overlap properly.** Observations are independent only when they
-share neither outcome window nor *signal* window, so the step is
-`max(look, horizon)`. Stepping by the horizon alone still left a four-week
-lookback sharing 1,870 of its 1,920 signal bars. Tightening it removed every raw
-`slope` survivor on usdjpy 1d and left only the EMA ones.
-
-**Costing everything.** Three separate real effects in this file turned out to be
-the size of the spread: the 3m innovation reversion at 0.16 spreads, the gbpusd
-15m fade where the edge and the cost were both 0.113 volatility units, and the
-usdjpy 15m innovation. A return before costs is not a result.
-
-**Noticing when a number cannot be true.** Two unit errors were found because
-the output was physically absurd - a spread of 136 volatility units on a market
-that trades, and an `existence` of 0.045 on a level touched every fifteen
-minutes. Faster than review, and it should be the first check.
-
-### And what is left, which is not nothing
-
-**The data looks like a random walk with forecastable volatility.** That is the
-synthesis and every measurement here is consistent with it:
-
-* it **diffuses at 1.00, 1.04, 1.06 and 1.07** times `sqrt(h)` across horizons of
-  1, 5, 20 and 50 - a martingale, with the faintest trend
-* **direction is unforecastable.** Every signal tested gave `continue` between
-  48.3% and 49.6%, and the best signed `t` on 70,000 points was -1.7
-* **size is forecastable, robustly.** Recent speed predicts the next move's
-  magnitude with a 3.12x spread between extreme quintiles at one bar and still
-  **2.03x at fifty**. That replicated across symbols, timeframes and horizons
-* the random walk wins 17 to 21 of 39 series at every horizon, and **nothing
-  beats it on the point forecast**
-
-A random walk with time-varying volatility produces exactly what was measured:
-unforecastable sign, forecastable magnitude. So the honest reading is not that
-the models found nothing - it is that they found **the volatility**, which is
-real, and that every directional find was artefact or spread-sized.
-
-### What that means for the package
-
-It does not invalidate the state space. It sets what it is for.
-
-`reverting` beats the random walk on 11 of 39 series at **all four horizons**,
-which is a member-level result repeated across series rather than a cell-level
-fluke, and it is the one member that does. `swarm` is the only model whose band
-is honest far out - 92.8% coverage at `h = 50` against `reverting`'s 88.0% and
-`linear`'s 88.8%. Neither of those is a directional edge and neither needs to be:
-a desk that sizes on the band needs an honest band, and a desk that forecasts
-volatility needs the member whose uncertainty means something.
-
-**The rule from `__init__.py` was right and is now expensive to ignore**: nothing
-publishes until it has beaten a *named* null. The null has to include the random
-walk, the synthetic control, the overlap correction, the cell count and the
-spread - and the first version of every measurement in this file failed at least
-one of those.
-
-## Deliberate lookahead: the machinery works, and 87% of the volatility is on the table
-
-`research/ideas/lookahead_oracle.py`, 2026-10-11. Asked for as a diagnostic, and
-it is the right one: every null result so far has two explanations that the
-measurements cannot separate - **there is no signal**, or **the models cannot use
-it**. Handing them the future on purpose separates them.
-
-### 1. Given the answer, the models report it. The machinery is sound.
-
-The leak dial feeds a member `k` bars past the decision point before asking it to
-forecast `h` ahead. RMSE, eurusd:
-
-| h | leak=0 | leak=1 | leak=2 | leak=5 | leak=20 |
-| ---: | ---: | ---: | ---: | ---: | ---: |
-| 20 (15m) | 7.28 | 7.11 | 6.94 | 6.38 | **0.99** |
-| 20 (1h) | 9.34 | 9.09 | 8.83 | 8.09 | **0.51** |
-| 20 (1d) | 7.12 | 6.95 | 6.79 | 6.25 | **0.01** |
-
-**The error collapses exactly when the leak reaches the horizon** - when the
-member has seen the bar it is being asked about - and it collapses to 0.01 on
-daily bars. Beyond that it rises again, because the state has moved past the
-target. So the filters can represent and report the value when they have it: the
-null results are **not** a broken implementation.
-
-### 2. Perfect direction is worth 7 to 800 spreads. Cost is not the constraint.
-
-The ceiling on any directional strategy, as a multiple of the spread it would
-pay:
-
-| series | h=1 | h=5 | h=20 |
-| --- | ---: | ---: | ---: |
-| eurusd 15m | 7.2 | 15.5 | 31.9 |
-| eurusd 1h | 29.2 | 68.2 | 143.3 |
-| eurusd 1d | **174.9** | **411.5** | **798.3** |
-| v75 15m | 2.3 | 5.2 | 10.5 |
-
-**This reframes every "inside the spread" conclusion in this file.** The effects
-found were spread-sized; the *prize* is 7 to 800 times the spread. So the honest
-statement is not "nothing is worth trading here" - it is **"we found nothing
-worth trading, and the search is justified by a large ceiling"**. The binding
-constraint is signal, not cost.
-
-### 3. The volatility forecast captures about a tenth of what is achievable
-
-Ranking by recent speed against ranking by the realised future move, which is
-the ceiling:
-
-| series | h | recent speed | perfect foresight | captured |
-| --- | ---: | ---: | ---: | ---: |
-| eurusd | 1 | 5.73x | 45.32x | **10.7%** |
-| eurusd | 5 | 4.77x | 29.13x | 13.4% |
-| eurusd | 20 | 4.00x | 26.15x | 11.9% |
-| v75 | 1 | 1.04x | 13.65x | **0.3%** |
-
-**This is the most actionable number in the session.** Volatility is the one
-thing measured as forecastable here, and the simplest possible forecast - a
-twenty-bar mean absolute move - captures roughly **an eighth** of the available
-dispersion. There is a seven-to-nine-fold improvement available in the one
-quantity that is known to be predictable, which is a far better place to spend
-effort than another attempt at direction.
-
-### 4. v75 has no volatility clustering, so it is the wrong control for this
-
-Recent speed captures **0.3%** of the ceiling on v75 against 10.7% on eurusd,
-while the oracle still shows 13.65x of dispersion to forecast. The generator's
-volatility varies and **does not autocorrelate**.
-
-That is useful twice over. It explains why v75 produced no slope-fade survivors -
-there is no volatility structure there to be mistaken for direction. And it
-disqualifies v75 as a control for volatility work: it is a control for *direction*
-only, and a volatility model that fails on it is not necessarily wrong.
-
-### The flaw in the smoother arm, which measured the wrong target
-
-The filter-against-smoother comparison reported ratios **below 1.0** - 0.62 on
-v75 1h - which reads as hindsight making the estimate worse. It cannot, and the
-test is at fault: it compares each estimate to the **measurement**, and a
-smoother's job is to be *further* from a noisy reading than the filter is. Being
-closer to the reading is what a member that simply copies it achieves - which is
-exactly what `swarm` scored, 0.056 against the reading and a 1.00x ratio.
-
-Comparing against the latent truth is the only version that means anything, and
-the truth is unobservable on real data. `paths.simulate` generates a path with
-known states, so the honest form of this arm runs there. **Not fixed, recorded** -
-the arm is marked in the harness as measuring the wrong quantity rather than
-left to be read as a result.
+| EURUSD | **0.711** | 478 |
+| GBPUSD | 0.711 | 478 |
+| XAUUSD | 0.674 | 453 |
+| Volatility_75 | **1.000** | 672 |
+| Volatility_25 | 1.000 | 672 |
+
+0.711 against 5/7 = 0.714 on the FX pairs and exactly 1.000 on the synthetics,
+so the same `Window(168)` spans five trading days on one and seven on the other.
+It reproduces the hardcoded FX answer - 478 against 480 - and fixes the other
+case, which is the shape a good inference has.
+
+Four features per window - the high, the low, the **position** of the last close
+inside that range, and realised volatility over it. `position` is the one worth
+having: it is unit-free in `[0, 1]`, so it travels across symbols as well as
+timeframes, where a raw high is in the instrument's own units. Realised
+volatility aggregates **variance** and takes the root once, per the Cboe
+reading.
+
+**Causality is the whole correctness of it.** `at(i)` reads `[start:i]` and
+never `[start:i + 1]`, and there is a test for exactly that off-by-one: a spike
+planted at bar 300 is invisible to `at(300)` and visible to `at(301)`. The
+cross-resolution test has already shown what the other answer looks like -
+`t = +20.8` across five symbols including a generated one.
+
+### Why `B` is not wired in, which is a decision rather than an omission
+
+`B` maps `u` into the state, and applying it needs a **state setter**. The
+members are `slots=True` dataclasses with named fields - `linear` holds
+`value`, `rate`, `accel`; `swarm` holds an array - and `state()` is a getter
+only. So `B u` needs either a per-member `drive()` or a new protocol method with
+a generic implementation behind it.
+
+Doing it on one member would recreate exactly the inconsistency this file has
+spent its measurements removing: `loglike`, `last_standardised`, `existence` and
+`noise` each meant two things across members, and every one of them was found by
+putting the members in a table rather than by reading any of them. A fifth of
+those is not worth a reference implementation.
+
+**And the case for `B` on a level is weak anyway**, which is worth saying before
+anyone builds it. `B u` is a *known external force*: `INSTRUMENT` has one - its
+family's move - and `RELATION` has one, and a level's position does not
+obviously have any. The honest use of these features on a level is not `B u` at
+all: it is scaling the **process noise** with the realised-volatility
+component, which is improvement 2 above and a different mechanism. `I8` is the
+question that decides each case - "state, input or output - the question a
+feature list never asks".
+
+## The profile's window, and whether the ladder belongs on it
+
+Asked 2026-10-11, in two parts.
+
+### Why modes and not bins: it was bins, and they failed measurably
+
+`drawing/profile.py` already answers this and the reasoning is strong enough to
+repeat here, because the same trap is available to anything in this package that
+reaches for a histogram.
+
+**The fair-share threshold could only ever fire when one band dominated.** A bin
+qualified by holding several times its fair share, where fair is one over the
+number of occupied bins - and with `N` equally busy bands each holds *exactly*
+its fair share, never three times it. So a range, which is the one situation a
+volume-at-price formation exists for, produced nothing by construction. **In
+production it drew 3 levels out of 1,808.** The threshold is now relative to the
+*busiest* mode, so several equally busy bands all pass.
+
+**And bins have edges.** A band straddling one is split between two that each
+look ordinary, where an Epanechnikov kernel puts a bump at every observation and
+a band peaks wherever it falls.
+
+A third reason was not about bins at all: **a mode is emitted once per visit,
+not once.** `levels.form` clusters turns and needs three within a volatility
+unit, so one point per band stamped at the window's end can never cluster.
+
+### The ladder does belong on it, and the engine already says why
+
+`profile.points` is handed the engine's whole series, so its horizon is
+`WINDOW = 1000` **bars** - a fixed bar count, which is about two days at 3m and
+three years at 1d. `engine.py`'s own comment names the consequence: "a 4h level
+from four months ago was outside the window, so the levels drawn there came from
+a short memory whatever their timeframe implied."
+
+That is the same defect `inputs.py` was written to fix, and the fix is the same:
+hours rather than bars, converted per series by `coverage`.
+
+**What the multi-horizon version would buy**, and it is not just portability. A
+single window cannot distinguish *busy recently* from *busy historically*, and
+the difference is the thing a desk wants: a band busy over four weeks and quiet
+over one is being abandoned, and one busy over a week but not four has just
+formed. Density over the rungs of the ladder makes that a slope rather than an
+impression - and the volatility work is direct evidence it helps, because HAR's
+multi-scale blend beat every single-lookback estimator it was measured against.
+
+An exponential weighting on visits is the other half, so a visit last week
+counts more than one a month ago at the same price - `inputs.ema` is already
+written and the kernel density is already a weighted sum, so this is a weight
+and not a rewrite.
+
+**The discipline is different here, and that is the point.** This package
+publishes nothing; `profile` is a **production** formation pass, in
+`STRUCTURES_FORMATION` alongside `pip,run,origin,equal,gap,round`. So the
+multi-horizon profile gets measured in a harness against the current one-window
+version before anything in `drawing/` is touched, and the null is the pass as it
+stands - which already draws 204 attributions in 32,603 level calls and whose
+`gap` sibling was measured at a coin.
 
 ## Members not written
 
@@ -1817,23 +928,6 @@ adding it now rather than when one of them comes up:
   uncorrelated the off-diagonal blocks are zero and a matrix filter *is* the
   independent filters already running.
 
-## What the three-state measurement also said
-
-Worth separating, because it changes where effort goes. Held out on eurusd 4h:
-
-| model | per point vs best |
-| --- | ---: |
-| two states, reverting rate | best |
-| three states, two-factor drift | -0.138 |
-| three states, white jerk | -0.831 |
-
-**Almost all of the gap was the instability, not the state count.** Stability is
-worth about 0.7 nats a point here; the third state is worth -0.14. So I3 was the
-large win and I5 is a small loss, which is the opposite of how the spec's
-suggested order ranks them — it puts I5 second and I3 outside the list on the
-grounds that it is conditional on I5's answer. I5's answer turned out not to
-gate it.
-
 ## The improvements, in the spec's suggested order
 
 `I6` is done (`rates.py`). The rest apply to the per-level row and need none of
@@ -1844,9 +938,9 @@ the set-layer rewrite, which is why they are worth doing before it is settled.
 | I5 | **partly answered, 2026-10-10.** Observability is *not* the blocker: the condition number for price-only measurements at 4h is 2.5 with two states and ~40 with three, against the ~1e8 where a state stops being identifiable. A third state is estimable and still loses — a two-factor drift is 0.138 nats a point worse held out, and the fit set its second component's noise to zero rather than use it. What is left of I5 is the same question at finer sampling, where the condition number rises |
 | I9 | two state spaces, and there already are two |
 | I10 | the slope has a volatility, and it is currently a guess |
-| I2 | the state is the memory of the system, and this one leaks |
+| I2 | the state is the memory of the system, and this one leaks. **Fixed-lag smoothing is now written** — `smoothing.lagged` — which is the memory a desk can actually act on |
 | I8 | state, input or output — the question a feature list never asks |
-| I1 | there is no input; `B` and `u` do not exist here |
+| I1 | **half closed.** `u` exists now — `inputs.py`, windows in hours — and `B` does not: see the section below |
 | I7 | two barriers, from one model instead of three |
 
 I3 and I4 are conditional on I5's answer. I11 is above, under members.

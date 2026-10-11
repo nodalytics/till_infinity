@@ -95,6 +95,107 @@ design.** The package's job is to find which observables have a state worth
 tracking, and the rule below - nothing publishes until it beats a named null -
 is what stops that search from becoming a story.
 
+## Every horizon is expressed in time, never in bars
+
+A standing rule for this package, and it is not a style preference - it is the
+difference between a parameter that means something and one that means something
+different on every series it meets.
+
+**"200 bars" is not a horizon. It is a horizon times a timeframe**: ten hours at
+3m and eight months at 1d. A window, a lag, a hazard or a half-life stated in
+bars therefore encodes a belief that changes silently when the same code is
+pointed at another series - and comparing across timeframes, which this package
+does constantly, then compares definitions rather than behaviour.
+
+So horizons here run **from seconds to weeks, in hours**, and the bar count is
+derived per series:
+
+* `inputs.Window(hours=...)` and `inputs.LADDER`, which spans `10s` to `4w`.
+  `inputs.resolvable` picks the rungs a given series can compute - a 3m series
+  resolves `5m` to `3d` and a 1d series resolves `3d` to `4w`, from one ladder
+  and with neither a special case.
+* **Seconds to weeks, on one ladder, and the range is tested.** `inputs.LADDER`
+  runs `10s` to `4w` and a feed fine and long enough resolves all fourteen
+  rungs. Which slice a given feed gets is decided by two rules rather than by a
+  per-instrument list: at least two bars, or the "window" is one bar's own high
+  and low under a name claiming a horizon; and at most a quarter of the series,
+  or there are too few independent observations of it. So a 1s feed answers
+  seconds to the hour, a 1d feed answers days to the month, and neither is a
+  special case. A feed cannot be asked about a horizon it has not observed.
+* **A count is right only when the question is about the sequence.** The audit
+  on 2026-10-11 found four bar counts in this package and kept two. `LAGS` in
+  the Ljung-Box test and `WARMUP` in `paired` are counts because they are about
+  the innovation *sequence* and the hull's point count - neither is a horizon.
+  `changepoint`'s freshness window and its truncation were horizons wearing
+  counts: "the run is at most two readings old" is half an hour at 15m and two
+  days at 1d, and a cap of 300 components was justified as the point where the
+  geometric tail is negligible, which is true at 1d (300 days against a ten-day
+  regime) and false at 15m (three days), so the posterior sat against the cap
+  permanently while `run_hours` looked like an estimate rather than a bound.
+  Both are durations now, the cap carries `LIVES` expected regimes of time
+  within a compute ceiling, and `Changepoint.saturated` publishes when the
+  truncation is binding instead of leaving it to be assumed away.
+* **`hours` means calendar time everywhere, and `coverage` does the
+  conversion.** Both halves of that were wrong somewhere until 2026-10-11:
+  `resolvable` counted calendar bars and so admitted rungs a part-time market
+  could not build, and `smoothing.lagged` divided by the median spacing alone,
+  which reads `hours` as *trading* time - so `lagged(hours=2)` and the `2h` rung
+  were different lags on anything that closes. Two meanings of one word is the
+  shape to watch for here, not a missing conversion.
+* `inputs.coverage`, because a week is seven **calendar** days and how much of
+  it a market trades is inferred from its own clock: FX comes back at 0.711
+  against 5/7, and the Deriv synthetics at exactly 1.000. A hardcoded five-day
+  week shortened every crypto window by two sevenths.
+* `changepoint.hazard`, per **hour**. It was per observation at `1/250`, which
+  asserts "a change every 12.5 hours" at 3m and "every 250 days" at 1d - the
+  same member believing wildly different things about the world depending on
+  what it was handed.
+* `smoothing.lagged(hours=...)`, `paired.Paired.hours_since_reset`,
+  `changepoint.run_hours`, and every rate in `rates.py`.
+
+**Two exceptions, and they are not horizons.** `MAX_RUN` truncates a posterior
+and `swarm.COUNT` is a particle count: both are resolutions rather than spans,
+and neither says anything about how long something lasts. `changepoint.
+run_length` is kept in observations because it is the quantity the recursion is
+literally over, and it is documented as not comparable across timeframes with
+`run_hours` beside it for anything that crosses one.
+
+This rule is also why irregular sampling is handled rather than assumed away.
+Touches arrive when they arrive; a hazard per hour converts to a per-observation
+probability from the gap that actually elapsed, and a window in hours spans the
+bars that actually fall inside it.
+
+### Why the definition of time is the thing, and not a detail
+
+Everything above is one claim: **how time is defined decides what a measurement
+means**, so it is part of the model rather than part of the plumbing. Three
+definitions are available and this package uses the first:
+
+* **clock time** - hours, what is used here. Portable across timeframes and
+  across instruments, and the only one in which "this level has held for two
+  days" is the same sentence on every series.
+* **event time** - one unit per observation, which is what a bar count is. Not
+  portable: the same number is a different horizon on every series, which is
+  the defect this rule exists to prevent.
+* **volume or tick time** - one unit per unit traded. The subordination idea,
+  and what VPIN's volume buckets are. `D2` proposes it as
+  `delta = dt * activity`, and it is not used because a CFD volume is a tick
+  count rather than traded size.
+
+**And portability of the window is necessary, not sufficient.** Muhle-Karbe,
+Ouazzani Chahdi, Rosenbaum and Szymanski (2026) hit the same problem from the
+other side: Hurst exponent estimates for order flow are "strongly scale
+dependent... close to 0.5 at high frequencies and increase steadily as the
+sampling frequency decreases", and their fix is an *estimator* that accounts for
+both components, under which estimates become "remarkably stable across
+aggregation scales".
+
+So there are two halves to this and only one is done. A window stated in hours
+means the same thing on every series; an **estimator** computed over it may
+still answer differently at 15m than at 1d for reasons that have nothing to do
+with the market. Every cross-timeframe table in `research/docs/statespace-*.md`
+carries that caveat, including the ones whose spans are correctly in hours.
+
 ## The models live here too
 
 Not only the improvements. The spec lists the family - Kalman, particle, HMM,

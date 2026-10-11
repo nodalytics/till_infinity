@@ -55,10 +55,12 @@ Exact for a linear-Gaussian model, no iteration. `dynamax` and
 small dense solve per step and is written out here rather than taking a
 dependency, for the same reason the rest of the package is.
 
-**Not fixed-lag, and that is the next thing.** This smooths a finished series,
-so its latency is the length of the series - fine for a study, useless live. The
-fixed-lag form bounds the latency by the lag instead, and is the only version a
-desk could run; `family.MISSING` records it.
+**`smooth` is the whole-series form and `lagged` is the fixed-lag one.** This
+one smooths a finished series, so its latency is the length of the series - fine
+for a study, useless live. `lagged` bounds the latency by the lag instead and is
+the version a desk could run: it answers *where was this a lag ago, given what
+has happened since*, which is a better basis for placing a stop than where the
+filter thought it was at the time.
 
 ## What it cannot fix
 
@@ -268,3 +270,206 @@ def smooth(
         filtered_sd=filtered_sd,
         loglike=float(getattr(filt, "loglike", 0.0)),
     )
+
+
+@dataclass(slots=True)
+class Lagged:
+    """One fixed-lag estimate: the state at `when`, given `lag` steps after it.
+
+    `delay` is how many measurements were used beyond `when`, which is `lag`
+    once the window has filled and fewer while it is filling. A caller acting
+    on this is acting `delay` bars late on purpose.
+    """
+
+    when: float
+    #: The smoothed state at `when`, in the member's `NAMES` order.
+    state: tuple[float, ...]
+    #: Standard deviation of the first component, the observed one.
+    sd: float
+    #: What the filter alone said at `when`, for the comparison that matters.
+    filtered: float
+    filtered_sd: float
+    delay: int
+
+    @property
+    def value(self) -> float:
+        return self.state[0] if self.state else 0.0
+
+    @property
+    def revision(self) -> float:
+        """How far hindsight moved the estimate. The quantity worth watching.
+
+        A revision much larger than `filtered_sd` means the filter was
+        confidently wrong at the time, which is a statement about the process
+        noise rather than about the smoother.
+        """
+        return self.value - self.filtered
+
+
+def _steps(times: Sequence[float], hours: float, fallback: int) -> int:
+    """Observations in `hours` of **calendar** time on this series.
+
+    Dividing by the median spacing alone converts *trading* hours to bars,
+    because the median gap between consecutive bars is the bar size and skips
+    the closures. That left two meanings of one parameter in the package:
+    `Window.bars` reads `hours` as calendar time and corrects with `coverage`,
+    while `lagged` read the same word as trading time - so `lagged(hours=2)`
+    and the `2h` rung of the ladder were different lags on any market that
+    closes. One meaning now, and it is the one `__init__.py` states.
+    """
+    from .inputs import bar_hours, coverage
+
+    bar = bar_hours(times)
+    if bar <= 0:
+        return fallback
+    cover = coverage(times, bar)
+    return max(round(hours * max(cover, 1e-9) / bar), 1)
+
+
+def lagged(
+    build: Callable[[], object],
+    times: Sequence[float],
+    measured: Sequence[float],
+    *,
+    noise: float,
+    hours: float | None = None,
+    lag: int = 10,
+) -> list[Lagged] | None:
+    """Fixed-lag smoothing: the estimate at each time, `lag` steps late.
+
+    **The version a live desk can run**, where `smooth` is not. `smooth`
+    conditions on the whole series, so its answer for ten minutes ago is not
+    available until the series ends; this conditions on exactly `lag`
+    measurements past each point, so the answer for ten minutes ago arrives
+    `lag` bars after it - late, bounded, and usable.
+
+    The recursion is the same Rauch-Tung-Striebel sweep, run over a window
+    instead of over everything, so this is not an approximation of a different
+    algorithm - it is the same algorithm conditioned on less. Two consequences
+    worth stating because they are easy to assume away:
+
+    * it is **not** equal to `smooth` at the same point. It conditions on `lag`
+      future measurements rather than all of them, which is the definition
+      rather than a shortfall, and it converges on `smooth` as `lag` grows. The
+      test asserts that convergence, which is the only honest check of it.
+    * the first `lag` points come back with a smaller `delay`, because there is
+      less future to use yet. They are returned rather than dropped, with the
+      `delay` that was actually available, so a caller can decide.
+
+    **Pass `hours`, not `lag`.** `hours` is converted to observations from the
+    series' own median spacing, so "revise what I believed two hours ago" means
+    that on every timeframe; `lag` is kept for the case where a caller genuinely
+    means a number of observations.
+
+    Cost is `O(n * lag)` against `smooth`'s `O(n)`, with a window of `lag + 1`
+    states held rather than the series. For `lag = 10` on three states that is
+    about thirty numbers.
+
+    None on the same terms as `smooth`: nothing to smooth, or a member that
+    cannot state its own transition.
+    """
+    n = min(len(times), len(measured))
+    if n < 2:
+        return None
+
+    # **`hours` is the portable parameter and `lag` is the fallback.** A lag of
+    # ten observations is two and a half hours at 15m and ten days at 1d, so
+    # stated that way it is not a latency budget - it is a latency budget times
+    # a timeframe. `__init__.py` carries this as a package rule; this is the
+    # one place that was still counting bars after it was written.
+    if hours is not None:
+        lag = _steps(times, hours, lag)
+    if lag < 1:
+        return None
+
+    filt = build()
+    for needed in ("state", "covariance", "transition", "update", "predict"):
+        if not callable(getattr(filt, needed, None)):
+            return None
+
+    # The rolling window: post-update and pre-update states, and the step that
+    # separates each from its predecessor. Held as plain lists and trimmed, so
+    # the memory is the lag rather than the series.
+    post: list[tuple[list[float], list[list[float]]]] = []
+    pred: list[tuple[list[float], list[list[float]]]] = []
+    steps: list[float] = []
+    stamps: list[float] = []
+
+    out: list[Lagged] = []
+
+    for i in range(n):
+        t = float(times[i])
+        before = getattr(filt, "at", None)
+        filt.predict(t)
+        steps.append(max(0.0, 0.0 if before is None else (t - before) / HOUR))
+        pred.append((list(filt.state()), [list(r) for r in filt.covariance()]))
+        filt.update(float(measured[i]), noise)
+        post.append((list(filt.state()), [list(r) for r in filt.covariance()]))
+        stamps.append(t)
+
+        if len(post) > lag + 1:
+            post.pop(0)
+            pred.pop(0)
+            steps.pop(0)
+            stamps.pop(0)
+
+        # Emit for the oldest point in the window once it has any future, and
+        # at the end flush what is left so nothing is silently dropped.
+        if len(post) < 2:
+            continue
+        if i < n - 1 and len(post) <= lag:
+            continue
+
+        window = len(post)
+        smooth_x = [list(row[0]) for row in post]
+        smooth_p = [[list(r) for r in row[1]] for row in post]
+        for k in range(window - 2, -1, -1):
+            dt = steps[k + 1]
+            inverse = _inverse(pred[k + 1][1]) if dt > 0.0 else None
+            if inverse is None:
+                continue
+            gain = _matmul(_matmul(post[k][1], _transpose(filt.transition(dt))), inverse)
+            delta = [a - b for a, b in zip(smooth_x[k + 1], pred[k + 1][0], strict=True)]
+            moved = _matvec(gain, delta)
+            smooth_x[k] = [a + b for a, b in zip(post[k][0], moved, strict=True)]
+            spread = [
+                [a - b for a, b in zip(row_s, row_p, strict=True)]
+                for row_s, row_p in zip(smooth_p[k + 1], pred[k + 1][1], strict=True)
+            ]
+            correction = _matmul(_matmul(gain, spread), _transpose(gain))
+            smooth_p[k] = [
+                [a + b for a, b in zip(row_p, row_c, strict=True)]
+                for row_p, row_c in zip(post[k][1], correction, strict=True)
+            ]
+
+        out.append(
+            Lagged(
+                when=stamps[0],
+                state=tuple(smooth_x[0]),
+                sd=math.sqrt(max(smooth_p[0][0][0], 0.0)),
+                filtered=post[0][0][0],
+                filtered_sd=math.sqrt(max(post[0][1][0][0], 0.0)),
+                delay=window - 1,
+            )
+        )
+
+        # At the end, walk the rest of the window out so the tail is covered
+        # with whatever future each point had.
+        if i == n - 1:
+            # To `window`, not `window - 1`: the last measurement has no
+            # future at all, so its fixed-lag estimate *is* its filtered one -
+            # and emitting it at `delay = 0` keeps the output aligned with the
+            # input, which a caller zipping the two will assume.
+            out.extend(
+                Lagged(
+                    when=stamps[drop],
+                    state=tuple(smooth_x[drop]),
+                    sd=math.sqrt(max(smooth_p[drop][0][0], 0.0)),
+                    filtered=post[drop][0][0],
+                    filtered_sd=math.sqrt(max(post[drop][1][0][0], 0.0)),
+                    delay=window - 1 - drop,
+                )
+                for drop in range(1, window)
+            )
+
+    return out

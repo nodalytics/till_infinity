@@ -60,9 +60,11 @@ SHAPES: dict[str, str] = {
     #: account. A reader scanning a phone should be able to tell a trade from
     #: an observation without reading a word.
     "trade": "💰",
-    #: A chart pattern the `mcfl` service found - an observation, never an order.
+    #: A chart pattern - an observation, never an order. **No producer since
+    #: `mcfl` was retired on 2026-10-11**; kept because the vocabulary is the
+    #: notifications layer's, not that service's.
     "pattern": "🧩",
-    #: The end of a paper trade an earlier `mcfl` alert opened.
+    #: The end of a paper trade. Also without a producer since `mcfl` went.
     "exit": "🏁",
 }
 
@@ -129,7 +131,8 @@ INSTRUMENTS: dict[str, str] = {
 #: timeframe itself: it was arriving twice, once inside the message and once
 #: as a bare `interval: 15m` line underneath the closing rule.
 #: `ref` is an alert's own identity for the repeat check, for a publisher whose
-#: alerts share a shape and instrument but are different findings (`mcfl`: two
+#: alerts share a shape and instrument but are different findings (the retired
+#: `mcfl`: two
 #: alts each sending "BTC long" inside the cooldown). Routing only, never shown.
 ROUTING: frozenset[str] = frozenset(
     {"shape", "instrument", "venue", "direction", "interval", "ref"}

@@ -31,6 +31,75 @@
   <br><b>Live alerts</b> - scan, or use the badge above
 </p>
 
+## In plain words
+
+Imagine a street where houses normally sell for about £300,000. One goes on the
+market at £380,000. You do not know whether it will sell - but you do know it is
+**unusually expensive for that street**, and you know roughly how much house
+prices on it tend to wobble month to month.
+
+This software does that for financial markets, continuously and automatically.
+
+**It works out what something is worth right now.** It watches the price of one
+thing - gold, say - from several different sources at once, because when they
+disagree with each other, that disagreement is itself information. From that it
+estimates a "fair price": not a prediction, just where the market currently
+seems to agree the thing is worth.
+
+**Then it measures how far the actual price has wandered from that.** That gap
+is the whole point. A price far from fair value is a price somebody might trade
+back toward it.
+
+**It measures that gap in "how unusual is this", not in pounds.** Gold moving
+$50 and the euro moving half a cent sound nothing alike, but they can be equally
+unusual for the thing in question. Converting everything to "how unusual" is
+what lets one set of rules work on gold, currencies, and crypto without being
+retuned for each.
+
+### What it can and cannot tell you
+
+This is the part most trading software is dishonest about, so it is stated up
+front.
+
+**It cannot tell you whether the price will go up or down.** Not "it is not very
+good at it" - it genuinely cannot, and neither can anything else we have been
+able to measure here. Every attempt to predict direction in this project has
+been tested and has come out indistinguishable from a coin flip. Those attempts
+are all still written down, in `research/`, including the ones that looked
+brilliant until they were checked properly.
+
+**It can tell you two useful things instead:**
+
+- **How bumpy the next stretch is likely to be.** Calm periods and wild periods
+  come in clusters, and that is forecastable. Most usefully, the calendar does
+  a lot of the work for free: on a scheduled announcement, prices move about
+  **2.4x** as much as normal, and a few hours later about **0.9x** - quieter
+  than usual. Those announcement times are published days in advance, so no
+  crystal ball is needed.
+- **Whether a price level will hold or give way.** If a price has turned around
+  at £1,000 several times before, that history genuinely says something about
+  whether it will turn there again. The longer price sits at a level without
+  bouncing, the more likely it is to break through - and that flips from
+  "probably holds" to "probably breaks" after about **four to seven** bars of
+  whatever timeframe you are looking at.
+
+Knowing *how much* something will move, and *how likely* a line is to hold, is
+not the same as knowing which way it goes. They happen to be the questions the
+data can actually answer.
+
+**It writes down why it did things.** Every decision is recorded with the
+reasoning that led to it at that moment. Prices can always be re-downloaded;
+the reasoning behind a decision is gone forever if nobody saved it.
+
+**And it grades its own homework.** When a model claims it will perform a
+certain way, that claim is stored and the live results are scored against it.
+Models that worked in testing and quietly stopped working in reality are the
+normal case, not the exception, and nothing here is trusted just because it
+once tested well.
+
+The rest of this README is the detailed version of the above, for anyone who
+wants the mechanics and the numbers.
+
 ## The idea
 
 **A level is the market's fair price, and the turn is what that costs.**

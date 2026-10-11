@@ -248,6 +248,61 @@ should be seen to **fail** once before it is trusted.
 
 ---
 
+## 12. A correction derived from the thing it corrects
+
+**Shape.** A statistic is contaminated, so a correction is subtracted. The
+correction is computed from the same quantity it is meant to clean, so it
+cannot be smaller than the contamination it is estimating, and subtracting it
+leaves nothing **by construction**.
+
+**Found here.** Measuring the Hurst exponent of realised variance needs the
+estimation noise removed from the second moment of log-volatility increments.
+The noise was estimated by splitting each window in half and comparing the
+halves - but adjacent non-overlapping windows are *exactly what the lag-1
+moment is taken over*, so the "noise" was the lag-1 moment plus the volatility's
+own variation. Every cell returned `nan` at "noise 100%". It read as a numerical
+problem and was a logical one.
+
+**The check.** Write down what the correction is a function of. If it shares a
+term with the statistic, it is not independent of it. The fix is a handle that
+varies the nuisance while **holding the signal fixed** - here, interleaving
+alternate bars so two estimates cover the same window of the same time, which
+makes their spread pure estimation error. And give the correction a
+**prediction** it can fail: the density exponent came out 0.66-1.35 against
+sampling theory's 1, which is the only reason the floor is believable.
+
+---
+
+## 13. A bar count inside a time-portable measurement
+
+**Shape.** A window, span, decay or threshold stated in bars, in code that is
+run across timeframes. It then means a different thing on every one, and
+comparisons across them are comparing different estimators.
+
+**Found here.** Three times. `volatility_ceiling.py` compared `har (5/22/110)`
+across 15m and 1d, where it is 1.25h/5.5h/27h on one and 5d/22d/110d on the
+other, and reported that HAR-Parkinson wins intraday and loses daily - a result
+that vanished on conversion. A noise floor was derived as `4/n` from
+`Var(log RV) ~ 2/n`, which claims the same four hours of the same market is five
+times noisier when sampled at 1h than at 15m. And a 5-day trading week was
+hardcoded where crypto has 7.
+
+**And the sharper version: two conversions of the same duration.** `cumsum_time.py`
+turned hours into bars by dividing by the bar size in one place and by dividing
+by the bar size *and multiplying by trading coverage* in another. Both look
+right alone. Together the feature windows were twice the evaluation stride on
+FX, the rows overlapped, and a `z` of **-7.3** was really -2.5. The finding
+survived; its significance was inflated threefold.
+
+**The check.** Grep the module for integer windows and ask what each is in
+**hours**. Where a duration becomes a bar count more than once, make it one
+function and call it twice. `statespace/__init__.py` carries the rule and `inputs.py` the
+conversion - `bar_hours` and `coverage` infer both from the series' own
+timestamps, so nothing needs a per-instrument constant. A span that cannot be
+stated as a duration is a span that cannot be compared across timeframes.
+
+---
+
 ## What has actually caught things here
 
 Ranked by what they found, not by how they sound:
@@ -267,7 +322,11 @@ Ranked by what they found, not by how they sound:
    the shrinkage parameter and affects no number at all; the shrinkage is
    `PRIOR_WEIGHT`. `fade-to-value` turned out to already trade origins, which
    changed the question before any measurement ran.
-5. **Printing the number.** A filter reported `slope = 0.0000` forever and
+5. **Giving the fix a number it can fail.** Both noise floors above produced
+   plausible-looking output; the one that was wrong failed its own stability
+   criterion and the one that works predicted `p = 1` and measured it. A
+   correction with no falsifiable consequence is a parameter.
+6. **Printing the number.** A filter reported `slope = 0.0000` forever and
    looked entirely healthy, because the covariance it needed to learn from was
    gated out of existence. The tests passed. Printing it took one line.
 

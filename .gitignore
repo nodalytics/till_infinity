@@ -72,3 +72,4 @@ NewClasses.plist
 # A local `models retrain` writes its run log beside the model it promotes.
 till_infinity/models/*.report.jsonl
 till_infinity/models/retrain.last
+.playwright-mcp/
