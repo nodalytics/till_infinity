@@ -931,14 +931,20 @@ def test_the_missing_inference_modes_are_named_rather_than_left_out():
     """A gap that is written down can be argued about; one that is not just looks
     like the package does not need it.
 
-    The finished-series smoother was the real absence and is now `smoothing.py`;
-    what is left is the **fixed-lag** form, which is the only one with bounded
-    latency, and EM.
+    The finished-series smoother was the real absence and is now
+    `smoothing.py`; the **fixed-lag** form followed as `smoothing.lagged` and
+    has been taken off the list. What is left presupposes a particle filter
+    (Monte Carlo variance, sequential parameter learning), revises estimates
+    a desk cannot unact (on-line smoothing), or is the one genuinely wanted
+    thing - `evidence`, which would let members with different parameter
+    counts be compared directly.
+
+    `test_nothing_on_the_missing_list_is_actually_written` is the guard that
+    keeps this honest; this one only checks the list's shape.
     """
     from till_infinity.structures.statespace import MISSING
 
     assert set(MISSING) == {
-        "fixed-lag smoother",
         "on-line smoothing",
         "monte carlo variance",
         "sequential parameter learning",
@@ -992,13 +998,21 @@ def test_the_particle_entry_records_what_it_will_need():
 
 def test_the_smoother_is_written_and_listed_as_an_inference_mode():
     """`family.py` tracks three operations - filter, smooth, sample. All three
-    exist now, and the table has to say so rather than still claiming a gap."""
-    from till_infinity.structures.statespace import MISSING, family
+    exist now, and the table has to say so rather than still claiming a gap.
+
+    **Both smoothers are written.** This used to assert that `fixed-lag
+    smoother` was still in `MISSING`; it is now `smoothing.lagged` and has
+    been taken off the list, which is the second stale entry found in a day -
+    see `test_nothing_on_the_missing_list_is_actually_written` for the guard
+    that stops a third.
+    """
+    from till_infinity.structures.statespace import MISSING, family, smoothing
 
     doc = " ".join((family.__doc__ or "").split())
     assert "smoothing.smooth" in doc, "the table must point at the implementation"
     assert "smoother" not in MISSING
-    assert "fixed-lag smoother" in MISSING
+    assert "fixed-lag smoother" not in MISSING
+    assert callable(smoothing.smooth) and callable(smoothing.lagged)
 
 
 def test_the_package_is_not_in_the_state_files_persistence_schema():
@@ -1134,15 +1148,50 @@ class TestSmoothing:
         assert got.autocorrelated is True, "the misspecification shows in the forward pass"
 
 
-def test_the_fixed_lag_form_is_what_is_still_missing():
-    """`smooth` needs the whole series, so its latency is the series. The
-    fixed-lag form bounds it by the lag and is the only version a desk could
-    read - and even then probably should not."""
+def test_nothing_on_the_missing_list_is_actually_written():
+    """**The guard that stops the list rotting**, which the old one did not.
+
+    `MISSING` is what someone reads to decide what to build next, so an entry
+    describing something already finished is worse than no entry. It rotted
+    twice in one day: `em` was half built and still described as absent, and
+    `fixed-lag smoother` was fully built as `smoothing.lagged` and still
+    listed.
+
+    The old test asserted the **entry's text** - that "latency" appeared in
+    it - which passes whether or not the code exists. This asserts the
+    **code's absence** instead, by naming for each key the thing that would
+    exist if it were done. A key whose probe starts resolving fails here,
+    which is the only way the list stays honest.
+    """
+    import importlib
+
     from till_infinity.structures.statespace import MISSING
 
-    assert "fixed-lag smoother" in MISSING
-    assert "smoother" not in MISSING, "the finished-series smoother is written now"
-    assert "latency" in MISSING["fixed-lag smoother"]
+    # For each remaining key, where it would live and what it would be called.
+    probes = {
+        "on-line smoothing": ("smoothing", ("online", "revise_all")),
+        "monte carlo variance": ("diagnostics", ("monte_carlo", "seed_spread")),
+        "sequential parameter learning": ("diagnostics", ("ibis", "smc_squared")),
+        "evidence": ("diagnostics", ("evidence", "log_evidence")),
+        "em": ("diagnostics", ("fit_em_matrix",)),
+    }
+    assert set(MISSING) == set(probes), (
+        f"a key was added or removed without its probe: {set(MISSING) ^ set(probes)}"
+    )
+
+    for key, (where, names) in probes.items():
+        module = importlib.import_module(f"till_infinity.structures.statespace.{where}")
+        for name in names:
+            assert not hasattr(module, name), (
+                f"MISSING['{key}'] says this is absent, but "
+                f"{where}.{name} exists - update the registry"
+            )
+
+    # And the one that is written is gone from the list.
+    from till_infinity.structures.statespace import smoothing
+
+    assert "fixed-lag smoother" not in MISSING
+    assert callable(smoothing.lagged), "which is why it is not on the list"
 
 
 def test_the_comparison_rule_is_held_out_and_says_why():
