@@ -518,3 +518,110 @@ def fit_jerk(
             fd = run(10.0**d)
     best = c if fc > fd else d
     return 10.0**best, max(fc, fd)
+
+
+def shape_cost(
+    build: Callable[[float, float], object],
+    times: Sequence[float],
+    measured: Sequence[float],
+    *,
+    jerk: float = 1e-4,
+    noise: float = 0.25,
+) -> dict[str, float] | None:
+    """What the fixed `Q` shape costs, which is what a matrix M-step would buy.
+
+    `family.MISSING["em"]` says the matrix M-step is the half still missing:
+    `fit_em` fits a scalar multiplier on `Q(dt) = jerk * G(dt)` by Frobenius
+    projection, where a full M-step would fit the covariance's **entries**.
+
+    ## Why a free matrix `Q` is not simply the better estimator
+
+    The textbook M-step for a linear-Gaussian state space is
+    `Q = (1/T) sum M(t)` with `M` exactly what `_bracket` returns - no inverse,
+    no conditioning problem, simpler than the projection. The reason this
+    package does not do it is **not** numerical.
+
+    It is that `Q` here is a function of `dt`. A continuous-time model
+    sampled at irregular times has a different `Q` at every step, and
+    `Q(dt) = jerk * G(dt)` is what ties them together with one parameter. A
+    free matrix `Q` is a statement that every step is the same length, which
+    is the per-bar assumption `I6` exists to reject - and averaging `M(t)`
+    across steps of different `dt` estimates nothing in particular.
+
+    So the question a matrix M-step would answer is not "what is `Q`" but
+    **"is the shape right"**, and that is answerable without one.
+
+    ## The measurement
+
+    For each step the scalar M-step solves `M ~ c G` in the least-squares
+    sense. The **relative residual** of that fit,
+
+        ||M - c G||_F / ||M||_F
+
+    is what the one-parameter family cannot represent. Zero means the shape is
+    exactly right and a free `Q` would buy nothing; near one means `M` and `G`
+    are nearly orthogonal and the scalar is discarding almost everything.
+
+    Returned with the cosine between `M` and `G`, which is the same fact read
+    the other way and is bounded, so it can be compared across series.
+    """
+    import math as _math
+    import statistics
+
+    from .smoothing import smooth
+
+    got = smooth(
+        lambda j=float(jerk), n=float(noise): build(j, n),
+        times,
+        measured,
+        noise=float(noise),
+    )
+    if got is None or not got.covariances or not got.cross:
+        return None
+    probe = build(1.0, float(noise))
+    if not callable(getattr(probe, "transition", None)):
+        return None
+    size = len(got.states[0])
+
+    residuals: list[float] = []
+    cosines: list[float] = []
+    scalars: list[float] = []
+    for i in range(1, len(got.states)):
+        if not got.cross[i]:
+            continue
+        dt = (float(times[i]) - float(times[i - 1])) / HOUR
+        if dt <= 0.0:
+            continue
+        shape = _shape(build, dt, float(noise))
+        if shape is None:
+            continue
+        bracket = _bracket(got, i, [list(r) for r in probe.transition(dt)])
+
+        mg = sum(bracket[a][b] * shape[a][b] for a in range(size) for b in range(size))
+        gg = sum(shape[a][b] * shape[a][b] for a in range(size) for b in range(size))
+        mm = sum(bracket[a][b] * bracket[a][b] for a in range(size) for b in range(size))
+        if gg <= 0.0 or mm <= 0.0:
+            continue
+        scalar = mg / gg
+        left = mm - 2.0 * scalar * mg + scalar * scalar * gg
+        residuals.append(_math.sqrt(max(left, 0.0) / mm))
+        cosines.append(mg / _math.sqrt(mm * gg))
+        scalars.append(scalar)
+
+    if len(residuals) < 10:
+        return None
+    return {
+        "steps": float(len(residuals)),
+        "residual": statistics.median(residuals),
+        "cosine": statistics.median(cosines),
+        "scalar": statistics.median(scalars),
+        # How much the fitted scalar moves from step to step. A shape that is
+        # right gives one scalar; a shape that is wrong gives a different
+        # best-fit multiple at every step, and that spread is a second
+        # symptom of the same thing.
+        "scalar_spread": (
+            statistics.pstdev(scalars) / abs(statistics.fmean(scalars))
+            if statistics.fmean(scalars) != 0.0
+            else float("nan")
+        ),
+    }
