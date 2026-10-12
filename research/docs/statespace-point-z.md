@@ -267,3 +267,76 @@ Both were right and both made the result sharper rather than softer.
 Neither changed the verdict, and that is worth stating plainly: a claim that
 survives neither its own threshold, nor a learned one, nor its mirror, nor a
 finer detector, nor conditioning on persistence, has been given five chances.
+
+## The two criteria the paper leaves out, added
+
+Asked for after the first run: the stated criteria talk about lower **lows**
+but not lower **highs**, and they confirm a reversal by one leg rather than
+two. Both are in the vocabulary `displacements.py` already names, and both
+turn out to matter - they are the only additions in this harness that move the
+answer.
+
+**On the way in**, criterion 2 counts the failed rallies and says nothing about
+where they sat. A real downtrend has lower highs as well as lower lows, so the
+tighter version requires every intervening peak to descend.
+
+**On the way out**, reclaiming the prior high is one leg. A market-structure
+break is two - a **higher high** *and* a **higher low** - so the harder
+confirmation also requires the next trough to hold above Point Z.
+
+| traded, median `z` over 96 cells | |
+| --- | ---: |
+| the stated criteria, `reclaimed` | **-5.23** |
+| **+ lower highs required**, `reclaimed` | **-2.92** |
+| the HH+HL break, on the stated criteria | **-2.19** |
+| **+ lower highs, HH+HL break** | **-1.17** |
+| *generated, the same four* | *-5.11 / -3.48 / -2.70 / -1.90* |
+
+**Every addition moves the z toward zero and none of them crosses it.** The
+strongest version of Point Z available - lower lows *and* lower highs on the
+way in, a higher high *and* a higher low on the way out - lands at **-1.17**,
+which is inside the `+/- 2` band and therefore **indistinguishable from
+selecting candidates at random**. `share z > 2` is 0.00 on all four rows and
+both groups: not one cell of 142 is positively significant.
+
+So the additions **repair** the criteria rather than make them work. That is a
+real finding about where the harm was: requiring descending highs removes
+about 2.3 of the 5.2 sigma of anti-prediction, because an all-descending run
+of highs is a *smaller and less extreme* selection and so sits closer to the
+base rate. The stated criteria were not merely uninformative, they were
+actively mis-specified, and most of that is the missing lower-high condition.
+
+**One consistent asymmetry worth recording.** The traded markets beat the
+known-generator controls on every one of the three additions - -2.92 against
+-3.48, -2.19 against -2.70, -1.17 against -1.90 - a gap of 0.5 to 0.8 sigma in
+the same direction each time. That is the only hint in this harness of a
+component that is about markets rather than about the definition. It is
+consistent, it is small, and both sides of it are still negative, so it buys
+"less bad" and not "good".
+
+## And the inversion does not work either
+
+The criteria define a strong trend, so the obvious reading with the sign
+flipped is that they pick **continuation**: after a trough satisfying them,
+the next trough should be *lower*. Measured, against random selection of the
+same size:
+
+| | cells | median `z` | median lift | share `z > 2` |
+| --- | ---: | ---: | ---: | ---: |
+| traded, short after a trough | 48 | **-1.06** | -0.043 | **0.00** |
+| traded, long after a peak | 48 | **-0.80** | -0.022 | **0.00** |
+| generated, short / long | 24 / 23 | +0.23 / -0.83 | +0.006 / -0.027 | 0.00 |
+
+**Null, and slightly negative.** This arm exists because the 31%-against-48%
+reclaim gap looked like a continuation edge with the sign reversed, and it is
+not one: `reclaimed` and `continued` are **not complements.** "Did not reclaim
+the prior high" most often means price bounced partway and then made a
+*higher* low - neither reversing nor continuing.
+
+So the gap was never about direction at all. It was the measured target being
+**further away**, which is the arithmetic mechanism this harness keeps
+returning to, and the continuation arm is what rules out the alternative.
+
+**The criteria predict neither reversal nor continuation.** That is a stronger
+and tidier statement than "they are anti-predictive", and it is the one the
+evidence supports.
