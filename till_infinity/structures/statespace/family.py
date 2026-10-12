@@ -434,10 +434,19 @@ MISSING: dict[str, str] = {
         "a real difference"
     ),
     "sequential parameter learning": (
-        "IBIS or SMC^2: update the parameter posterior as measurements arrive, "
-        "rather than re-running the filter over the whole series per candidate "
-        "the way `fit_jerk` does. A level is touched a few times a week, so "
-        "refitting from scratch each time is the wasteful way to learn it"
+        "IBIS or SMC^2: update the parameter *posterior* as measurements "
+        "arrive, rather than re-running the filter over the whole series per "
+        "candidate the way `fit_jerk` does. A level is touched a few times a "
+        "week, so refitting from scratch each time is the wasteful way to "
+        "learn it. **The posterior is what is still missing** - it needs a "
+        "particle filter, which is itself unbuilt. The cheap part, a *point* "
+        "estimate of the one scalar process-noise lever driven by the "
+        "residual, is now `adapting.Adapting`: measured at +848 nats median "
+        "over a `Q` gridded offline on eight traded instruments, and -933 on "
+        "three Deriv indices whose `Q` is constant by construction. So it "
+        "helps where there is something to track and **costs** where there is "
+        "not, which a posterior over parameters would not - that asymmetry is "
+        "the argument for finishing this properly"
     ),
     "evidence": (
         "integrate the parameters out instead of maximising over them, so "
