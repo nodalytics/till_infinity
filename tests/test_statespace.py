@@ -1012,7 +1012,8 @@ def test_the_smoother_is_written_and_listed_as_an_inference_mode():
     assert "smoothing.smooth" in doc, "the table must point at the implementation"
     assert "smoother" not in MISSING
     assert "fixed-lag smoother" not in MISSING
-    assert callable(smoothing.smooth) and callable(smoothing.lagged)
+    assert callable(smoothing.smooth)
+    assert callable(smoothing.lagged)
 
 
 def test_the_package_is_not_in_the_state_files_persistence_schema():
