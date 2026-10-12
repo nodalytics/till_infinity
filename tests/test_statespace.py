@@ -4190,17 +4190,33 @@ class TestPaired:
         )
 
         # 5s bars, and enough of them that four weeks is under the quarter cap.
+        # It reaches 10s but **not** 1s or 5s, which are fractions of a bar and
+        # one bar respectively - the same bound that stops a 1d feed being
+        # asked about 30m, now biting at the fine end too. The ladder extends
+        # below what any one feed can see, which is the point of having bounds
+        # rather than a per-feed ladder.
         whole = resolvable(5.0 / 3600.0, 2_000_000)
-        assert len(whole) == len(LADDER), [w.label() for w in whole]
-        assert whole[0].label() == "10s"
+        assert [w.label() for w in whole[:2]] == ["10s", "30s"]
         assert whole[-1].label() == "4w"
+        assert len(whole) == len(LADDER) - 2, [w.label() for w in whole]
+
+        # A 1s feed, which tick stores make possible, reaches the new rungs.
+        # `5s` is five bars and `1s` is one, so the floor still refuses `1s`:
+        # a window the length of a single bar reports that bar's own extremes
+        # under a name claiming a horizon.
+        finest = resolvable(1.0 / 3600.0, 2_000_000)
+        assert finest[0].label() == "5s", [w.label() for w in finest[:3]]
+        assert "1s" not in [w.label() for w in finest]
 
         # The seconds end is reachable from real timestamps, not just from a
         # bar size passed in by hand.
         times = [i * 1.0 for i in range(20000)]
         bar = bar_hours(times)
         got = [w.label() for w in resolvable(bar, len(times), cover=coverage(times, bar))]
-        assert got[0] == "10s", got
+        # A 1s feed now reaches `5s` - five bars - where before the ladder's
+        # finest rung was `10s`. `1s` is still refused at one bar.
+        assert got[0] == "5s", got
+        assert "1s" not in got, got
         assert "1h" in got, got
         assert "4h" not in got, got
 
