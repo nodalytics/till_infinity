@@ -280,6 +280,24 @@ class Switching:
             return 0.0
 
         innovation = measured - self.value
+
+        # **The predictive spread, taken before anything is updated.** A
+        # residual is a pre-update quantity: it asks how surprising the
+        # reading was given what the member believed *beforehand*. This
+        # divided by `self.sd` read after the component updates and the
+        # reweighting, which is the **posterior** spread and excludes `R`
+        # entirely - so the standardised residual shrank as the measurement
+        # noise grew, which is backwards, and it was not comparable with any
+        # other member's.
+        #
+        # For a mixture the predictive variance carries the spread *between*
+        # the components as well as within them, plus `R`.
+        middle = self.value
+        predictive = sum(
+            w * (v + max(noise, 0.0) + (m - middle) ** 2)
+            for w, m, v in zip(self.weights, self.means, self.variances, strict=True)
+        )
+
         likes = []
         for j in range(2):
             s = self.variances[j] + max(noise, 0.0)
@@ -301,7 +319,7 @@ class Switching:
             if self.seen >= self.burn:
                 self.loglike += math.log(total)
 
-        spread = self.sd
+        spread = math.sqrt(max(predictive, 0.0))
         self.last_standardised = innovation / spread if spread > 0 else 0.0
         # The anchor follows the mixed estimate slowly: fair value moves, but
         # not as fast as price, or balance would have nothing to revert to.

@@ -1,107 +1,116 @@
-# Which lever the clock belongs on, and a correction to the number
+# Which lever the clock belongs on, and the convention bug that hid the answer
 
 `statespace-seasonal.md` measured a time-of-day profile driving `level_wander`
-on a level-only member at +197 nats median, and left one question open: the
-other members carry different process noises, and whether the clock belongs on
-those was untested.
+on a level-only member and left one question open: the other members carry
+different process noises, and whether the clock belongs on those was untested.
 
-Two answers. **The clock belongs on the level's wander and nowhere else
-tested** - and **the +197 was partly a rescaling, not a clock.** With each
-lever's base fitted before the clock is applied, the level gain is +81 at the
-median and negative on two of seven instruments.
+The first answer this study produced was **wrong**, and wrong because of a
+defect in two members this desk had already merged. Both the defect and the
+corrected answer are below, because the defect is the more useful of the two.
 
-## The correction first, because it is a correction to merged work
+## The bug: two members took a standard deviation where everything else took a variance
 
-The earlier harness set the level's process noise from the series' one-step
-spread and left it there. That is a reasonable base but not a fitted one, and
-`Profile.at` averages one over the **cycle** rather than over the sample's
-actual hours - so multiplying a slightly mis-set base by a profile whose mean
-over the sample is not exactly one improves the fit partly by **rescaling the
-base**, which has nothing to do with the clock.
+The `Filter` contract says `update`'s `noise` argument is the measurement
+**variance** `R`, and `linear`, `reverting`, `switching` and the `Walk` null
+all read it that way. `seasonal` and `symmetry` **squared it**, treating it as
+a standard deviation.
 
-This harness sweeps each lever over fourteen decades and picks the base on the
-**matched null**, `clock=None`, before applying the clock. The clock then has
-to beat the member at its own best setting.
+That is undetectable while a harness compares a member with itself, which is
+how both were measured. It surfaced the first time one number was passed to
+three different members: at `R = 1e-3` the squaring member was handed a
+variance of `1e-6` and the others `1e-3`, so one arm was **a thousand times
+more confident in every reading** than the others.
 
-| | earlier | with the base fitted first |
-| --- | --- | --- |
-| level, traded median | +197 | **+81** |
-| level, positive cells | 10 of 10 | **5 of 7** |
-| EURUSD | +142.5 | **-39.7** |
-| GBPUSD | +154.8 | **-16.7** |
-| BTCUSD | +298.7 | +194.7 |
-| ETHUSD | +367.6 | +243.1 |
+What it produced, and what was briefly believed:
 
-So the effect is real but roughly half the size, and it is not universal: on
-EURUSD and GBPUSD a well-set constant `Q` beats a clock-driven one. The
-earlier claim that it gained on *every* FX and metal cell does not survive the
-base being fitted.
+| claimed from the broken run | actually |
+| --- | --- |
+| a level walk is ~40,000 nats better than `kalman` or `reverting` | they are within ~2,000 nats of each other, and `reverting` is marginally *best* |
+| `kalman`'s jerk pins at 1e-10 times its natural value, i.e. zero | it fits at **1e-2**, a sane interior value |
+| "a lever driven to zero cannot carry a profile" | the lever was never at zero; its measurement variance was a thousandfold too large, so the filter trusted its state and wanted no process noise |
+| the clock belongs on the level's wander and nowhere else | it belongs on **all three**, and most on `jerk` |
 
-**The misalignment penalty is untouched and is still enormous** - sliding the
-observations half a day against the stamps costs 362 to 1,283 nats. Both
-readings hold together: the profile has a genuine 2.7-to-3.7-fold amplitude,
-so applying it misaligned hurts a great deal, while applying it aligned to a
-member whose base is already right adds much less than applying it to one
-whose base is not.
+A test now pins the convention across five members. It is model-independent:
+for a fixed innovation the standardised residual is `i / sqrt(P + R)`, so two
+fresh members differing only in `R` satisfy `(i/z1)^2 - (i/z2)^2 = R1 - R2`
+exactly, whatever `P` their dynamics produce. A member that squares `R` fails
+it by a wide margin.
 
-## Why the dimensions were never the question
+### And two more inconsistencies the same test found
 
-Three levers, three units, all **variance rates**:
+* **`switching` divided a prior innovation by a posterior spread**, and one
+  that excluded `R` altogether - so its standardised residual *shrank* as the
+  measurement noise grew, which is backwards. A residual is a pre-update
+  quantity. It now divides by the mixture's predictive spread, which carries
+  the variance within the components, the spread between them, and `R`.
+  `symmetry` had the same defect in a milder form and is fixed the same way.
+* **`Walk.update` returns the raw innovation where every member returns the
+  standardised residual.** Harnesses should read `last_standardised`, which
+  all of them set, and the test does.
 
-| member | lever | units |
-| --- | --- | --- |
-| `Seasonal` level-only | `level_wander` | (value)^2 / hour |
-| `linear.Gaussian` | `jerk` | (value)^2 / hour^5 |
-| `reverting.Reverting` | `sigma2` | (value)^2 / hour^3 |
+None of these is visible in a single-member study. All three corrupt any
+comparison *between* members, which is the only kind this package exists to
+make.
 
-`Profile.factor` is the profile **squared**, which is correct for a variance
-whatever the integration order - the propagation from a jerk's spectral
-density to the position's variance is linear in that density, so the factor
-passes through unchanged. The question was never whether the units fit.
+## The corrected answer
 
-## The answer, and the column that explains it
+Each lever's base is swept over fourteen decades and chosen on the **matched
+null**, `clock=None`, before the clock is applied - so the clock has to beat
+the member at its own best setting rather than being credited with a
+rescaling.
 
-| lever | null loglike, EURUSD | clock gain, traded median | clock broken | generated |
-| --- | --- | --- | --- | --- |
-| **level** | **81,226** | **+81.1** | -529.5 | -0.7 |
-| jerk | 39,496 | -0.6 | +0.8 | -0.0 |
-| reverting | 39,434 | -12.1 | -26.4 | -0.1 |
+| instrument | level | jerk | reverting |
+| --- | --- | --- | --- |
+| EURUSD | -39.7 | **+195.4** | +18.2 |
+| GBPUSD | -16.7 | **+187.7** | +22.8 |
+| USDJPY | +81.1 | **+109.0** | +27.1 |
+| XAUUSD | +87.1 | **+180.6** | +103.2 |
+| XAGUSD | +4.7 | **+155.8** | +75.1 |
+| BTCUSD | **+194.7** | +77.2 | +104.3 |
+| ETHUSD | **+243.1** | +94.1 | +125.9 |
+| **traded median** | +81.1 | **+155.8** | +75.1 |
+| **clock broken** | -529.5 | -113.2 | -256.1 |
+| **generated markets** | -0.7 | +0.2 | -0.2 |
 
-The `null loglike` column is the whole explanation. **A plain level walk is
-about forty thousand nats better than either `kalman` or `reverting`** at
-describing a log-price series, on every instrument tested. A model losing by
-that much has no room for a hundred-nat refinement, and the clock's effect on
-both is inside the noise.
+* **The clock helps on all three levers**, in 19 of 21 traded cells. The two
+  exceptions are the level on EURUSD and GBPUSD, where a well-set constant
+  beats a clock-driven one.
+* **It helps most on `kalman`'s jerk** - +155.8 at the median and positive on
+  all seven instruments, which is the one lever that was dismissed before the
+  fix.
+* **Breaking the clock hurts on all three**, so the gain is alignment and not
+  amplitude.
+* **The generated markets gain nothing on any lever**, which is the control
+  doing its job: they are real markets the desk trades, and what they lack is
+  a session.
 
-This is the session's central finding in its most direct form. `kalman`
-carries integrated jerk, and fitted to price its jerk pins at **1e-10 to 1e-6
-times** the dimensionally natural value - which is to say essentially zero, so
-the member is a straight line plus measurement noise. **A lever driven to zero
-cannot carry a profile, because zero times any factor is still zero.** The
-clock has nothing to multiply.
+## The other correction, which stands
 
-`reverting` is the same story with an extra wrinkle: its gain is *negative*,
--12 at the median, and more negative still when the clock is broken. A
-reverting member fitted to a near-random-walk sets its reversion weak and its
-noise to absorb everything, and modulating that noise by the hour makes it
-slightly worse at the job it has settled into.
+The earlier +197 on the level was measured with the process noise set from the
+series' one-step spread rather than fitted. With the base swept first it is
+**+81 at the median and negative on two of seven**. That correction is
+independent of the convention bug - both arms there were the same member -
+and it holds.
 
-## What to do with it
+So two things were wrong with the original number in opposite directions: it
+was too high for the level because the base was not fitted, and the lever
+conclusion drawn from it was too narrow because the comparison was broken.
 
-* **Keep the clock on the level's wander**, and fit the base. On BTC and ETH
-  it is worth +195 and +243 and the misalignment penalty confirms it is the
-  clock; on EURUSD and GBPUSD a fitted constant is better and the clock
-  should be off.
-* **Do not put it on `jerk` or `sigma2`.** Not because the units are wrong,
-  but because those members are the wrong model for the series in the first
-  place, by forty thousand nats.
-* **The general lesson, which is the reusable part**: fit a lever's base
-  before testing a multiplier on it. A multiplier whose mean over the sample
-  is not exactly one will otherwise be credited with the rescaling it
-  performs, and the credit grows with how badly the base was set. This is the
-  same shape as the unfitted-`Walk` trap in `jpy-silver-pair.md` and the
-  fitted-against-unfitted comparison in `statespace-fitting.md` - three
-  instances now of the same mistake, which is a strong enough pattern to
-  check for by default.
+## What to do
+
+* **Put the clock on `jerk`** if it goes anywhere: best median, positive
+  everywhere, and the smallest misalignment penalty.
+* **Fit the lever's base first**, every time. A multiplier whose sample mean
+  is not exactly one is otherwise credited with the rescaling it performs.
+* **Never compare two members without checking they read `noise` the same
+  way.** The test is cheap, it is now in the suite, and it caught three
+  separate inconsistencies on its first run.
+
+The reusable lesson is the last one. This desk has now hit the
+fitted-against-unfitted mistake three times - a walk's noise gaining +14,563
+in `statespace-fitting.md`, an uncalibrated `Walk` handing out +99,444 in
+`jpy-silver-pair.md`, and a rescaling credited to a clock here - and the
+convention mistake once, with a much larger effect. Both are invisible without
+a cross-member check.
 
 The harness is `research/ideas/clock_levers.py`.

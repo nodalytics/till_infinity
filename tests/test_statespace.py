@@ -5048,3 +5048,70 @@ class TestNodes:
         moves = sequence(times, values, values, values, span=2, unit=1.0)
         assert len(moves) == max(len(found) - 1, 0)
         assert [m.ended for m in moves] == [node.at for node in found[1:]]
+
+
+def test_every_member_takes_the_measurement_noise_as_a_variance():
+    """`update`'s `noise` is `R`, a variance, for every member alike.
+
+    **This was not true and the breakage was invisible.** `seasonal` and
+    `symmetry` squared it, treating it as a standard deviation, which is
+    undetectable while a harness compares a member with itself - and both
+    were measured that way. It surfaced only when `clock_levers.py` passed one
+    number to three different members: the two that squared it were handed a
+    variance of `R^2` and the others `R`, so at `R = 1e-3` one arm was a
+    thousand times more confident than the others. It reversed the conclusion
+    of that study.
+
+    The check is model-independent. For a fixed innovation `i`, the
+    standardised residual is `i / sqrt(P + R)` where `P` is whatever
+    predictive variance the member's own dynamics produce. So for two fresh
+    members of the same kind differing only in `R`,
+
+        (i / z1)^2 - (i / z2)^2 = R1 - R2
+
+    exactly, whatever `P` is. A member that squares `R` gives `R1^2 - R2^2`
+    instead and fails by a wide margin.
+    """
+    from till_infinity.structures.statespace.linear import Gaussian
+    from till_infinity.structures.statespace.nulls import Walk
+    from till_infinity.structures.statespace.reverting import Reverting
+    from till_infinity.structures.statespace.seasonal import Seasonal
+    from till_infinity.structures.statespace.switching import Switching
+
+    builders = {
+        "walk": Walk,
+        "linear": Gaussian,
+        "reverting": Reverting,
+        "switching": Switching,
+        "seasonal": lambda: Seasonal(seasonal_on=False),
+    }
+    one, two = 0.04, 0.25
+    innovation = 1.0
+
+    # Warmed up with a **fixed** variance in both arms, because several
+    # members seed their covariance from `R` on the first reading - so varying
+    # `R` from the start would let it in twice and the identity below would
+    # pick up a factor of two that is correct behaviour rather than a defect.
+    warm = 1e-4
+
+    for name, build in builders.items():
+        got = []
+        for variance in (one, two):
+            member = build()
+            for step in range(4):
+                member.predict(step * HOUR)
+                member.update(0.0, warm, step * HOUR)
+            member.predict(4 * HOUR)
+            member.update(innovation, variance, 4 * HOUR)
+            # `last_standardised`, not `update`'s return value: the members
+            # return the standardised residual but the `Walk` null returns the
+            # raw innovation, and the attribute is the one every one of them
+            # sets. A harness reading the return value would compare a
+            # residual with an innovation.
+            standardised = member.last_standardised
+            assert standardised, (name, standardised)
+            got.append((innovation / standardised) ** 2)
+        assert got[0] - got[1] == pytest.approx(one - two, abs=1e-6), (
+            f"{name} does not take `noise` as a variance: "
+            f"implied difference {got[0] - got[1]:.6f} against {one - two:.6f}"
+        )

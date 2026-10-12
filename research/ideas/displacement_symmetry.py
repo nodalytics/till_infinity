@@ -328,7 +328,7 @@ def _member(pairs, data, rng, seed) -> tuple[tuple, tuple | None]:
     mixed = Symmetry()
     for i, idx in enumerate(order):
         mixed.predict(pairs[i].confirmed)
-        mixed.update(pairs[idx].log_ratio, mixed.spread, pairs[i].confirmed)
+        mixed.update(pairs[idx].log_ratio, mixed.spread * mixed.spread, pairs[i].confirmed)
 
     fake = walk_like(data["close"], seed)
     walked = Symmetry()

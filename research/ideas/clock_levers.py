@@ -147,7 +147,7 @@ def score(times, values, *, build, lever, base, profile, slide: int = 0) -> floa
     )
     for when, value in zip(times, values, strict=True):
         member.predict(when)
-        member.update(value, noise, when)
+        member.update(value, noise * noise, when)
         if member.seen == start:
             member.loglike = 0.0
     return member.loglike

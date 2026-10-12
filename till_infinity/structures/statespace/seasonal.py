@@ -331,6 +331,11 @@ class Seasonal:
     def update(self, measured: float, noise: float, when: float | None = None) -> float:
         """Fold in one reading of `level + season`.
 
+        `noise` is the measurement **variance** `R`, in value units squared,
+        matching `linear`, `reverting`, `switching` and the `Walk` null. An
+        earlier version squared it here, which is only invisible while a
+        harness compares this member with itself.
+
         The observation is scalar, so the gain is a vector and no matrix needs
         inverting - which is why this member can carry thirteen states and
         still cost what `linear` costs.
@@ -351,7 +356,13 @@ class Seasonal:
 
         # `P H'`, then `H P H' + R`.
         gain_raw = [sum(self.covariance[i][j] * row[j] for j in range(size)) for i in range(size)]
-        spread = sum(row[i] * gain_raw[i] for i in range(size)) + max(noise, 1e-12) ** 2
+        # `noise` is the measurement **variance** `R`, as the `Filter`
+        # contract says and as `linear`, `reverting`, `switching` and the
+        # `Walk` null all take it. This squared it instead, which made the
+        # member a thousand times more confident than its callers intended
+        # and, worse, made any comparison against another member meaningless:
+        # one arm was handed a variance of `R` and the other of `R^2`.
+        spread = sum(row[i] * gain_raw[i] for i in range(size)) + max(noise, 1e-24)
         if spread <= 0:
             return 0.0
         gain = [g / spread for g in gain_raw]
