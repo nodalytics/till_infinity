@@ -31,6 +31,15 @@ has a scale**, and that is a question about model class.
 fastest mode is slower than the bar it is fed cannot see anything, so the
 caller is expected to pass a span its data covers.
 
+## Where this member does win: the variance
+
+`statespace-fractals.md` took the sentence below at its word and put the
+ladder on **log-volatility** instead of the level. It beats a single OU on
+seven of seven traded instruments, by +191 to +547 nats out of sample, and
+loses on five of five controls - including on a series whose log-volatility
+genuinely is one OU, which it loses by 453. So the modes are not idle; they
+were on the wrong quantity.
+
 ## A prediction I made before running it, and it was wrong
 
 `facts.py` measured every member rolled forward and not one generated

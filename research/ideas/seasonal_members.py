@@ -116,7 +116,7 @@ def score(times, values, *, on: bool, slide: int = 0):
     member = Seasonal(periods=PERIODS, harmonics=HARMONICS, seasonal_on=on, wander=1e-7)
     for when, value in zip(times, values, strict=True):
         member.predict(when)
-        member.update(value, noise, when)
+        member.update(value, noise * noise, when)
 
     base = member.at or 0.0
     shape = [member.profile(base + h * HOUR, period=24.0) for h in range(24)]
@@ -256,7 +256,7 @@ def score_driven(times, values, profile, *, use_shape: bool, door: str = "wander
         )
         for when, value in zip(times, values, strict=True):
             member.predict(when)
-            member.update(value, base, when)
+            member.update(value, base * base, when)
             if member.seen == start:
                 member.loglike = 0.0
         return member.loglike
@@ -270,7 +270,7 @@ def score_driven(times, values, profile, *, use_shape: bool, door: str = "wander
         else:
             noise = base * factor
         member.predict(when)
-        member.update(value, noise, when)
+        member.update(value, noise * noise, when)
         if member.seen == start:
             member.loglike = 0.0
     return member.loglike

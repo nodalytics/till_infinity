@@ -1,4 +1,4 @@
-# statespace: the package, its members, and what is not done
+# State Space
 
 `__init__.py` is the contract - what this package is for, the rule that nothing
 in it publishes, that every horizon is expressed in time rather than in bars,

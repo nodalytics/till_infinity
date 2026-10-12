@@ -268,17 +268,21 @@ class Symmetry:
     def update(self, measured: float, noise: float, when: float | None = None) -> float:
         """One log ratio, scored against each class, and the classes reweighted.
 
-        `measured` is `log(size(t) / size(t-1))` and `noise` the spread of a
-        single ratio around its class centre - which is a measurement spread
-        here rather than an instrument's, because a displacement is not read
-        off a quote.
+        `measured` is `log(size(t) / size(t-1))` and `noise` the **variance**
+        of a single ratio around its class centre - a measurement variance
+        rather than an instrument's, because a displacement is not read off a
+        quote, but a variance all the same so that this member can be scored
+        beside the others.
         """
         if when is not None and self.at is None:
             self.at = float(when)
         if not math.isfinite(measured):
             return 0.0
 
-        extra = max(noise, 1e-9) ** 2
+        # The measurement **variance**, per the `Filter` contract. Squared
+        # here once, which made every comparison against another member wrong
+        # by a square.
+        extra = max(noise, 1e-18)
         width = len(CLASSES)
 
         densities: list[float] = []
@@ -297,9 +301,13 @@ class Symmetry:
         if self.seen > self.burn:
             self.loglike += math.log(evidence)
 
-        # Standardise against the mixture, which is what a residual means when
-        # the forecast is a mixture rather than one Gaussian.
-        self.last_standardised = (measured - self.value) / max(self.sd, 1e-9)
+        # Standardise against the **predictive** spread of the mixture, which
+        # carries the spread between the classes, within them, and the
+        # measurement variance. `self.sd` alone omits `R`, so a residual built
+        # on it is not comparable with another member's - the defect
+        # `switching` had in a sharper form.
+        predictive = math.sqrt(self.sd * self.sd + extra)
+        self.last_standardised = (measured - self.value) / max(predictive, 1e-12)
 
         self.weights = [w * d / evidence for w, d in zip(self.weights, densities, strict=True)]
         total = sum(self.weights)
@@ -318,8 +326,12 @@ class Symmetry:
         that closed it.
         """
         self.predict(relation.confirmed)
+        # `self.spread` is a standard deviation and `update` takes a
+        # variance, so it is squared here rather than at every call site.
         return self.update(
-            relation.log_ratio, self.spread if noise is None else noise, relation.confirmed
+            relation.log_ratio,
+            self.spread * self.spread if noise is None else noise,
+            relation.confirmed,
         )
 
 

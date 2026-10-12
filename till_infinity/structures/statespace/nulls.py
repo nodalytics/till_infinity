@@ -45,6 +45,7 @@ Nothing here is a model this desk would ship. They are the floor.
 from __future__ import annotations
 
 import math
+import random
 import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -222,3 +223,84 @@ def control(xs: Sequence[float], ys: Sequence[float]) -> float:
     got = [spearman(xs, ys, shift=max(int(n * fraction), 1)) for fraction in (0.25, 0.5, 0.75)]
     usable = [v for v in got if not math.isnan(v)]
     return statistics.fmean(usable) if usable else float("nan")
+
+
+#: GARCH(1,1) parameters: the constant, the shock loading and the memory.
+#: `shock + memory` is the persistence and must stay below one.
+GARCH_CONSTANT = 0.02
+GARCH_SHOCK = 0.10
+GARCH_MEMORY = 0.88
+
+#: Degrees of freedom for the innovation. Five is the usual choice for a
+#: return series: finite variance, infinite fourth moment.
+GARCH_TAIL = 5.0
+
+
+def garch(
+    count: int,
+    *,
+    seed: int,
+    sigma: float = 1.0,
+    constant: float = GARCH_CONSTANT,
+    shock: float = GARCH_SHOCK,
+    memory: float = GARCH_MEMORY,
+    tail: float = GARCH_TAIL,
+) -> list[float]:
+    """Clustered volatility with an exponential decay and fat tails.
+
+    **The control for anything that might be reading volatility clustering**,
+    and it lives here rather than in a harness because three harnesses had
+    three copies and all three were wrong in the same way.
+
+    ## The defect, because it is instructive
+
+    A Student-t innovation has to be **standardised** before it is fed back
+    into the variance recursion. A raw `t(nu)` has variance `nu / (nu - 2)` -
+    five thirds at `nu = 5` - so a recursion written as
+
+        variance = constant + shock * previous^2 + memory * variance
+
+    with an unstandardised `previous` has an effective persistence of
+    `shock * nu/(nu-2) + memory`, which at the usual 0.10 and 0.88 is
+    **1.046**: explosive. Measured, the variance reached `1e110` and 98.8% of
+    the returns sat on whatever clamp the caller had applied, which makes the
+    "GARCH surrogate" a clamped square wave with a log-volatility swing
+    *below* the estimation-noise floor.
+
+    A control that is accidentally a near-constant series is worse than no
+    control, because it still produces a number and the number looks like a
+    comparison. The scaling by `sqrt((nu - 2) / nu)` below is the whole fix,
+    and `persistence` is exposed so a caller can assert it is under one.
+
+    `sigma` scales the output to a target unconditional standard deviation,
+    so the surrogate can be matched to the series it is controlling for.
+    """
+    if tail <= 2.0:
+        raise ValueError("a t innovation needs more than two degrees of freedom")
+    if shock + memory >= 1.0:
+        raise ValueError(
+            f"persistence {shock + memory} is not below one: the variance would explode"
+        )
+
+    rng = random.Random(seed)
+    # Unit-variance t: a normal over the root of a chi-square mean, rescaled
+    # by `sqrt((nu-2)/nu)` so the recursion's persistence is `shock + memory`.
+    scale = math.sqrt((tail - 2.0) / tail)
+    half = int(tail)
+    stationary = constant / (1.0 - shock - memory)
+
+    variance, previous = stationary, 0.0
+    out: list[float] = []
+    for _ in range(count):
+        variance = constant + shock * previous * previous + memory * variance
+        chi = sum(rng.gauss(0.0, 1.0) ** 2 for _ in range(half))
+        draw = rng.gauss(0.0, 1.0) * math.sqrt(half / max(chi, 1e-6)) * scale
+        previous = math.sqrt(variance) * draw
+        out.append(previous * sigma / math.sqrt(stationary))
+    return out
+
+
+def garch_persistence(shock: float = GARCH_SHOCK, memory: float = GARCH_MEMORY) -> float:
+    """`shock + memory`. Below one for a stationary surrogate, and the number
+    a caller should assert rather than assume."""
+    return shock + memory

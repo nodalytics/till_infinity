@@ -1,5 +1,15 @@
 # Seasonality: nothing in the level, a great deal in the spread
 
+> **Corrected by `statespace-clock-levers.md`.** The +197 nats below was
+> measured with the level's process noise set from the series' one-step spread
+> rather than fitted. With the base swept and chosen on the matched null
+> first, the gain is **+81 at the median and negative on two of seven
+> instruments** - part of the original number was the profile rescaling a
+> mis-set base. The misalignment penalty is unaffected and still large, so the
+> clock is genuinely clock-locked; it simply adds less to a member whose base
+> is already right. The numbers in this note are left as measured, with that
+> correction attached.
+
 Asked on 2026-10-11: was seasonality ever added to the state-space package?
 
 It was not, and the omission was real. `oscillator.py` cycles, but a

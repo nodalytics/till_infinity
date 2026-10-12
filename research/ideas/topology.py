@@ -120,17 +120,18 @@ def returns(closes: list[float]) -> list[float]:
 
 
 def garch(n: int, seed: int) -> list[float]:
-    """GARCH(1,1) with t(5) innovations: clustered volatility, no recurrence."""
-    rng = random.Random(seed)
-    variance, previous = 1.0, 0.0
-    out = []
-    for _ in range(n):
-        variance = 0.02 + 0.10 * previous * previous + 0.88 * variance
-        # Student-t(5) by the ratio of a normal to a chi scaling.
-        chi = sum(rng.gauss(0.0, 1.0) ** 2 for _ in range(5))
-        previous = rng.gauss(0.0, math.sqrt(variance)) * math.sqrt(5.0 / max(chi, 1e-9))
-        out.append(previous)
-    return out
+    """GARCH(1,1) with t(5) innovations: clustered volatility, no recurrence.
+
+    **The version here was explosive**, and with no clamp at all: an
+    unstandardised t(5) innovation puts the variance recursion's persistence
+    at `0.10 * 5/3 + 0.88 = 1.046`, so it ran to astronomical values. The
+    GARCH arm of this study was therefore not a control; its conclusion rests
+    on the Gaussian walk, the rotated control and the trailing standard
+    deviation, which were sound. Now from `nulls.garch`.
+    """
+    from till_infinity.structures.statespace.nulls import garch as surrogate
+
+    return surrogate(n, seed=seed)
 
 
 def walk(n: int, seed: int) -> list[float]:
