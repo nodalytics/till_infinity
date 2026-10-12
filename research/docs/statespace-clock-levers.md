@@ -72,6 +72,17 @@ rescaling.
 | **clock broken** | -529.5 | -113.2 | -256.1 |
 | **generated markets** | -0.7 | +0.2 | -0.2 |
 
+**The `null loglike` column above is specific to this study's measurement
+variance and should not be read as a general ranking.** `statespace-backtest.md`
+measures the same members at a smaller `R` - a quarter of a bar move rather
+than a whole one - and the walk then leads `kalman` by about 33,000 nats on
+EURUSD rather than two thousand. A small `R` forces the filter to explain the
+movement with its dynamics and so penalises bad dynamics heavily; a large one
+lets measurement noise absorb the error and the models converge. An absolute
+likelihood gap between two members means nothing without the `R` beside it.
+The *clock* gains in this table are unaffected, because each lever's two arms
+share an `R`.
+
 * **The clock helps on all three levers**, in 19 of 21 traded cells. The two
   exceptions are the level on EURUSD and GBPUSD, where a well-set constant
   beats a clock-driven one.
