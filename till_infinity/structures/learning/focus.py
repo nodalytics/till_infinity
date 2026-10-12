@@ -55,6 +55,25 @@ from ...shared.state import Restorable
 #: The statistic is a log likelihood ratio, so a threshold is "how many nats of
 #: evidence before this is worth saying". Chosen to be conservative rather than
 #: fitted: `drift.py` records that a false alarm discounts real evidence.
+#:
+#: **Now calibrated**, in `statespace-paired-threshold.md`. On a stationary
+#: standard-normal stream this value gives an average run length to a false
+#: alarm of about **216,000 observations**, and detects a one-sigma shift in
+#: the mean in 22. The trade-off is one-sided - the quiet grows exponentially
+#: in the threshold and the delay only linearly - so on a stationary stream
+#: higher would be better.
+#:
+#: **On a real series it alarms every 1,389 observations instead**, a factor of
+#: 156, measured the same way on EURUSD, XAUUSD and BTCUSD. The cause is
+#: volatility clustering: a constant-volatility market reproduces the
+#: stationary numbers almost exactly, and two attempts to rescale the stream -
+#: by a constant and by a trailing spread, which is what `update`'s `scale`
+#: argument below exists for - both make it worse rather than better. The
+#: problem is the conditional shape rather than the scale.
+#:
+#: So **12.0 stays, and the number to quote beside it is 1,389 rather than
+#: 216,000**. A stated false-alarm rate needs a threshold fitted per
+#: instrument on its own residuals.
 THRESHOLD = 12.0
 
 

@@ -163,13 +163,25 @@ exogenous channel nothing consumed.
    stated as a switching model and is also I9. Its 70% claims need the matched
    control that already killed "price is a magnet".
 
-**And three debts that are not features:** every measurement since the start
-has been on bar closes rather than touches, which item 4 of the README's list
-explicitly warns about; `paths.simulate` is used for parameter recovery and
-nothing else, when it could separate "the model cannot find the ordering" from
-"the market has no ordering"; and `Paired`'s threshold is still uncalibrated
-against a stationary stream, which `focus.py` names as the right measurement
-and skips.
+**And three debts that are not features** - all three now paid, 2026-10-12,
+and each one changed something:
+
+* ~~every measurement has been on bar closes rather than touches~~ -
+  `statespace-touches.md`. The two-sigma band holds a *quoted* path 0.944 of
+  the time where it contains the next close 0.969, so the stop recommendation
+  survives with a correction; at one sigma the gap is 0.115 and it does not.
+* ~~`paths.simulate` is used for parameter recovery and nothing else~~ -
+  `statespace-planted-orderings.md`. The detection threshold on an AR(1) is
+  `|phi| = 0.08` and the **cost** threshold is 0.188 at 1m, so below three
+  minutes a directional null says "cannot pay" rather than "cannot find". And
+  the generator's own increments have a lag-1 autocorrelation of +0.999 where
+  real series sit at 0.00, which is why a fitted jerk lands at the floor.
+* ~~`Paired`'s threshold is still uncalibrated against a stationary stream~~ -
+  `statespace-paired-threshold.md`. The shipped 12 nats gives an average run
+  length of about 216,000 observations on a stationary stream and detects a
+  one-sigma shift in 22, but **on a real series it alarms every 1,389**, and
+  neither a constant nor a trailing rescale repairs it because the cause is
+  the conditional shape rather than the scale.
 
 ---
 
