@@ -922,7 +922,13 @@ def test_the_missing_inference_modes_are_named_rather_than_left_out():
         "evidence",
         "em",
     }
+    # EM is **partly** built now: `diagnostics.fit_em` fits a scalar `Q`
+    # multiplier and `R`, and the entry has to say which half remains or the
+    # registry becomes a list of things that are already done.
     assert "smoothed posterior" in MISSING["em"], "EM needs the smoother first"
+    assert "matrix M-step" in MISSING["em"], (
+        "the entry must name what is still missing, not just what EM is for"
+    )
     for name, note in MISSING.items():
         assert len(note) > 40, f"{name} is listed without saying what it unlocks"
 

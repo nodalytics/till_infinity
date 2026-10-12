@@ -429,7 +429,14 @@ MISSING: dict[str, str] = {
     ),
     "em": (
         "fits the whole parameter set rather than one parameter by search, with "
-        "a closed-form M-step for the noise covariances. Needs the smoother "
-        "first: the E-step is the smoothed posterior"
+        "a closed-form M-step for the noise covariances. The E-step is the "
+        "smoothed posterior, so it needed the smoother first - and that "
+        "blocker is gone: `diagnostics.fit_em` exists and recovers a planted "
+        "jerk to 1.157e-3 against a true 1e-3. **What is still missing is the "
+        "matrix M-step.** What is written fits a single scalar multiplier on "
+        "`Q` by Frobenius projection plus `R`, because the naive "
+        "`tr(G^-1 M)` form cancels negative on an ill-conditioned `G` and "
+        "drove the jerk to 1e-12 with a likelihood of -2.5e9. A full M-step "
+        "would fit the covariance's entries rather than its scale"
     ),
 }
