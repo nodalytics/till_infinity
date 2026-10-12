@@ -231,3 +231,96 @@ def test_the_intent_picks_the_duration_that_matches_its_feed():
     assert real["barrier_bars_brownian"] == pytest.approx(synthetic["barrier_bars"])
     # And the clock covers less of the geometry than it appeared to.
     assert real["hold_covers"] < synthetic["hold_covers"]
+
+
+class TestConditionalSlowdown:
+    """The term `slowdown` is missing: where the entry volatility sat.
+
+    `slowdown` keys on predicted bars alone, so it returns one multiple for a
+    geometry however unusual the volatility was when the trade opened. Measured
+    across entry-volatility quintiles on eight traded feeds the realised-over-
+    predicted ratio runs **0.79 to 1.51** against its single 1.26, so the
+    missing term is worth about a factor of two end to end.
+
+    These hold the derivation down rather than the measurement: the exponent
+    follows from `duration`'s own `(a+B)(b+B)` once the barriers are expressed
+    in realised rather than entry volatility, and the two feed kinds differ
+    only in how much of the short estimate is real.
+    """
+
+    def test_an_average_entry_changes_nothing(self):
+        """The whole point of a *conditional* correction: at the long mean it is
+        inert, so a caller with no unusual volatility is left where it was."""
+        from till_infinity.trading import barriers
+
+        assert barriers.conditional_slowdown(0.01, 0.01) == pytest.approx(1.0)
+        assert barriers.conditional_slowdown(0.01, 0.01, generated=True) == pytest.approx(1.0)
+
+    def test_a_high_entry_estimate_lengthens_and_a_low_one_shortens(self):
+        """Direction first, because getting it backwards would be invisible.
+
+        A short estimate above its longer mean sized the barriers too wide for
+        the volatility that follows, so the trade runs **longer**.
+        """
+        from till_infinity.trading import barriers
+
+        assert barriers.conditional_slowdown(0.02, 0.01) > 1.0
+        assert barriers.conditional_slowdown(0.005, 0.01) < 1.0
+
+    def test_the_exponents_are_the_derived_ones(self):
+        """`(sigma_entry/sigma_long) ** (2 (1 - w))`, with `w` measured at 0.5 on
+        a real feed and 0 on a generated one - so 1.0 and 2.0.
+
+        Asserted as the exact powers rather than as inequalities: these are
+        derived constants, and a fitted drift away from them would mean the
+        derivation stopped applying.
+        """
+        from till_infinity.trading import barriers
+
+        for scale in (0.5, 0.8, 1.25, 2.0):
+            assert barriers.conditional_slowdown(scale * 0.01, 0.01) == pytest.approx(scale)
+            assert barriers.conditional_slowdown(
+                scale * 0.01, 0.01, generated=True
+            ) == pytest.approx(scale**2)
+
+    def test_a_generated_feed_is_corrected_harder(self):
+        """Because *none* of its short estimate's deviation is real.
+
+        A constant-volatility feed's every departure from the long mean is
+        estimation noise, so the whole of it should be undone - which is why the
+        measured weight there is 0 and the exponent 2, and why its quintile
+        spread collapses to +0.01 under full shrinkage where a traded feed's
+        over-corrects to -0.48.
+        """
+        from till_infinity.trading import barriers
+
+        assert barriers.conditional_slowdown(
+            0.02, 0.01, generated=True
+        ) > barriers.conditional_slowdown(0.02, 0.01)
+
+    def test_it_declines_to_guess_without_a_usable_pair(self):
+        """Zero, negative and non-finite estimates return 1.0.
+
+        A correction that raised on bad input would make the caller's error the
+        caller's problem at the worst moment; one that returned a wild number
+        would be worse. Returning 1.0 leaves the existing behaviour exactly.
+        """
+        from till_infinity.trading import barriers
+
+        for short, long_run in ((0.0, 0.01), (0.01, 0.0), (-0.01, 0.01), (0.01, -0.01)):
+            assert barriers.conditional_slowdown(short, long_run) == pytest.approx(1.0)
+
+    def test_it_leaves_the_shipped_duration_alone(self):
+        """This lands as a helper and changes no live number.
+
+        `duration_on_feed` is what `trading/models.py` calls, and switching it
+        to use the conditional term changes how long the desk expects to hold -
+        which is a decision to take deliberately, not a side effect of adding
+        the function.
+        """
+        import inspect
+
+        from till_infinity.trading import barriers
+
+        source = inspect.getsource(barriers.duration_on_feed)
+        assert "conditional_slowdown" not in source
