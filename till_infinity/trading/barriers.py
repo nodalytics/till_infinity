@@ -255,6 +255,68 @@ def duration_on_feed(
     return bars * slowdown(bars)
 
 
+#: Exponent on `sigma_entry / sigma_long` in `conditional_slowdown`, by feed
+#: kind. **Derived, then verified.**
+#:
+#: Barriers are placed at `k * sigma_entry` in absolute terms, so in units of
+#: the *realised* volatility they sit at `k * sigma_entry / sigma_realised`, and
+#: `duration`'s `(a+B)(b+B)` therefore scales as `(sigma_entry/sigma_realised)^2`.
+#: Writing `sigma_realised = sigma_entry^w * sigma_long^(1-w)` gives
+#:
+#:     correction = (sigma_entry / sigma_long) ** (2 * (1 - w))
+#:
+#: so the whole question is `w`: how much of the short estimate's deviation from
+#: its own longer mean is real.
+#:
+#: `research/ideas/triple_barrier.py` measures it by sweeping `w` until the
+#: realised-over-predicted ratio is flat across entry-volatility quintiles. On
+#: eight traded feeds at 1h the ratio runs **0.79 to 1.51** against `slowdown`'s
+#: single 1.26, and flattens to +0.08 at `w = 0.5`. On the generated feeds it
+#: flattens to **+0.01 at `w = 0`** - the short estimate carries *no*
+#: information there, which is correct, because their volatility is constant and
+#: every deviation of the short estimate from the long mean is estimation noise.
+#:
+#: **That split is the finding.** Roughly 70% of the conditional bias on a real
+#: feed is regression in the volatility *estimate* rather than mean reversion in
+#: the market: the constant-volatility controls show +0.43 of the +0.61 spread
+#: and full shrinkage removes theirs entirely. So the remedy is arithmetic on
+#: the estimate, not a volatility forecast.
+EXPONENT_ON_FEED = 1.0
+EXPONENT_GENERATED = 2.0
+
+
+def conditional_slowdown(
+    sigma_entry: float,
+    sigma_long: float,
+    *,
+    generated: bool = False,
+) -> float:
+    """How much longer a trade runs because its entry volatility was unusual.
+
+    `slowdown` returns one multiple per predicted duration and nothing else, and
+    its own docstring says it is "five points and an interpolation, not a law".
+    This is the term it is missing: the same geometry entered when the short
+    volatility estimate sits above its longer mean takes **longer**, because the
+    barriers were sized from an estimate the realised volatility will not match.
+
+    Multiply `duration` or `duration_on_feed` by this. **It does not touch
+    `probability`**, and that is not an omission: with zero drift the exit side
+    is gambler's ruin, `b/(a+b)`, *whatever the volatility path* - verified in
+    simulation across three paths whose durations differ by 2.2x and on real
+    feeds, where `P(up)` moves 0.009 across volatility quintiles. Volatility is
+    a timing model for a barrier trade and not a label model.
+
+    Returns 1.0 when either estimate is unusable, so a caller that cannot form
+    the long window is left exactly where it was.
+    """
+    short = float(sigma_entry)
+    long_run = float(sigma_long)
+    if not (short > 0.0 and long_run > 0.0):
+        return 1.0
+    exponent = EXPONENT_GENERATED if generated else EXPONENT_ON_FEED
+    return (short / long_run) ** exponent
+
+
 def overshoot_cost(
     target_units: float,
     stop_units: float,
