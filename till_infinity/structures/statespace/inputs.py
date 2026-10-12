@@ -126,6 +126,19 @@ WEEKS = (
 #: can actually compute - which is the portable version of choosing a window,
 #: where "200 bars" was the unportable one.
 LADDER = (
+    #: The second rungs existed before any feed could reach them: the finest
+    #: series this desk stored was 1m, and `resolvable` rightly refused a 10s
+    #: window on it - two bars is the floor and a 10s window on 1m bars is a
+    #: sixth of one. Tick stores changed that, so these are reachable for the
+    #: first time, and 1s and 5s are added because ticks arrive every tenth of
+    #: a second on the traded pairs and every second or two on the synthetics.
+    #:
+    #: **A rung being reachable is not a rung being useful.** At this scale the
+    #: spread is the whole question: `statespace-seconds.md` measures the
+    #: median move over each rung in spread units, and the second rungs are
+    #: where that ratio falls below one.
+    Window(1.0 / 3600.0, "1s"),
+    Window(5.0 / 3600.0, "5s"),
     Window(10.0 / 3600.0, "10s"),
     Window(30.0 / 3600.0, "30s"),
     Window(1.0 / 60.0, "1m"),
