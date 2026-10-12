@@ -114,9 +114,14 @@ is unambiguous.
   breach rate is 0.056 per interval rather than 0.047. At one sigma the gap
   is 0.115 and a close-based reading is not usable at all. The correction
   scales with the spread in units of the interval's volatility.
-* **Do not trade a member's direction.** Zero of twenty-eight cells clear
-  cost, the loss equals the spread paid, and this agrees with every previous
-  attempt: at most 6 of 45 bin pairs orderable in
+* **Do not trade a member's direction** - and `statespace-planted-orderings.md`
+  now says *which* kind of null this is. Below about three minutes the cost
+  threshold on an AR(1) coefficient is higher than the detection threshold
+  (0.188 against 0.08 at 1m), so this result is the statement that whatever
+  ordering exists **cannot pay for the spread**, which no better detector
+  changes. Above 15m the ordering flips and a null would mean "not findable"
+  instead. Zero of twenty-eight cells clear cost, the loss equals the spread
+  paid, and this agrees with every previous attempt: at most 6 of 45 bin pairs orderable in
   `statespace-informatory-pairs.md`, AUC 0.51 in `statespace_fx.py`, and the
   up/down edge at -98% with good fills.
 * **`kalman` needs its state equation looked at, not its noise.** A -0.45
