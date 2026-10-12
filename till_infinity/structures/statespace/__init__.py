@@ -374,6 +374,7 @@ asserts it rather than trusting it.
 
 from __future__ import annotations
 
+from .adapting import Adapting
 from .diagnostics import Residuals, fit_jerk, residuals
 from .family import MISSING, PENDING, Filter, members
 from .landau import Landau
@@ -392,6 +393,7 @@ __all__ = [
     "PENDING",
     "RELATION",
     "SUBJECTS",
+    "Adapting",
     "Filter",
     "Gaussian",
     "Landau",

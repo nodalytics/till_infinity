@@ -5686,3 +5686,206 @@ class TestLandauCubic:
         from till_infinity.structures.statespace.family import Filter
 
         assert isinstance(Landau(), Filter)
+
+
+class TestAdapting:
+    """Error feedback on the process noise. The loop, and the guarantees it needs.
+
+    A Kalman filter is already online learning with error feedback - the
+    innovation is the error and the gain is a derived learning rate - so this
+    wrapper closes the one gap: the gain is optimal *given* `Q`, and `Q` is
+    set by hand or gridded offline.
+
+    Three things have to hold or the measurement is worthless. **`none` must be
+    the bare delegate**, so a harness's null arm cannot differ from the member
+    by anything but the mode. **The lever must be updated after the
+    measurement is scored**, or the likelihood is being produced by a
+    parameter fitted to the point it is predicting. And **the loop must drive
+    its own error signal toward one**, since that is the only thing it is
+    designed to do.
+    """
+
+    HOUR = 3_600.0
+
+    def _series(self, n=1200, *, jerk=0.02, seed=5):
+        """A level whose drift random-walks, so a filter's `Q` can be wrong."""
+        import random
+
+        rng = random.Random(seed)
+        times, levels = [], []
+        level, slope = 0.0, 0.0
+        for i in range(n):
+            slope += rng.gauss(0.0, math.sqrt(jerk))
+            level += slope
+            times.append(i * self.HOUR)
+            levels.append(level + rng.gauss(0.0, 0.1))
+        return times, levels
+
+    def test_none_is_the_bare_delegate(self):
+        """Exact equality on the state, the covariance and the likelihood.
+
+        Not `approx`: `mode="none"` must take a code path that does the same
+        arithmetic, because a harness compares its null arm against the other
+        modes and any difference here is attributed to adaptation.
+        """
+        from till_infinity.structures.statespace import Gaussian
+        from till_infinity.structures.statespace.adapting import Adapting
+
+        times, levels = self._series()
+        wrapped = Adapting(build=lambda: Gaussian(jerk=0.01, p00=1.0), mode="none")
+        bare = Gaussian(jerk=0.01, p00=1.0)
+        for when, level in zip(times, levels, strict=True):
+            wrapped.predict(when)
+            got = wrapped.update(level, 0.01)
+            bare.predict(when)
+            want = bare.update(level, 0.01)
+            assert got == want
+        assert wrapped.state() == bare.state()
+        assert wrapped.covariance() == bare.covariance()
+        assert wrapped.loglike == bare.loglike
+        assert wrapped.factor == 1.0, "the lever must not move in this mode"
+
+    def test_the_lever_moves_after_the_measurement_is_scored(self):
+        """The ordering guarantee, asserted rather than trusted.
+
+        The likelihood contribution at step `t` has to come from the parameter
+        in force *before* `t` was seen. This drives one step at a time and
+        checks that the lever used by the filter is the one from the previous
+        step, which is the difference between a held-out number and a cheat.
+        """
+        from till_infinity.structures.statespace import Gaussian
+        from till_infinity.structures.statespace.adapting import Adapting
+
+        times, levels = self._series(n=200)
+        loop = Adapting(build=lambda: Gaussian(jerk=0.01, p00=1.0), mode="matching", step=0.05)
+        previous = loop._member.jerk
+        for when, level in zip(times, levels, strict=True):
+            loop.predict(when)
+            # Whatever `predict` just used, it is the lever as of the last
+            # update - not one informed by `level`, which has not been seen.
+            assert loop._member.jerk == previous
+            loop.update(level, 0.01)
+            previous = loop._member.jerk
+
+    def test_the_loop_drives_its_error_signal_toward_one(self):
+        """`E[z^2] = 1` is an honest filter, and is the loop's whole job.
+
+        Started deliberately over-confident - a `Q` a thousand times too small
+        - so the squared standardised innovation starts far above one and the
+        loop has somewhere to go.
+        """
+        from till_infinity.structures.statespace import Gaussian
+        from till_infinity.structures.statespace.adapting import Adapting
+
+        times, levels = self._series(jerk=0.02)
+        wrong = 0.02 / 1000.0
+        loop = Adapting(build=lambda: Gaussian(jerk=wrong, p00=1.0), mode="matching", step=0.01)
+        fixed = Adapting(build=lambda: Gaussian(jerk=wrong, p00=1.0), mode="none")
+        for when, level in zip(times, levels, strict=True):
+            loop.predict(when)
+            loop.update(level, 0.01)
+            fixed.predict(when)
+            fixed.update(level, 0.01)
+
+        assert fixed.excess > 3.0, "the fixed arm has to be badly over-confident"
+        assert loop.excess < fixed.excess / 2.0, "the loop has to close most of the gap"
+        assert loop.factor > 10.0, "and it has to do it by raising the lever"
+        assert loop.loglike > fixed.loglike, "which should also score better here"
+
+    def test_matching_and_gradient_move_the_same_way(self):
+        """They are the same direction: covariance matching **is** gradient
+        ascent on the likelihood with respect to `log Q`, up to the step size.
+
+        Asserted on the sign rather than the size, because the size is exactly
+        where they differ - the gradient's step shrinks as the predictive
+        spread grows, and measuring whether that matters is the harness's job.
+        """
+        from till_infinity.structures.statespace import Gaussian
+        from till_infinity.structures.statespace.adapting import Adapting
+
+        times, levels = self._series(jerk=0.02)
+        for wrong, direction in ((0.02 / 500.0, 1.0), (0.02 * 500.0, -1.0)):
+            moves = []
+            for mode in ("matching", "gradient"):
+                # `wrong` bound as a default: the lambda outlives this
+                # iteration inside the wrapper, and a late-bound loop variable
+                # would silently build every arm from the last value.
+                loop = Adapting(
+                    build=lambda jerk=wrong: Gaussian(jerk=jerk, p00=1.0),
+                    mode=mode,
+                    step=0.01,
+                )
+                for when, level in zip(times, levels, strict=True):
+                    loop.predict(when)
+                    loop.update(level, 0.01)
+                moves.append(loop.factor)
+            for factor in moves:
+                assert (factor - 1.0) * direction > 0.0, f"{wrong} went the wrong way"
+
+    def test_forgetting_inflates_the_covariance_and_leaves_the_lever_alone(self):
+        """A different mechanism, and the control on whether feedback matters.
+
+        Exponential forgetting is the recursive-least-squares answer: it bounds
+        how much information the filter can accumulate rather than correcting
+        `Q`. So the lever must not move, and the covariance must end larger
+        than the unforgetting arm's.
+        """
+        from till_infinity.structures.statespace import Gaussian
+        from till_infinity.structures.statespace.adapting import Adapting
+
+        times, levels = self._series()
+        loose = Adapting(
+            build=lambda: Gaussian(jerk=0.01, p00=1.0), mode="forgetting", forgetting=0.99
+        )
+        tight = Adapting(build=lambda: Gaussian(jerk=0.01, p00=1.0), mode="none")
+        for when, level in zip(times, levels, strict=True):
+            loose.predict(when)
+            loose.update(level, 0.01)
+            tight.predict(when)
+            tight.update(level, 0.01)
+        assert loose.factor == 1.0, "forgetting must not touch the lever"
+        assert loose.covariance()[0][0] > tight.covariance()[0][0]
+
+    def test_the_lever_is_clamped(self):
+        """A loop chasing an outlier must not reach zero or infinity.
+
+        A process noise of zero is a state that cannot move; one of infinity is
+        a state that is pure noise. Both are reachable by a multiplicative
+        update, so both are clamped - and `clamped` says when the loop has
+        stopped learning and started sitting on a bound.
+        """
+        from till_infinity.structures.statespace import Gaussian
+        from till_infinity.structures.statespace.adapting import Adapting
+
+        times, levels = self._series(jerk=5.0)
+        loop = Adapting(
+            build=lambda: Gaussian(jerk=1e-12, p00=1.0),
+            mode="matching",
+            step=0.9,
+            most=50.0,
+        )
+        for when, level in zip(times, levels, strict=True):
+            loop.predict(when)
+            loop.update(level, 0.01)
+        assert loop.factor <= 50.0
+        assert loop.clamped, "this is meant to hit the ceiling"
+        assert math.isfinite(loop.loglike)
+
+    def test_it_refuses_a_lever_that_does_not_exist_and_a_mode_that_does_not(self):
+        """Both silently do nothing if unchecked, which is the worst outcome:
+        a harness would report adaptation buying zero and be right by
+        accident."""
+        from till_infinity.structures.statespace import Gaussian
+        from till_infinity.structures.statespace.adapting import Adapting
+
+        with pytest.raises(ValueError, match="no 'theta' to adapt"):
+            Adapting(build=lambda: Gaussian(jerk=0.01), lever="theta")
+        with pytest.raises(ValueError, match="unknown mode"):
+            Adapting(build=lambda: Gaussian(jerk=0.01), mode="rmsprop")
+
+    def test_it_satisfies_the_filter_protocol(self):
+        from till_infinity.structures.statespace import Gaussian
+        from till_infinity.structures.statespace.adapting import Adapting
+        from till_infinity.structures.statespace.family import Filter
+
+        assert isinstance(Adapting(build=lambda: Gaussian(jerk=0.01)), Filter)
