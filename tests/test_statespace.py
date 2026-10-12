@@ -5160,3 +5160,88 @@ def test_every_member_takes_the_measurement_noise_as_a_variance():
             f"{name} does not take `noise` as a variance: "
             f"implied difference {got[0] - got[1]:.6f} against {one - two:.6f}"
         )
+
+
+def test_a_matrix_m_step_would_recover_the_shape_it_was_given():
+    """**Why the matrix M-step is not worth writing**, which is a measurement.
+
+    `family.MISSING["em"]` listed it as the half still missing. The textbook
+    M-step for a linear-Gaussian state space is `Q = (1/T) sum M(t)` with `M`
+    exactly what the scalar step projects, so it is *simpler* than what is
+    written - no inverse, no conditioning problem.
+
+    It would buy almost nothing, and the reason is structural. `M` is built
+    from the **E-step**, and a smoother cannot attribute process noise outside
+    the geometry of the model it is smoothing with - so `M` comes out nearly
+    parallel to `G(dt)` whatever the data, and a free `Q` would recover
+    approximately `c G(dt)`.
+
+    This asserts that on a **random walk**, which is not an integrated-jerk
+    path at all: if the residual were informative it would be large here.
+    """
+    import random
+
+    from till_infinity.structures.statespace.diagnostics import shape_cost
+    from till_infinity.structures.statespace.linear import Gaussian
+
+    times = [i * HOUR for i in range(600)]
+    rng = random.Random(7)
+    level = 0.0
+    walk = []
+    for _ in times:
+        level += rng.gauss(0.0, 1.0)
+        walk.append(level + rng.gauss(0.0, 0.5))
+
+    got = shape_cost(
+        lambda jerk, noise: Gaussian(jerk=jerk, p00=1.0),
+        times,
+        walk,
+        jerk=1e-3,
+        noise=0.25,
+    )
+    assert got is not None
+    # Near-parallel to the shape it was never generated from.
+    assert got["cosine"] > 0.99, got
+    assert got["residual"] < 0.05, got
+
+
+def test_the_scalar_spread_is_the_column_that_separates():
+    """The one reading in `shape_cost` that does carry misspecification.
+
+    A shape that is right gives one best-fit multiple; a shape that is wrong
+    gives a different one at every step. Measured: 0.19 on a matched
+    integrated-jerk path, 0.49 on a random walk, 1.30 under jumps.
+
+    **It is not monotone in correctness** and the test says so: pure noise
+    with no state at all gives the *lowest* spread of any arm, because there
+    is nothing to attribute. So it detects heteroscedastic mismatch rather
+    than wrongness.
+    """
+    import random
+
+    from till_infinity.structures.statespace.diagnostics import shape_cost
+    from till_infinity.structures.statespace.linear import Gaussian
+
+    times = [i * HOUR for i in range(600)]
+
+    def build(jerk, noise):
+        return Gaussian(jerk=jerk, p00=1.0)
+
+    def spread_of(series):
+        got = shape_cost(build, times, series, jerk=1e-3, noise=0.25)
+        assert got is not None
+        return got["scalar_spread"]
+
+    rng = random.Random(11)
+    level = 0.0
+    walk = []
+    jumps = []
+    for _ in times:
+        level += rng.gauss(0.0, 1.0)
+        walk.append(level + rng.gauss(0.0, 0.5))
+    level = 0.0
+    for _ in times:
+        level += rng.gauss(0.0, 0.3) + (rng.gauss(0.0, 8.0) if rng.random() < 0.02 else 0.0)
+        jumps.append(level + rng.gauss(0.0, 0.5))
+
+    assert spread_of(jumps) > spread_of(walk), "jumps are the sharpest mismatch"
