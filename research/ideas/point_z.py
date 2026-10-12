@@ -200,6 +200,18 @@ def candidates(series, span: int, side: int = TROUGH):
         )
         # Criterion 2: opposite-kind nodes strictly between the first and last.
         between = [n for n in found if n.kind == other and same[0].index < n.index < node.index]
+        # **The structure criterion 2 leaves out.** "At least two local maxima"
+        # counts the failed rallies and says nothing about where they sat. A
+        # real downtrend has **lower highs** as well as lower lows, so this
+        # counts how many of those intervening peaks descended - the
+        # `LOWER_HIGH` leg of the vocabulary `displacements.py` already names.
+        # Lower lows *and* lower highs is the strongest version of criterion 1
+        # available, and if the nulls come from too weak a filter, this is
+        # where that shows.
+        descending = sum(
+            1 for a, b in zip(between[:-1], between[1:], strict=True) if extends(b.level, a.level)
+        )
+        structured = len(between) >= 2 and descending == len(between) - 1
         # Criterion 3: the retracement, against the move that preceded it.
         prior = [n for n in found[: i + 1] if n.kind == other]
         if not prior:
@@ -239,6 +251,43 @@ def candidates(series, span: int, side: int = TROUGH):
                 "depth": depth,
                 # The claim's own success condition.
                 "reclaimed": 1.0 if beats(nxt.level, high.level) else 0.0,
+                "descending": descending,
+                "structured": 1.0 if structured else 0.0,
+                # **The confirmation criterion 3 leaves out.** Reclaiming the
+                # prior high is one leg; a market-structure break is two - a
+                # **higher high** *and* a **higher low**, so the next
+                # opposite-kind node beats the prior extreme and the same-kind
+                # node after it holds above Point Z. That is the standard
+                # confirmation and strictly harder than `reclaimed`, so it is
+                # reported beside it rather than instead of it.
+                "broke": (
+                    1.0
+                    if beats(nxt.level, high.level)
+                    and (
+                        later := next(
+                            (n for n in found[i + 1 :] if n.kind == side and n.index > nxt.index),
+                            None,
+                        )
+                    )
+                    is not None
+                    and beats(later.level, node.level)
+                    else 0.0
+                ),
+                # **The inversion, measured.** The criteria select for a
+                # strong trend and then bet against it, so the number that
+                # matters is whether the trend *continued*: does the next
+                # same-kind node go further than this one? For a trough that
+                # is a lower low, which is the short the criteria actually
+                # describe. Scored against the same random control, because a
+                # trend continuing is the common case and a criterion has to
+                # beat the base rate rather than the coin.
+                "continued": (
+                    1.0
+                    if (nextsame := next((n for n in ahead if n.kind == side), None)) is not None
+                    and extends(nextsame.level, node.level)
+                    else 0.0
+                ),
+                "had_next": 1.0 if any(n.kind == side for n in ahead) else 0.0,
                 # **Positive by construction and therefore not an edge**: the
                 # node after a trough is higher than it, by definition. Kept
                 # only to size the leg, never read as a return.
@@ -678,6 +727,135 @@ def main() -> None:
                 f"{statistics.median(cells):+.3f}  share positive "
                 f"{sum(1 for c in cells if c > 0) / len(cells):.2f}"
             )
+
+    print("\n" + "=" * 112)
+    print("ARM 7  the inversion: do the criteria pick continuation rather than reversal?")
+    print("=" * 112)
+    print(
+        "The criteria define a strong trend, so the reading with the sign\n"
+        "flipped is whether it **continued** - the next same-kind node going\n"
+        "further than this one, a lower low after a trough. Scored against\n"
+        "random selection of the same size, because a trend continuing is the\n"
+        "common case and a criterion must beat the base rate, not a coin.\n"
+        "Only candidates whose next same-kind node exists are counted.\n"
+    )
+    print(
+        f"{'instrument':<22}{'frame':<6}{'span':>5}{'side':<8}{'n':>7}"
+        f"{'all cont':>10}{'strict cont':>13}{'random':>9}{'z':>7}"
+    )
+    rng = random.Random(SEED)
+    found_all = []
+    for name in TRADED + GENERATED:
+        for frame in FRAMES:
+            series = load(name, frame)
+            if series is None:
+                continue
+            for span in SPANS:
+                for side, label in ((TROUGH, "short"), (PEAK, "long")):
+                    rows = [r for r in candidates(series, span, side) if r["had_next"] > 0]
+                    if len(rows) < 100:
+                        continue
+                    strict = [r for r in rows if r["lower"] == 3 and r["between"] >= 2]
+                    if len(strict) < 25:
+                        continue
+                    loose = statistics.fmean(r["continued"] for r in rows)
+                    tight = statistics.fmean(r["continued"] for r in strict)
+                    draws = [
+                        statistics.fmean(r["continued"] for r in rng.sample(rows, len(strict)))
+                        for _ in range(200)
+                    ]
+                    middle = statistics.fmean(draws)
+                    spread = statistics.stdev(draws)
+                    z = (tight - middle) / spread if spread > 0 else float("nan")
+                    found_all.append((name in GENERATED, label, z, tight - middle))
+                    print(
+                        f"{name:<22}{frame:<6}{span:>5}{label:<8}{len(rows):>7}"
+                        f"{loose:>10.3f}{tight:>13.3f}{middle:>9.3f}{z:>+7.2f}"
+                    )
+    print()
+    for generated, group in ((False, "traded"), (True, "generated")):
+        for label in ("short", "long"):
+            cells = [
+                (z, d)
+                for g, s_, z, d in found_all
+                if g is generated and s_ == label and not math.isnan(z)
+            ]
+            if cells:
+                print(
+                    f"{group:<10}{label:<7}cells {len(cells):>3}  median z "
+                    f"{statistics.median(z for z, _d in cells):+.2f}  "
+                    f"median lift {statistics.median(d for _z, d in cells):+.3f}  "
+                    f"share z>2 {sum(1 for z, _d in cells if z > 2) / len(cells):.2f}"
+                )
+
+    print("\n" + "=" * 112)
+    print("ARM 8  lower highs on the way in, a higher high plus a higher low on the way out")
+    print("=" * 112)
+    print(
+        "Two things the stated criteria leave out. **lower highs**: criterion 2\n"
+        "counts the failed rallies but not where they sat, and a real downtrend\n"
+        "has lower highs as well as lower lows. **the break**: reclaiming the\n"
+        "prior high is one leg, and a structure break is a higher high *and* a\n"
+        "higher low. Both z columns are against random selection of the same\n"
+        "size. If the earlier nulls came from too weak a filter, the +LH\n"
+        "column is where that shows.\n"
+    )
+    print(
+        f"{'instrument':<22}{'frame':<6}{'span':>5}{'side':<7}"
+        f"{'strict':>7}{'+LH':>6}{'recl':>7}{'z':>7}"
+        f"{'broke all':>11}{'broke str':>11}{'z':>7}{'broke +LH':>11}{'z':>7}"
+    )
+    rng = random.Random(SEED)
+    pooled: dict[str, list[float]] = {}
+    for name in TRADED + GENERATED:
+        for frame in FRAMES:
+            series = load(name, frame)
+            if series is None:
+                continue
+            for span in SPANS:
+                for side, label in ((TROUGH, "trough"), (PEAK, "peak")):
+                    rows = candidates(series, span, side)
+                    if len(rows) < 150:
+                        continue
+                    strict = [r for r in rows if r["lower"] == 3 and r["between"] >= 2]
+                    tighter = [r for r in strict if r["structured"] > 0]
+                    if len(strict) < 25 or len(tighter) < 20:
+                        continue
+
+                    def against(subset, field, pool=rows):
+                        real = statistics.fmean(r[field] for r in subset)
+                        draws = [
+                            statistics.fmean(r[field] for r in rng.sample(pool, len(subset)))
+                            for _ in range(200)
+                        ]
+                        middle = statistics.fmean(draws)
+                        spread = statistics.stdev(draws)
+                        return real, ((real - middle) / spread if spread > 0 else float("nan"))
+
+                    lh_recl, lh_z = against(tighter, "reclaimed")
+                    broke_all = statistics.fmean(r["broke"] for r in rows)
+                    bs, bs_z = against(strict, "broke")
+                    bl, bl_z = against(tighter, "broke")
+                    group = "generated" if name in GENERATED else "traded"
+                    for key, value in (
+                        (f"{group}:reclaimed with LH", lh_z),
+                        (f"{group}:break on strict", bs_z),
+                        (f"{group}:break with LH", bl_z),
+                    ):
+                        if not math.isnan(value):
+                            pooled.setdefault(key, []).append(value)
+                    print(
+                        f"{name:<22}{frame:<6}{span:>5}{label:<7}"
+                        f"{len(strict):>7}{len(tighter):>6}{lh_recl:>7.3f}{lh_z:>+7.2f}"
+                        f"{broke_all:>11.3f}{bs:>11.3f}{bs_z:>+7.2f}{bl:>11.3f}{bl_z:>+7.2f}"
+                    )
+    print()
+    for key in sorted(pooled):
+        cells = pooled[key]
+        print(
+            f"{key:<30}cells {len(cells):>3}  median z {statistics.median(cells):+.2f}  "
+            f"share z>2 {sum(1 for z in cells if z > 2) / len(cells):.2f}"
+        )
 
     print("\nDONE")
 
