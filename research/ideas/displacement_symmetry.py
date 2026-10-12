@@ -233,21 +233,21 @@ def garch_like(closes: list[float], seed: int) -> list[float]:
     A sequence of swings whose *sizes* cluster will show sizes more alike at
     short lags than a shuffle of itself, because that is what clustering
     means. So the symmetry index needs a series with the clustering and
-    nothing else, and GARCH(1,1) with t(5) innovations is the one
-    `research/harness/ecology.py` already uses.
+    nothing else.
+
+    **The surrogate this used was explosive and the control was therefore
+    worthless.** An unstandardised t(5) innovation gives the variance
+    recursion a persistence of `0.10 * 5/3 + 0.88 = 1.046`, so it ran to
+    `1e110` and nearly every return sat on the clamp - a clamped square wave
+    with a log-volatility swing *below* the estimation-noise floor. It now
+    comes from `nulls.garch`, which standardises the innovation and asserts
+    the persistence is under one.
     """
-    rng = random.Random(seed)
-    scale = unit(closes)
-    variance, previous = 1.0, 0.0
+    from till_infinity.structures.statespace.nulls import garch
+
+    scale = unit(closes) or 1e-6
     out = [closes[0]]
-    for _ in range(len(closes) - 1):
-        variance = 0.02 + 0.10 * previous * previous + 0.88 * variance
-        chi = sum(rng.gauss(0.0, 1.0) ** 2 for _ in range(5))
-        previous = rng.gauss(0.0, math.sqrt(variance)) * math.sqrt(5.0 / max(chi, 0.05))
-        # t(5) is heavy enough that a raw draw can overflow the exponential,
-        # and a price that overflows is not a heavier tail - it is a bug. The
-        # clamp is at twelve standardised units, past anything on record.
-        step = max(min(previous, 12.0), -12.0) * scale / 1.6
+    for step in garch(len(closes) - 1, seed=seed, sigma=scale):
         out.append(out[-1] * math.exp(step))
     return out
 

@@ -45,6 +45,7 @@ OU with `H` of 0.5 by construction** through the identical proxy:
 | `Volatility_75_Index` | 0.000 | 0.315 |
 | a constant-volatility walk | -0.005 | 0.314 |
 | **OU log-vol, true `H` = 0.5** | **0.141** | 0.578 |
+| GARCH(1,1) t(5) | 0.088 | 0.535 |
 
 **Cont and Das are right about the bias and it does not rescue the null.** The
 estimator returns 0.141 for a process whose true `H` is 0.5, so it is biased
@@ -123,26 +124,67 @@ gain is not a rescaling. On the controls the chosen bases differ by four to
 seven orders of magnitude, which is the ladder being the wrong model and
 saying so.
 
-## What to do with it
+## The gate, run: the ladder does not earn its complexity
 
-The actionable shape is clear and is **not yet built**: `fractional.py`
-applied to log-volatility, feeding its forecast into a price member's `Q`
-through `driven.py`'s `clock`-style door. The pieces all exist - the ladder,
-the Q-door, and a fitted volatility profile - and the wiring is the next step.
+A likelihood gain on log-volatility is a statement about log-volatility, not
+about the interval a stop sits in. `statespace-backtest.md` measured the
+random walk's two-sigma band at 0.953 against a nominal 0.954 - already
+honest - so the question is whether a volatility model produces a band that is
+**narrower at the same coverage**.
 
-Before that is worth doing, one thing has to be checked. `statespace-backtest.md`
-measured the random walk's two-sigma band at 0.953 against a nominal 0.954 -
-already honest. **A better volatility model only matters if it beats that**,
-and a likelihood gain on log-volatility is not the same claim as a better
-band. That test is the gate, and it has not been run.
+Four forecasters of the next bar's spread, all fitted on the first half and
+scored on the second:
+
+| | cover 1 sigma | cover 2 sigma | width at 2 sigma | **width at 0.954 coverage** |
+| --- | --- | --- | --- | --- |
+| constant, i.e. the walk | 0.819 | **0.951** | 1.000 | 2.059 |
+| **trailing standard deviation** | 0.742 | 0.925 | 0.769 | **1.933** |
+| ladder on log-volatility | 0.716 | 0.909 | 0.719 | 1.999 |
+| one OU on log-volatility | 0.672 | 0.878 | 0.649 | 2.097 |
+
+**Reading the nominal two-sigma column alone would get this wrong.** Every
+volatility-scaled band is narrower there - the ladder at 0.719 of the
+constant's width - and every one of them **under-covers**, at 0.878 to 0.925
+against 0.954. Narrower and under-covering is not sharper, it is wrong.
+
+The reason is the conditional distribution rather than the volatility model.
+Conditioning on volatility removes the *clustering* part of the fat tail and
+leaves a `t`-like core, so a Gaussian multiplier of two is too small for it -
+and the constant band's own two-sigma honesty is the mirror of the same fact,
+which is why it over-covers at one sigma while being right at two.
+
+So the last column is the only honest comparison: the multiplier searched
+until coverage actually reaches 0.954, and the widths compared there.
+
+* **A volatility model does beat the walk**, but by 3 to 6 percent, not by
+  the 28 percent the nominal column suggests.
+* **The winner is the trailing standard deviation at 1.933**, not the ladder.
+  A plain window of twenty-four bars is 3.3 percent narrower than five fitted
+  geometric modes.
+* **The single OU is worse than the constant** at 2.097, so the ladder's win
+  over it is real - the modes help *within* the log-volatility model - and
+  that win does not survive contact with the simplest possible alternative.
+
+**So the wiring is not justified.** The +191 to +547 nat likelihood gain on
+log-volatility does not translate into a better band than `trailing`, which
+is the null `nulls.py` describes as "the one nothing here has beaten" and
+which remains unbeaten. Running the gate cost one afternoon; wiring a ladder
+into `Q` first and discovering this afterwards would have cost considerably
+more.
 
 Two caveats on what is above:
 
-* **The GARCH surrogate is a weak control here.** Its log-volatility swing is
-  0.116, *below* the 0.315 estimation-noise floor, so at this
-  parameterisation it barely clusters and its `lambda^2` of -0.05 is not
-  meaningful. The constant-volatility and OU-log-volatility controls carry
-  the arms above; GARCH does not.
+* **The GARCH surrogate was broken when this was first run and is now
+  fixed.** An unstandardised t(5) innovation has variance `nu/(nu-2)`, five
+  thirds, so a recursion written with `shock = 0.10` and `memory = 0.88` has
+  an effective persistence of **1.046**: explosive. Measured, its variance
+  reached `1e110` and **98.8% of returns sat on the clamp**, making it a
+  clamped square wave whose log-volatility swing of 0.116 was *below* the
+  estimation-noise floor. A control that is accidentally a near-constant
+  series is worse than no control, because it still produces a number.
+  It now lives in `nulls.garch`, which standardises the innovation and
+  refuses a persistence at or above one - and three harnesses that each had
+  their own copy of the same defect now share it.
 * Everything is at 1h with a six-bar volatility window. The roughness
   estimator is known to be window-sensitive, and the window was not swept.
 

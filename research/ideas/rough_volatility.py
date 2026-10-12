@@ -256,21 +256,17 @@ def ou_volatility_returns(
 
 
 def garch_returns(n: int, sigma: float, seed: int) -> list[float]:
-    """Clustered volatility with an exponential decay, t(5) innovations.
+    """Clustered volatility with an exponential decay, from `nulls.garch`.
 
-    The control for the multifractality arm: clustering alone produces some
-    curvature in `zeta(q)`, so a market that cannot be told from this has
-    multifractality that is clustering under another name.
+    The surrogate lives in `nulls.py` because three harnesses had three copies
+    and all three were explosive: an unstandardised t(5) innovation makes the
+    recursion's persistence `0.10 * 5/3 + 0.88 = 1.046`, so the variance ran
+    to `1e110` and 98.8% of returns sat on the clamp. A near-constant series
+    is worse than no control, because it still produces a number.
     """
-    rng = random.Random(seed)
-    variance, previous = 1.0, 0.0
-    out: list[float] = []
-    for _ in range(n):
-        variance = 0.02 + 0.10 * previous * previous + 0.88 * variance
-        chi = sum(rng.gauss(0.0, 1.0) ** 2 for _ in range(5))
-        previous = rng.gauss(0.0, math.sqrt(variance)) * math.sqrt(5.0 / max(chi, 0.05))
-        out.append(max(min(previous, 12.0), -12.0) * sigma / 1.6)
-    return out
+    from till_infinity.structures.statespace.nulls import garch
+
+    return garch(n, seed=seed, sigma=sigma)
 
 
 def ladder_against_one(series: list[float], *, seed: int) -> dict[str, float]:
@@ -448,6 +444,8 @@ def main() -> None:
         "   volatility variation at all reads H = 0."
     )
 
+    _bands(rows, controls)
+
     print("\n== does log-volatility need a ladder of modes, or one OU?")
     print(f"{'series':<26}{'ladder':>12}{'one OU':>12}{'gain':>9}{'base ratio':>12}")
     for got in rows + made:
@@ -465,6 +463,208 @@ def main() -> None:
             f"{got['label']:<26}{scored['ladder']:>12.1f}{scored['one_ou']:>12.1f}"
             f"{scored['ladder'] - scored['one_ou']:>9.1f}{ratio:>12.1e}"
         )
+
+
+def _bands(rows, controls) -> None:
+    """The gate: a narrower band at the same coverage, or nothing."""
+    print("\n== the gate: does a volatility model beat the walk's band?")
+    print(
+        "   'constant' is the walk's band and the one to beat. width is relative\n"
+        "   to it, so below 1.00 is narrower. A narrower band only counts at the\n"
+        "   same coverage: narrower and under-covering is wrong, not sharp."
+    )
+    print(f"{'model':<12}{'cells':>6}{'cover1':>9}{'cover2':>9}{'width':>8}{'at 0.954':>10}")
+
+    pool: list[dict] = []
+    for got in rows:
+        pool.extend(band_arm(got["moves"], label=got["label"]))
+    for label, moves in controls:
+        pool.extend(band_arm(moves, label=label))
+
+    traded = [r for r in pool if not r["label"].startswith("*") and "," not in r["label"]]
+    for tag in ("constant", "trailing", "one_ou", "ladder"):
+        got = [r for r in traded if r["model"] == tag]
+        if not got:
+            continue
+        print(
+            f"{tag:<12}{len(got):>6}"
+            f"{statistics.median([r['cover1'] for r in got]):>9.3f}"
+            f"{statistics.median([r['cover2'] for r in got]):>9.3f}"
+            f"{statistics.median([r['width'] for r in got]):>8.3f}"
+            f"{statistics.median([r['matched'] for r in got]):>10.3f}"
+        )
+    print(
+        "   nominal coverage is 0.683 and 0.954. The last column is the width at\n"
+        "   the multiplier that actually reaches 0.954, which is the only\n"
+        "   comparison that is not confounded by coverage."
+    )
+
+
+def band_arm(moves: list[float], *, label: str) -> list[dict]:
+    """**The gate.** Does a log-volatility model give a better band than the walk?
+
+    `statespace-backtest.md` measured the random walk's two-sigma band at
+    0.953 against a nominal 0.954 - already honest. So a volatility model has
+    to do something the likelihood arm does not measure: produce a band that
+    is **narrower at the same coverage**. A likelihood gain on log-volatility
+    is a statement about log-volatility, not about the interval a stop sits
+    in, and the two can disagree.
+
+    Four forecasters of the next bar's standard deviation, all fitted on the
+    first half and scored on the second, all asked the same question - does
+    the next return fall inside `k` sigma:
+
+    * **constant** - the in-sample standard deviation. This is the walk's
+      band, and the one to beat.
+    * **trailing** - the standard deviation of the last `WINDOW * 4` returns.
+      The desk's standing null for a magnitude, and the one nothing has
+      beaten.
+    * **one_ou** - a single Ornstein-Uhlenbeck on log-volatility, forecast one
+      window ahead.
+    * **ladder** - `fractional`'s five geometric modes on log-volatility.
+
+    The log-volatility members forecast a **window's** volatility, so the
+    per-bar standard deviation is theirs unchanged: realised volatility is
+    already a per-bar quantity by construction of `log_volatility`.
+    """
+    from till_infinity.structures.statespace.fractional import Fractional
+    from till_infinity.structures.statespace.reverting import Reverting
+
+    series = log_volatility(moves, WINDOW)
+    if len(series) < 400:
+        return []
+    half = len(series) // 2
+    variance = 1.0 / (2.0 * WINDOW)
+    stamps = [float(i) * WINDOW * HOUR for i in range(len(series))]
+
+    # The in-sample constant and the fitted bases both come from the first
+    # half only, so nothing below has seen the half it is scored on.
+    insample = [v for chunk in range(half) for v in moves[chunk * WINDOW : (chunk + 1) * WINDOW]]
+    constant = statistics.pstdev(insample) or 1e-12
+
+    def forecasts(build) -> list[float]:
+        best, chosen = float("-inf"), 0.0
+        for power in range(-10, 3):
+            noise = 10.0**power
+            member = build(noise)
+            for i in range(half):
+                member.predict(stamps[i])
+                member.update(series[i], variance, stamps[i])
+            if math.isfinite(member.loglike) and member.loglike > best:
+                best, chosen = member.loglike, noise
+        if chosen <= 0:
+            return []
+        member = build(chosen)
+        out: list[float] = []
+        for i in range(len(series)):
+            member.predict(stamps[i])
+            # The forecast for window `i` is read **before** window `i` is
+            # folded in, which is the only version a live band could use.
+            out.append(math.exp(member.value))
+            member.update(series[i], variance, stamps[i])
+        return out
+
+    ladder = forecasts(lambda q: Fractional(modes=5, wander=q))
+    one_ou = forecasts(lambda q: Reverting(sigma2=q))
+
+    return _cover(
+        moves,
+        series,
+        label=label,
+        half=half,
+        constant=constant,
+        ladder=ladder,
+        one_ou=one_ou,
+        span=WINDOW * 4,
+    )
+
+
+def _cover(moves, series, *, label, half, constant, ladder, one_ou, span):
+    """Coverage and width for each forecaster, over the second half."""
+    rows = []
+    for tag in ("constant", "trailing", "one_ou", "ladder"):
+        inside = {1.0: 0, 2.0: 0}
+        widths: list[float] = []
+        widths_by_chunk: list[tuple[int, float]] = []
+        counted = 0
+        for chunk in range(half, len(series)):
+            if tag == "ladder" and not ladder:
+                break
+            if tag == "one_ou" and not one_ou:
+                break
+            if tag == "constant":
+                sigma = constant
+            elif tag == "trailing":
+                start = chunk * WINDOW - span
+                if start < 0:
+                    continue
+                recent = moves[start : chunk * WINDOW]
+                sigma = statistics.pstdev(recent) if len(recent) > 2 else constant
+            else:
+                sigma = (ladder if tag == "ladder" else one_ou)[chunk]
+            if not (sigma > 0) or not math.isfinite(sigma):
+                continue
+            widths_by_chunk.append((chunk, sigma))
+            for bar in moves[chunk * WINDOW : (chunk + 1) * WINDOW]:
+                counted += 1
+                for sigmas in (1.0, 2.0):
+                    if abs(bar) <= sigmas * sigma:
+                        inside[sigmas] += 1
+                widths.append(sigma)
+        if counted < 200:
+            continue
+        rows.append(
+            {
+                "label": label,
+                "model": tag,
+                "cover1": inside[1.0] / counted,
+                "cover2": inside[2.0] / counted,
+                "width": statistics.median(widths) / constant,
+                "matched": _matched(moves, series, half, widths_by_chunk, constant),
+            }
+        )
+    return rows
+
+
+def _matched(moves, series, half, sigmas_by_chunk, constant) -> float:
+    """Median band width at the multiplier that **hits 0.954 coverage**.
+
+    This is the comparison that decides the gate, and the nominal two-sigma
+    one does not. Every volatility-scaled band above is narrower than the
+    constant and **under-covers**, which is not a win - and the reason is the
+    conditional distribution rather than the volatility model: conditioning on
+    volatility removes the clustering part of the fat tail and leaves a
+    `t`-like core, so a Gaussian multiplier of two is too small for it. The
+    constant band's own two-sigma honesty is the mirror of the same fact.
+
+    So the multiplier is searched for each forecaster until its coverage is
+    0.954, and the widths are compared **there**. A model earns its place only
+    if it is still narrower once it is made honest.
+
+    Returned relative to the constant band's width at *its* own matched
+    multiplier, so 1.00 is the walk and below 1.00 is a real improvement.
+    """
+    if not sigmas_by_chunk:
+        return float("nan")
+    low, high = 0.5, 12.0
+    for _ in range(40):
+        mid = 0.5 * (low + high)
+        inside = counted = 0
+        for chunk, sigma in sigmas_by_chunk:
+            for bar in moves[chunk * WINDOW : (chunk + 1) * WINDOW]:
+                counted += 1
+                if abs(bar) <= mid * sigma:
+                    inside += 1
+        if counted == 0:
+            return float("nan")
+        if inside / counted < 0.9545:
+            low = mid
+        else:
+            high = mid
+    _ = series, half
+    return (
+        0.5 * (low + high) * statistics.median([sigma for _c, sigma in sigmas_by_chunk]) / constant
+    )
 
 
 if __name__ == "__main__":

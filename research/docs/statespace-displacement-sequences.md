@@ -200,8 +200,17 @@ Swept over lags 1 to 6 against two controls:
 
 | | median gain over a shuffle of the same sizes |
 | --- | --- |
-| the real series | **0.136** |
-| a GARCH(1,1) t(5) surrogate | **1.864** |
+| the real series | **0.124** |
+| a GARCH(1,1) t(5) surrogate | **0.131** |
+
+> **Corrected 2026-10-12.** This arm first reported 0.136 against 1.864, and
+> the surrogate was broken: an unstandardised t(5) innovation put the variance
+> recursion's persistence at 1.046, so it was explosive and 98.8% of its
+> returns sat on the clamp - a near-constant series, not GARCH. With the
+> surrogate fixed in `nulls.garch` the two numbers are **0.124 and 0.131**.
+> The verdict is unchanged and the mechanism is cleaner: the index does not
+> merely fail to exceed a clustering surrogate, it **matches** one almost
+> exactly.
 
 The index does measure something: real sequences are more self-similar at
 short lags than a shuffle of themselves, which is swing-size clustering and
@@ -209,8 +218,9 @@ is the slowly-decaying absolute-return autocorrelation this desk already
 records as a stylized fact in `facts.py`.
 
 But a surrogate with clustered volatility and no geometry whatsoever scores
-**thirteen times the gain**. The index cannot tell a market from a specified
-process, and telling those apart is the only thing it was offered to do. The
+**the same gain, to within six percent**. The index cannot tell a market from
+a specified process, and telling those apart is the only thing it was offered
+to do. The
 gain also barely decays from lag 1 to lag 6, which is what a volatility
 reading looks like and not what a periodicity at lag `k` looks like.
 
