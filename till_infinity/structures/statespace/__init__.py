@@ -376,6 +376,7 @@ from __future__ import annotations
 
 from .diagnostics import Residuals, fit_jerk, residuals
 from .family import MISSING, PENDING, Filter, members
+from .landau import Landau
 from .linear import Gaussian
 from .paths import Path, hourly, simulate, with_gaps
 from .rates import Slope, slope_per_bar, slope_per_hour
@@ -393,6 +394,7 @@ __all__ = [
     "SUBJECTS",
     "Filter",
     "Gaussian",
+    "Landau",
     "Path",
     "Residuals",
     "Reverting",

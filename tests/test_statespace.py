@@ -471,6 +471,7 @@ class TestFamily:
         assert set(got) == {
             "kalman",
             "reverting",
+            "landau",
             "robust",
             "selective",
             "swarm",
@@ -5412,3 +5413,276 @@ class TestDirectionChain:
         fitted = coin(moves, up_share(moves))
         assert fitted > fair, "a fitted coin must beat a fair one on biased signs"
         assert up_share(moves) == pytest.approx(0.70)
+
+
+class TestLandauCubic:
+    """The cubic member: exact where it claims to be, and nested where it must be.
+
+    Two claims carry this member and both are checkable without any market
+    data. **It reduces to `Reverting` at `kappa = 0`** - which is what makes
+    the comparison between them a one-parameter likelihood-ratio test rather
+    than a contest between two different models - and **its mean propagation
+    is closed-form rather than substepped**, which is the reason it can be
+    trusted over a long gap where an extended filter is usually worst.
+
+    The first version of `_travel` was Simpson's rule at four panels and
+    landed 2e-3 from the answer while the docstring claimed 1e-9. These tests
+    exist because that claim was written before it was checked.
+    """
+
+    def test_zero_kappa_is_reverting_bit_for_bit(self):
+        """The nested case, asserted on every field rather than the likelihood.
+
+        A member that merely *scored* the same would be good enough for the
+        likelihood-ratio test and would still hide an error in the state. This
+        asserts exact float equality - not `approx` - because the two should be
+        running identical arithmetic, and anything else means `kappa = 0` is
+        taking a different code path.
+        """
+        import random
+
+        from till_infinity.structures.statespace import Landau, Reverting
+
+        rng = random.Random(7)
+        cubic = Landau(sigma2=2e-3, theta=0.4, kappa=0.0)
+        linear = Reverting(sigma2=2e-3, theta=0.4)
+        clock = 0.0
+        for i in range(400):
+            # Uneven spacing, and one long gap: a dt bug hides under a grid.
+            clock += (73.0 if i % 50 == 49 else 1.0) * HOUR
+            reading = math.sin(i / 20.0) * 0.5 + rng.gauss(0.0, 0.1)
+            got = cubic.update(reading, noise=0.04, when=clock)
+            want = linear.update(reading, noise=0.04, when=clock)
+            assert got == want, f"innovation at {i}"
+            assert cubic.state() == linear.state(), f"state at {i}"
+            assert cubic.covariance() == linear.covariance(), f"covariance at {i}"
+        assert cubic.loglike == linear.loglike
+
+    def test_the_rates_flow_matches_a_dense_integration(self):
+        """The closed form against Runge-Kutta, over every sign combination.
+
+        `dr/dt = -(theta r + kappa r^3)` is solved through `u = r^2`, which
+        turns it logistic. The substitution is the kind of thing that is right
+        in general and wrong at `theta = 0` or for a negative rate, so all of
+        those are here: reversion, the double well, no linear term at all, a
+        negative starting rate, and a gap long enough to reach the well.
+        """
+        from till_infinity.structures.statespace.landau import _flow
+
+        def dense(rate, dt, theta, kappa, steps=20000):
+            step = dt / steps
+            pull = lambda x: -(theta * x + kappa * x**3)  # noqa: E731
+            for _ in range(steps):
+                k1 = pull(rate)
+                k2 = pull(rate + step * k1 / 2.0)
+                k3 = pull(rate + step * k2 / 2.0)
+                k4 = pull(rate + step * k3)
+                rate += step * (k1 + 2.0 * k2 + 2.0 * k3 + k4) / 6.0
+            return rate
+
+        cases = (
+            (0.5, 2.0, 0.8, 3.0),  # reversion, stiffened
+            (-0.3, 1.5, 0.1, 10.0),  # double well, climbing into it
+            (-0.3, 1.5, -0.05, 25.0),  # double well, the other side
+            (0.0, 4.0, 0.5, 2.0),  # no linear term
+            (0.5, 0.0, 0.3, 4.0),  # no cubic term
+            (2.0, 0.1, 0.02, 1.0),  # cubic negligible
+        )
+        for theta, kappa, rate, dt in cases:
+            got = _flow(rate, dt, theta, kappa)
+            want = dense(rate, dt, theta, kappa)
+            assert got == pytest.approx(want, rel=1e-9, abs=1e-12), (
+                f"theta={theta} kappa={kappa} rate={rate} dt={dt}"
+            )
+
+    def test_the_travel_integral_is_closed_and_not_quadrature(self):
+        """`int r dt` against Simpson at forty thousand panels.
+
+        **This is the test the first version of the module failed.** Both
+        branches are exercised - the logarithm for the double well and the
+        arctangent outside it - and so are the three cases that are not
+        branches at all: `theta` at exactly zero, a rate placed exactly in a
+        well (where the integral must be linear in time), and a step short
+        enough that the answer is the rate itself.
+        """
+        from till_infinity.structures.statespace.landau import _flow, _travel
+
+        def dense(rate, dt, theta, kappa, panels=40000):
+            step = dt / (2 * panels)
+            total = _flow(rate, 0.0, theta, kappa) + _flow(rate, dt, theta, kappa)
+            for i in range(1, 2 * panels):
+                total += (4.0 if i % 2 else 2.0) * _flow(rate, i * step, theta, kappa)
+            return total * step / 3.0
+
+        cases = (
+            (0.5, 2.0, 0.8, 3.0),
+            (-0.3, 1.5, 0.1, 200.0),  # long enough to settle in the well
+            (-0.3, 1.5, -0.05, 25.0),
+            (0.0, 4.0, 0.5, 2.0),  # theta exactly zero
+            (0.5, 0.0, 0.3, 4.0),
+            (-0.3, 1.5, 0.1, 0.001),  # a step shorter than anything real
+        )
+        for theta, kappa, rate, dt in cases:
+            got = _travel(rate, dt, theta, kappa)
+            want = dense(rate, dt, theta, kappa)
+            assert got == pytest.approx(want, rel=1e-8, abs=1e-12), (
+                f"theta={theta} kappa={kappa} rate={rate} dt={dt}"
+            )
+
+    def test_a_rate_in_the_well_travels_linearly(self):
+        """The stationary case, which is where `A` in the closed form vanishes.
+
+        `theta = -kappa r^2` is exactly the well condition, and it is also
+        exactly where the substitution's leading coefficient is zero. So this
+        is not a numerical edge that needed a guard - it is a physical fact
+        that shows up as one, and the guard has to reproduce the physics: a
+        rate sitting in a well does not move, so the distance is `rate * dt`.
+        """
+        from till_infinity.structures.statespace.landau import _flow, _travel
+
+        theta, kappa = -0.62, 0.30
+        rate = math.sqrt(-theta / kappa)
+        for dt in (1.0, 50.0, 1000.0):
+            assert _flow(rate, dt, theta, kappa) == pytest.approx(rate, rel=1e-12)
+            assert _travel(rate, dt, theta, kappa) == pytest.approx(rate * dt, rel=1e-9)
+            assert _flow(-rate, dt, theta, kappa) == pytest.approx(-rate, rel=1e-12)
+
+    def test_the_double_well_attracts_from_either_side(self):
+        """The member's falsifiable claim, as arithmetic.
+
+        `wells` is the only property here that makes a prediction about data
+        rather than about the filter, so the flow had better actually go there.
+        From inside, from outside, and from the wrong sign.
+        """
+        from till_infinity.structures.statespace import Landau
+
+        theta, kappa = -0.62, 0.30
+        edge = math.sqrt(-theta / kappa)
+        assert Landau(theta=theta, kappa=kappa).wells == pytest.approx((-edge, edge))
+        for start in (0.01, 0.5, 5.0, -0.01, -5.0):
+            member = Landau(
+                theta=theta,
+                kappa=kappa,
+                sigma2=0.0,
+                rate=start,
+                p00=0.0,
+                p01=0.0,
+                p11=0.0,
+                at=0.0,
+                seen=5,
+            )
+            member.predict(HOUR * 400.0)
+            assert member.rate == pytest.approx(math.copysign(edge, start), rel=1e-6), (
+                f"from {start}"
+            )
+
+    def test_no_wells_without_the_sign_pattern_that_makes_them(self):
+        """`wells` must be `None` unless `theta < 0 < kappa`.
+
+        The renormalisation-group claim is specifically `b > 0 > c`, which is
+        this sign pattern and no other. A property that returned a pair for
+        `theta > 0` would report a mode where the model has a single minimum,
+        and the harness reads this field to decide what it found.
+        """
+        from till_infinity.structures.statespace import Landau
+
+        assert Landau(theta=0.5, kappa=1.0).wells is None, "reverting and stiffened"
+        assert Landau(theta=-0.5, kappa=0.0).wells is None, "unstable, nothing to stop it"
+        assert Landau(theta=0.0, kappa=1.0).wells is None, "marginal"
+        assert Landau(theta=-0.5, kappa=-1.0).wells is None, "both signs wrong"
+        assert Landau(theta=-0.5, kappa=1.0).wells is not None
+
+    def test_the_stiffness_is_the_local_reversion_rate(self):
+        """`theta + 3 kappa r^2`, and `-2 theta` when the rate is in the well.
+
+        The curvature of the potential at its minimum is `-2 theta` for this
+        family, independent of `kappa` - which is a non-obvious identity and
+        therefore worth asserting, because getting the Jacobian's factor of
+        three wrong is the single easiest mistake in the module and would make
+        the covariance quietly wrong rather than visibly broken.
+        """
+        from till_infinity.structures.statespace import Landau
+
+        theta, kappa = -0.62, 0.30
+        member = Landau(theta=theta, kappa=kappa, rate=math.sqrt(-theta / kappa))
+        assert member.stiffness == pytest.approx(-2.0 * theta)
+        assert member.half_life_hours == pytest.approx(math.log(2.0) / (-2.0 * theta))
+
+        flat = Landau(theta=0.5, kappa=0.0, rate=3.0)
+        assert flat.stiffness == pytest.approx(0.5), "no cubic, no state dependence"
+        assert Landau(theta=-0.1, kappa=0.0, rate=1.0).half_life_hours == math.inf
+
+    def test_the_transition_is_the_tangent_of_the_flow(self):
+        """`transition` is a linearisation and `predict` is not - and they agree
+        where they must.
+
+        A smoother needs a matrix, so it gets the Jacobian; `predict` uses the
+        closed form. At `kappa = 0` the two are the same model and the matrix
+        must match `Reverting`'s exactly, which is what stops the tangent from
+        drifting away from the member it is a tangent to.
+        """
+        from till_infinity.structures.statespace import Landau, Reverting
+
+        for dt in (0.5, 4.0, 73.0):
+            assert Landau(theta=0.4, kappa=0.0).transition(dt) == Reverting(theta=0.4).transition(
+                dt
+            )
+
+        # With kappa on, the tangent's decay must follow the local stiffness.
+        member = Landau(theta=0.1, kappa=2.0, rate=0.9)
+        decay = member.transition(1.0)[1][1]
+        assert decay == pytest.approx(math.exp(-(0.1 + 3.0 * 2.0 * 0.81)))
+
+    def test_a_negative_kappa_reports_a_blow_up_rather_than_a_sign_flip(self):
+        """`kappa < 0` drives the rate to infinity in finite time.
+
+        It is not a parameter anyone should fit, but a grid search will offer
+        it, and the failure mode to avoid is the quiet one: taking the square
+        root of a negative `u` and coming back with a *finite* rate of the
+        wrong sign, which a likelihood would happily score.
+        """
+        from till_infinity.structures.statespace.landau import _flow, _travel
+
+        assert _flow(0.5, 10.0, -0.1, -1.0) == math.inf
+        assert _flow(-0.5, 10.0, -0.1, -1.0) == -math.inf
+        assert _travel(0.5, 10.0, -0.1, -1.0) == math.inf
+
+        # And the member survives it: the mean freezes, the likelihood is
+        # finite, and the grid can score the cell and move on.
+        from till_infinity.structures.statespace import Landau
+
+        member = Landau(theta=-0.1, kappa=-1.0, sigma2=1e-3)
+        for i in range(50):
+            member.update(0.1 * i, noise=0.04, when=i * HOUR)
+        assert math.isfinite(member.loglike)
+        assert math.isfinite(member.value)
+
+    def test_the_band_agrees_with_predicting_forward(self):
+        """Two hand-written copies of one propagation, as for `linear` and
+        `reverting`. The same check, because the same mistake was available -
+        `band` recomputes the local stiffness and could easily use the
+        start-of-step rate where `predict` uses the midpoint."""
+        from till_infinity.structures.statespace import Landau
+
+        fields = ("value", "rate", "p00", "p01", "p11", "theta", "kappa", "at", "seen")
+        for ahead in (0.0, 1.0, 7.0, 62.0):
+            live = Landau(sigma2=0.18, theta=-0.3, kappa=1.5)
+            for i in range(30):
+                live.update(5.0 + 0.05 * i, noise=0.16, when=i * HOUR)
+            when = live.at + ahead * HOUR
+            low, high = live.band(when, sigmas=2.0)
+
+            ahead_copy = Landau(**{f: getattr(live, f) for f in fields})
+            ahead_copy.sigma2 = live.sigma2
+            ahead_copy.predict(when)
+            assert 0.5 * (low + high) == pytest.approx(ahead_copy.value, rel=1e-9, abs=1e-12)
+            assert 0.5 * (high - low) == pytest.approx(2.0 * math.sqrt(ahead_copy.p00), rel=1e-9), (
+                f"ahead {ahead}"
+            )
+
+    def test_it_satisfies_the_filter_protocol(self):
+        """Because the whole point is scoring it against the other members."""
+        from till_infinity.structures.statespace import Landau
+        from till_infinity.structures.statespace.family import Filter
+
+        assert isinstance(Landau(), Filter)
