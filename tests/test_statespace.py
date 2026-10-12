@@ -931,14 +931,20 @@ def test_the_missing_inference_modes_are_named_rather_than_left_out():
     """A gap that is written down can be argued about; one that is not just looks
     like the package does not need it.
 
-    The finished-series smoother was the real absence and is now `smoothing.py`;
-    what is left is the **fixed-lag** form, which is the only one with bounded
-    latency, and EM.
+    The finished-series smoother was the real absence and is now
+    `smoothing.py`; the **fixed-lag** form followed as `smoothing.lagged` and
+    has been taken off the list. What is left presupposes a particle filter
+    (Monte Carlo variance, sequential parameter learning), revises estimates
+    a desk cannot unact (on-line smoothing), or is the one genuinely wanted
+    thing - `evidence`, which would let members with different parameter
+    counts be compared directly.
+
+    `test_nothing_on_the_missing_list_is_actually_written` is the guard that
+    keeps this honest; this one only checks the list's shape.
     """
     from till_infinity.structures.statespace import MISSING
 
     assert set(MISSING) == {
-        "fixed-lag smoother",
         "on-line smoothing",
         "monte carlo variance",
         "sequential parameter learning",
@@ -992,13 +998,22 @@ def test_the_particle_entry_records_what_it_will_need():
 
 def test_the_smoother_is_written_and_listed_as_an_inference_mode():
     """`family.py` tracks three operations - filter, smooth, sample. All three
-    exist now, and the table has to say so rather than still claiming a gap."""
-    from till_infinity.structures.statespace import MISSING, family
+    exist now, and the table has to say so rather than still claiming a gap.
+
+    **Both smoothers are written.** This used to assert that `fixed-lag
+    smoother` was still in `MISSING`; it is now `smoothing.lagged` and has
+    been taken off the list, which is the second stale entry found in a day -
+    see `test_nothing_on_the_missing_list_is_actually_written` for the guard
+    that stops a third.
+    """
+    from till_infinity.structures.statespace import MISSING, family, smoothing
 
     doc = " ".join((family.__doc__ or "").split())
     assert "smoothing.smooth" in doc, "the table must point at the implementation"
     assert "smoother" not in MISSING
-    assert "fixed-lag smoother" in MISSING
+    assert "fixed-lag smoother" not in MISSING
+    assert callable(smoothing.smooth)
+    assert callable(smoothing.lagged)
 
 
 def test_the_package_is_not_in_the_state_files_persistence_schema():
@@ -1134,15 +1149,50 @@ class TestSmoothing:
         assert got.autocorrelated is True, "the misspecification shows in the forward pass"
 
 
-def test_the_fixed_lag_form_is_what_is_still_missing():
-    """`smooth` needs the whole series, so its latency is the series. The
-    fixed-lag form bounds it by the lag and is the only version a desk could
-    read - and even then probably should not."""
+def test_nothing_on_the_missing_list_is_actually_written():
+    """**The guard that stops the list rotting**, which the old one did not.
+
+    `MISSING` is what someone reads to decide what to build next, so an entry
+    describing something already finished is worse than no entry. It rotted
+    twice in one day: `em` was half built and still described as absent, and
+    `fixed-lag smoother` was fully built as `smoothing.lagged` and still
+    listed.
+
+    The old test asserted the **entry's text** - that "latency" appeared in
+    it - which passes whether or not the code exists. This asserts the
+    **code's absence** instead, by naming for each key the thing that would
+    exist if it were done. A key whose probe starts resolving fails here,
+    which is the only way the list stays honest.
+    """
+    import importlib
+
     from till_infinity.structures.statespace import MISSING
 
-    assert "fixed-lag smoother" in MISSING
-    assert "smoother" not in MISSING, "the finished-series smoother is written now"
-    assert "latency" in MISSING["fixed-lag smoother"]
+    # For each remaining key, where it would live and what it would be called.
+    probes = {
+        "on-line smoothing": ("smoothing", ("online", "revise_all")),
+        "monte carlo variance": ("diagnostics", ("monte_carlo", "seed_spread")),
+        "sequential parameter learning": ("diagnostics", ("ibis", "smc_squared")),
+        "evidence": ("diagnostics", ("evidence", "log_evidence")),
+        "em": ("diagnostics", ("fit_em_matrix",)),
+    }
+    assert set(MISSING) == set(probes), (
+        f"a key was added or removed without its probe: {set(MISSING) ^ set(probes)}"
+    )
+
+    for key, (where, names) in probes.items():
+        module = importlib.import_module(f"till_infinity.structures.statespace.{where}")
+        for name in names:
+            assert not hasattr(module, name), (
+                f"MISSING['{key}'] says this is absent, but "
+                f"{where}.{name} exists - update the registry"
+            )
+
+    # And the one that is written is gone from the list.
+    from till_infinity.structures.statespace import smoothing
+
+    assert "fixed-lag smoother" not in MISSING
+    assert callable(smoothing.lagged), "which is why it is not on the list"
 
 
 def test_the_comparison_rule_is_held_out_and_says_why():
@@ -5245,3 +5295,120 @@ def test_the_scalar_spread_is_the_column_that_separates():
         jumps.append(level + rng.gauss(0.0, 0.5))
 
     assert spread_of(jumps) > spread_of(walk), "jumps are the sharpest mismatch"
+
+
+class TestDirectionChain:
+    """`hmm.Direction` - the direction half of the velocity decomposition.
+
+    The registry gave it a job: speed is persistent, direction is not, so the
+    state wants to be `(position, log speed)` with direction as a discrete
+    process. Measured, direction is a coin and speed is more persistent than
+    the registry claimed - so the tests here pin both the member's ability to
+    find a chain that exists and its collapse when one does not."""
+
+    HOUR = 3_600.0
+
+    def _planted(self, n, *, up, down, switch, seed):
+        import random
+
+        rng = random.Random(seed)
+        times = [i * self.HOUR for i in range(n)]
+        state, moves = 0, []
+        for _ in times:
+            if rng.random() < switch:
+                state = 1 - state
+            rate = up if state == 0 else down
+            moves.append(1.0 if rng.random() < rate else -1.0)
+        return times, moves
+
+    def test_it_recovers_a_planted_chain(self):
+        """Without this the null below is unreadable.
+
+        A member that cannot find a direction regime when one is planted says
+        nothing by failing to find one in a market.
+        """
+        from till_infinity.structures.statespace.hmm import (
+            Direction,
+            coin,
+            fit,
+            up_share,
+        )
+
+        times, moves = self._planted(4000, up=0.70, down=0.30, switch=0.02, seed=7)
+        half = len(moves) // 2
+        member, _ = fit(times[:half], moves[:half])
+        assert member.rates[0] == pytest.approx(0.70, abs=0.06), member.rates
+
+        live = Direction(persist_hours=member.persist_hours, rates=member.rates)
+        for when, move in zip(times[half:], moves[half:], strict=True):
+            live.predict(when)
+            live.update(move, move and when)
+        fitted = coin(moves[half:], up_share(moves[:half]))
+        assert live.loglike > fitted + 50.0, (live.loglike, fitted)
+
+    def test_it_collapses_to_the_small_end_of_the_grid_on_a_fair_coin(self):
+        """A fair coin drives the two states together.
+
+        The claim is about the **small end of the grid** rather than an exact
+        value, and that is deliberate: the likelihood difference between a
+        separation of 0.02 and 0.05 on two thousand fair tosses is within
+        noise, so which of the two wins varies by seed. What does not vary is
+        that it is one of them rather than 0.20 or 0.35.
+
+        Measured on real data at 1h the fit lands on 0.020 - the smallest the
+        grid offers - on every instrument.
+        """
+        from till_infinity.structures.statespace.hmm import fit
+
+        for seed in (11, 12, 13):
+            times, moves = self._planted(4000, up=0.5, down=0.5, switch=0.02, seed=seed)
+            member, _ = fit(times[:2000], moves[:2000])
+            assert abs(member.rates[0] - 0.5) < 0.1, (seed, member.rates)
+
+    def test_the_forecast_is_read_before_the_move_is_folded_in(self):
+        """`update` returns P(up) **before** seeing the move.
+
+        A probability read after the outcome is not a forecast of it, and the
+        returned value is what a caller would have had to bet on.
+        """
+        from till_infinity.structures.statespace.hmm import Direction
+
+        member = Direction(rates=(0.9, 0.1))
+        member.predict(0.0)
+        first = member.update(1.0, 0.0)
+        assert first == pytest.approx(0.5), "the prior is even before any move"
+        member.predict(self.HOUR)
+        second = member.update(1.0, self.HOUR)
+        assert second > first, "an up move should raise the next forecast"
+
+    def test_a_flat_move_is_dropped_rather_than_assigned(self):
+        """A flat bar is not a direction.
+
+        Splitting it evenly would invent an observation, and on a tick-sparse
+        series there can be many.
+        """
+        from till_infinity.structures.statespace.hmm import Direction, coin
+
+        member = Direction()
+        member.predict(0.0)
+        member.update(0.0, 0.0)
+        assert member.seen == 0
+        assert member.loglike == 0.0
+        # And the coin null ignores them too, so the two agree on the sample.
+        assert coin([0.0, 0.0], 0.5) == float("-inf")
+
+    def test_the_coin_null_takes_its_probability_rather_than_inventing_one(self):
+        """`coin` requires the probability, and that is the point.
+
+        An earlier version took `None` to mean a fair coin and then computed
+        the *fitted* rate in that branch - the opposite of what it said -
+        which would have made the fair null the fitted one and hidden any gain
+        over it.
+        """
+        from till_infinity.structures.statespace.hmm import coin, up_share
+
+        moves = [1.0] * 70 + [-1.0] * 30
+        fair = coin(moves, 0.5)
+        fitted = coin(moves, up_share(moves))
+        assert fitted > fair, "a fitted coin must beat a fair one on biased signs"
+        assert up_share(moves) == pytest.approx(0.70)

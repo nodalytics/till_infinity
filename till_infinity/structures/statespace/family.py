@@ -382,7 +382,24 @@ PENDING: dict[str, str] = {
         "direction agrees with its predecessor 49.5% of the time against 50% "
         "+/- 3.1%. So the state wants to be (position, log speed) with "
         "direction as a separate discrete process, which is a switching model, "
-        "and the HMM is the direction half of it"
+        "and the HMM is the direction half of it. "
+        "**Built and measured, 2026-10-12** - `statespace-direction-chain.md`. "
+        "`hmm.Direction` is a two-state chain with Bernoulli emissions on the "
+        "sign and a hazard per hour. It finds a chain that is really there: on "
+        "a planted series with up-rates of 0.70 and 0.30 and fifty-bar "
+        "regimes it recovers exactly 0.70/0.30 and beats a fitted coin by 101 "
+        "nats. On real data it is **null**, and the column that says so is the "
+        "shuffled control rather than the coin: the chain gains +5.5 nats at "
+        "the median over a fitted coin and **-0.1 over the same signs "
+        "reordered**, so the gain is the marginal and not the sequence. At 1h "
+        "the fitted states come out at 0.52/0.48 on every instrument, the "
+        "smallest separation in the grid - it collapses to one coin. "
+        "**The decomposition's other half is confirmed and larger than the "
+        "number above**: speed persistence is +0.412 to +1.915 across "
+        "fourteen traded cells against a signed-rate persistence of -0.062 to "
+        "+0.055, medians +0.787 and -0.012, where the generated markets give "
+        "0.002 to 0.054 for speed. So `(position, log speed)` is the state "
+        "worth having and the discrete direction process is not"
     ),
     "rfs": (
         "the geometric levels themselves - `pips` on its own data, not a random "
@@ -395,18 +412,17 @@ PENDING: dict[str, str] = {
 #: Inference modes the family should offer and this package does not yet. Keyed
 #: the way `dynamax` keys them, with what each unlocks rather than what it is.
 MISSING: dict[str, str] = {
-    "fixed-lag smoother": (
-        "`smoothing.smooth` smooths a finished series, so its latency is the "
-        "length of the series - fine for a study and useless live. The fixed-lag "
-        "form bounds latency by the lag instead and is the only version a desk "
-        "could read, though it still may not: a smoothed estimate at the moment "
-        "of a touch uses bars that have not happened"
-    ),
     "on-line smoothing": (
-        "updates the smoothed estimate as measurements arrive instead of needing "
-        "the series to end. Between `smoothing.smooth` and the fixed-lag form in "
-        "usefulness, and the one that would make a smoothed reading available "
-        "without a horizon to wait for"
+        "revises **every** past estimate as each measurement arrives, rather "
+        "than the one `lag` steps back. Listed here as between "
+        "`smoothing.smooth` and the fixed-lag form in usefulness, which with "
+        "`lagged` written now looks like the wrong ordering: it costs `O(t)` "
+        "per step where fixed-lag costs `O(lag)`, and what it buys is "
+        "revisions to estimates a desk has already acted on and cannot "
+        "unact. `Lagged.revision` already exposes the quantity that would be "
+        "worth watching - how far hindsight moved the estimate - at bounded "
+        "cost. So this stays on the list as **genuinely absent** rather than "
+        "as genuinely wanted"
     ),
     "monte carlo variance": (
         "an error bar on a particle filter's own estimation noise - Chan and Lai "
