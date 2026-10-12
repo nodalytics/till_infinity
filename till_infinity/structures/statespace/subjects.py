@@ -211,14 +211,29 @@ SPREAD = Subject(
     jerk=1e-4,
     noise=0.25,
     provenance=(
-        "both placeholders. The spread is the one quantity here that is "
-        "*observed* rather than inferred - the broker quotes it - so `noise` "
-        "is about how well a bar's recorded spread represents the spread that "
-        "would have been paid, which is a question about the feed rather than "
-        "about the market. Roll's implied spread from the serial covariance of "
-        "price changes is the independent estimate, and the disagreement "
-        "between the two is itself a measurement: the broker's number is the "
-        "one the desk is charged"
+        "**measured, and the answer is that this subject does not earn its "
+        "place.** `statespace-spread.md` filtered the quoted spread on tick "
+        "data and found it nearly constant: its hour-of-day profile is 1.02x "
+        "to 1.09x peak to trough where volatility's is 2.7x to 3.7x, and on "
+        "XAUUSD and every generated market the spread is flat enough that "
+        "every forecaster scores an error of 0.000. Only BTCUSD has a "
+        "forecastable spread at all, and there a five-observation trailing "
+        "mean beats the filter - 0.060 against 0.062 - with a constant at "
+        "0.072. `theta` fits at 200 an hour on both traded pairs, a half-life "
+        "of twelve seconds, which is the fit saying the spread is a constant "
+        "plus noise rather than a process. The parameters above stay "
+        "placeholders because fitting them is degenerate on a constant: "
+        "`sigma2` and `theta` pin at opposite grid edges on the synthetics. "
+        "**The practical consequence is reassuring**: the constant cost gate "
+        "every harness here uses is wrong by 0.6% on XAUUSD and 7.2% on "
+        "BTCUSD, so no cost-gated conclusion in the repository changes. "
+        "Roll's implied spread was named here as the independent estimate "
+        "and **cannot be computed from this data**: it infers the spread from "
+        "bid-ask bounce in *transaction* prices, and a mid-quote has no "
+        "bounce by construction, so applied to mids it reads price dynamics - "
+        "it swings from 12.06x the quoted spread at 60s intervals to 1.39x at "
+        "10s on the same instrument. It would need trade prices, which this "
+        "desk does not store"
     ),
     member="reverting",
 )

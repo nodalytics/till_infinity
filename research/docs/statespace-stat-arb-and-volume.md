@@ -152,10 +152,13 @@ exogenous channel nothing consumed.
    sum of geometrically spaced exponential modes approximating a power law,
    which is what the S4/HiPPO lineage in this package's reading list exists
    for. Null: beat the exponential member on held-out likelihood.
-5. **The spread as a subject.** Every cost gate here uses a constant, and the
-   SEC paper's whole finding is that the number moves with the composition of
-   the flow. Null: beat a trailing average of the spread, out of sample - a
-   hard null.
+5. ~~**The spread as a subject.**~~ **Done, and the answer is no.**
+   `statespace-spread.md` filtered the quoted spread on tick data: its
+   hour-of-day profile is 1.02x to 1.09x peak to trough where volatility's is
+   2.7x to 3.7x, a five-observation trailing mean beats the filter on the one
+   instrument whose spread moves at all, and the constant gate every harness
+   uses is wrong by under 8%. So no cost-gated conclusion here changes, which
+   supports them rather than undermining them. The hard null held.
 6. **A balance/imbalance two-state member**, which is auction market theory
    stated as a switching model and is also I9. Its 70% claims need the matched
    control that already killed "price is a magnet".

@@ -312,11 +312,34 @@ class TestSubjects:
         assert "placeholder" in LEVEL.provenance, "its jerk is not measured"
 
     def test_the_others_claim_nothing(self):
-        from till_infinity.structures.statespace.subjects import SPREAD
+        """`INSTRUMENT` and `RELATION` still have no measurement behind them.
 
-        for s in (INSTRUMENT, RELATION, SPREAD):
+        `SPREAD` used to be in this list and has moved: its parameters are
+        still placeholders, but the **subject** has been measured - and found
+        not to earn its place, which is a result rather than an absence. The
+        two categories are different and the test now says which is which.
+        """
+        for s in (INSTRUMENT, RELATION):
             assert "placeholder" in s.provenance
             assert "measured" not in s.provenance.replace("never fitted", "")
+
+    def test_the_spread_has_been_measured_and_its_parameters_have_not(self):
+        """Both at once, which is the state a measured-and-rejected subject is in.
+
+        `statespace-spread.md` filtered the quoted spread and found it nearly
+        constant - an hour-of-day profile of 1.02x to 1.09x where volatility's
+        is 2.7x to 3.7x - so a five-observation trailing mean beats the filter
+        and the constant cost gate every harness uses is wrong by under 8%.
+        The parameters stay placeholders because fitting them is **degenerate
+        on a constant**: `sigma2` and `theta` pin at opposite grid edges.
+        """
+        from till_infinity.structures.statespace.subjects import SPREAD
+
+        assert "measured" in SPREAD.provenance
+        assert "placeholder" in SPREAD.provenance
+        assert "Roll" in SPREAD.provenance, (
+            "the provenance must keep why its independent check is unavailable"
+        )
 
     def test_one_model_serves_all_three(self):
         """The thesis's central claim, refined by the thing that falsified it.
