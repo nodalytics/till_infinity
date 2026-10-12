@@ -107,7 +107,13 @@ is unambiguous.
 ## What this changes
 
 * **Use the walk's band for stops**, not a member's. It is the only one
-  honest at two sigma, and the one to beat.
+  honest at two sigma, and the one to beat - **with the correction
+  `statespace-touches.md` measured.** Everything in this note is on closes,
+  and a stop is hit on a touch: on ticks the two-sigma band holds a *quoted*
+  path 0.944 of the time where it contains the next close 0.969, so the real
+  breach rate is 0.056 per interval rather than 0.047. At one sigma the gap
+  is 0.115 and a close-based reading is not usable at all. The correction
+  scales with the spread in units of the interval's volatility.
 * **Do not trade a member's direction.** Zero of twenty-eight cells clear
   cost, the loss equals the spread paid, and this agrees with every previous
   attempt: at most 6 of 45 bin pairs orderable in
