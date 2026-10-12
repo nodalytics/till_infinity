@@ -471,6 +471,7 @@ class TestFamily:
         assert set(got) == {
             "kalman",
             "reverting",
+            "landau",
             "robust",
             "selective",
             "swarm",
