@@ -390,10 +390,30 @@ class Seasonal:
         return self.last_standardised
 
 
-#: Harmonics for a clock profile. Three, for the same reason the member uses
-#: three: a session shape has two or three bumps, and the fourth starts
-#: fitting single hours.
-PROFILE_HARMONICS = 3
+#: Harmonics for a clock profile. **Four, measured.** It was three, on the
+#: reasoning that a session shape has two or three bumps and the fourth would
+#: start fitting single hours. The second half of that was wrong.
+#:
+#: Swept on five traded instruments at 1h, held out, each count against the
+#: flat arm with its own best base jerk - median gain over flat:
+#:
+#: | harmonics | 1 | 2 | 3 | **4** | 6 | 8 | 12 |
+#: | --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+#: | median | +898 | +995 | +1010 | **+1055** | +1053 | +1040 | +1044 |
+#:
+#: It peaks at four and plateaus, and four is best or tied-best on all five -
+#: USDJPY gains +143 over three and USDCAD +164.
+#:
+#: **The placebos are what make the plateau readable.** Two Deriv volatility
+#: indices have no session, so any count that is fitting noise should show it
+#: there; they stay at -1 to -3 nats at *every* count including twelve. So the
+#: higher counts are not overfitting, they have simply run out of shape to
+#: describe - which is a different and more useful fact than "the fourth fits
+#: single hours".
+#:
+#: `research/docs/statespace-profile-and-legs.md` has the run, including why
+#: extending `PERIODS` instead is not where the gain is.
+PROFILE_HARMONICS = 4
 
 
 @dataclass(slots=True)
@@ -466,8 +486,23 @@ class Profile:
     weights: tuple[float, ...] = ()
     harmonics: int = PROFILE_HARMONICS
 
-    #: The period the profile repeats over, in hours. A day by default; a week
-    #: is the other one worth trying, and the weekend gap makes it harder.
+    #: The period the profile repeats over, in hours. A day by default.
+    #:
+    #: **A ladder of other periods was measured and none of them earns a
+    #: place.** At 1h bars, scored on top of the daily profile: 4h +1, 8h
+    #: **-63**, 12h +58, the week -0, the fortnight +7, four weeks -8, the
+    #: quarter +3, the year -45 - against the day's own +1010.
+    #:
+    #: The ladder carried two rungs with no mechanism, and they are what
+    #: settled it: a second profile at **24h gained +324** and one at **48h
+    #: +399**, more than any genuinely new period, while **100h gained -3**.
+    #: Harmonic `j` of a 48-hour period sits at `48/j` hours, so `j = 2` *is*
+    #: the day - a 48h profile re-fits the daily shape with more harmonics.
+    #: 100h has no harmonic near 24 and gains nothing, so 100h is the honest
+    #: control and nothing beats it.
+    #:
+    #: The day's shape was under-described rather than the clock incomplete,
+    #: which is why `PROFILE_HARMONICS` moved to four and this stayed at 24.
     period: float = 24.0
 
     @property
