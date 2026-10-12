@@ -189,3 +189,71 @@ Two caveats on what is above:
   estimator is known to be window-sensitive, and the window was not swept.
 
 The harness is `research/ideas/rough_volatility.py`.
+
+## Combining the two: the symmetry index at every moment order
+
+Asked after the two results above sat oddly together. The symmetry index is
+blind - the market gains 0.124 over a shuffle where a clustering surrogate
+gains 0.131 - and yet the market's returns are two to four times more
+multifractal than that surrogate. So the market has structure the index does
+not see, which suggests a repair rather than an abandonment.
+
+The index is the **first** absolute moment of the log swing-size ratio.
+Nothing forces it to be the first. Taking the `q`-th moment gives a scaling
+exponent per order, `xi(q)`, and if the swing sequence is multifractal that
+exponent is **curved** - the same parabola `zeta(q)` traces for returns, with
+`lambda_s^2` the swing sequence's own multifractality. The hypothesis was that
+a first moment averages the intermittency away and the curvature is where the
+market's excess would appear.
+
+| arm | index at `q=1` | `H_s` | `lambda_s^2` |
+| --- | --- | --- | --- |
+| the market | 0.590 | 0.029 | **0.0031** |
+| its sizes shuffled | 0.882 | -0.001 | 0.0009 |
+| a GARCH surrogate | 0.716 | 0.058 | -0.0010 |
+| a Gaussian walk | 0.637 | 0.003 | -0.0035 |
+| **generated markets** | 0.507 | 0.006 | **0.0025** |
+
+**It does not rescue the index, and the reason closes the question.**
+`lambda_s^2` is 0.0031 on traded markets and 0.0025 on markets with a known
+generator and no auction - indistinguishable - and it is **twenty to forty
+times smaller** than the 0.062 to 0.117 the same instruments' *returns* show.
+
+The mechanism is a stylized fact this package already records. A swing size is
+a **sum of same-signed returns**, and `facts.py` measures kurtosis falling
+with aggregation: summing is precisely the operation that destroys
+multifractality. So the displacement sequence does not merely fail to show the
+market's intermittency - it cannot, because forming it averages the
+intermittency away.
+
+That is worth more than another null. It says the whole family of
+swing-sequence statistics is downstream of an aggregation that removes the
+one property distinguishing these markets from a clustering surrogate, and no
+choice of moment order recovers it.
+
+The harness is `research/ideas/swing_multifractality.py`.
+
+## And the tail, which is where conditioning makes things worse
+
+The band arm was extended to three sigma after asking whether anticipating
+volatility lets moves be anticipated better:
+
+| | 1 sigma | 2 sigma | **3 sigma** |
+| --- | --- | --- | --- |
+| nominal | 0.683 | 0.954 | **0.9973** |
+| constant, the walk | 0.819 | 0.951 | **0.983** |
+| trailing standard deviation | 0.742 | 0.925 | **0.972** |
+| ladder on log-volatility | 0.716 | 0.909 | **0.963** |
+| one OU on log-volatility | 0.672 | 0.878 | **0.946** |
+
+**Every model under-covers at three sigma, and the volatility models under-cover
+worst.** The constant band already admits about six times too many three-sigma
+exceedances - 0.017 observed against 0.0027 expected - and `one_ou` admits
+twenty times too many.
+
+So conditioning on volatility makes the tail **worse**, not better. The fat
+tail is not clustering: it survives conditioning, and it survives it
+relatively less well, because it is a question about the **shape** of the
+conditional distribution and a variance model only sets the scale. Anything
+sized off a Gaussian multiple of a conditional standard deviation will be
+wrong in the tail however good the volatility forecast is.

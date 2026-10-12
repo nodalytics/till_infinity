@@ -490,6 +490,7 @@ def _bands(rows, controls) -> None:
             f"{tag:<12}{len(got):>6}"
             f"{statistics.median([r['cover1'] for r in got]):>9.3f}"
             f"{statistics.median([r['cover2'] for r in got]):>9.3f}"
+            f"{statistics.median([r['cover3'] for r in got]):>9.3f}"
             f"{statistics.median([r['width'] for r in got]):>8.3f}"
             f"{statistics.median([r['matched'] for r in got]):>10.3f}"
         )
@@ -583,7 +584,7 @@ def _cover(moves, series, *, label, half, constant, ladder, one_ou, span):
     """Coverage and width for each forecaster, over the second half."""
     rows = []
     for tag in ("constant", "trailing", "one_ou", "ladder"):
-        inside = {1.0: 0, 2.0: 0}
+        inside = {1.0: 0, 2.0: 0, 3.0: 0}
         widths: list[float] = []
         widths_by_chunk: list[tuple[int, float]] = []
         counted = 0
@@ -607,7 +608,7 @@ def _cover(moves, series, *, label, half, constant, ladder, one_ou, span):
             widths_by_chunk.append((chunk, sigma))
             for bar in moves[chunk * WINDOW : (chunk + 1) * WINDOW]:
                 counted += 1
-                for sigmas in (1.0, 2.0):
+                for sigmas in (1.0, 2.0, 3.0):
                     if abs(bar) <= sigmas * sigma:
                         inside[sigmas] += 1
                 widths.append(sigma)
@@ -619,6 +620,7 @@ def _cover(moves, series, *, label, half, constant, ladder, one_ou, span):
                 "model": tag,
                 "cover1": inside[1.0] / counted,
                 "cover2": inside[2.0] / counted,
+                "cover3": inside[3.0] / counted,
                 "width": statistics.median(widths) / constant,
                 "matched": _matched(moves, series, half, widths_by_chunk, constant),
             }
