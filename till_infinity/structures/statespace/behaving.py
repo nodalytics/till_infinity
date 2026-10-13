@@ -150,6 +150,59 @@ def classify(feed: str) -> str:
     return "unknown"
 
 
+def geometry(opens, highs, lows, closes) -> dict[str, float]:
+    """The intra-bar statistics `TRAITS` is built from, so it can be rebuilt.
+
+    `imbalance` is `(C - O) / (H - L)` - where in its own range the bar closed -
+    and `wick` is `((H - C) - (C - L)) / (H - L)`, which side was rejected.
+    Returned as medians of their absolute values, plus the share of bars that
+    closed past half their range.
+
+    **A figure from this means nothing on its own.** All three take perfectly
+    ordinary values on a random walk, because they are functions of path
+    geometry rather than of order flow - which is why `TRAITS.absorption` is a
+    **ratio to a matched walk** and not a level. `absorption` below computes
+    that ratio once a caller has the walk's own value.
+    """
+    import numpy as np
+
+    opens = np.asarray(opens, dtype=float)
+    highs = np.asarray(highs, dtype=float)
+    lows = np.asarray(lows, dtype=float)
+    closes = np.asarray(closes, dtype=float)
+    span = highs - lows
+    keep = span > 0
+    if keep.sum() < 100:
+        return {}
+    opens, highs, lows, closes, span = (v[keep] for v in (opens, highs, lows, closes, span))
+    imbalance = (closes - opens) / span
+    wick = ((highs - closes) - (closes - lows)) / span
+    return {
+        "imbalance": float(np.median(np.abs(imbalance))),
+        "wick": float(np.median(np.abs(wick))),
+        "run_share": float(np.mean(np.abs(imbalance) > 0.5)),
+        "bars": float(len(span)),
+    }
+
+
+def absorption(measured: float, walk: float) -> float:
+    """`measured / walk - 1`: the fingerprint, as a departure from a walk.
+
+    Negative absorbs - a real order book, where price travels its range and
+    comes back. Zero is a walk. Positive runs - a generator with a jump, whose
+    bars close at their extremes.
+
+    The departures are a few per cent, so **the sign is the claim and the
+    magnitude only its size**. Measured across nineteen classes and about five
+    hundred instruments, the sign separates a real book from a generator with
+    no exceptions: every traded class absorbs, every jump generator runs, and
+    every jump-free generator is neutral.
+    """
+    if not walk:
+        return float("nan")
+    return measured / walk - 1.0
+
+
 @dataclass(frozen=True, slots=True)
 class Traits:
     """What one market class was measured to do. Every field has a source."""

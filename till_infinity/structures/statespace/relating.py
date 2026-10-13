@@ -163,6 +163,70 @@ LEVEL_WANDER = 1e-4
 RATIO_WANDER = 1e-7
 
 
+def native_returns(series):
+    """One-bar returns on a series' **own** grid, gap-spanners dropped.
+
+    `(stamps, steps)` or `None`. `series` is `(stamps, values, ...)`.
+
+    **The order of differencing and aligning is not a detail.** Taking two
+    series' common timestamps first and differencing afterwards turns every
+    hole in the common grid into one increment spanning the hole - and the
+    increment appears in **both** series at the same index, so those shared
+    jumps dominate any correlation or tail statistic computed from them.
+
+    It bites hardest on mixed-session pairs: FX trades 24/5 and crude, the
+    softs and the indices do not, so the common grid between an FX pair and a
+    commodity is mostly holes. Measured, it moved `USDCAD` against crude from
+    `-0.0436` to `-0.0621` and a dollar-partial amplification from 5.4x to
+    3.6x.
+
+    An increment is kept only when its own timestamp gap is the modal spacing,
+    which also drops the weekend - a 65-hour move is not an hourly return on
+    any instrument.
+    """
+    import numpy as np
+
+    stamps = np.asarray(series[0], dtype=float)
+    values = np.asarray(series[1], dtype=float)
+    if len(stamps) < 3:
+        return None
+    gaps = np.diff(stamps)
+    step = float(np.median(gaps))
+    if step <= 0:
+        return None
+    keep = np.abs(gaps - step) <= 0.25 * step
+    if not keep.any():
+        return None
+    return stamps[1:][keep], np.diff(values)[keep]
+
+
+def paired(*series, least: int = 400):
+    """Native returns for two or more series, on their common bars.
+
+    Differences each on its own grid **first**, then aligns the returns, so
+    every observation is a true one-bar return that both instruments actually
+    traded through. Returns a list of equal-length arrays, or `None`.
+    """
+    import numpy as np
+
+    got = [native_returns(one) for one in series]
+    if any(one is None for one in got):
+        return None
+    stamps = got[0][0]
+    for one in got[1:]:
+        stamps = np.intersect1d(stamps, one[0])
+    if len(stamps) < least:
+        return None
+    out = []
+    for one in got:
+        _, index, _ = np.intersect1d(one[0], stamps, return_indices=True)
+        steps = one[1][index]
+        if steps.std() == 0:
+            return None
+        out.append(steps)
+    return out
+
+
 def currencies(name: str) -> frozenset[str]:
     """The two codes a symbol spans. `EURUSD` is an edge from EUR to USD."""
     return frozenset((name[:3], name[3:6])) if len(name) >= 6 else frozenset()
