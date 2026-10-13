@@ -198,14 +198,38 @@ def family(name: str) -> str:
     return "other"
 
 
-def universe(frame: str) -> list[str]:
-    """Every synthetic in the cache for `frame`, by prefix."""
-    found = []
+def universe(frame: str, cap: int = 0) -> list[str]:
+    """Every synthetic in the cache for `frame`, balanced across families.
+
+    **The cap used to truncate an alphabetical list, which silently excluded a
+    whole family.** `Volatility_*` sorts last, so a cap of 40 returned Boom,
+    Crash, DEX, Drift_Switch, Jump, Multi_Step, Range_Break, Skew_Step and Step
+    and never once included the GBM family - the one whose members are most
+    likely to share a generator, and the one the null partition was built to
+    check. Taking them round-robin by prefix means a cap thins every family
+    instead of deleting the last ones.
+    """
+    found: dict[str, list[str]] = {}
     for path in sorted(CACHE.glob(f"*.{frame}.npz")):
         name = path.name[: -len(f".{frame}.npz")]
-        if any(name.startswith(prefix) for prefix in GENERATED_PREFIXES):
-            found.append(name)
-    return found[:NULLS]
+        for prefix in GENERATED_PREFIXES:
+            if name.startswith(prefix):
+                found.setdefault(prefix, []).append(name)
+                break
+    limit = cap or NULLS
+    out: list[str] = []
+    while len(out) < limit:
+        took = False
+        for prefix in GENERATED_PREFIXES:
+            names = found.get(prefix)
+            if names:
+                out.append(names.pop(0))
+                took = True
+                if len(out) >= limit:
+                    break
+        if not took:
+            break
+    return out
 
 
 def point_size(closes) -> float:
