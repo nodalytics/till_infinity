@@ -6150,3 +6150,144 @@ class TestBounding:
         assert bounding.shifts_for("DEX_600_UP_Index")[0] > bounding.SHIFT
         assert bounding.shifts_for("DEX_600_DOWN_Index")[1] > bounding.SHIFT
         assert bounding.shifts_for("DEX_600_Index") == (bounding.SHIFT, bounding.SHIFT)
+
+
+class TestVendoredCusum:
+    """The package must not import from outside itself, and the copy must not drift."""
+
+    def test_the_package_imports_nothing_from_outside_itself(self):
+        """Isolation is the point: this package is meant to lift out in one move.
+
+        A reach into a sibling **model** - `structures.learning`,
+        `structures.context`, `trading`, `models` - turns an extraction into a
+        code change, so it is asserted rather than remembered. `paired.py` used
+        to import the changepoint detector from `structures.learning`.
+
+        **`shared` is exempt.** It travels with the package rather than being a
+        model the package depends on, which is why `Restorable` is imported
+        from there rather than vendored: duplicating persistence-critical code
+        is a liability, and `restore_deque` exists because a capped deque came
+        back unbounded from a production restore.
+        """
+        import pathlib
+        import re
+
+        from till_infinity.structures import statespace
+
+        package = pathlib.Path(statespace.__file__).parent
+        offenders = {}
+        for path in sorted(package.glob("*.py")):
+            for line in path.read_text().splitlines():
+                stripped = line.strip()
+                if not stripped.startswith(("import ", "from ")):
+                    continue
+                # `from .x`, `from till_infinity.structures.statespace...` and
+                # plain third-party imports are all fine; `from ..` and any
+                # `till_infinity` path outside this package are not.
+                if "shared" in stripped:
+                    continue
+                if stripped.startswith("from ..") or (
+                    re.match(r"from till_infinity\b", stripped) and "statespace" not in stripped
+                ):
+                    offenders.setdefault(path.name, []).append(stripped)
+        assert not offenders, f"statespace reaches outside itself: {offenders}"
+
+    def test_no_two_modules_under_structures_share_a_basename(self):
+        """`codec.py` keys by basename, so a duplicate silently breaks a restore.
+
+        This hazard has now bitten three times. `paired.py` records the first
+        two - two modules called `focus` holding two classes called `Focus`
+        resolved to the same registry key, and a restore built the wrong class.
+        The third was this vendoring: naming the new module `cusum.py` beside
+        the existing `context/cusum.py` made the basename-to-location map
+        ambiguous, and a new field on `context.cusum.Cusum` stopped
+        invalidating saved state.
+
+        The schema test catches it, but with a message about an unrelated class.
+        This says what is actually wrong.
+        """
+        import pathlib
+
+        from till_infinity import structures
+
+        root = pathlib.Path(structures.__file__).parent
+        seen = {}
+        for path in sorted(root.rglob("*.py")):
+            if path.name == "__init__.py":
+                continue
+            seen.setdefault(path.stem, []).append(str(path.relative_to(root)))
+        clashes = {stem: where for stem, where in seen.items() if len(where) > 1}
+        assert not clashes, (
+            "two modules under structures share a basename, which codec.py keys "
+            f"persistence by: {clashes}"
+        )
+
+    def test_the_vendored_detector_matches_the_original_observation_by_observation(self):
+        """A verbatim copy is only safe while it stays verbatim.
+
+        The original is still in `structures.learning` and still used there, so
+        the two can drift apart silently. This feeds both the same stream and
+        compares the statistic, the changepoint and the hull at every step.
+        """
+        import random
+
+        from till_infinity.structures.learning.focus import THRESHOLD as ORIGINAL
+        from till_infinity.structures.learning.focus import Focus
+        from till_infinity.structures.statespace.accruing import THRESHOLD, OneSided
+
+        assert THRESHOLD == ORIGINAL
+
+        rng = random.Random(20261013)
+        for up in (True, False):
+            theirs = Focus(up=up)
+            mine = OneSided(up=up)
+            # A shift part way through, so both detectors actually fire.
+            for i in range(600):
+                value = rng.gauss(0.0, 1.0) + (1.5 if i > 300 else 0.0)
+                fired_theirs = theirs.update(value, 1.0)
+                fired_mine = mine.update(value, 1.0)
+                assert fired_mine == fired_theirs, f"up={up} step {i}"
+                assert mine.statistic == pytest.approx(theirs.statistic), i
+                assert mine.at == theirs.at, i
+                assert mine.hull == theirs.hull, i
+                assert mine.seen == theirs.seen, i
+            theirs.reset()
+            mine.reset()
+            assert mine.hull == theirs.hull
+            assert mine.statistic == theirs.statistic
+
+    def test_paired_still_works_on_the_vendored_detector(self):
+        """The caller that prompted the vendoring, driven through its real API."""
+        from till_infinity.structures.statespace.accruing import OneSided
+        from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.paired import Paired
+
+        member = Paired(build=lambda: Gaussian(jerk=1e-9))
+        hour = 3_600.0
+        when = 0.0
+        for i in range(400):
+            when += hour
+            member.predict(when)
+            # A clean shift part way through, so the detector has something to find.
+            member.update(0.001 * i + (0.05 if i > 200 else 0.0), 1e-8, when)
+        assert isinstance(member._up, OneSided)
+        assert isinstance(member._down, OneSided)
+        assert member.statistic >= 0.0
+
+    def test_paired_still_works_on_the_vendored_detector(self):
+        """The caller that prompted the vendoring, driven through its real API."""
+        from till_infinity.structures.statespace.accruing import OneSided
+        from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.paired import Paired
+
+        member = Paired(build=lambda: Gaussian(jerk=1e-9))
+        hour = 3_600.0
+        when = 0.0
+        for i in range(400):
+            when += hour
+            member.predict(when)
+            # A clean shift part way through, so the detector has something to find.
+            member.update(0.001 * i + (0.05 if i > 200 else 0.0), 1e-8, when)
+        assert isinstance(member._up, OneSided)
+        assert isinstance(member._down, OneSided)
+        assert member.statistic >= 0.0

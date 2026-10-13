@@ -77,7 +77,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from ..learning.focus import THRESHOLD, Focus
+from .accruing import THRESHOLD, OneSided
 
 HOUR = 3600.0
 
@@ -103,8 +103,8 @@ class Paired:
     _member: object = field(default=None, repr=False)
     #: Two one-sided detectors. The innovations are signed, and a member that
     #: has started reading high is a different failure from one reading low.
-    _up: Focus = field(default=None, repr=False)
-    _down: Focus = field(default=None, repr=False)
+    _up: OneSided = field(default=None, repr=False)
+    _down: OneSided = field(default=None, repr=False)
     #: Statistic from the last reading, and how many times it has fired.
     statistic: float = 0.0
     detections: int = 0
@@ -119,9 +119,9 @@ class Paired:
         if self._member is None:
             self._member = self.build()
         if self._up is None:
-            self._up = Focus(threshold=self.threshold, up=True)
+            self._up = OneSided(threshold=self.threshold, up=True)
         if self._down is None:
-            self._down = Focus(threshold=self.threshold, up=False)
+            self._down = OneSided(threshold=self.threshold, up=False)
 
     # ----------------------------------------------------- the member's view
 
