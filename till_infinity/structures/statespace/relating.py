@@ -108,6 +108,34 @@ direction of the regression - `y on x` and `x on y` give different hedge ratios
 and the choice matters. Those are the caller's, and `research/ideas/` is where
 they get measured.
 
+## Never test for a relationship with this ratio
+
+**It adapts to every reading, so a spread built from it is stationary by
+construction.** Measured: a Dickey-Fuller `t` on a spread formed from the
+one-bar-lagged live ratio reads **-29.39** between `Boom_50_Index` and
+`Skew_Step_Index_4_Down` - two generated processes with no connection - while
+the best real pair reads `-18.19` and the textbook critical value is about
+`-3.4`. The pipeline produced more apparent cointegration from noise than from
+markets.
+
+One bar is no lag at all: the ratio barely moves in a bar, so it still absorbs
+whatever the two series jointly do and leaves a residual that looks stationary
+because it was fitted to look stationary.
+
+So the ratio is the right object for **holding** a hedge, which is what it was
+built for, and the wrong one for **testing** whether a hedge exists - by a
+factor of 8.5 in the test statistic. To test, fit one ratio by least squares on
+a training half and hold it fixed over the rest; that null lands at `-3.46`,
+which is the textbook value, derived rather than assumed.
+
+## And a candidate basket may be an identity rather than a relationship
+
+`is_identity` below is the other half of the same caution. Seven currency
+triangles in a 20-instrument FX universe satisfy an exact linear relation, and
+a screen that does not exclude them reports arithmetic as discovery: at three
+legs they read `t` past `-56` with weights at exactly `+/-1.000`, and 21 of 500
+four-leg baskets inherit one.
+
 ## Nothing here publishes
 
 The nulls are named and both are the obvious thing a desk does instead: a
@@ -133,6 +161,63 @@ HOUR = 3600.0
 #: harness sweeps them, and `diagnostics` is where a fit would go.
 LEVEL_WANDER = 1e-4
 RATIO_WANDER = 1e-7
+
+
+def currencies(name: str) -> frozenset[str]:
+    """The two codes a symbol spans. `EURUSD` is an edge from EUR to USD."""
+    return frozenset((name[:3], name[3:6])) if len(name) >= 6 else frozenset()
+
+
+def is_identity(names: Sequence[str]) -> bool:
+    """Whether a candidate basket satisfies an **exact** linear relation.
+
+    Treat each instrument as an edge between its two currencies. The log prices
+    satisfy an exact relation if and only if the edge set contains a **cycle**:
+
+        edges > nodes - components
+
+    `EURUSD/USDCHF/EURCHF` is three edges on three connected nodes, so `3 > 2`
+    and `log(EURCHF) = log(EURUSD) + log(USDCHF)` holds by arithmetic.
+    `EURUSD/USDJPY/USDCAD` is three edges on four nodes, so `3 = 3` - a tree,
+    no cycle, and a genuine candidate.
+
+    **This is a positive control as much as a filter.** A screen run on an FX
+    universe must return the triangles at `t` past `-50` with fitted weights at
+    `+/-1.000`; one that does not has a defect upstream of its conclusion. And
+    a screen that does not *exclude* them reports arithmetic as discovery - the
+    count of inherited identities rises 0, 5, 21, 39 at widths two to five, so
+    past three legs they dominate the survivors by count.
+
+    The rule is structural and the weights are measured, so their agreement is
+    the evidence: nothing told the fit which sets were identities and it put
+    every identity weight at exactly `+/-1.000`, against `0.675/0.161` and
+    `0.595/0.424` for the two that are not.
+    """
+    parent: dict[str, str] = {}
+
+    def find(node: str) -> str:
+        parent.setdefault(node, node)
+        while parent[node] != node:
+            parent[node] = parent[parent[node]]
+            node = parent[node]
+        return node
+
+    edges = 0
+    for name in names:
+        pair = tuple(currencies(name))
+        if len(pair) != 2:
+            continue
+        left, right = find(pair[0]), find(pair[1])
+        edges += 1
+        if left != right:
+            parent[left] = right
+    codes = {code for name in names for code in currencies(name)}
+    if not codes:
+        return False
+    # `nodes` counts currencies and `components` the trees they fall into;
+    # conflating the two makes every connected set look like an identity.
+    components = len({find(code) for code in codes})
+    return edges > len(codes) - components
 
 
 @dataclass(slots=True)

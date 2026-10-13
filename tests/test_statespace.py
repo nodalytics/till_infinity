@@ -6273,3 +6273,140 @@ class TestVendoredCusum:
         assert isinstance(member._up, OneSided)
         assert isinstance(member._down, OneSided)
         assert member.statistic >= 0.0
+
+
+class TestResearchIntegrated:
+    """The primitives the relationship and forecast work left in research harnesses.
+
+    `nulls.py` argues the case itself: the floors "lived in research harnesses,
+    were copied between them, and drifted - which is how both defects below
+    survived". This session copied two null constructions across five harnesses
+    and scored every forecast result on a CRPS the library did not have.
+    """
+
+    def test_a_rotation_preserves_the_marginal_exactly(self):
+        """The one property the null exists for, asserted rather than assumed.
+
+        The first implementation rotated the **levels** and then differenced
+        them, which replaces one real increment with the gap across the wrap
+        point - so the marginal was not preserved and the null was not a null.
+        """
+        import random
+
+        from till_infinity.structures.statespace import nulls
+
+        rng = random.Random(20261013)
+        values = [0.0]
+        for _ in range(400):
+            values.append(values[-1] + rng.gauss(0.0, 1.0))
+        rotated = nulls.rotated(values, 137)
+
+        assert len(rotated) == len(values)
+        assert rotated[0] == values[0], "anchored at the same start"
+        steps = sorted(round(values[i] - values[i - 1], 9) for i in range(1, len(values)))
+        after = sorted(round(rotated[i] - rotated[i - 1], 9) for i in range(1, len(rotated)))
+        assert after == steps, "the increment multiset must be identical"
+        assert rotated[1:6] != values[1:6], "and it must actually move"
+
+    def test_a_block_shuffle_preserves_the_marginal_and_the_caller_s_order(self):
+        import random
+
+        from till_infinity.structures.statespace import nulls
+
+        rng = random.Random(7)
+        values = [0.0]
+        for _ in range(400):
+            values.append(values[-1] + rng.gauss(0.0, 1.0))
+        order = list(range(len(values) // 24 + 2))
+        rng.shuffle(order)
+        shuffled = nulls.block_shuffled(values, order)
+
+        assert len(shuffled) == len(values)
+        steps = sorted(round(values[i] - values[i - 1], 9) for i in range(1, len(values)))
+        after = sorted(round(shuffled[i] - shuffled[i - 1], 9) for i in range(1, len(shuffled)))
+        assert after == steps, "a permutation must preserve the increments"
+        # A partial order would shorten the series, which changes the sample.
+        assert len(nulls.block_shuffled(values, [0, 1])) == len(values)
+        # Too short to null: handed back unchanged rather than silently wrong.
+        assert nulls.block_shuffled([0.0, 1.0, 2.0], [0]) == [0.0, 1.0, 2.0]
+        assert nulls.rotated([0.0, 1.0, 2.0], 1) == [0.0, 1.0, 2.0]
+
+    def test_crps_agrees_with_the_closed_form_it_replaces(self):
+        """One instrument for every band shape, checked against the known case.
+
+        The tail-shape work needed a Gaussian closed form *and* a quadrature and
+        had to reconcile them. The quantile-loss identity needs only quantiles,
+        so it scores a Gaussian, a Student-t and a shape-free empirical band
+        identically - but it has to reproduce the closed form to be trusted.
+        """
+        import statistics as stats
+
+        from till_infinity.structures.statespace import diagnostics
+
+        normal = stats.NormalDist()
+        grid = [(i / 200.0, normal.inv_cdf(i / 200.0)) for i in range(1, 200)]
+
+        # The closed form for a standard normal forecast at outcome x is
+        # `x(2*Phi(x) - 1) + 2*phi(x) - 1/sqrt(pi)`, checked at two outcomes so
+        # the agreement is not a coincidence at one point.
+        def closed(x: float) -> float:
+            phi = math.exp(-0.5 * x * x) / math.sqrt(2.0 * math.pi)
+            return x * (2.0 * normal.cdf(x) - 1.0) + 2.0 * phi - 1.0 / math.sqrt(math.pi)
+
+        for outcome in (0.0, 1.5):
+            assert diagnostics.crps(grid, outcome) == pytest.approx(closed(outcome), abs=5e-3), (
+                outcome
+            )
+        # A degenerate forecast sitting on the outcome scores nothing.
+        assert diagnostics.crps([(i / 50.0, 0.0) for i in range(1, 50)], 0.0) == 0.0
+        # And it is a loss: being wrong costs more than being right.
+        near = diagnostics.crps(grid, 0.0)
+        far = diagnostics.crps(grid, 3.0)
+        assert far > near
+
+    def test_pit_flatness_reads_one_on_uniform_and_more_on_a_pile(self):
+        from till_infinity.structures.statespace import diagnostics
+
+        uniform = [(i + 0.5) / 2000.0 for i in range(2000)]
+        assert diagnostics.pit_flatness(uniform) == pytest.approx(0.0, abs=0.05)
+        piled = [0.5] * 2000
+        assert diagnostics.pit_flatness(piled) > 100.0
+        assert math.isnan(diagnostics.pit_flatness([0.1, 0.2]))
+
+    def test_har_is_a_harder_floor_than_a_lag_and_says_so_by_shape(self):
+        from till_infinity.structures.statespace import nulls
+
+        rows, targets = nulls.har(list(range(100)))
+        assert len(rows) == len(targets)
+        assert all(len(row) == 3 for row in rows)
+        # The first row sits at `month - 1` and predicts the next observation.
+        assert targets[0] == float(nulls.HAR_MONTH)
+        assert rows[0][0] == float(nulls.HAR_MONTH - 1)
+        # On a ramp the week and month means trail the own value.
+        assert rows[0][1] < rows[0][0]
+        assert rows[0][2] < rows[0][1]
+        assert nulls.har([1.0, 2.0]) == ([], [])
+
+    def test_the_currency_cycle_rule_separates_arithmetic_from_a_candidate(self):
+        """The rule that keeps a screen from reporting arithmetic as discovery."""
+        from till_infinity.structures.statespace import relating
+
+        for names in (
+            ("EURUSD", "USDCHF", "EURCHF"),
+            ("EURUSD", "GBPUSD", "EURGBP"),
+            ("GBPUSD", "USDJPY", "GBPJPY"),
+            ("EURUSD", "USDCHF", "EURCHF", "GBPUSD"),
+            ("EURUSD", "EURGBP", "GBPUSD"),
+        ):
+            assert relating.is_identity(names), names
+        for names in (
+            ("EURUSD", "USDJPY", "USDCAD"),
+            ("GBPUSD", "NZDUSD", "AUDUSD"),
+            ("BTCUSD", "ETHUSD", "SOLUSD", "XAUUSD"),
+            ("EURUSD", "GBPUSD"),
+            ("XAUUSD", "XAGUSD"),
+            ("EURUSD", "USDJPY", "GBPUSD", "USDCAD", "NZDUSD"),
+        ):
+            assert not relating.is_identity(names), names
+        assert relating.currencies("EURUSD") == frozenset({"EUR", "USD"})
+        assert relating.is_identity([]) is False
