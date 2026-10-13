@@ -209,8 +209,22 @@ def score(times, values, volumes, *, build, lever, base, clock, driver):
     return member.loglike, member.average
 
 
-def best_base(times, values, volumes, *, build, lever, natural):
-    """Sweep the base on the **flat** arm, so no driver can win a rescaling."""
+def best_base(times, values, volumes, *, build, lever, natural, clock=None, driver=None):
+    """Sweep the base noise. On the **flat** arm unless an arm is named.
+
+    The default - refitting on the undriven arm and holding that base for every
+    driven one - is the usual guard, and it is what makes a driver prove it
+    earns its gain by **shape**. But it cannot settle one question, and that
+    question is now open: `seasonal.Profile.factor` runs at a mean of **1.21**,
+    so the clock arm has been receiving 21% more average process noise than the
+    base it was given, and the obvious reading is that the base was simply too
+    low for it.
+
+    If so, the clock's gain is partly a mis-set base rather than a time-of-day
+    shape, and a normalised clock **with its own refitted base** should recover
+    it. Passing `clock` and `driver` here refits on that arm instead, which is
+    the comparison that decides whether `Profile` should be changed.
+    """
     found = []
     for multiple in GRID:
         base = natural * multiple
@@ -223,8 +237,8 @@ def best_base(times, values, volumes, *, build, lever, natural):
             build=build,
             lever=lever,
             base=base,
-            clock=None,
-            driver=NoDriver(),
+            clock=clock,
+            driver=driver if driver is not None else NoDriver(),
         )
         if math.isfinite(got):
             found.append((got, base, multiple))
@@ -317,6 +331,63 @@ def main() -> None:
     if not rows:
         print("\nnothing scored")
         return
+
+    print("\n" + "=" * 104)
+    print("ARM 5  is the clock's level subsidy a mis-set base, or something else")
+    print("=" * 104)
+    print(
+        "`Profile.factor` runs at a mean of 1.21, so the clock arm has had 21%\n"
+        "more average process noise than the base it was handed. If that is all\n"
+        "it is, a **normalised** clock given **its own refitted base** recovers\n"
+        "the gain - and then `Profile` should be normalised, because the level\n"
+        "belongs in the base where a refit will find it.\n"
+    )
+    print(
+        f"{'instrument':<20}{'clock, own base':>17}{'normalised, own base':>22}"
+        f"{'difference':>12}{'base ratio':>12}"
+    )
+    recovered = []
+    for name in TRADED:
+        found = load(name, FRAMES[0])
+        if found is None:
+            continue
+        times, logs, volumes = found
+        gaps = [times[i] - times[i - 1] for i in range(1, min(len(times), 500))]
+        dt = statistics.median(gaps) / HOUR if gaps else 1.0
+        spread = statistics.pstdev([logs[i] - logs[i - 1] for i in range(1, len(logs))]) or 1e-9
+        middle = len(times) // 2
+        profile = Profile.fit(times[:middle], logs[:middle])
+        if profile is None:
+            continue
+        build, lever, natural = LEVERS["level"]
+        plain_base, plain = best_base(
+            times, logs, volumes, build=build, lever=lever, natural=natural(spread, dt),
+            clock=profile.factor, driver=NoDriver(),
+        )
+        levelled = Levelled(inner=profile.factor)
+        norm_base, normalised = best_base(
+            times, logs, volumes, build=build, lever=lever, natural=natural(spread, dt),
+            clock=levelled.factor, driver=NoDriver(),
+        )
+        if plain_base <= 0 or norm_base <= 0:
+            continue
+        print(
+            f"{name:<20}{plain:>17.1f}{normalised:>22.1f}"
+            f"{normalised - plain:>+12.1f}{norm_base / plain_base:>12.2f}"
+        )
+        recovered.append((normalised - plain, norm_base / plain_base))
+    if recovered:
+        print(
+            f"\nmedian difference {statistics.median(d for d, _ in recovered):+.1f} nats, "
+            f"median base ratio {statistics.median(r for _, r in recovered):.2f}"
+        )
+        print(
+            "**A base ratio above one is the whole hypothesis made visible.** If\n"
+            "the normalised clock wants a larger base, the 1.21 was supplying\n"
+            "process noise that the base should have carried - and if it then\n"
+            "scores level with the unnormalised arm, nothing is lost by\n"
+            "normalising `Profile` and a confound is removed."
+        )
 
     print("\n" + "=" * 104)
     print("did any arm win on level rather than shape")

@@ -535,6 +535,31 @@ class Profile:
         square, so the squaring lives here once rather than in every caller.
 
         This is the method `driven.Driven` takes as its `clock`.
+
+        ## It does not average one, and that is measured, deliberate and safe
+
+        `at` normalises by subtracting `weights[0]` on the **log** scale, which
+        makes its *geometric* mean one. Squaring a log-normalised quantity does
+        not give an arithmetic mean of one, and measured on FX and metals at 1h
+        this method runs at a mean of **1.21**, worst **1.58**. So a member
+        driven by it receives about a fifth more average process noise than the
+        base it was handed, on top of the time-of-day shape.
+
+        **That subsidy is exactly equivalent to a larger base, and nothing
+        else.** `research/ideas/activity_clock.py` refits the base separately
+        for this method and for a `pacing.Levelled` wrapper around it, and the
+        normalised arm asks for a base ratio of **2.00** on six of eight
+        instruments and then scores within **-135 nats of 110,000** - about a
+        tenth of a per cent - of this one. The clock's gain survives its own
+        normalisation at `+553` against `+675`, so four fifths of it was shape.
+
+        **Which is why this is left alone.** Normalising here without refitting
+        every caller's base would cut a live member's average `Q` by 1.21 and
+        cost the nats that experiment just showed the base was providing. A
+        caller who wants the level in the base where a refit can find it wraps
+        this in `pacing.Levelled`; that is what the wrapper is for, and it
+        keeps the choice at the call site instead of changing what every
+        existing measurement meant.
         """
         size = self.at(when)
         return size * size

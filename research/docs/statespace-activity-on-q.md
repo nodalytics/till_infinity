@@ -82,6 +82,34 @@ of the quantity they return, and the harness **prints every arm's realised
 mean factor** rather than trusting that to have worked - all the activity arms
 land between 0.95 and 1.00.
 
+### The third one is exactly a mis-set base, which settles what to do
+
+`Profile.factor`'s 1.21 raised a decision rather than a defect: normalise it, or
+leave it? The experiment that answers it refits the base **separately for each
+arm**, which the usual guard - refit on the undriven arm, hold it for every
+driven one - cannot do, and that is precisely why a level subsidy is invisible
+to it.
+
+| | median |
+| --- | ---: |
+| normalised clock minus unnormalised, each with its own base | **-134.6 nats** |
+| base the normalised arm asks for, as a ratio | **2.00** |
+
+On bases between 28,000 and 115,000 nats, a difference of 135 is about **a
+tenth of a per cent**. And the normalised arm asks for **twice** the base on six
+of eight instruments, which is the hypothesis made visible: the 1.21 was
+supplying process noise that the base should have carried, and when the base
+carries it instead the two arms are level.
+
+**So it is left alone, for a production reason rather than a preference.**
+Normalising `Profile` without refitting every caller's base would cut a live
+member's average `Q` by 1.21 and cost the nats this experiment just showed the
+base was providing. `pacing.Levelled` wraps it for a caller who wants the level
+in the base where a refit can find it, which keeps the choice at the call site
+instead of changing what every existing measurement meant. The equivalence is
+recorded in `Profile.factor`'s own docstring, where the next person to notice
+the 1.21 will look.
+
 ### The third one is about an existing result, and it survives
 
 `seasonal.Profile.factor` has been running at a mean of 1.21, worst 1.58, which
