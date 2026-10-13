@@ -303,23 +303,40 @@ at a time.
 ## The improvements, which do not wait for any of that
 
 I1-I11 in the spec apply to the **per-level** row, so they are worth doing before
-the set question is settled rather than after. Seven of the eleven need none of
-the rewrite. Suggested order, cheapest decisive first:
+the set question is settled rather than after.
+
+**This table rotted and has been corrected.** Every row below except `I7` was
+marked `-` while a module in this package already claimed it - the same failure
+as `MISSING["em"]` and the fixed-lag smoother, both of which were listed as
+absent while written. A plan whose status column is wrong is worse than no
+plan, because the wrong rows are exactly the ones nobody re-reads.
+`tests/test_statespace.py` now asserts this column **both ways**: a named module
+must exist and mention the item, and a `-` must have no module claiming it.
 
 | item | what it is | here |
 | --- | --- | --- |
 | **I6** | a rate is per unit time, and a bar is not a unit of time | `rates.py` |
-| I5 | observability is the real argument about acceleration | - |
-| I9 | two state spaces, and there already are two | - |
-| I10 | the slope has a volatility, and it is currently a guess | - |
-| I2 | the state is the memory of the system, and this one leaks | - |
-| I8 | state, input or output - the question a feature list never asks | - |
-| I1 | there is no input; `B` and `u` do not exist here | - |
-| I7 | two barriers from one model instead of three | - |
+| I5 | observability is the real argument about acceleration | `reverting.py` |
+| I9 | two state spaces, and there already are two | `switching.py` |
+| I10 | the slope has a volatility, and it is currently a guess | `linear.py` |
+| I2 | the state is the memory of the system, and this one leaks | `linear.py` |
+| I8 | state, input or output - the question a feature list never asks | `driven.py` |
+| I1 | there is no input; `B` and `u` do not exist here | `inputs.py` |
+| I3 | a rate that pulls back instead of running away | `reverting.py` |
+| I11 | what a subject is, and which ones have provenance | `subjects.py` |
+| **I7** | **two barriers from one model instead of three** | **-** |
 
-I3, I4 and I11 are not in that order deliberately: I3 and I4 are conditional on
-I5's answer, and I11 has already failed twice in the form that was tested - see
-the spec, which names the two escapes it has left.
+**`I7` is the only one left**, and it is the interesting one rather than the
+leftover. The desk sets a target, a stop and a time limit as three independent
+numbers; `I7` says two of them should fall out of one model. The barrier work
+since - `barriers.conditional_slowdown` and
+`research/docs/statespace-triple-barrier.md` - establishes the pieces it needs:
+the label is invariant to volatility, the duration is not, and the duration's
+conditional correction is derived rather than fitted.
+
+I4 is still conditional on I5's answer, and I11's own escapes are named in the
+spec - it is listed here because `subjects.py` carries the provenance half of
+it, not because the whole item is settled.
 
 ## What was borrowed, and from where
 
