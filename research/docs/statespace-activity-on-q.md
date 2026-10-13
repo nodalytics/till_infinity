@@ -117,6 +117,43 @@ it has the most varying activity of the controls and that variation is noise,
 so driving `Q` with it **loses** likelihood, and loses more as the exponent
 rises. The mechanism is not a free parameter that can only help.
 
+## A peer's activity is real information, and redundant
+
+The obvious extension crosses this desk's two largest measured effects:
+cross-instrument volatility correlation runs at a median **+0.5170** and is
+contemporaneous, and activity drives variance at **+2197**. So a *peer's*
+activity should carry information about this instrument's variance.
+
+It does, and it is worth nothing. `research/ideas/peer_activity.py`, on seven
+named pairs chosen for relationships this desk has already measured:
+
+| arm | median nats |
+| --- | ---: |
+| the instrument's own activity | **+1666** |
+| a peer's activity instead | +1343 |
+| the same peer, **rotated in time** | **-917** |
+| both, as a normalised product | +539 |
+
+**The peer arm beats its rotation on 7 of 7**, so peer activity genuinely
+predicts this instrument's variance - a third independent confirmation that
+relationships here are contemporaneous and live in variance, this time through
+activity rather than realised volatility.
+
+**And `both` beats `own` alone on 0 of 7.** The peer is a noisy copy of the
+instrument's own activity, so the product over-drives and loses a thousand
+nats. A member should **not** reach outside its own feed for this, which is a
+cheap negative to have: the cross-feed plumbing was the expensive part.
+
+The rotated arm is the useful detail. It is not near zero, it is **-917** -
+driving `Q` with real activity that is misaligned in time is substantially
+worse than not driving it at all. The mechanism is not a free parameter that
+can only help.
+
+The controls are exact. A **generated peer** - `Boom_500_Index`,
+`Step_Index_200` - contributes `-0.0` and `0.0`, as a fixed tick count
+requires. And a **generated target** cannot be helped by anything: its own
+activity earns 0, and a real instrument's activity driving it scores **-2333**.
+
 ## What is wired, and what is not
 
 `statespace.pacing` is self-contained: `Pace` for the multiplier, `Both` for the
