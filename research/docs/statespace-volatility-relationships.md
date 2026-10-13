@@ -173,6 +173,16 @@ The growth-optimal fraction on this book is currently **zero**, so there is no
 edge for better sizing to scale. What this changes is the denominator: risk
 removed is compounding gained, and it needs no new signal to collect.
 
+**And there is a forecast use, which this section first missed.** A
+contemporaneous relationship cannot predict direction, but it can improve the
+estimate of *now* - and volatility is persistent, so a less noisy estimate of
+today is a better forecast of tomorrow without the factor carrying any
+predictive information of its own.
+[The panel estimator](statespace-panel-volatility.md) measures it: `+4.3%` of
+out-of-sample log-volatility forecast error removed on equities at a pooled `t`
+of `+4.85`, and `+3.1%` on the FX crosses with few currency neighbours. Unlike
+every trading result here, an estimator change has **no cost gate**.
+
 ## What to use
 
 **Screen relationships in volatility space, not price space**, and use a
