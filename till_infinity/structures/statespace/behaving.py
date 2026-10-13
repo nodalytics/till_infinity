@@ -1,0 +1,212 @@
+"""What each market class measurably *is*, as a table the library can look up.
+
+`bounding.SHIFTS` holds the measured barrier walls per synthetic family and
+`bounding.shifts_for` resolves a feed name to them. That pattern - measure once,
+record the constant, let callers look it up by name - is the right one, and it
+was about to be duplicated: a second table of measured per-class behaviour
+would have carried a second copy of the same prefix matching.
+
+So the classifier lives here once, `bounding.shifts_for` uses it, and this
+module adds the traits that are not about barriers.
+
+## The three-way split, which is the finding rather than the schema
+
+`statespace-orderflow-from-bars.md` compared each instrument's intra-bar
+geometry against a **matched random walk** built from its own per-bar tick
+counts. The ratio of `|imbalance|` - how far from the middle of its range a bar
+closes - to the walk's own value separates markets into three states, and the
+separation is unanimous within each:
+
+| state | ratio | what it is |
+| --- | ---: | --- |
+| **absorbing** | 0.94 to 0.97 | a real book: price travels its range and comes back |
+| **neutral** | 1.00 | a generator with no jumps. `Step_Index_200` reads **0.998** |
+| **running** | 1.13 to 1.23 | a generator with jumps: a bar containing one closes at its extreme |
+
+The neutral row is not a rounding of either neighbour. `Step_Index_200` is
+specified as a pure step process with no jump in it, and it reads as neither
+absorbing nor running - which is what its specification says it is.
+
+The middle row is why this is worth a table. A two-way "real against generated"
+split would have put `Step_Index_200` on the wrong side of a line; measured, it
+sits exactly on the walk, and the families that depart from it are the ones
+whose generators contain a jump. The statistic was not designed to find jumps.
+
+## What the traits are for
+
+**Not for prediction.** None of these is a signal and `orderflow_from_bars.py`
+measured what the directional version is worth - about a quarter of a spread.
+They are for **configuration and for checking**:
+
+* `activity_extent` says whether driving `Q` from activity can do anything at
+  all. The synthetics post a nearly fixed tick count, so their activity share
+  is one and `pacing.Pace` is inert on them without being told to be. A caller
+  that wants to know *in advance* can ask here;
+* `absorption` is a **specification test**. A synthetic family whose ratio
+  drifts off its recorded value has changed, and that is worth knowing about a
+  venue that generates its own feeds;
+* `tail_alpha` says which moments exist. Below 2 there is no variance and below
+  1 no mean, and the measured values forbid quoting a kurtosis as a parameter.
+
+## Unmeasured means absent, not assumed
+
+Equities, crypto and the FX crosses are not in this table because they were not
+in the study that produced it. `traits_for` returns `None` for them, in the same
+spirit as `shifts_for` returning a symmetric wall for an unlisted feed: an
+unmeasured class has not been measured, and a plausible-looking default is the
+one thing a lookup table must never invent.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+#: Prefixes that name a generated family, longest first so `dex_` resolves
+#: before any shorter match could.
+GENERATED_PREFIXES = (
+    "dex_",
+    "drift_switch",
+    "multi_step",
+    "skew_step",
+    "step",
+    "boom",
+    "crash",
+    "volatility",
+    "jump",
+    "range_break",
+)
+
+#: Traded classes, by the names the cache uses. Checked after the generated
+#: prefixes, because a traded symbol never starts with one of those.
+TRADED_CLASSES: dict[str, tuple[str, ...]] = {
+    "metal": ("XAUUSD", "XAGUSD", "XPTUSD", "XPDUSD", "XCUUSD"),
+    "energy": ("US_Oil", "UK_Brent_Oil", "NGAS"),
+    "basket": ("USD_Basket", "EUR_Basket", "GBP_Basket"),
+    "soft": ("Sugar", "Cocoa", "Cotton", "CoffeeArab", "CoffeeRobu"),
+}
+
+#: The eight majors, as the pairs that are quoted against the dollar either way.
+FX_MAJORS = (
+    "EURUSD",
+    "GBPUSD",
+    "USDJPY",
+    "USDCHF",
+    "USDCAD",
+    "AUDUSD",
+    "NZDUSD",
+)
+
+
+def classify(feed: str) -> str:
+    """The family a feed name belongs to. One place, used by `bounding` too.
+
+    Returns a generated family name (`boom`, `dex_up`, `step`, ...), a traded
+    class (`fx_major`, `fx_cross`, `metal`, `energy`, `basket`, `soft`,
+    `equity`), or `"unknown"`.
+    """
+    raw = str(feed)
+    name = raw.lower()
+    if name.startswith("dex_"):
+        if name.endswith("up_index"):
+            return "dex_up"
+        if name.endswith("down_index"):
+            return "dex_down"
+        return "dex"
+    for prefix in GENERATED_PREFIXES:
+        if name.startswith(prefix):
+            return prefix.rstrip("_")
+    for label, names in TRADED_CLASSES.items():
+        if raw in names:
+            return label
+    # Reuters-coded equities, which the cache holds as `AAPL.OQ` and `JPM.N`.
+    if "." in raw and raw.rsplit(".", maxsplit=1)[-1].isalpha():
+        return "equity"
+    letters = "".join(c for c in raw if c.isalpha())
+    if len(letters) == 6 and letters.isupper():
+        return "fx_major" if raw in FX_MAJORS else "fx_cross"
+    return "unknown"
+
+
+@dataclass(frozen=True, slots=True)
+class Traits:
+    """What one market class was measured to do. Every field has a source."""
+
+    #: `|imbalance|` over a matched walk's own `|imbalance|`, minus one. The
+    #: sign is the state: negative absorbs, zero is a walk, positive runs.
+    #: From `statespace-orderflow-from-bars.md`.
+    absorption: float
+
+    #: Ninetieth over tenth percentile of `pacing.shares`. One means a fixed
+    #: tick count and so an inert activity channel. From
+    #: `statespace-activity-on-q.md`'s survey of 553 cached feeds at 1h.
+    activity_extent: float
+
+    #: The exponent relating a bar's variance to its activity share, swept
+    #: with a turn on both sides. `None` where activity carries nothing.
+    q_exponent: float | None
+
+    #: Hill tail index on raw returns, from `statespace-measurement-audit.md`.
+    #: Below 2 no variance exists, below 1 no mean.
+    tail_alpha: float | None
+
+    @property
+    def absorbs(self) -> bool:
+        """A real order book, by the sign of its intra-bar geometry."""
+        return self.absorption < -0.01
+
+    @property
+    def runs(self) -> bool:
+        """A generator with a jump in it."""
+        return self.absorption > 0.01
+
+    @property
+    def informative_activity(self) -> bool:
+        """Whether driving `Q` from activity can do anything on this class."""
+        return self.activity_extent > 1.5
+
+
+#: Measured per class. **Only classes that were actually in the studies.**
+#:
+#: The traded rows are medians over the instruments of that class in
+#: `orderflow_from_bars.py` and `activity_clock.py`: five FX majors, two
+#: metals, one energy. The generated rows are single feeds, which is why their
+#: `activity_extent` is quoted to four places - the whole point of those rows
+#: is how close to one it is.
+TRAITS: dict[str, Traits] = {
+    # Traded: absorbing, informative activity, exponent 2.
+    "fx_major": Traits(absorption=-0.045, activity_extent=5.68, q_exponent=2.0, tail_alpha=2.90),
+    "metal": Traits(absorption=-0.056, activity_extent=6.05, q_exponent=2.0, tail_alpha=3.00),
+    "energy": Traits(absorption=-0.033, activity_extent=9.42, q_exponent=2.0, tail_alpha=None),
+    # Generated with a jump: running, and inert to activity.
+    "boom": Traits(absorption=+0.126, activity_extent=1.0076, q_exponent=None, tail_alpha=None),
+    "crash": Traits(absorption=+0.139, activity_extent=1.0084, q_exponent=None, tail_alpha=None),
+    "dex_up": Traits(absorption=+0.230, activity_extent=1.0089, q_exponent=None, tail_alpha=None),
+    "drift_switch": Traits(
+        absorption=+0.174, activity_extent=1.0155, q_exponent=None, tail_alpha=None
+    ),
+    # Generated without one: sits on the walk. The row that makes the table
+    # three-way rather than two-way.
+    "step": Traits(absorption=-0.002, activity_extent=1.0006, q_exponent=None, tail_alpha=None),
+}
+
+
+def traits_for(feed: str) -> Traits | None:
+    """What this feed's class was measured to do, or `None` if unmeasured.
+
+    `None` rather than a default. An unmeasured class has not been measured,
+    and the one thing a table of measurements must not do is invent a
+    plausible row for a market nobody looked at.
+    """
+    return TRAITS.get(classify(feed))
+
+
+def drives_q(feed: str) -> bool:
+    """Whether an activity channel on `Q` is worth wiring for this feed.
+
+    Unmeasured classes return `True`: `pacing.Pace` is self-limiting - a feed
+    with a fixed tick count has a share of one and a factor of one - so the
+    cost of trying is nothing and the cost of refusing a market that was never
+    studied is a mechanism that silently does not run.
+    """
+    traits = traits_for(feed)
+    return True if traits is None else traits.informative_activity

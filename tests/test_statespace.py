@@ -6668,3 +6668,100 @@ class TestPacing:
         # which would be a look-ahead worth a great deal of fictional nats.
         assert shares[: pacing.WARMUP] == [1.0] * pacing.WARMUP
         assert max(shares[:400]) == 1.0
+
+
+class TestBehaving:
+    """The measured per-class table, and the one classifier that feeds it."""
+
+    def test_the_classifier_separates_generated_families_from_traded_classes(self):
+        from till_infinity.structures.statespace import behaving
+
+        for feed, want in (
+            ("EURUSD", "fx_major"),
+            ("AUDUSD", "fx_major"),
+            ("EURGBP", "fx_cross"),
+            ("AUDJPY", "fx_cross"),
+            ("XAUUSD", "metal"),
+            ("US_Oil", "energy"),
+            ("Sugar", "soft"),
+            ("USD_Basket", "basket"),
+            ("AAPL.OQ", "equity"),
+            ("JPM.N", "equity"),
+            ("Boom_500_Index", "boom"),
+            ("Crash_1000_Index", "crash"),
+            ("Step_Index_200", "step"),
+            ("Drift_Switch_Index_10", "drift_switch"),
+            ("Volatility_75_Index", "volatility"),
+        ):
+            assert behaving.classify(feed) == want, feed
+        # `multi_step` has to resolve before `step`, which is a prefix of it.
+        assert behaving.classify("multi_step_index") == "multi_step"
+        # DEX carries its direction in the suffix, not the prefix.
+        assert behaving.classify("DEX_900_UP_Index") == "dex_up"
+        assert behaving.classify("DEX_1500_DOWN_Index") == "dex_down"
+
+    def test_bounding_resolves_its_walls_through_the_same_classifier(self):
+        """Two tables, one classifier. The duplication this replaced.
+
+        `shifts_for` held the only copy of the prefix matching, and a second
+        measured table was about to carry another - which is how two lookups
+        for the same feed start disagreeing about what family it is in.
+        """
+        from till_infinity.structures.statespace import behaving, bounding
+
+        for feed in (
+            "Boom_500_Index",
+            "Crash_500_Index",
+            "DEX_900_UP_Index",
+            "DEX_1500_DOWN_Index",
+            "Step_Index_200",
+            "Volatility_75_Index",
+        ):
+            family = behaving.classify(feed)
+            assert bounding.shifts_for(feed) == bounding.SHIFTS[family], feed
+        # An unlisted family still falls back to the symmetric wall.
+        assert bounding.shifts_for("EURUSD") == (bounding.SHIFT, bounding.SHIFT)
+        assert bounding.shifts_for("AAPL.OQ") == (bounding.SHIFT, bounding.SHIFT)
+
+    def test_the_table_is_three_way_and_step_is_the_middle_row(self):
+        """The row that makes it a finding rather than a schema.
+
+        A two-way real-against-generated split would put `Step_Index_200` on
+        the wrong side of a line. Measured against a matched walk it sits on
+        it, and the generated families that depart are the ones whose
+        generators contain a jump.
+        """
+        from till_infinity.structures.statespace import behaving
+
+        assert behaving.traits_for("EURUSD").absorbs
+        assert behaving.traits_for("XAUUSD").absorbs
+        assert behaving.traits_for("US_Oil").absorbs
+        for feed in ("Boom_500_Index", "Crash_500_Index", "DEX_900_UP_Index"):
+            assert behaving.traits_for(feed).runs, feed
+        step = behaving.traits_for("Step_Index_200")
+        assert not step.absorbs
+        assert not step.runs
+
+    def test_an_unmeasured_class_returns_nothing_rather_than_a_default(self):
+        from till_infinity.structures.statespace import behaving
+
+        for feed in ("EURGBP", "AAPL.OQ", "Sugar", "USD_Basket", "NOTASYMBOL"):
+            assert behaving.traits_for(feed) is None, feed
+        # And an unmeasured class still gets the activity channel, because
+        # `Pace` is self-limiting: a fixed tick count gives a factor of one.
+        assert behaving.drives_q("EURGBP")
+        assert behaving.drives_q("AAPL.OQ")
+
+    def test_activity_only_drives_q_where_activity_varies(self):
+        from till_infinity.structures.statespace import behaving
+
+        for feed in ("EURUSD", "XAUUSD", "US_Oil"):
+            assert behaving.drives_q(feed), feed
+            assert behaving.traits_for(feed).informative_activity
+        for feed in ("Boom_500_Index", "Step_Index_200", "Drift_Switch_Index_10"):
+            assert not behaving.drives_q(feed), feed
+        # Every traded row carries the measured exponent; no generated row does.
+        for feed in ("EURUSD", "XAUUSD", "US_Oil"):
+            assert behaving.traits_for(feed).q_exponent == 2.0
+        for feed in ("Boom_500_Index", "Step_Index_200"):
+            assert behaving.traits_for(feed).q_exponent is None
