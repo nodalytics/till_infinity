@@ -346,6 +346,22 @@ invariant to volatility, the duration is not, and the duration's conditional
 correction is derived rather than fitted. That is why `slower` is a caller's
 argument in `bounding` and scales only the duration.
 
+**The shift is two numbers, not one.** `P` and `T` follow from optional stopping
+and Wald's identity, which need only a mean-zero martingale and a finite
+variance - so skew does not touch them. What skew touches is the **overshoot**,
+and `SHIFT` is an overshoot correction: a feed that spikes one way overshoots
+that barrier badly and the other barely at all. Optional stopping then applies
+to the stopped value *including* the overshoot, so the same `P = d/(u+d)` holds
+with a different wall on each side, and `bounding.SHIFTS` carries the measured
+pairs for `Boom`, `Crash`, `DEX_UP` and `DEX_DOWN`. A Boom index on a symmetric
+geometry wins 0.4861 rather than half.
+
+The `Volatility_*` and step families measured symmetric and keep the single
+constant, which is recorded so it is not re-derived. The step families are a
+genuine price lattice - 149 distinct bar-return magnitudes against 14,000 for a
+diffusion - but the grid is **0.0166 of one bar's standard deviation**, so
+aligning a barrier to it removes at most 2.8% of the correction.
+
 I4 is still conditional on I5's answer, and I11's own escapes are named in the
 spec - it is listed here because `subjects.py` carries the provenance half of
 it, not because the whole item is settled.
