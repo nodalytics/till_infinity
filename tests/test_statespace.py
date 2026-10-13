@@ -7009,6 +7009,7 @@ class TestPooling:
         assert pooling.LEVERS["reverting"] == "sigma2"
         assert pooling.LEVERS["kalman"] == "jerk"
 
+
 class TestResearchPrimitives:
     """Three measurement tools that were living in harnesses."""
 
