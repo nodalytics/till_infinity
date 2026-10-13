@@ -36,8 +36,39 @@ relationships while looking rigorous.
 So the null is **partitioned and printed**: cross-family pairs, same-family
 pairs, and the ten most reverting null pairs by name. If the extremes are all
 same-family, the independence assumption is dead and visible rather than
-load-bearing and invisible. The bar is taken from the **cross-family** null,
-with the same-family distribution reported beside it as the diagnostic.
+load-bearing and invisible.
+
+## The null has to share the candidates' tails, and independence is not it
+
+The first version of this reached for a traded-against-synthetic null and
+justified it as "the only one with guaranteed independence". **That was wrong.**
+Two cross-family synthetics are independent of each other exactly as a
+synthetic is independent of EURUSD; swapping a leg changes nothing about
+independence.
+
+What it changes is the **leg distribution**, and that is what sets a
+Dickey-Fuller threshold. Measured on this universe: the 20 traded instruments
+have median return kurtosis **20.07**, the 36 synthetics **3.19** - Gaussian is
+3.0. **The synthetics are Gaussian-tailed and the candidates are not, by a
+factor of six**, so a synthetic-only null judges them against the wrong
+reference however independent it is.
+
+So the null is partitioned by **how many legs are real markets**, which is the
+variable, rather than by independence, which is constant:
+
+* **0 real legs** - synthetic against synthetic, across families;
+* **1 real leg** - traded against synthetic, which is still a cross-family
+  independent pair and not a different kind of null;
+* **2 real legs** - traded against **another traded instrument's returns in
+  day-long blocks, scrambled.** A block shuffle is a permutation, so each leg
+  keeps its tails *exactly* and its within-day clustering, while any
+  relationship between the legs is destroyed. This is the only partition whose
+  legs are distributed like the pairs being screened.
+
+The cross-universe arm also runs in the other direction. A traded-against-
+synthetic pair showing a genuine relationship would mean either that Deriv's
+engine is seeded from market data - a finding about Deriv - or that the screen
+is broken. Either is worth knowing, and neither is testable without the arm.
 
 ## The live hedge ratio manufactures the statistic, and the null proves it
 
@@ -74,6 +105,40 @@ faster - plus the half-life in bars and the share of the two legs' spreads the
 reversion has to clear. A pair that reverts beautifully over a range smaller
 than its own round-trip cost is not a trade.
 
+## What the numbers said
+
+The null partition came back clean: the ten most reverting null pairs are all
+**cross**-family, so the engineered-pair worry above did not bite, and the
+mirror and scaled-stream families are not what sets the bar.
+
+The live ratio was the whole effect - it reads past `-28` between processes with
+no connection, and the split form collapses to the textbook `-3.4` as predicted.
+On the split arm the threshold then moves with the tails:
+
+| real legs | pairs | split best | 1st pct | median |
+|-----------|------:|-----------:|--------:|-------:|
+| 0, synthetic x synthetic        | 553 | -3.46 | -3.16 | -1.60 |
+| 1, traded x synthetic           | 720 | -3.94 | -3.47 | -1.76 |
+| **2, traded x shuffled traded** | 570 | **-4.07** | -3.79 | -2.17 |
+
+**Monotone in the number of real legs, and the median shifts too** - so this is
+the distribution moving rather than one lucky extreme. Independence is identical
+across all three rows, which is what rules it out as the cause.
+
+Against the bar whose legs match the candidates: **0 of 190 traded pairs beat
+-4.07**, where 17 beat the synthetic-only -3.46. The best traded pair on the
+honest statistic is `USDJPY/XAGUSD` at `-3.37`, which clears none of the three.
+
+The live arm runs the other way across the partitions - `-29.39`, `-28.31`,
+`-18.88` - which confirms the first defect a second time. A shuffled leg leaves
+an adaptive ratio no co-movement to absorb, so the live statistic deflates by 10
+points of `t` once the joint dynamics are gone. It was never cointegration.
+
+The reverse reading is a null too: no traded-against-synthetic pair shows a
+relationship, so Deriv's engine shows no sign of being seeded from market data.
+The synthetics stay usable as controls - for **structure**, with the caveat that
+at kurtosis 3.19 they are a poor control for **tails**.
+
 Runs on the lab.
 """
 
@@ -81,6 +146,7 @@ from __future__ import annotations
 
 import math
 import os
+import random
 import statistics
 from itertools import combinations
 from pathlib import Path
@@ -109,6 +175,9 @@ SINCE = float(os.environ.get("SINCE", "99792000"))
 LIMIT = int(os.environ.get("LIMIT", "20000"))
 #: Minimum overlapping bars before a pair is scored at all.
 LEAST = int(os.environ.get("LEAST", "4000"))
+#: Repetitions of the block-shuffled arm, so its draw count is comparable
+#: to the other two partitions rather than a tenth of them.
+REPS = int(os.environ.get("REPS", "3"))
 #: Cap on the null universe, so the screen stays inside a sensible runtime.
 NULLS = int(os.environ.get("NULLS", "40"))
 CACHE = Path.home() / "till_infinity" / "data" / "seqlab"
@@ -164,6 +233,31 @@ def load(name: str, frame: str = FRAME):
         return None
     # Relative spread, so it is comparable across instruments priced differently.
     return times, np.log(closes), spread / closes
+
+
+def block_shuffled(series, rng, blocks: int = 24):
+    """One leg's own returns, reordered in day-long blocks, on its own clock.
+
+    A traded instrument against a **shuffled traded instrument** keeps a real
+    market's fat tails and its within-block clustering on *both* legs while
+    destroying any relationship between them.
+
+    This is the null for the pairs actually being screened, and the synthetic
+    arms cannot be. Swapping a leg for a near-Gaussian process changes the leg
+    distribution, and **the leg distribution is what sets the threshold** - so
+    a null with fewer real legs than the candidate measures the wrong quantity,
+    however independent it is.
+    """
+    import numpy as np
+
+    times, values, spread = series
+    steps = np.diff(values)
+    pieces = np.split(steps, range(blocks, len(steps), blocks))
+    rng.shuffle(pieces)
+    rebuilt = np.empty_like(values)
+    rebuilt[0] = values[0]
+    rebuilt[1:] = values[0] + np.cumsum(np.concatenate(pieces))
+    return times, rebuilt, spread
 
 
 def align(left, right):
@@ -331,16 +425,70 @@ def main() -> None:
     if not cross:
         print("  no cross-family pairs; cannot form a null")
         return
+    # Every arm below is independent by construction, exactly as the cross-
+    # family pairs above are. What varies is how many legs are real markets.
+    mixed, mixed_split = [], []
+    for a in live:
+        for b in nulls:
+            got = screen(series[a], series[b])
+            if got is None or not math.isfinite(got["t"]):
+                continue
+            mixed.append(got["t"])
+            if math.isfinite(got["split_t"]):
+                mixed_split.append(got["split_t"])
+    mixed.sort()
+    mixed_split.sort()
+
+    rng = random.Random(SEED)
+    shuffled, shuffled_split = [], []
+    for _ in range(REPS):
+        for a, b in combinations(live, 2):
+            got = screen(series[a], block_shuffled(series[b], rng))
+            if got is None or not math.isfinite(got["t"]):
+                continue
+            shuffled.append(got["t"])
+            if math.isfinite(got["split_t"]):
+                shuffled_split.append(got["split_t"])
+    shuffled.sort()
+    shuffled_split.sort()
+
+    print(
+        f"\nOne null, partitioned by how many legs are real markets. All three\n"
+        f"are independent by construction - synthetic against synthetic across\n"
+        f"families, synthetic against a market its engine never sees, and a\n"
+        f"market against another market's blocks in a scrambled order.\n"
+    )
+    print(f"{'partition':<34}{'pairs':>8}{'best':>10}{'1st pct':>10}{'median':>10}")
+    for label, values in (
+        ("0 real legs, live", cross),
+        ("1 real leg, live", mixed),
+        ("2 real legs, live", shuffled),
+        ("0 real legs, SPLIT", cross_split),
+        ("1 real leg, SPLIT", mixed_split),
+        ("2 real legs, SPLIT", shuffled_split),
+    ):
+        if not values:
+            continue
+        print(
+            f"{label:<34}{len(values):>8,}{values[0]:>+10.2f}"
+            f"{values[max(len(values) // 100, 0)]:>+10.2f}"
+            f"{statistics.median(values):>+10.2f}"
+        )
+    print(
+        "\n**The two-real-leg split null is the bar**, because it is the only\n"
+        "partition whose legs are distributed like the pairs being screened.\n"
+        "If the threshold moves with the number of real legs, independence was\n"
+        "never the variable - the tails were."
+    )
+
     cuts = {
         "best (min)": cross[0],
         "split best": cross_split[0] if cross_split else float("nan"),
+        "mixed split best": mixed_split[0] if mixed_split else float("nan"),
+        "shuffled split best": (
+            shuffled_split[0] if shuffled_split else float("nan")
+        ),
     }
-    print(
-        "\n**The bar is the cross-family best.** A traded pair has to be more\n"
-        "reverting than the most reverting pair this procedure finds between\n"
-        "two unrelated generators."
-    )
-
     print("\n" + "=" * 104)
     print("ARM 2  the traded universe, ranked")
     print("=" * 104)
@@ -370,13 +518,25 @@ def main() -> None:
         )
     live_beat = sum(1 for r in rows if r["t"] < cuts["best (min)"])
     split_beat = sum(1 for r in rows if r["split_t"] < cuts["split best"])
+    mixed_beat = sum(1 for r in rows if r["split_t"] < cuts["mixed split best"])
     print(
-        f"\nlive arm:  {live_beat} of {len(rows)} traded pairs beat the live null "
+        f"\nlive arm:       {live_beat:>3} of {len(rows)} beat the synthetic live null "
         f"({cuts['best (min)']:+.2f})"
     )
     print(
-        f"SPLIT arm: {split_beat} of {len(rows)} traded pairs beat the split null "
+        f"SPLIT arm:      {split_beat:>3} of {len(rows)} beat the synthetic split null "
         f"({cuts['split best']:+.2f})"
+    )
+    print(
+        f"1 real leg:     {mixed_beat:>3} of {len(rows)} beat the one-real-leg split "
+        f"null ({cuts['mixed split best']:+.2f})"
+    )
+    shuffled_beat = sum(
+        1 for r in rows if r["split_t"] < cuts["shuffled split best"]
+    )
+    print(
+        f"2 real legs:    {shuffled_beat:>3} of {len(rows)} beat the two-real-leg "
+        f"split null ({cuts['shuffled split best']:+.2f}) - THE BAR"
     )
 
     print("\n" + "=" * 104)
