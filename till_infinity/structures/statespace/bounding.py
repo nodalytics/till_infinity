@@ -161,17 +161,9 @@ def shifts_for(feed: str) -> tuple[float, float]:
     not been measured, and a symmetric correction is the honest default for a
     process whose asymmetry is unknown.
     """
-    name = str(feed).lower()
-    if name.startswith("dex_"):
-        if name.endswith("up_index"):
-            return SHIFTS["dex_up"]
-        if name.endswith("down_index"):
-            return SHIFTS["dex_down"]
-        return (SHIFT, SHIFT)
-    for family, pair in SHIFTS.items():
-        if name.startswith(family):
-            return pair
-    return (SHIFT, SHIFT)
+    from .behaving import classify
+
+    return SHIFTS.get(classify(feed), (SHIFT, SHIFT))
 
 
 def _walls(shift: float, shift_up: float | None, shift_down: float | None):
