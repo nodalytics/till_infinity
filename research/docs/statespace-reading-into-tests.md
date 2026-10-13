@@ -64,6 +64,30 @@ adaptive conformal corrector in `conformal_band.py`, which is a feedback loop
 with a delay in it, and it is worth checking whether its `gamma` sweep is
 really a stability sweep.
 
+### The fingerprint now covers the whole cache, with no exceptions
+
+`research/ideas/class_traits.py` extended the measurement from six classes to
+**nineteen**, covering about five hundred instruments, and the loop reading
+survives contact with all of them:
+
+| loop | classes |
+| --- | --- |
+| **balancing** (absorbs) | basket, energy, equity, fx_cross, fx_major, index, metal, soft |
+| **reinforcing** (runs) | boom, crash, dex_up, dex_down, drift_switch, jump, range_break |
+| **no loop** (neutral) | step, multi_step, skew_step, volatility |
+
+**Not one traded class fails to absorb and not one generated class absorbs.**
+The three groups are exactly: everything with an order book, every generated
+family whose generator contains a jump, and every generated family whose
+generator does not. The volatility indices - specified geometric Brownian
+motion - read `-0.0005`, which is a pure walk to four places.
+
+Two details worth keeping. `basket` **absorbs** at `-0.0519` while its activity
+extent is `1.111`, so it is a real market whose tick count is nearly fixed - a
+derived quote. A table using one number to answer both questions would have had
+to call it generated. And `equity` has an activity extent of **26.3**, the most
+uneven in the cache, which is what a session open and close looks like.
+
 ## 3. "Why would they trade with me?" - the question the desk has not asked
 
 *The Laws of Trading*: the other side usually knows more than you; ask what
@@ -202,8 +226,15 @@ measure first.
 
 ## The order to run them in
 
-1. **the delay sweep on the absorption loop** - two independent arguments, and
-   it decides whether the one real directional signal here is tradeable;
+1. ~~**the delay sweep on the absorption loop**~~ - **done, and it closed the
+   line.** `statespace-absorption-delay.md`: the edge is **flat at 0.2 basis
+   points** across a 48-fold change in horizon, against a 1 to 5 basis point
+   round trip, and the median net is negative at every horizon. Room grows
+   slightly faster than `sqrt(h)` and the signal decays at least as fast, so
+   the product never moves. The sweep did characterise the loop - a gain of
+   about 3% of a move and a **delay of about three bars**, gone by twelve -
+   and a three-bar memory cannot collect a horizon's worth of room, which is
+   why the edge is flat;
 2. **a peer's activity driving this instrument's `Q`** - crosses the desk's two
    largest measured effects and nothing has been tried there;
 3. **measure the maker fee** - converts the absorption edge from "a quarter of
