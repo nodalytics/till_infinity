@@ -6412,6 +6412,264 @@ class TestResearchIntegrated:
         assert relating.is_identity([]) is False
 
 
+class TestBoundingFeed:
+    """`feed=` has to reach every entry point, and has to change the answer.
+
+    The wiring this covers was measured and then not reachable: `shifts_for`
+    held the measured directional walls and nothing but a test ever called it,
+    so a caller asking for a Boom barrier got the symmetric `0.5826` on both
+    sides. An earlier pass at the same work added `feed` to `feasible` and
+    ignored it inside - caught by a lint rule for an unused argument, not by a
+    test - which is why these assertions check that the value *differs* rather
+    than that the call is accepted.
+    """
+
+    def test_a_named_feed_resolves_the_measured_asymmetric_walls(self):
+        from till_infinity.structures.statespace import bounding
+
+        assert bounding.shifts_for("Boom_500_Index") == bounding.SHIFTS["boom"]
+        assert bounding.shifts_for("DEX_900_UP_Index") == bounding.SHIFTS["dex_up"]
+        # An unlisted feed is symmetric, which is the documented fallback.
+        assert bounding.shifts_for("EURUSD") == (bounding.SHIFT, bounding.SHIFT)
+
+    def test_feed_changes_what_solve_returns_on_a_skewed_family(self):
+        from till_infinity.structures.statespace import bounding
+
+        plain = bounding.solve(probability=0.4, horizon=9.0)
+        boomed = bounding.solve(probability=0.4, horizon=9.0, feed="Boom_500_Index")
+        assert plain is not None
+        assert boomed is not None
+        # Boom's walls are 0.6535 up against 0.5100 down, so the barriers it
+        # implies cannot be the symmetric ones.
+        assert plain != boomed
+
+    def test_feed_reaches_least_horizon_and_feasible_and_they_agree(self):
+        from till_infinity.structures.statespace import bounding
+
+        for feed in ("Boom_500_Index", "DEX_1500_DOWN_Index", "Crash_500_Index"):
+            for probability in (0.3, 0.5, 0.7):
+                least = bounding.least_horizon(probability, feed=feed)
+                symmetric = bounding.least_horizon(probability)
+                assert least > 0
+                # The two must not silently coincide, or `feed` is being
+                # dropped somewhere between here and `_walls`.
+                assert least != symmetric
+                # Just below the floor is infeasible and just above is
+                # feasible, for the same feed - which is the only way to show
+                # the two functions resolved the same walls.
+                assert not bounding.feasible(probability, least * 0.99, feed=feed)
+                assert bounding.feasible(probability, least * 1.01, feed=feed)
+
+    def test_an_explicit_wall_beats_the_table_on_the_side_that_binds(self):
+        """A caller who measured their own is not overridden by a lookup.
+
+        And only the **binding** side can move the answer, which is worth
+        asserting in both directions. `least_horizon` is the larger of
+        `up^2 p / (1 - p)` and `down^2 (1 - p) / p`, so at `p = 0.4` with
+        Boom's walls the down term wins at 0.390 against the up term's 0.285 -
+        and overriding the up wall there correctly changes nothing. A test that
+        demanded a change from either side would be asserting a bug.
+        """
+        from till_infinity.structures.statespace import bounding
+
+        table = bounding.least_horizon(0.4, feed="Boom_500_Index")
+        # Down binds at this probability, so overriding it moves the floor.
+        assert bounding.least_horizon(0.4, feed="Boom_500_Index", shift_down=0.9) != table
+        # Up does not bind, so overriding it must not.
+        assert bounding.least_horizon(0.4, feed="Boom_500_Index", shift_up=0.5826) == table
+        # Past the crossover the roles swap, which is the same claim from the
+        # other side rather than a second one.
+        high = bounding.least_horizon(0.7, feed="Boom_500_Index")
+        assert bounding.least_horizon(0.7, feed="Boom_500_Index", shift_up=0.9) != high
+
+
+class TestPacing:
+    """Activity as a `Q` multiplier, and the properties that make it one."""
+
+    def test_constant_activity_is_exactly_neutral_which_is_the_control(self):
+        """The generated feeds post constant tick volume, so they must be off.
+
+        This is the whole control design: Deriv's synthetics have an
+        interquartile range of zero on tick volume, so `share` is one, the
+        factor is one and `control` is zero. If this drifted even slightly the
+        control arm would be driven as well as the traded arm and the
+        comparison would mean nothing - and nothing in the harness would say
+        so, because a factor of 1.001 looks exactly like a factor of 1.
+        """
+        from till_infinity.structures.statespace import pacing
+
+        pace = pacing.Pace()
+        for _ in range(300):
+            pace.update(1800.0)
+        assert pace.share(1800.0) == 1.0
+        assert pace.factor(1800.0) == 1.0
+        assert pace.control(1800.0) == 0.0
+        assert pacing.extent([1800.0] * 400) == 1.0
+
+    def test_it_averages_one_so_a_gain_does_not_move_the_average(self):
+        """A multiplier whose mean is not one refits the base as well.
+
+        The lesson a `+1192` result that became `-24` taught: if the lever's
+        multiplier averages more than one it raises the member's average
+        process noise too, and a gain that only did that is indistinguishable
+        from one that used the signal.
+        """
+        import random
+
+        from till_infinity.structures.statespace import pacing
+
+        random.seed(11)
+        volumes = [random.lognormvariate(6.0, 0.7) for _ in range(4000)]
+        shares = pacing.shares(volumes)[pacing.WARMUP :]
+        assert abs(sum(shares) / len(shares) - 1.0) < 0.05
+
+    def test_every_exponent_averages_one_so_the_sweep_compares_shapes(self):
+        """The defect that made the squared arm look like the right answer.
+
+        `share` averages one; `share ** 2` averages `1 + Var(share)`, which on
+        real FX volume at 1h is **2.23**. An arm scored that way is running on
+        more than twice the process noise, and the usual guard - sweeping the
+        base noise on the undriven arm - cannot see it, because it refits the
+        arm that is not being driven. The squared arm duly beat the linear one
+        by +2365 to +1734 nats, measuring "more `Q`" and reporting "better
+        shape for `Q`".
+
+        So `factor` divides by an exponential mean of the same raised share.
+        The normaliser lags a heavy-tailed quantity, so the realised average
+        is near one rather than one, and the harness prints it per arm rather
+        than trusting this test to have settled it.
+        """
+        import random
+        import statistics
+
+        from till_infinity.structures.statespace import pacing
+
+        random.seed(3)
+        volumes = [random.lognormvariate(6.0, 0.9) for _ in range(6000)]
+        for exponent in (0.5, 1.0, 2.0):
+            got = pacing.factors(volumes, exponent=exponent)[pacing.WARMUP :]
+            assert abs(statistics.fmean(got) - 1.0) < 0.1, exponent
+        # Without the division the squared arm is nowhere near neutral, which
+        # is the whole reason the field exists.
+        shares = pacing.shares(volumes)[pacing.WARMUP :]
+        assert statistics.fmean([v * v for v in shares]) > 2.0
+
+    def test_the_exponent_is_the_difference_between_twofold_and_fourfold(self):
+        """Subordination says variance tracks activity; the clock squares."""
+        from till_infinity.structures.statespace import pacing
+
+        pace = pacing.Pace(exponent=1.0)
+        for _ in range(200):
+            pace.update(100.0)
+        assert pace.factor(200.0) == 2.0
+        squared = pacing.Pace(exponent=2.0)
+        for _ in range(200):
+            squared.update(100.0)
+        assert squared.factor(200.0) == 4.0
+        # And `control` is what `Driven` consumes, on its `1 + gain * u` form,
+        # so a unit gain has to reproduce the factor exactly.
+        assert pace.control(200.0) == 1.0
+        assert 1.0 + 1.0 * pace.control(200.0) == pace.factor(200.0)
+
+    def test_a_counter_reset_cannot_hand_q_a_twentyfold_variance(self):
+        """`Driven` has a floor and no ceiling, so the clamp belongs here."""
+        from till_infinity.structures.statespace import pacing
+
+        pace = pacing.Pace()
+        for _ in range(200):
+            pace.update(100.0)
+        assert pace.factor(1e9) == pacing.MAX_SHARE
+        # Absent and non-positive volume are not quiet bars, they are no
+        # information, and a filter must not be told the market froze.
+        assert pace.update(0.0) == 1.0
+        assert pace.update(None) == 1.0
+        assert pace.factor(-5.0) == 1.0
+
+    def test_it_says_nothing_until_it_has_seen_enough_to_have_a_mean(self):
+        from till_infinity.structures.statespace import pacing
+
+        pace = pacing.Pace()
+        for i in range(pacing.WARMUP - 1):
+            assert pace.update(100.0 + i) == 1.0
+        assert not pace.warm
+        pace.update(100.0)
+        assert pace.warm
+
+    def test_the_two_doors_compose_and_a_constant_clock_is_not_a_clock(self):
+        """A busy hour and a busy bar reinforce - and the product renormalises.
+
+        `Both` divides by an exponential mean of the product, because two
+        factors that each average one do not multiply to one when they are
+        correlated, and a busy hour is busy precisely because its bars are.
+        Measured, the uncorrected product ran at 1.36 on average.
+
+        A visible consequence is that a **constant** clock is normalised away
+        entirely, which is correct: a multiplier that never varies carries no
+        information and must not change what the member does.
+        """
+        from till_infinity.structures.statespace import pacing
+
+        def run(clock, volumes):
+            pace = pacing.Pace()
+            both = pacing.Both(pace=pace, clock=clock)
+            out = []
+            for i, volume in enumerate(volumes):
+                pace.update(volume)
+                out.append(both.factor(float(i), volume))
+            return out
+
+        volumes = [100.0 if i % 5 else 400.0 for i in range(400)]
+        flat = run(lambda _when: 1.0, volumes)
+        tripled = run(lambda _when: 3.0, volumes)
+        # A constant clock, whatever its value, is the same as none.
+        assert flat[-5:] == pytest.approx(tripled[-5:])
+        # A clock that varies does change the composition.
+        swinging = run(lambda when: 1.0 + 2.0 * (int(when) % 2), volumes)
+        assert swinging[-5:] != flat[-5:]
+        # And the product still averages about one.
+        import statistics
+
+        assert abs(statistics.fmean(swinging[pacing.WARMUP :]) - 1.0) < 0.15
+        # `control` stays on `Driven`'s `1 + gain * u` form.
+        pace = pacing.Pace()
+        both = pacing.Both(pace=pace)
+        for volume in volumes:
+            pace.update(volume)
+            got = both.factor(float(0), volume)
+        assert both.control(0.0, volume) == pytest.approx(got - 1.0, rel=0.3)
+
+    def test_bursts_drive_q_and_a_permanent_shift_does_not(self):
+        """Only deviation from the recent norm is a multiplier. Measured.
+
+        A tenfold **step** in activity reads as `extent` 1.40, not 10: the
+        exponential mean catches up within its half-life and the share returns
+        to one. That is the correct behaviour and not a limitation - a market
+        that is permanently busier has a permanently larger process noise,
+        which belongs in the member's **base** `Q` where a refit will find it.
+        A multiplier that carried the level instead would double-count it, and
+        would also stop averaging one, which is the thing that makes a gain
+        attributable.
+
+        Bursts are what the mechanism is for, and they read as bursts.
+        """
+        from till_infinity.structures.statespace import pacing
+
+        step = pacing.extent([100.0] * 500 + [1000.0] * 500)
+        assert step < 1.5
+        bursty = [100.0 if i % 5 else 1500.0 for i in range(1000)]
+        assert pacing.extent(bursty) > 4.0
+
+    def test_the_shares_are_causal_so_a_gain_measured_with_them_is_earnable(self):
+        from till_infinity.structures.statespace import pacing
+
+        shares = pacing.shares([100.0] * 500 + [1000.0] * 500)
+        # The early bars cannot know about the busy stretch: the share is one
+        # through the warmup rather than a ratio to the whole sample's mean,
+        # which would be a look-ahead worth a great deal of fictional nats.
+        assert shares[: pacing.WARMUP] == [1.0] * pacing.WARMUP
+        assert max(shares[:400]) == 1.0
+
+
 class TestBehaving:
     """The measured per-class table, and the one classifier that feeds it."""
 
