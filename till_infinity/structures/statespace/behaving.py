@@ -74,6 +74,10 @@ GENERATED_PREFIXES = (
     "volatility",
     "jump",
     "range_break",
+    # `Spot_Up_-_Volatility_Up_Index`. Found by `class_traits.py`, which
+    # reported fifteen instruments as `unknown` - fourteen stock indices and
+    # this one generated feed.
+    "spot",
 )
 
 #: Traded classes, by the names the cache uses. Checked after the generated
@@ -83,6 +87,25 @@ TRADED_CLASSES: dict[str, tuple[str, ...]] = {
     "energy": ("US_Oil", "UK_Brent_Oil", "NGAS"),
     "basket": ("USD_Basket", "EUR_Basket", "GBP_Basket"),
     "soft": ("Sugar", "Cocoa", "Cotton", "CoffeeArab", "CoffeeRobu"),
+    #: Cash stock indices. They were `unknown` until `class_traits.py` listed
+    #: what the classifier was failing to name, and they are traded - they
+    #: absorb at -0.0438 with an activity extent of 7.95.
+    "index": (
+        "Germany_40",
+        "France_40",
+        "UK_100",
+        "Japan_225",
+        "Hong_Kong_50",
+        "Europe_50",
+        "Swiss_20",
+        "Spain_35",
+        "Netherlands_25",
+        "US_SP_500",
+        "US_Tech_100",
+        "Wall_Street_30",
+        "US_Mid_Cap_400",
+        "US_Small_Cap_2000",
+    ),
 }
 
 #: The eight majors, as the pairs that are quoted against the dollar either way.
@@ -165,28 +188,69 @@ class Traits:
         return self.activity_extent > 1.5
 
 
-#: Measured per class. **Only classes that were actually in the studies.**
+#: Measured per class by `research/ideas/class_traits.py`, at 1h, each
+#: instrument against **its own matched walk** - a walk built from that
+#: instrument's per-bar tick counts and volatility, so path geometry is removed
+#: rather than assumed away.
 #:
-#: The traded rows are medians over the instruments of that class in
-#: `orderflow_from_bars.py` and `activity_clock.py`: five FX majors, two
-#: metals, one energy. The generated rows are single feeds, which is why their
-#: `activity_extent` is quoted to four places - the whole point of those rows
-#: is how close to one it is.
+#: **The sign separates a real order book from a generator with no exceptions.**
+#: Nineteen classes and about five hundred instruments:
+#:
+#: * every **traded** class absorbs - basket, energy, equity, both FX classes,
+#:   index, metal, soft;
+#: * every generated family **with a jump** runs - boom, crash, both DEX
+#:   directions, drift switch, jump, range break;
+#: * every generated family **without** one is neutral - the three step
+#:   variants and the volatility indices, which read `-0.0005`.
+#:
+#: Not one traded class fails to absorb and not one generated class absorbs,
+#: which is what makes this a fingerprint rather than an index. The departures
+#: are a few per cent, so the **sign** is the claim and the magnitude only its
+#: size.
+#:
+#: `q_exponent` is recorded only where `activity_clock.py` actually swept it -
+#: the three traded classes it ran on - and is `None` elsewhere. A class whose
+#: `activity_extent` is near one cannot have one at all.
 TRAITS: dict[str, Traits] = {
-    # Traded: absorbing, informative activity, exponent 2.
-    "fx_major": Traits(absorption=-0.045, activity_extent=5.68, q_exponent=2.0, tail_alpha=2.90),
-    "metal": Traits(absorption=-0.056, activity_extent=6.05, q_exponent=2.0, tail_alpha=3.00),
-    "energy": Traits(absorption=-0.033, activity_extent=9.42, q_exponent=2.0, tail_alpha=None),
-    # Generated with a jump: running, and inert to activity.
-    "boom": Traits(absorption=+0.126, activity_extent=1.0076, q_exponent=None, tail_alpha=None),
-    "crash": Traits(absorption=+0.139, activity_extent=1.0084, q_exponent=None, tail_alpha=None),
-    "dex_up": Traits(absorption=+0.230, activity_extent=1.0089, q_exponent=None, tail_alpha=None),
+    # Traded: all absorbing, with activity worth driving `Q` from.
+    "fx_major": Traits(absorption=-0.0439, activity_extent=5.678, q_exponent=2.0, tail_alpha=2.90),
+    "fx_cross": Traits(absorption=-0.0698, activity_extent=4.421, q_exponent=None, tail_alpha=2.90),
+    "metal": Traits(absorption=-0.0623, activity_extent=5.814, q_exponent=2.0, tail_alpha=2.62),
+    "energy": Traits(absorption=-0.0369, activity_extent=9.420, q_exponent=2.0, tail_alpha=2.40),
+    # The most uneven activity in the cache by a wide margin, which is what a
+    # market with a session open and close looks like.
+    "equity": Traits(absorption=-0.0801, activity_extent=26.335, q_exponent=None, tail_alpha=2.44),
+    "index": Traits(absorption=-0.0438, activity_extent=7.954, q_exponent=None, tail_alpha=2.72),
+    "soft": Traits(absorption=-0.0276, activity_extent=2.995, q_exponent=None, tail_alpha=3.42),
+    # Traded, but a **derived** quote: the basket absorbs like a real market
+    # and its tick count is nearly fixed, so the activity channel is inert on
+    # it for a reason that has nothing to do with its being generated.
+    "basket": Traits(absorption=-0.0519, activity_extent=1.111, q_exponent=None, tail_alpha=2.81),
+    # Generated, with a jump in the generator: all running.
+    "boom": Traits(absorption=+0.1058, activity_extent=1.007, q_exponent=None, tail_alpha=5.34),
+    "crash": Traits(absorption=+0.0968, activity_extent=1.006, q_exponent=None, tail_alpha=5.37),
+    "dex_up": Traits(absorption=+0.2276, activity_extent=1.009, q_exponent=None, tail_alpha=4.08),
+    "dex_down": Traits(absorption=+0.2309, activity_extent=1.005, q_exponent=None, tail_alpha=4.04),
     "drift_switch": Traits(
-        absorption=+0.174, activity_extent=1.0155, q_exponent=None, tail_alpha=None
+        absorption=+0.2086, activity_extent=1.016, q_exponent=None, tail_alpha=8.52
     ),
-    # Generated without one: sits on the walk. The row that makes the table
-    # three-way rather than two-way.
-    "step": Traits(absorption=-0.002, activity_extent=1.0006, q_exponent=None, tail_alpha=None),
+    "jump": Traits(absorption=+0.0490, activity_extent=1.002, q_exponent=None, tail_alpha=5.67),
+    "range_break": Traits(
+        absorption=+0.1240, activity_extent=1.001, q_exponent=None, tail_alpha=3.24
+    ),
+    # Generated, without one: neutral, which is the row that makes the table
+    # three-way. The volatility indices are specified geometric Brownian
+    # motion and read -0.0005 - a pure walk, to four places.
+    "step": Traits(absorption=-0.0033, activity_extent=1.001, q_exponent=None, tail_alpha=5.94),
+    "multi_step": Traits(
+        absorption=+0.0077, activity_extent=1.001, q_exponent=None, tail_alpha=6.01
+    ),
+    "skew_step": Traits(
+        absorption=-0.0061, activity_extent=1.000, q_exponent=None, tail_alpha=5.73
+    ),
+    "volatility": Traits(
+        absorption=-0.0005, activity_extent=1.003, q_exponent=None, tail_alpha=6.06
+    ),
 }
 
 

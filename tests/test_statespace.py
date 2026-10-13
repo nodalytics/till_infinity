@@ -6685,6 +6685,12 @@ class TestBehaving:
             ("US_Oil", "energy"),
             ("Sugar", "soft"),
             ("USD_Basket", "basket"),
+            ("Germany_40", "index"),
+            ("US_SP_500", "index"),
+            ("Wall_Street_30", "index"),
+            ("Jump_100_Index", "jump"),
+            ("Range_Break_100_Index", "range_break"),
+            ("Spot_Up_-_Volatility_Up_Index", "spot"),
             ("AAPL.OQ", "equity"),
             ("JPM.N", "equity"),
             ("Boom_500_Index", "boom"),
@@ -6745,20 +6751,89 @@ class TestBehaving:
     def test_an_unmeasured_class_returns_nothing_rather_than_a_default(self):
         from till_infinity.structures.statespace import behaving
 
-        for feed in ("EURGBP", "AAPL.OQ", "Sugar", "USD_Basket", "NOTASYMBOL"):
+        # `class_traits.py` measured the classes this once listed, so the
+        # remaining unmeasured ones are a name the classifier cannot place and
+        # the one generated family it found but did not score.
+        for feed in ("NOTASYMBOL", "Spot_Up_-_Volatility_Up_Index", ""):
             assert behaving.traits_for(feed) is None, feed
         # And an unmeasured class still gets the activity channel, because
         # `Pace` is self-limiting: a fixed tick count gives a factor of one.
-        assert behaving.drives_q("EURGBP")
-        assert behaving.drives_q("AAPL.OQ")
+        assert behaving.drives_q("NOTASYMBOL")
+        assert behaving.drives_q("Spot_Up_-_Volatility_Up_Index")
+
+    def test_the_sign_separates_a_real_book_from_a_generator_with_no_exception(self):
+        """Nineteen classes, about five hundred instruments, no misfits.
+
+        This is the assertion that makes the table a fingerprint rather than an
+        index: not one traded class fails to absorb and not one generated class
+        absorbs. If a future measurement breaks it, the fingerprint is what has
+        to be re-examined and not the test.
+        """
+        from till_infinity.structures.statespace import behaving
+
+        traded = ("fx_major", "fx_cross", "metal", "energy", "equity", "index", "soft", "basket")
+        jumping = ("boom", "crash", "dex_up", "dex_down", "drift_switch", "jump", "range_break")
+        smooth = ("step", "multi_step", "skew_step", "volatility")
+        for label in traded:
+            assert behaving.TRAITS[label].absorbs, label
+            assert not behaving.TRAITS[label].runs, label
+        for label in jumping:
+            assert behaving.TRAITS[label].runs, label
+            assert not behaving.TRAITS[label].absorbs, label
+        for label in smooth:
+            assert not behaving.TRAITS[label].runs, label
+            assert not behaving.TRAITS[label].absorbs, label
+        # Every class in the table is in exactly one of the three groups.
+        assert set(traded) | set(jumping) | set(smooth) == set(behaving.TRAITS)
+
+    def test_a_derived_quote_absorbs_yet_carries_no_activity(self):
+        """`basket` is the row that separates the two questions.
+
+        It absorbs like a real market, because it is one - a dollar basket is
+        priced off real FX - and its tick count is nearly fixed at an extent of
+        1.111, so the activity channel is inert on it for a reason that has
+        nothing to do with being generated. A table that used one field to
+        answer both questions would have had to call it generated.
+        """
+        from till_infinity.structures.statespace import behaving
+
+        basket = behaving.traits_for("USD_Basket")
+        assert basket.absorbs
+        assert not basket.informative_activity
+        assert not behaving.drives_q("USD_Basket")
+        # Against a traded class whose activity is the most uneven in the cache.
+        equity = behaving.traits_for("AAPL.OQ")
+        assert equity.absorbs
+        assert equity.informative_activity
+        assert equity.activity_extent > 20.0
+
+    def test_every_traded_class_has_an_undefined_fourth_moment(self):
+        """Hill alpha below four forbids quoting a sample kurtosis."""
+        from till_infinity.structures.statespace import behaving
+
+        for label in ("fx_major", "fx_cross", "metal", "energy", "equity", "index", "soft"):
+            alpha = behaving.TRAITS[label].tail_alpha
+            assert alpha is not None, label
+            assert 2.0 < alpha < 4.0, (label, alpha)
+        # The generated families are far thinner tailed, which is the control:
+        # a specified process has the tails its specification gives it.
+        for label in ("step", "multi_step", "skew_step", "volatility"):
+            assert behaving.TRAITS[label].tail_alpha > 5.0, label
 
     def test_activity_only_drives_q_where_activity_varies(self):
         from till_infinity.structures.statespace import behaving
 
-        for feed in ("EURUSD", "XAUUSD", "US_Oil"):
+        for feed in ("EURUSD", "XAUUSD", "US_Oil", "AAPL.OQ", "Germany_40", "Sugar"):
             assert behaving.drives_q(feed), feed
             assert behaving.traits_for(feed).informative_activity
-        for feed in ("Boom_500_Index", "Step_Index_200", "Drift_Switch_Index_10"):
+        for feed in (
+            "Boom_500_Index",
+            "Step_Index_200",
+            "Drift_Switch_Index_10",
+            "Volatility_75_Index",
+            "Jump_100_Index",
+            "USD_Basket",
+        ):
             assert not behaving.drives_q(feed), feed
         # Every traded row carries the measured exponent; no generated row does.
         for feed in ("EURUSD", "XAUUSD", "US_Oil"):
