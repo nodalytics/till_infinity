@@ -6957,6 +6957,57 @@ class TestPooling:
         assert all(a[1] <= b[1] for a, b in itertools.pairwise(got))
         assert math.isfinite(crps(got, 0.0))
 
+    def test_the_pool_adapts_its_members_noise_by_default(self):
+        """The 2.7x correction, and the reason `Adapting` stopped being unused.
+
+        A River Hoeffding tree beat this pool by 3.6x on CRPS, and most of the
+        gap turned out not to be learning: on validated driftless Brownian
+        motion, where there is **nothing to learn**, the learner still won and
+        sat at a PIT flatness of 1.24 where the pool read 43.05. Wrapping the
+        members in `Adapting` - which drives the squared standardised
+        innovation toward 1.0 - took the pool to PIT 7.89 and CRPS 0.000588,
+        better calibrated than the learner that exposed it.
+        """
+        import random
+
+        from till_infinity.structures.statespace import pooling
+        from till_infinity.structures.statespace.adapting import Adapting
+
+        assert pooling.ADAPT is True
+        pool = pooling.Pooled()
+        assert all(isinstance(one, Adapting) for one in pool.members)
+        # `False` is kept, because it is the arm every alpha and rule figure
+        # was originally measured on.
+        assert not any(isinstance(one, Adapting) for one in pooling.Pooled(adapt=False).members)
+
+        def run(adapt):
+            got = pooling.Pooled(adapt=adapt)
+            random.seed(9)
+            level = 0.0
+            for i in range(400):
+                level += random.gauss(0.0, 0.01)
+                got.predict(float(i) * 3600.0)
+                got.update(level, 1e-4)
+            return got
+
+        # The adapting pool ends with a different process noise than it began
+        # with, which is the whole mechanism: a loop that never moves is not
+        # adapting. `Adapting.factor` is its lever's multiple of its start.
+        adapted = run(True)
+        assert any(float(one.factor) != 1.0 for one in adapted.members)
+        assert math.isfinite(adapted.loglike)
+
+    def test_every_member_s_lever_is_named_because_they_disagree(self):
+        """`reverting` has no `jerk`, so one name for all of them would raise."""
+        from till_infinity.structures.statespace import pooling
+        from till_infinity.structures.statespace.family import members
+
+        built = members()
+        for name in pooling.DEFAULT:
+            lever = pooling.LEVERS[name]
+            assert hasattr(built[name](), lever), (name, lever)
+        assert pooling.LEVERS["reverting"] == "sigma2"
+        assert pooling.LEVERS["kalman"] == "jerk"
 
 class TestResearchPrimitives:
     """Three measurement tools that were living in harnesses."""

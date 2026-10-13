@@ -96,6 +96,40 @@ DEFAULT = ("kalman", "reverting", "robust")
 #: itself it is certain cannot take the whole weight and divide by zero.
 FLOOR = 1e-12
 
+#: The process-noise lever each member names, for `adapt`. `Adapting` defaults
+#: to `jerk`, which `reverting` does not have - it calls the same quantity
+#: `sigma2` - so a pool that adapted every member through one name would raise
+#: on the second one.
+LEVERS = {"kalman": "jerk", "robust": "jerk", "reverting": "sigma2", "landau": "sigma2"}
+
+#: Whether each member learns its own process noise from its own standardised
+#: innovation, through `adapting.Adapting` in `matching` mode.
+#:
+#: **Default true, and it is the largest correction in this module.**
+#: `statespace-river-against-members.md` set a River Hoeffding tree against this
+#: pool and lost by **3.6x on CRPS** - and then found that most of the gap was
+#: not learning at all. On the generated feeds, which are validated driftless
+#: Brownian motion with **nothing to learn**, the learner still won and sat at a
+#: PIT flatness of 1.24 where this pool read **43.05**. A gain that survives
+#: where there is nothing to learn is a statement about the pool, and what it
+#: says is that its members' `Q` is mis-set.
+#:
+#: Wrapping them in `Adapting` - which drives the exponentially weighted square
+#: of the standardised innovation toward 1.0, what its own docstring calls "an
+#: honest filter" - recovers most of it:
+#:
+#: | arm | PIT | CRPS |
+#: | --- | ---: | ---: |
+#: | plain members | 37.77 | 0.001598 |
+#: | **adapting members** | **7.89** | **0.000588** |
+#: | the River tree | 8.81 | 0.000441 |
+#:
+#: So `Adapting` is worth **2.7x on CRPS** here and takes the pool from badly
+#: over-confident to better calibrated than the learner that exposed it. It was
+#: written, measured at +848 nats median in `family.py`, and until this was
+#: used by nothing.
+ADAPT = True
+
 
 def _factories(names: Sequence[str]) -> tuple[Callable[[], object], ...]:
     from .family import members
@@ -116,6 +150,9 @@ class Pooled:
     names: tuple[str, ...] = DEFAULT
     alpha: float = ALPHA
     rule: str = RULE
+    #: See `ADAPT`. `False` is the un-adapting pool, kept because it is the arm
+    #: every `alpha` and `rule` figure was originally measured on.
+    adapt: bool = ADAPT
 
     #: Combined state, formed in `predict`.
     value: float = 0.0
@@ -143,7 +180,15 @@ class Pooled:
                     f"{self.names!r}. One member is not a pool and should be "
                     "used directly."
                 )
-            self._pool = [make() for make in built]
+            if self.adapt:
+                from .adapting import Adapting
+
+                self._pool = [
+                    Adapting(build=make, lever=LEVERS.get(name, "jerk"), mode="matching")
+                    for name, make in zip(self.names, built, strict=False)
+                ]
+            else:
+                self._pool = [make() for make in built]
         if self.rule not in ("shrinking", "mixture", "argmax"):
             raise ValueError(f"unknown rule {self.rule!r}")
 
