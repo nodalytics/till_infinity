@@ -5956,3 +5956,93 @@ def test_the_improvements_table_cannot_rot_in_either_direction():
                 "That is the rot this test exists for: finish an item and the "
                 "table has to say so."
             )
+
+
+class TestBounding:
+    """I7: the target, stop, win rate and duration are one surface."""
+
+    def test_the_symmetric_case_is_a_coin_whatever_the_shift(self):
+        """Equal barriers give 0.5 because the shift moves both walls alike."""
+        from till_infinity.structures.statespace import bounding
+
+        for shift in (0.0, bounding.SHIFT, 2.0):
+            got = bounding.solve(up=1.3, down=1.3, shift=shift)
+            assert got["probability"] == pytest.approx(0.5)
+
+    def test_the_duration_is_the_product_of_the_shifted_barriers(self):
+        from till_infinity.structures.statespace import bounding
+
+        got = bounding.solve(up=2.0, down=3.0)
+        want = (2.0 + bounding.SHIFT) * (3.0 + bounding.SHIFT)
+        assert got["horizon"] == pytest.approx(want)
+
+    @pytest.mark.parametrize(
+        "pair",
+        [
+            ("up", "down"),
+            ("up", "probability"),
+            ("up", "horizon"),
+            ("down", "probability"),
+            ("down", "horizon"),
+            ("probability", "horizon"),
+        ],
+    )
+    def test_every_pair_recovers_the_same_point_on_the_surface(self, pair):
+        """Two degrees of freedom means all six pairs agree.
+
+        This is the item itself: if any pair disagreed, the four quantities
+        would not be one model and the desk's third number would be free.
+        """
+        from till_infinity.structures.statespace import bounding
+
+        full = bounding.solve(up=2.0, down=3.0)
+        again = bounding.solve(**{key: full[key] for key in pair})
+        for key in bounding.QUANTITIES:
+            assert again[key] == pytest.approx(full[key], rel=1e-9), key
+
+    def test_three_numbers_is_an_error_rather_than_an_input(self):
+        """Over-specified is the finding, so it cannot be silently accepted."""
+        from till_infinity.structures.statespace import bounding
+
+        with pytest.raises(ValueError, match="exactly two"):
+            bounding.solve(up=1.0, down=1.0, horizon=10.0)
+        with pytest.raises(ValueError, match="exactly two"):
+            bounding.solve(up=1.0)
+
+    def test_a_win_rate_and_a_holding_time_can_be_jointly_unreachable(self):
+        """The constraint three independent numbers cannot express."""
+        from till_infinity.structures.statespace import bounding
+
+        least = bounding.least_horizon(0.9)
+        assert least == pytest.approx(bounding.SHIFT**2 * 0.9 / 0.1)
+        assert not bounding.feasible(0.9, least * 0.99)
+        assert bounding.feasible(0.9, least * 1.01)
+        with pytest.raises(ValueError, match="closer than zero"):
+            bounding.solve(probability=0.9, horizon=least * 0.5)
+        # at the boundary the near barrier sits exactly at zero distance
+        edge = bounding.solve(probability=0.9, horizon=least)
+        assert min(edge["up"], edge["down"]) == pytest.approx(0.0, abs=1e-9)
+
+    def test_slack_says_which_of_the_three_decides_the_exit(self):
+        from till_infinity.structures.statespace import bounding
+
+        implied = bounding.solve(up=1.0, down=1.0)["horizon"]
+        assert bounding.slack(1.0, 1.0, implied) == pytest.approx(1.0)
+        assert bounding.binding(1.0, 1.0, implied) == "both"
+        assert bounding.binding(1.0, 1.0, implied * 10.0) == "barriers"
+        assert bounding.binding(1.0, 1.0, implied * 0.1) == "time"
+
+    def test_slower_scales_the_duration_and_leaves_the_label_alone(self):
+        """The measured correction is conditional on volatility; the label is not."""
+        from till_infinity.structures.statespace import bounding
+
+        plain = bounding.solve(up=2.0, down=3.0)
+        slow = bounding.solve(up=2.0, down=3.0, slower=1.958)
+        assert slow["horizon"] == pytest.approx(plain["horizon"] * 1.958)
+        assert slow["probability"] == pytest.approx(plain["probability"])
+        # and a horizon handed back in feed time recovers the same geometry
+        again = bounding.solve(
+            probability=slow["probability"], horizon=slow["horizon"], slower=1.958
+        )
+        assert again["up"] == pytest.approx(2.0)
+        assert again["down"] == pytest.approx(3.0)
