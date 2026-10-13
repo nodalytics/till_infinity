@@ -66,10 +66,46 @@ LAGS = int(os.environ.get("LAGS", "10"))
 EDGES = (0.95, 0.99)
 #: Null repetitions.
 REPS = int(os.environ.get("REPS", "3"))
+#: Generated instruments carried as the control class.
+SYNTHETICS = int(os.environ.get("SYNTHETICS", "14"))
 #: Factors removed before the residual screen.
 FACTORS = int(os.environ.get("FACTORS", "3"))
 SEED = 20261013
 DAY = 24
+
+
+#: Asset classes, so a pooled median cannot hide a subgroup that disagrees.
+JPY = ("EURJPY", "GBPJPY", "AUDJPY", "CHFJPY")
+METALS = ("XAUUSD", "XAGUSD")
+CRYPTO = ("BTCUSD", "ETHUSD", "SOLUSD")
+
+
+def family(name: str) -> str:
+    """Which class an instrument belongs to.
+
+    The synthetics are the decisive control here. If real volatilities co-move
+    because of a common risk driver, a generated process must read zero against
+    everything - its engine has no reference to any market. **If the synthetics
+    co-move too, the correlation is in the estimator or the clock rather than
+    in the markets**, and the headline result is an artefact.
+    """
+    for prefix in screen.GENERATED_PREFIXES:
+        if name.startswith(prefix):
+            return "synthetic"
+    if name in CRYPTO:
+        return "crypto"
+    if name in METALS:
+        return "metal"
+    if name in JPY:
+        return "fx jpy cross"
+    if name.endswith("USD") or name.startswith("USD"):
+        return "fx major"
+    return "fx cross"
+
+
+def pair_class(left: str, right: str) -> str:
+    a, b = sorted((family(left), family(right)))
+    return a if a == b else f"{a} x {b}"
 
 
 def rotated(series, rng):
@@ -288,10 +324,19 @@ def main() -> None:
     )
     planted_arm()
 
-    live = [name for name in screen.TRADED if screen.load(name) is not None]
+    traded = [name for name in screen.TRADED if screen.load(name) is not None]
+    synthetic = [
+        name
+        for name in screen.universe(screen.FRAME)[:SYNTHETICS]
+        if screen.load(name) is not None
+    ]
+    live = traded + synthetic
     series = {name: screen.load(name) for name in live}
     rng = random.Random(SEED)
-    print(f"\n{len(live)} instruments -> {len(live) * (len(live) - 1) // 2} pairs")
+    print(
+        f"\n{len(traded)} traded and {len(synthetic)} generated -> "
+        f"{len(live) * (len(live) - 1) // 2} pairs"
+    )
 
     def both(builder):
         """`(real, null)` for a per-pair statistic, the null by rotation."""
@@ -319,6 +364,23 @@ def main() -> None:
     bar = max(r["corr"] for r in vols_null if math.isfinite(r["corr"]))
     beat = [r for r in vols if math.isfinite(r["corr"]) and r["corr"] > bar]
     print(f"\n{len(beat)} of {len(vols)} exceed the null's maximum vol correlation ({bar:+.4f})")
+
+    print("\nby class, because a pooled median can hide a subgroup:")
+    print(f"{'class':<30}{'pairs':>7}{'median corr':>14}{'max':>9}{'beat null':>11}")
+    groups: dict[str, list] = {}
+    for got in vols:
+        left, right = got["pair"].split("/")
+        groups.setdefault(pair_class(left, right), []).append(got)
+    for label in sorted(groups, key=lambda k: -statistics.median(
+        [r["corr"] for r in groups[k] if math.isfinite(r["corr"])] or [0.0]
+    )):
+        here = [r["corr"] for r in groups[label] if math.isfinite(r["corr"])]
+        if not here:
+            continue
+        print(
+            f"{label:<30}{len(here):>7}{statistics.median(here):>+14.4f}"
+            f"{max(here):>+9.4f}{sum(1 for v in here if v > bar):>11}"
+        )
     print(f"\n{'pair':<18}{'vol corr':>10}{'rank':>9}{'vol DF t':>10}{'weight':>9}")
     for got in sorted(vols, key=lambda r: -(r["corr"] if math.isfinite(r["corr"]) else -9))[:12]:
         print(
@@ -364,6 +426,23 @@ def main() -> None:
     bar_t = max(r[0.99] for r in tails_null if math.isfinite(r[0.99]))
     beat_t = [r for r in tails if math.isfinite(r[0.99]) and r[0.99] > bar_t]
     print(f"\n{len(beat_t)} of {len(tails)} exceed the null's maximum 99th lift ({bar_t:+.4f})")
+
+    print("\nby class:")
+    print(f"{'class':<30}{'pairs':>7}{'median lift':>14}{'max':>9}{'beat null':>11}")
+    tail_groups: dict[str, list] = {}
+    for got in tails:
+        left, right = got["pair"].split("/")
+        tail_groups.setdefault(pair_class(left, right), []).append(got)
+    for label in sorted(tail_groups, key=lambda k: -statistics.median(
+        [r[0.99] for r in tail_groups[k] if math.isfinite(r[0.99])] or [0.0]
+    )):
+        here = [r[0.99] for r in tail_groups[label] if math.isfinite(r[0.99])]
+        if not here:
+            continue
+        print(
+            f"{label:<30}{len(here):>7}{statistics.median(here):>+14.4f}"
+            f"{max(here):>+9.4f}{sum(1 for v in here if v > bar_t):>11}"
+        )
     print(f"\n{'pair':<18}{'lift 0.95':>11}{'lift 0.99':>11}{'beats':>8}")
     for got in sorted(tails, key=lambda r: -(r[0.99] if math.isfinite(r[0.99]) else -9))[:12]:
         print(
