@@ -324,15 +324,27 @@ must exist and mention the item, and a `-` must have no module claiming it.
 | I1 | there is no input; `B` and `u` do not exist here | `inputs.py` |
 | I3 | a rate that pulls back instead of running away | `reverting.py` |
 | I11 | what a subject is, and which ones have provenance | `subjects.py` |
-| **I7** | **two barriers from one model instead of three** | **-** |
+| **I7** | **two barriers from one model instead of three** | `bounding.py` |
 
-**`I7` is the only one left**, and it is the interesting one rather than the
-leftover. The desk sets a target, a stop and a time limit as three independent
-numbers; `I7` says two of them should fall out of one model. The barrier work
-since - `barriers.conditional_slowdown` and
-`research/docs/statespace-triple-barrier.md` - establishes the pieces it needs:
-the label is invariant to volatility, the duration is not, and the duration's
-conditional correction is derived rather than fitted.
+**`I7` is now `bounding.py`, and the answer is stronger than the item asked
+for.** The desk sets a target, a stop and a time limit as three independent
+numbers; `I7` asked for two of them to fall out of one model. In shifted units
+`u = up + B` and `d = down + B` the first-passage laws collapse to `P = d/(u+d)`
+and `T = u*d`, so **all four of target, stop, win probability and expected
+duration are one surface with two degrees of freedom.** Three numbers is not
+under-modelled, it is over-specified: the third is redundant or contradictory,
+and `bounding.slack` reports which.
+
+It also expresses a constraint three independent numbers cannot. Barriers
+cannot sit at negative distance, so `T >= B**2 * max((1-P)/P, P/(1-P))` - a
+desired win rate and a desired holding time are **not always jointly
+reachable**, and `bounding.feasible` is the check.
+
+The barrier work since - `barriers.conditional_slowdown` and
+`research/docs/statespace-triple-barrier.md` - supplied the pieces: the label is
+invariant to volatility, the duration is not, and the duration's conditional
+correction is derived rather than fitted. That is why `slower` is a caller's
+argument in `bounding` and scales only the duration.
 
 I4 is still conditional on I5's answer, and I11's own escapes are named in the
 spec - it is listed here because `subjects.py` carries the provenance half of
@@ -392,6 +404,7 @@ asserts it rather than trusting it.
 from __future__ import annotations
 
 from .adapting import Adapting
+from .bounding import binding, feasible, least_horizon, slack, solve
 from .diagnostics import Residuals, fit_jerk, residuals
 from .family import MISSING, PENDING, Filter, members
 from .landau import Landau
@@ -421,14 +434,19 @@ __all__ = [
     "Slope",
     "Smoothed",
     "Subject",
+    "binding",
+    "feasible",
     "fit_jerk",
     "hourly",
+    "least_horizon",
     "members",
     "residuals",
     "simulate",
+    "slack",
     "slope_per_bar",
     "slope_per_hour",
     "smooth",
+    "solve",
     "with_gaps",
 ]
 
