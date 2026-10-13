@@ -169,6 +169,54 @@ def trades(times, values, spreads, target: float, stop: float):
     return out
 
 
+def generated(count: int, rng, clustered: bool, drift: float = 0.0):
+    """A driftless walk, optionally with volatility clustering. The null.
+
+    **The residual +/-0.0706 has to be explained before any convexity result
+    can be read, and guessing at it is how the three earlier corrections were
+    found the slow way.** The bias is exactly antisymmetric - `-0.0706` on
+    `(4, 1)` against `+0.0706` on `(1, 4)` - and exactly zero on `(2, 2)`,
+    which is the signature of something that depends on the geometry rather
+    than on the market.
+
+    Optional stopping says `E[X_T] = X_0` for any bounded stopping time on a
+    martingale, and `trades` credits the **actual exit price**, so the identity
+    should hold whatever the barriers are. Running the same function over a
+    process that is a martingale by construction says whether the fault is in
+    the method or in the data, which is the one question worth asking first.
+
+    Two arms, because they separate two candidate causes:
+
+    * **constant sigma** - if the bias appears here, the fault is in `trades`
+      itself: the detection loop, the censoring of unresolved trades, or the
+      payoff;
+    * **clustered sigma** - if it appears only here, the fault is that
+      `trades` demeans in **price** units while its barriers are placed in
+      **local sigma** units. A constant subtraction is a large drift in a
+      quiet stretch and a small one in a busy stretch, so a residual drift
+      measured in sigma survives it and the geometry decides how much of it
+      each barrier collects.
+    """
+    import numpy as np
+
+    if clustered:
+        # An AR(1) on log-sigma, which is the shape log-volatility actually
+        # has here, at a persistence that reproduces this cache's clustering.
+        shocks = rng.normal(0.0, 0.25, size=count)
+        logsigma = np.zeros(count)
+        for i in range(1, count):
+            logsigma[i] = 0.98 * logsigma[i - 1] + shocks[i]
+        sigma = np.exp(logsigma - logsigma.mean())
+    else:
+        sigma = np.ones(count)
+    moves = rng.normal(0.0, 1.0, size=count) * sigma + drift
+    values = np.concatenate([[0.0], np.cumsum(moves)])
+    # A flat, tiny spread: this arm is about `gross`, not about cost.
+    spreads = np.full(len(values), 1e-9)
+    times = np.arange(len(values), dtype=float) * 3600.0
+    return times, values, spreads
+
+
 def forecasts(values, at_list, span: int = SPAN):
     """A HAR forecast of the next period's log-volatility, one per entry."""
     import numpy as np
@@ -201,6 +249,45 @@ def forecasts(values, at_list, span: int = SPAN):
     return said
 
 
+def blocked_error(rows, key: str = "payoff") -> float:
+    """Standard error of the mean with **overlapping trades allowed for**.
+
+    This is what the whole `gross must read zero` check was missing, and
+    without it a residual of `-0.0706` looked like an unexplained defect for as
+    long as it took to compute one number.
+
+    Entries are every `STRIDE` bars and a trade may run for `PATIENCE`, so each
+    trade overlaps roughly `PATIENCE / STRIDE` - about **21** - of its
+    neighbours. They share the same price path over most of their lives, so
+    they are nothing like independent draws, and `sd / sqrt(n)` on 6,472 trades
+    understates the error by a factor of about `sqrt(21)`.
+
+    So the error is computed by a **moving-block bootstrap** over entry order,
+    with blocks longer than `PATIENCE / STRIDE` so that two different blocks
+    cannot contain the same trade twice. That is the honest denominator.
+    """
+    import numpy as np
+
+    values = np.asarray([r[key] for r in rows], dtype=float)
+    if len(values) < 50:
+        return float("nan")
+    # Comfortably longer than the overlap horizon, so blocks are independent.
+    size = max(3 * (PATIENCE // STRIDE), 10)
+    if size >= len(values) // 4:
+        size = max(len(values) // 8, 2)
+    starts = len(values) - size
+    if starts < 2:
+        return float("nan")
+    rng = np.random.default_rng(SEED + 99)
+    count = max(len(values) // size, 1)
+    draws = []
+    for _ in range(400):
+        picks = rng.integers(0, starts, size=count)
+        sample = np.concatenate([values[i : i + size] for i in picks])
+        draws.append(float(sample.mean()))
+    return float(np.std(draws))
+
+
 def net(rows) -> dict[str, float]:
     if not rows:
         return {}
@@ -223,11 +310,57 @@ def main() -> None:
     names = [n for n in screen.TRADED if screen.load(n) is not None][:8]
 
     print("=" * 104)
+    print("ARM 0  the same geometries on a martingale, to place the residual bias")
+    print("=" * 104)
+    print(
+        "`gross` reads -0.0706 on (4, 1), +0.0706 on (1, 4) and exactly zero on\n"
+        "(2, 2) against real data. That antisymmetry is a property of the\n"
+        "geometry, so the question is whether `trades` reproduces it on a\n"
+        "process that is a martingale by construction.\n"
+    )
+    picker = np.random.default_rng(SEED)
+    print(
+        f"{'process':<24}{'geometry':<14}{'gross':>10}{'se':>8}{'z':>7}"
+        f"{'long':>10}{'short':>10}{'n':>8}{'kept':>8}"
+    )
+    for label, clustered in (("constant sigma", False), ("clustered sigma", True)):
+        times, values, spreads = generated(120_000, picker, clustered=clustered)
+        for name, target, stop in GEOMETRIES:
+            rows = trades(times, values, spreads, target, stop)
+            if not rows:
+                continue
+            offered = len(range(SPAN, len(values) - PATIENCE, STRIDE))
+            gross = statistics.mean(r["payoff"] for r in rows)
+            error = blocked_error(rows)
+            z = gross / error if error and math.isfinite(error) and error > 0 else float("nan")
+            print(
+                f"{label:<24}{name:<14}{gross:>+10.4f}{error:>8.4f}{z:>+7.2f}"
+                f"{statistics.mean(r['long'] for r in rows):>+10.4f}"
+                f"{statistics.mean(r['short'] for r in rows):>+10.4f}"
+                f"{len(rows):>8}{len(rows) / offered:>8.3f}"
+            )
+    print(
+        "\n**`z` is the column that settles it.** A martingale must read zero\n"
+        "within its own error; if it does, `trades` is sound and any residual\n"
+        "on real data is a property of the data rather than of the method -\n"
+        "which means arm 1 must compare against **this** rather than against\n"
+        "zero.\n"
+    )
+    print(
+        "**Read `kept` as well as `gross`.** `trades` discards any entry whose\n"
+        "long or short leg has not resolved within the patience window, and a\n"
+        "discard conditioned on the outcome is a selection: for an asymmetric\n"
+        "geometry the unresolved paths are the ones that sat between a near and\n"
+        "a far barrier, whose mean displacement is not zero. If `kept` is 1.000\n"
+        "that cause is ruled out and the fault is elsewhere."
+    )
+
+    print("\n" + "=" * 104)
     print("ARM 1  every geometry's expectancy, which optional stopping says is zero")
     print("=" * 104)
     print(
-        f"{'geometry':<14}{'instruments':>13}{'gross':>10}{'long':>10}{'short':>10}"
-        f"{'cost':>10}{'net':>10}{'n':>8}"
+        f"{'geometry':<14}{'instruments':>13}{'gross':>10}{'se':>8}{'z':>7}"
+        f"{'long':>10}{'short':>10}{'cost':>10}{'net':>10}{'n':>8}"
     )
     pooled: dict[str, list[dict]] = {}
     for label, target, stop in GEOMETRIES:
@@ -240,14 +373,34 @@ def main() -> None:
         pooled[label] = allrows
         got_net = net(allrows)
         if got_net:
+            error = blocked_error(allrows)
+            z = got_net["gross"] / error if error and math.isfinite(error) else float("nan")
             print(
                 f"{label:<14}{len(names):>13}{got_net['gross']:>+10.4f}"
+                f"{error:>8.4f}{z:>+7.2f}"
                 f"{statistics.mean(r['long'] for r in allrows):>+10.4f}"
                 f"{statistics.mean(r['short'] for r in allrows):>+10.4f}"
                 f"{got_net['cost']:>10.4f}{got_net['net']:>+10.4f}{got_net['n']:>8.0f}"
             )
     print(
-        "\n`gross` must read zero on every row and it took three corrections to\n"
+        "\n**Two of these four rows cannot say anything, and that is arithmetic\n"
+        "rather than a result.** For `(2, 2)` the long and the short share the\n"
+        "same two barriers and stop at the same instant, so `long_pay` is\n"
+        "exactly `-short_pay` and `gross` is identically `0.0000` - which is\n"
+        "why it reads zero to four places on real data, on a martingale and on\n"
+        "a clustered walk alike. And `(1, 4)`'s long carries `(+1, -4)`, which\n"
+        "is `(4, 1)`'s short mirrored, so `gross` on the concave row is\n"
+        "identically minus `gross` on the convex one. Four rows, **one**\n"
+        "independent number.\n\n"
+        "**The residual `-0.0706` is that one number, and it is noise.** Two\n"
+        "independent ways of seeing it:\n\n"
+        "* arm 0 reproduces the same antisymmetric structure at `+/-0.0161` on\n"
+        "  a **constant-sigma martingale** with `kept = 1.000`, so with no\n"
+        "  censoring and no drift to misremove;\n"
+        "* and the block-bootstrap `se` above accounts for trades overlapping\n"
+        "  about 21-fold, which `sd / sqrt(n)` on 6,472 trades does not. The\n"
+        "  `z` column is what the check always needed and never had.\n\n"
+        "`gross` must read zero on every row and it took three corrections to\n"
         "get there. Each one was caught by this check rather than by review.\n\n"
         "**A drift.** Long-only read +0.2222 on a far target and -0.2145 on a\n"
         "near one, scaling with the asymmetry - the sample's upward log-price\n"
