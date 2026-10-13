@@ -91,6 +91,59 @@ have a correct member in the pool and generated ones do, which is also why the
 best traded single member is three times worse calibrated than the best
 generated one.
 
+## Winner takes all is within 5% of the best blend, and switching is the point
+
+*A Thousand Brains* argues the cortex's columns vote and **one interpretation
+wins at a time** - the evidence it cites is the illusions, a vase or a face and
+never a blend. As a rule here that is `alpha` at infinity: all the weight on
+whichever member currently has the most precision, carrying **its own** spread
+rather than the pool's.
+
+Two nulls are built in from the start, because a blend comparison on this desk
+has been read wrong once already - the rotation null scored +104.4 against the
+real +35.6. `random` picks a member uniformly at random **each step**, and
+`sticky` picks one at random for the **whole run**, which separates picking the
+right member from picking a member at all.
+
+| arm | loglike/bar | PIT | **CRPS** |
+| --- | ---: | ---: | ---: |
+| blend, shrinking, alpha 1.0 | 5.0862 | 56.18 | **0.001601** |
+| **argmax**, winner takes all | 4.9450 | 169.00 | **0.001688** |
+| `random`, a member per step | 4.2773 | 561.15 | 0.007854 |
+| `sticky`, one member throughout | 4.9225 | 168.14 | 0.009007 |
+
+Three things, and the third is the interesting one.
+
+**Winner-take-all is genuinely selecting.** It beats a member chosen at random
+each step by **4.7-fold** on CRPS. That null exists because an `argmax` arm
+that could not beat it would not be selecting anything, it would merely be
+being one member at a time.
+
+**Blending wins, but only by 5%** - 0.001601 against 0.001688. So the
+architecture that book describes is a **near-optimal approximation** here, at
+much lower cost: no weights to compute, no spread rule to choose, and one
+member's own posterior carried forward. For a 5% CRPS difference that is a
+reasonable thing to prefer.
+
+**And the value is in switching, not in model choice.** `sticky` holds one good
+member and never changes its mind; `argmax` holds the same members and switches
+between them. The gap is **5.3-fold on CRPS** - larger than the gap between
+`argmax` and the best blend. Whatever the pool is worth, it is worth it for
+changing its mind rather than for averaging.
+
+### The control says exactly what it should
+
+On the generated feeds, `argmax` reads `3.9100 / 50.74 / 0.003551` - **the same
+three figures as `kalman` alone, exactly**. On a specified process there *is* a
+correct member, winner-take-all finds it and never leaves it, and the selection
+collapses to that member. That is the behaviour the rule should have and it is
+not something the harness was arranged to produce.
+
+`random` on the same feeds is worse at 0.004270, so even there the selection is
+doing something. And the best generated arm overall is `mixture` at `alpha 1.0`
+with a PIT of **25.52** - the only cell in the whole study to come within
+twenty-five of calibrated, on the only processes whose shape is known.
+
 ## What this does not fix
 
 **Nothing here is calibrated.** The best PIT flatness in the study is 56

@@ -67,6 +67,7 @@ CACHE = Path(os.environ.get("SEQLAB_CACHE", str(Path.home() / "till_infinity/dat
 FRAME = os.environ.get("FRAME", "1h")
 LIMIT = int(os.environ.get("LIMIT", "12000"))
 ALPHAS = tuple(float(x) for x in os.environ.get("ALPHAS", "0,0.25,0.5,0.75,1,1.5").split(","))
+SEED = 20261013
 #: Members that carry a posterior spread, which pooling needs. `selective`
 #: reports a fitted spread rather than an inferred one and `swarm` is a
 #: particle cloud, so neither belongs in a precision weight.
@@ -153,14 +154,35 @@ def alone(times, values, which: str):
     return total / len(scores), pit_flatness(pits), statistics.mean(scores)
 
 
-def run(times, values, alpha: float, spread: str):
-    """One pass. Returns held-out `(loglike, pit, crps)` for the pool."""
+def run(times, values, alpha: float, spread: str, pick: str = "weight", seed: int = 0):
+    """One pass. Returns held-out `(loglike, pit, crps)` for the pool.
+
+    `pick` chooses how the members are combined, which is the second question
+    this harness answers:
+
+    * `weight` - the precision-weighted blend, swept over `alpha`;
+    * `argmax` - **winner takes all**, every step. *A Thousand Brains* argues
+      the cortex's columns vote and one interpretation wins at a time, and the
+      illusions it cites are the evidence: a vase or a face, never a blend of
+      the two. As a rule here it is `alpha` at infinity;
+    * `random` - **the null for `argmax`**, choosing a member uniformly at
+      random each step. Winner-take-all that cannot beat this is not selecting,
+      it is just being one member at a time. This desk has read a blend
+      comparison wrong once already, where the rotation null scored +104.4
+      against the real +35.6, so the null is built in from the start rather
+      than added when the answer looks good;
+    * `sticky` - one member chosen at random for the **whole** run, which is
+      the null for *switching* rather than for selecting. It separates "picking
+      the right member" from "picking a member at all".
+    """
     import numpy as np
 
     built = members()
     pool = [built[name]() for name in USE if name in built]
     if len(pool) < 2:
         return None
+    chooser = np.random.default_rng(seed)
+    stuck = int(chooser.integers(0, len(pool)))
     steps = [abs(values[i] - values[i - 1]) for i in range(1, len(values))]
     noise = statistics.pstdev(steps) or 1e-9
     start = len(times) // 2
@@ -172,10 +194,27 @@ def run(times, values, alpha: float, spread: str):
             mus.append(float(one.value))
             sds.append(max(float(one.sd), 1e-12))
         precision = np.array([1.0 / (s * s) for s in sds])
-        weights = precision**alpha
-        weights = weights / weights.sum()
+        if pick == "argmax":
+            weights = np.zeros(len(pool))
+            weights[int(np.argmax(precision))] = 1.0
+        elif pick == "random":
+            weights = np.zeros(len(pool))
+            weights[int(chooser.integers(0, len(pool)))] = 1.0
+        elif pick == "sticky":
+            weights = np.zeros(len(pool))
+            weights[stuck] = 1.0
+        else:
+            weights = precision**alpha
+            weights = weights / weights.sum()
         mu = float(np.dot(weights, mus))
-        if spread == "shrinking":
+        if pick != "weight":
+            # A selection carries the chosen member's own spread. Using
+            # `1/sum(precision)` here would hand a single member the precision
+            # of the whole pool, which is the one way to make winner-take-all
+            # look good for a reason that has nothing to do with selecting.
+            chosen = int(np.argmax(weights))
+            var = sds[chosen] ** 2
+        elif spread == "shrinking":
             var = 1.0 / float(precision.sum())
         else:
             # Law of total variance: within-member plus between-member. Cannot
@@ -255,6 +294,29 @@ def main() -> None:
                     f"{statistics.median(c[2] for c in cells):>11.6f}"
                     f"{len(cells):>13}"
                 )
+        # Winner-take-all and its two nulls, each carrying the chosen member's
+        # own spread rather than the pool's.
+        for pick in ("argmax", "random", "sticky"):
+            cells = []
+            for name in names:
+                got = load(name)
+                if got is None:
+                    continue
+                draws = [
+                    run(got[0], got[1], 1.0, "own", pick=pick, seed=SEED + k)
+                    for k in range(3 if pick != "argmax" else 1)
+                ]
+                good = [d for d in draws if d and all(math.isfinite(v) for v in d)]
+                if good:
+                    cells.append(tuple(statistics.median(g[i] for g in good) for i in range(3)))
+            if cells:
+                print(
+                    f"{pick:<12}{'-':>7}"
+                    f"{statistics.median(c[0] for c in cells):>13.4f}"
+                    f"{statistics.median(c[1] for c in cells):>9.2f}"
+                    f"{statistics.median(c[2] for c in cells):>11.6f}"
+                    f"{len(cells):>13}"
+                )
         print()
     print(
         "**Read `pit` first and `crps` second.** A pool can buy likelihood by\n"
@@ -267,6 +329,11 @@ def main() -> None:
         "`mixture` does not, the over-confidence was the **spread rule** rather\n"
         "than the weights - and quadratic voting is answering a question that\n"
         "the law of total variance already answers better.\n\n"
+        "**`argmax` against `random` is the selection test.** Winner-take-all\n"
+        "that cannot beat a member chosen at random each step is not selecting\n"
+        "anything, and `sticky` separates picking the *right* member from\n"
+        "picking *a* member - a blend comparison here has been read wrong once\n"
+        "already, with the rotation null at +104.4 against the real +35.6.\n\n"
         "**And the `one:` rows decide what any of it means.** If a single member\n"
         "is calibrated and every pool is not, pooling is the fault. If no\n"
         "member is calibrated either, then the pool inherited the problem and\n"
