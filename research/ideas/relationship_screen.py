@@ -208,6 +208,29 @@ def universe(frame: str) -> list[str]:
     return found[:NULLS]
 
 
+def point_size(closes) -> float:
+    """The quote grid the prices sit on, inferred from the prices themselves.
+
+    **The `spread` column is in integer points, not price.** EURUSD carries a
+    median raw spread of `2.0` at a close near `1.12`, and dividing one by the
+    other reads a 476% round trip. Worse, the error scales with the price
+    level, so a JPY pair quoted near 133 was penalised a hundred times less
+    than a EUR pair near 1.1 - which silently reorders every pair by cost
+    rather than merely inflating them all.
+
+    The grid is recoverable without a hard-coded table: the smallest non-zero
+    gap between consecutive closes *is* one point, rounded to the nearest power
+    of ten to absorb binary representation error.
+    """
+    import numpy as np
+
+    steps = np.abs(np.diff(np.asarray(closes, dtype=float)))
+    steps = steps[steps > 0]
+    if not len(steps):
+        return float("nan")
+    return float(10.0 ** round(math.log10(float(steps.min()))))
+
+
 def load(name: str, frame: str = FRAME):
     import numpy as np
 
@@ -231,8 +254,10 @@ def load(name: str, frame: str = FRAME):
         times, closes, spread = times[-LIMIT:], closes[-LIMIT:], spread[-LIMIT:]
     if len(times) < LEAST:
         return None
-    # Relative spread, so it is comparable across instruments priced differently.
-    return times, np.log(closes), spread / closes
+    # Relative spread, so it is comparable across instruments priced
+    # differently. `spread` is in points, so it needs the quote grid first.
+    point = point_size(closes)
+    return times, np.log(closes), spread * point / closes
 
 
 def block_shuffled(series, rng, blocks: int = 24):
