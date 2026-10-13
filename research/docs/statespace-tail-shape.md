@@ -4,7 +4,16 @@
 beats the walk's forecast distribution on CRPS at any horizon, and **no
 Gaussian forecast is calibrated on real data at all** - the probability
 integral transform's flatness runs 18 to 461 against the 1.0 that calibration
-means, the walk included. The two failure modes are opposite, so neither has
+means, the walk included.
+
+> **The long-horizon end of that range is largely a sampling artefact and is
+> corrected in [the conformal band](statespace-conformal-band.md).**
+> `standardised` below steps the forward window **one bar at a time** at every
+> horizon, so at h=20 consecutive residuals share 19 of their 20 bars. Stepped
+> by the horizon instead, the Gaussian's flatness at h=20 reads **1.6 rather
+> than 16.0** - already calibrated. The **h=1** figure stands, because a
+> one-bar horizon has no overlap to remove, and it reads 73.3 on an independent
+> harness. So the claim holds at short horizons and does not hold at long ones. The two failure modes are opposite, so neither has
 the right *shape*.
 
 That document nominated `robust.py` as the lever. **That was wrong and is

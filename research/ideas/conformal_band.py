@@ -85,10 +85,12 @@ SPAN = int(os.environ.get("SPAN", "100"))
 MEMORY = int(os.environ.get("MEMORY", "500"))
 #: Bins for the PIT histogram.
 BINS = int(os.environ.get("BINS", "20"))
+#: How far the forward window is stepped, as a divisor of the horizon. 1 means
+#: non-overlapping; a larger number overlaps and inflates any arm that can
+#: exploit the autocorrelation that overlap creates.
+OVERLAP = int(os.environ.get("OVERLAP", "1"))
 #: Residuals required before an arm is allowed to quote a band.
-WARM = int(os.environ.get("WARM", "200"))
-#: Coverage levels the adaptive arm carries a corrector for.
-SHARES = (0.5, 0.8, 0.9, 0.95, 0.99)
+WARM = int(os.environ.get("WARM", "120"))
 #: Step sizes aggregated by the adaptive arm.
 GAMMAS = (0.005, 0.02, 0.08)
 
@@ -104,7 +106,15 @@ def standardised(levels, horizon: int, span: int = SPAN):
 
     moves = np.diff(levels)
     out = []
-    for at in range(span, len(levels) - horizon):
+    # **Stepped by the horizon, not by one bar.** Stepping by one makes
+    # consecutive residuals share `horizon - 1` of their `horizon` bars, and at
+    # h=60 that is 59 of 60. An adaptive band chasing recent misses then looks
+    # excellent because the next miss is nearly the same observation - it read
+    # a CRPS of 0.815 at h=60 under overlap - while a real forecaster at that
+    # horizon makes one forecast per 60 bars. `OVERLAP=1` restores the old
+    # behaviour for comparison.
+    step = max(1, horizon // OVERLAP) if OVERLAP else horizon
+    for at in range(span, len(levels) - horizon, step):
         window = moves[at - span : at]
         spread = float(np.std(window))
         if spread <= 0:
@@ -161,12 +171,30 @@ def crps_from_quantiles(quantiles, outcome: float) -> float:
 TAUS = tuple(i / 50.0 for i in range(1, 50))
 
 
+#: The two parametric arms' quantiles never change, so they are built once
+#: rather than per step - the first version rebuilt 49 `ppf` calls a step for
+#: each of them.
+_NORMAL_Q: list[tuple[float, float]] = []
+_STUDENT_Q: list[tuple[float, float]] = []
+
+
+def _parametric(nu: float = 4.0) -> None:
+    from scipy import stats
+
+    if _NORMAL_Q:
+        return
+    _NORMAL_Q.extend((t, float(stats.norm.ppf(t))) for t in TAUS)
+    scale = math.sqrt((nu - 2.0) / nu)
+    _STUDENT_Q.extend((t, float(stats.t.ppf(t, nu) * scale)) for t in TAUS)
+
+
 def gaussian_arm(history, z):
     """The band the package quotes now: standard normal, shape assumed."""
     from scipy import stats
 
     _ = history
-    return stats.norm.cdf(z), [(t, float(stats.norm.ppf(t))) for t in TAUS]
+    _parametric()
+    return float(stats.norm.cdf(z)), _NORMAL_Q
 
 
 def student_arm(history, z, nu: float = 4.0):
@@ -174,110 +202,104 @@ def student_arm(history, z, nu: float = 4.0):
     from scipy import stats
 
     _ = history
+    _parametric(nu)
     scale = math.sqrt((nu - 2.0) / nu)
-    return stats.t.cdf(z / scale, nu), [
-        (t, float(stats.t.ppf(t, nu) * scale)) for t in TAUS
-    ]
+    return float(stats.t.cdf(z / scale, nu)), _STUDENT_Q
 
 
-def empirical_arm(history, z):
-    """The rank among past residuals: conformal, and no shape at all."""
+def empirical_arm(order, z):
+    """The rank among past residuals: conformal, and no shape at all.
+
+    Takes the history **already sorted**, because a quantile off a sorted array
+    is an index lookup. The first version called `np.quantile` once per level
+    per step - about a hundred calls a step on a growing array - and the
+    planted arm did not finish.
+    """
     import numpy as np
 
-    past = np.asarray(history)
-    pit = float((np.searchsorted(np.sort(past), z, side="right") + 0.5) / (len(past) + 1))
-    return pit, [(t, float(np.quantile(past, t))) for t in TAUS]
+    size = len(order)
+    pit = float((np.searchsorted(order, z, side="right") + 0.5) / (size + 1))
+    return pit, [(t, float(order[min(int(t * size), size - 1)])) for t in TAUS]
 
 
 class Adaptive:
-    """Gibbs and Candes' corrector per coverage level, aggregated over `gamma`.
+    """Gibbs and Candes' corrector **per quantile level**, aggregated over `gamma`.
 
-    One offset per `(share, gamma)`: when the realised interval misses, the
-    offset widens by `gamma * (1 - share)`, and when it covers it narrows by
-    `gamma * share`, which is the update whose fixed point is the target
-    coverage. The aggregate over `gamma` is the mean, which is the part of AgACI
-    that matters here - a single step size is either too slow for a regime
+    One offset per `(tau, gamma)`. After each observation the offset for level
+    `tau` moves by `gamma * (tau - hit)`, where `hit` is 1 if the outcome fell
+    below that quantile: the fixed point of that update is the level where the
+    outcome falls below exactly `tau` of the time, which is what a calibrated
+    quantile means. The aggregate over `gamma` is the mean, which is the part of
+    AgACI that matters here - one step size is either too slow for a regime
     change or too noisy in a calm stretch, and there is no way to know which in
     advance.
+
+    **The first version carried a corrector per *coverage* level instead - five
+    of them - and was unreadable.** Its PIT was "the narrowest of five nested
+    intervals containing `z`", which takes five distinct values, so a histogram
+    over twenty bins has five spikes and a flatness near 1,040 whatever the
+    data does. That was the construction, not a finding, and a score that
+    cannot read a correct answer cannot read a wrong one either.
     """
 
     def __init__(self):
-        self.offsets = {(s, g): 0.0 for s in SHARES for g in GAMMAS}
+        self.offsets = {(t, g): 0.0 for t in TAUS for g in GAMMAS}
 
-    @staticmethod
-    def nearest(share: float) -> float:
-        """The carried coverage level closest to `share`.
+    def quantiles(self, order):
+        """The corrected quantile ladder, forced monotone."""
+        size = len(order)
+        out = []
+        last = -math.inf
+        for tau in TAUS:
+            base = float(order[min(int(tau * size), size - 1)])
+            shift = statistics.mean(self.offsets[(tau, g)] for g in GAMMAS)
+            value = max(base + shift, last)
+            last = value
+            out.append((tau, value))
+        return out
 
-        Clamping to the *range* of `SHARES` is not the same as snapping to a
-        member of it, and the first version did the former: a quantile level of
-        0.98 asks for a coverage of 0.96, which has no corrector, and the
-        lookup raised `KeyError: (0.96, 0.005)`.
-        """
-        return min(SHARES, key=lambda s: abs(s - share))
+    def readings(self, order, z: float):
+        """A PIT from the corrected ladder, and the ladder itself for CRPS."""
+        ladder = self.quantiles(order)
+        below = sum(1 for _, value in ladder if z >= value)
+        # The rank among the ladder's own levels, which is a PIT on the grid
+        # the arm actually quotes rather than on a finer one it does not.
+        pit = (below + 0.5) / (len(ladder) + 1)
+        return pit, ladder
 
-    def width(self, history, share: float) -> float:
-        import numpy as np
-
-        share = self.nearest(share)
-        base = float(np.quantile(np.abs(history), share))
-        shift = statistics.mean(self.offsets[(share, g)] for g in GAMMAS)
-        return max(base + shift, 1e-9)
-
-    def observe(self, history, z: float) -> None:
-        import numpy as np
-
-        for share in SHARES:
-            base = float(np.quantile(np.abs(history), share))
+    def observe(self, order, z: float) -> None:
+        ladder = dict(self.quantiles(order))
+        for tau in TAUS:
+            hit = 1.0 if z <= ladder[tau] else 0.0
             for gamma in GAMMAS:
-                key = (share, gamma)
-                wide = max(base + self.offsets[key], 1e-9)
-                covered = abs(z) <= wide
-                self.offsets[key] += gamma * ((1.0 - share) if not covered else -share)
-
-    def readings(self, history, z: float):
-        """A PIT from the nested intervals, and the quantile set for CRPS."""
-        import numpy as np
-
-        widths = sorted((self.width(history, s), s) for s in SHARES)
-        # The PIT is read off the narrowest interval containing `z`, which is
-        # the only PIT nested intervals define.
-        inside = next((s for w, s in widths if abs(z) <= w), None)
-        if inside is None:
-            pit = 1.0 - 1e-9 if z > 0 else 1e-9
-        else:
-            half = (1.0 - inside) / 2.0
-            pit = 1.0 - half if z > 0 else half
-        middle = float(np.median(history))
-        quantiles = []
-        for t in TAUS:
-            share = abs(2.0 * t - 1.0)
-            wide = self.width(history, share)
-            quantiles.append((t, middle + (wide if t > 0.5 else -wide)))
-        return pit, quantiles
+                # Positive when the quantile sits too low, so it rises.
+                self.offsets[(tau, gamma)] += gamma * (tau - hit)
 
 
 def score(zs):
     """Every arm on one standardised series, predict-then-update throughout."""
     import numpy as np
 
-    if len(zs) < WARM + 400:
+    if len(zs) < WARM + 250:
         return {}
     arms = {name: {"pit": [], "crps": []} for name in ("gaussian", "student", "conformal", "rolling", "adaptive")}
     adaptive = Adaptive()
     for at in range(WARM, len(zs)):
         z = float(zs[at])
         history = zs[:at]
-        rolling = zs[max(0, at - MEMORY) : at]
+        # Sorted once a step and shared by every arm that needs a quantile.
+        order = np.sort(history)
+        rolling = np.sort(zs[max(0, at - MEMORY) : at])
         for name, (pit, quantiles) in (
             ("gaussian", gaussian_arm(history, z)),
             ("student", student_arm(history, z)),
-            ("conformal", empirical_arm(history, z)),
+            ("conformal", empirical_arm(order, z)),
             ("rolling", empirical_arm(rolling, z)),
-            ("adaptive", adaptive.readings(history, z)),
+            ("adaptive", adaptive.readings(order, z)),
         ):
             arms[name]["pit"].append(pit)
             arms[name]["crps"].append(crps_from_quantiles(quantiles, z))
-        adaptive.observe(history, z)
+        adaptive.observe(order, z)
     out = {}
     for name, got in arms.items():
         out[name] = {
