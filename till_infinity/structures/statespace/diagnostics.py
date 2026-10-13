@@ -125,6 +125,49 @@ class Residuals:
         return self.jarque_bera_p < 0.05
 
 
+def blocked_error(values, overlap: int, draws: int = 400, seed: int = 0) -> float:
+    """Standard error of a mean when the observations **overlap**.
+
+    `sd / sqrt(n)` assumes independent draws, and a study of overlapping
+    windows or barrier trades has nothing of the kind: neighbours share most of
+    the same price path. A moving-block bootstrap with blocks longer than
+    `overlap` measures the dependence instead of assuming it.
+
+    **This is the number a `must read zero` check needs, and not having it once
+    cost a line of work.** `statespace-volatility-convexity.md` carried a
+    residual of `-0.0706` that looked like an unexplained defect for as long as
+    it took to compute one standard error; it is `0.0231`, so the residual is
+    `z = -3.06` and real.
+
+    It is also worth recording what the **naive** correction gets wrong there.
+    Barrier trades entered 24 bars apart with 500 bars of patience look 21-fold
+    overlapped, which gives `se = 0.085` and a reassuring `z = -0.83` - but
+    about three quarters stop at the near barrier within a few dozen bars, so
+    the mean duration is nowhere near the patience window and the true overlap
+    is slight. Pass the **horizon** as `overlap` and let the bootstrap find the
+    dependence; do not divide the sample by it.
+    """
+    import numpy as np
+
+    got = np.asarray(values, dtype=float)
+    got = got[np.isfinite(got)]
+    if len(got) < 50:
+        return float("nan")
+    size = max(3 * int(overlap), 10)
+    if size >= len(got) // 4:
+        size = max(len(got) // 8, 2)
+    starts = len(got) - size
+    if starts < 2:
+        return float("nan")
+    rng = np.random.default_rng(seed)
+    count = max(len(got) // size, 1)
+    means = []
+    for _ in range(draws):
+        picks = rng.integers(0, starts, size=count)
+        means.append(float(np.concatenate([got[i : i + size] for i in picks]).mean()))
+    return float(np.std(means))
+
+
 def crps(quantiles: Sequence[tuple[float, float]], outcome: float) -> float:
     """Continuous ranked probability score from a set of quantiles.
 

@@ -6840,3 +6840,198 @@ class TestBehaving:
             assert behaving.traits_for(feed).q_exponent == 2.0
         for feed in ("Boom_500_Index", "Step_Index_200"):
             assert behaving.traits_for(feed).q_exponent is None
+
+
+class TestPooling:
+    """The 5.6x CRPS win, as a member rather than as a research harness."""
+
+    def test_a_pool_is_itself_a_filter_and_is_not_a_family_member(self):
+        """It satisfies the contract, and is deliberately not in the registry.
+
+        `members()` is the registry of filter **kinds**; a pool is a
+        combination of them rather than another one, and putting it there
+        would make it a candidate in its own contest.
+        """
+        from till_infinity.structures.statespace.family import Filter, members
+        from till_infinity.structures.statespace.pooling import Pooled
+
+        assert isinstance(Pooled(), Filter)
+        assert "pooled" not in members()
+        assert "pooling" not in members()
+
+    def test_the_defaults_are_the_measured_ones(self):
+        """Not conventions. `0.5` was the hypothesis and it lost."""
+        from till_infinity.structures.statespace import pooling
+
+        assert pooling.ALPHA == 1.0
+        assert pooling.RULE == "shrinking"
+        # `landau` at its default kappa is `reverting`, so a pool holding both
+        # doubles the weight on reverting behaviour.
+        assert "landau" not in pooling.DEFAULT
+        assert len(pooling.DEFAULT) == 3
+
+    def test_mixture_is_wider_than_shrinking_and_cannot_undercut_disagreement(self):
+        """The two spread rules differ in the direction that matters."""
+        import random
+
+        from till_infinity.structures.statespace.pooling import Pooled
+
+        def run(rule):
+            pool = Pooled(rule=rule)
+            random.seed(7)
+            level = 0.0
+            for i in range(300):
+                level += random.gauss(0.0, 0.01)
+                pool.predict(float(i) * 3600.0)
+                pool.update(level, 1e-4)
+            return pool
+
+        shrinking, mixture = run("shrinking"), run("mixture")
+        assert mixture.sd > shrinking.sd
+        # `shrinking` is 1/sum(precision), so it sits below every member's own
+        # spread - which is exactly why it is the over-confident one.
+        assert shrinking.sd < min(float(one.sd) for one in shrinking.members)
+        # `mixture` carries the members' disagreement and so cannot.
+        assert mixture.sd >= min(float(one.sd) for one in mixture.members)
+
+    def test_argmax_is_one_hot_and_carries_the_chosen_member_s_own_spread(self):
+        import random
+
+        from till_infinity.structures.statespace.pooling import Pooled
+
+        pool = Pooled(rule="argmax")
+        random.seed(7)
+        level = 0.0
+        for i in range(300):
+            level += random.gauss(0.0, 0.01)
+            pool.predict(float(i) * 3600.0)
+            pool.update(level, 1e-4)
+        assert sorted(pool.weights) == [0.0, 0.0, 1.0]
+        chosen = pool.weights.index(1.0)
+        assert pool.sd == pytest.approx(float(pool.members[chosen].sd))
+        assert pool.value == pytest.approx(float(pool.members[chosen].value))
+
+    def test_it_scores_the_prediction_before_folding_the_reading_in(self):
+        """A held-out likelihood must not score a posterior against its own
+        observation, so the order inside `update` is load-bearing."""
+        import random
+
+        from till_infinity.structures.statespace.pooling import Pooled
+
+        pool = Pooled()
+        random.seed(3)
+        level = 0.0
+        first = None
+        for i in range(200):
+            level += random.gauss(0.0, 0.01)
+            pool.predict(float(i) * 3600.0)
+            before = pool.value
+            pool.update(level, 1e-4)
+            if first is None and i > 50:
+                # The score used `before`, not the updated value: a residual of
+                # zero would mean it had already seen the reading.
+                assert before != pytest.approx(level, abs=1e-12)
+                first = pool.loglike
+        assert math.isfinite(pool.loglike)
+        assert pool.seen == 200
+
+    def test_a_pool_of_one_is_refused_rather_than_silently_degenerate(self):
+        from till_infinity.structures.statespace.pooling import Pooled
+
+        with pytest.raises(ValueError, match="at least two members"):
+            Pooled(names=("kalman",))
+        with pytest.raises(ValueError, match="unknown rule"):
+            Pooled(rule="average")
+
+    def test_quantiles_feed_crps_directly(self):
+        from till_infinity.structures.statespace.diagnostics import crps
+        from till_infinity.structures.statespace.pooling import Pooled
+
+        pool = Pooled()
+        pool.predict(0.0)
+        pool.update(0.0, 1e-4)
+        levels = [i / 20.0 for i in range(1, 20)]
+        got = pool.quantiles(levels)
+        assert [level for level, _ in got] == levels
+        # Ascending in value, which `crps`'s left Riemann sum requires.
+        assert all(a[1] <= b[1] for a, b in itertools.pairwise(got))
+        assert math.isfinite(crps(got, 0.0))
+
+
+class TestResearchPrimitives:
+    """Three measurement tools that were living in harnesses."""
+
+    def test_native_returns_drops_a_gap_spanning_increment(self):
+        """The trap: aligning first makes every session gap a one-bar return."""
+        from till_infinity.structures.statespace.relating import native_returns
+
+        stamps = [0.0, 3600.0, 7200.0, 10800.0, 300000.0, 303600.0]
+        values = [1.0, 1.1, 1.2, 1.3, 5.0, 5.1]
+        got = native_returns((stamps, values))
+        assert got is not None
+        # Five increments, one of which spans eighty hours. Four survive.
+        assert len(got[0]) == 4
+        assert max(abs(v) for v in got[1]) < 1.0
+        assert native_returns(([0.0], [1.0])) is None
+
+    def test_paired_aligns_returns_rather_than_levels(self):
+        from till_infinity.structures.statespace.relating import paired
+
+        stamps = [float(i) * 3600.0 for i in range(600)]
+        left = [1.0 + 0.01 * i for i in range(600)]
+        # The second series misses a stretch, so the common grid has a hole.
+        other = [s for i, s in enumerate(stamps) if not 200 <= i < 260]
+        right = [2.0 + 0.02 * i for i, s in enumerate(stamps) if not 200 <= i < 260]
+        got = paired((stamps, left), (other, right))
+        assert got is not None
+        assert len(got[0]) == len(got[1])
+        # Every surviving increment is one bar, so none spans the hole: a
+        # 60-bar gap would show up as a 60x outlier if it did.
+        import statistics as st
+
+        for steps in got:
+            assert max(abs(v) for v in steps) < 3.0 * st.median([abs(v) for v in steps])
+        assert paired((stamps, left), (other, right), least=10_000) is None
+
+    def test_blocked_error_grows_with_the_overlap_it_is_told_about(self):
+        import numpy as np
+
+        from till_infinity.structures.statespace.diagnostics import blocked_error
+
+        rng = np.random.default_rng(5)
+        # A strongly serially correlated series: independent blocks of 50.
+        series = np.repeat(rng.normal(0.0, 1.0, 80), 50)
+        naive = float(series.std()) / math.sqrt(len(series))
+        got = blocked_error(series, overlap=50, seed=1)
+        # The naive figure assumes 4,000 independent draws; there are 80.
+        assert got > 4.0 * naive
+        assert math.isnan(blocked_error([1.0, 2.0], overlap=1))
+
+    def test_geometry_and_absorption_rebuild_the_fingerprint(self):
+        import random
+
+        from till_infinity.structures.statespace import behaving
+
+        random.seed(11)
+        opens, highs, lows, closes = [], [], [], []
+        level = 100.0
+        for _ in range(1500):
+            path = [level]
+            for _ in range(20):
+                path.append(path[-1] + random.gauss(0.0, 0.01))
+            opens.append(level)
+            highs.append(max(path))
+            lows.append(min(path))
+            closes.append(path[-1])
+            level = path[-1]
+        got = behaving.geometry(opens, highs, lows, closes)
+        assert set(got) == {"imbalance", "wick", "run_share", "bars"}
+        assert 0.0 < got["imbalance"] < 1.0
+        assert got["bars"] == 1500
+        # Against itself the departure is exactly zero, which is what makes
+        # `absorption` a ratio to a walk rather than a level.
+        assert behaving.absorption(got["imbalance"], got["imbalance"]) == 0.0
+        assert behaving.absorption(0.94, 1.0) < 0
+        assert behaving.absorption(1.13, 1.0) > 0
+        assert math.isnan(behaving.absorption(0.5, 0.0))
+        assert behaving.geometry([1.0], [1.0], [1.0], [1.0]) == {}

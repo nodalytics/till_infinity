@@ -144,6 +144,34 @@ doing something. And the best generated arm overall is `mixture` at `alpha 1.0`
 with a PIT of **25.52** - the only cell in the whole study to come within
 twenty-five of calibrated, on the only processes whose shape is known.
 
+## It is in the library, and the library reproduces it exactly
+
+`statespace.pooling.Pooled` is this result as a member rather than a harness.
+It satisfies `family.Filter`, so it is scored and composed like any other
+member, and it carries the measured defaults - `alpha = 1.0`, `rule =
+"shrinking"`, and three members with `landau` deliberately absent.
+
+A reimplementation is a chance to change an answer by accident, and the member
+differs from the harness in one respect that matters: it forms its combined
+state in `predict` and scores it in `update`, where the harness did both
+inline. So `research/ideas/pooled_member.py` scores the library member on the
+same six instruments, the same held-out half and the same three metrics:
+
+| arm | loglike/bar | PIT | CRPS | harness said |
+| --- | ---: | ---: | ---: | ---: |
+| `Pooled()` defaults | 5.0862 | 56.18 | **0.001601** | **0.001601** |
+| `Pooled(rule="mixture")` | 4.8115 | 263.28 | 0.002389 | 0.002389 |
+| `Pooled(rule="argmax")` | 4.9450 | 169.00 | 0.001688 | 0.001688 |
+| `Pooled(alpha=0.5)` | 5.0970 | 58.70 | 0.001661 | 0.001661 |
+
+**Every figure to four decimal places.** And on the generated feeds
+`Pooled(rule="argmax")` reproduces `kalman` alone exactly - `3.9100 / 50.74 /
+0.003551` - which is the behaviour winner-take-all should have when a correct
+member exists, now a property of the library rather than of one harness run.
+
+`Pooled.quantiles` returns `(level, value)` pairs for `diagnostics.crps`
+directly, so a caller scoring a pool no longer builds a quantile grid by hand.
+
 ## What this does not fix
 
 **Nothing here is calibrated.** The best PIT flatness in the study is 56
