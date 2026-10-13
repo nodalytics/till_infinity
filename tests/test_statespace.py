@@ -6273,21 +6273,3 @@ class TestVendoredCusum:
         assert isinstance(member._up, OneSided)
         assert isinstance(member._down, OneSided)
         assert member.statistic >= 0.0
-
-    def test_paired_still_works_on_the_vendored_detector(self):
-        """The caller that prompted the vendoring, driven through its real API."""
-        from till_infinity.structures.statespace.accruing import OneSided
-        from till_infinity.structures.statespace.linear import Gaussian
-        from till_infinity.structures.statespace.paired import Paired
-
-        member = Paired(build=lambda: Gaussian(jerk=1e-9))
-        hour = 3_600.0
-        when = 0.0
-        for i in range(400):
-            when += hour
-            member.predict(when)
-            # A clean shift part way through, so the detector has something to find.
-            member.update(0.001 * i + (0.05 if i > 200 else 0.0), 1e-8, when)
-        assert isinstance(member._up, OneSided)
-        assert isinstance(member._down, OneSided)
-        assert member.statistic >= 0.0
