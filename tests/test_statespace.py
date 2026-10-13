@@ -5889,3 +5889,70 @@ class TestAdapting:
         from till_infinity.structures.statespace.family import Filter
 
         assert isinstance(Adapting(build=lambda: Gaussian(jerk=0.01)), Filter)
+
+
+def test_the_improvements_table_cannot_rot_in_either_direction():
+    """The `here` column of the I1-I11 table, asserted against the code.
+
+    **This is the third stale registry in this package.** `MISSING["em"]` said
+    EM was absent while `fit_em` existed; `MISSING` listed the fixed-lag
+    smoother while `smoothing.lagged` was written and tested; and the
+    improvements table marked six items `-` while a module already claimed
+    each one.
+
+    The first two were caught by a guard that asserts **absence**. That is only
+    half of what goes wrong here, because the rot was in the other direction -
+    things listed as missing that existed. So this one checks **both**:
+
+    * a row naming a module must have that module, and the module must mention
+      the item - so a rename or a deletion fails here rather than silently
+      making the plan a work of fiction;
+    * a row marked `-` must have **no** module claiming it, so the next item
+      to be built cannot be finished and left marked undone.
+
+    Parsed out of the docstring rather than duplicated in the test, because two
+    copies of a table is how the first one rotted.
+    """
+    import pathlib
+    import re
+
+    from till_infinity.structures import statespace
+
+    doc = statespace.__doc__ or ""
+    rows = re.findall(r"^\|\s*\**(I\d+)\**\s*\|[^|]*\|\s*(.+?)\s*\|$", doc, re.MULTILINE)
+    assert len(rows) >= 9, f"expected the improvements table, parsed {len(rows)} rows"
+
+    package = pathlib.Path(statespace.__file__).parent
+    sources = {
+        path.name: path.read_text() for path in package.glob("*.py") if path.name != "__init__.py"
+    }
+
+    claimed: dict[str, set[str]] = {}
+    for name, text in sources.items():
+        for item in re.findall(r"\bI(\d+)\b", text):
+            claimed.setdefault(f"I{item}", set()).add(name)
+
+    for item, where in rows:
+        # Digits included: `[a-z_]+` missed `barriers2.py`, so a module name
+        # carrying a number fell through to the `-` branch and failed with the
+        # wrong reason. Caught while checking the guard fails when it should.
+        named = re.findall(r"`([a-z0-9_]+\.py)`", where)
+        if named:
+            for module in named:
+                assert module in sources, f"{item} names {module}, which does not exist"
+                # Split rather than `and`-ed: CI's `PT018` catches a compound
+                # assert, and this session already let one through once.
+                assert item in claimed, f"{item} is named in the table and claimed nowhere"
+                assert module in claimed[item], (
+                    f"{item} names {module} but that module never mentions {item} - "
+                    "either the work moved or the table is fiction"
+                )
+        else:
+            assert where.replace("*", "").strip() == "-", (
+                f"{item}'s `here` column is {where!r}, which is neither a module nor `-`"
+            )
+            assert item not in claimed, (
+                f"{item} is marked absent but {sorted(claimed[item])} claims it. "
+                "That is the rot this test exists for: finish an item and the "
+                "table has to say so."
+            )
