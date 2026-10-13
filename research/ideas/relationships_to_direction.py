@@ -143,7 +143,6 @@ def convert(legs, names, enter: float = ENTER):
         return []
     # Standardised with first-half scale, so nothing from the test half leaks.
     z = deviation(values[half:]) / scale
-    held = np.concatenate([np.abs(weights[:-1]), [1.0]])
 
     rows = []
     for index, name in enumerate(names):

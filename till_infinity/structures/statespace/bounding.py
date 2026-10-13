@@ -69,6 +69,30 @@ volatility and the duration is not.
 `SHIFT` is restated rather than imported. This package does not import from
 `trading`, deliberately, and one duplicated constant is a smaller cost than a
 dependency that makes the members untestable without a broker.
+
+## One shift is wrong for a one-sided feed, and the formulas are not
+
+A published spec that spikes one way - `Boom`, `Crash`, `DEX_UP`, `DEX_DOWN` -
+breaks the symmetric correction without touching the algebra, and getting that
+distinction the right way round decides how much changes.
+
+`P = d/(u+d)` is optional stopping on a mean-zero martingale and `T = u*d` is
+Wald's second identity. **Neither derivation mentions symmetry, Gaussianity or
+any higher moment**, so a skewed martingale has the same laws. What it does not
+have is the same **overshoot**: `SHIFT` exists because a barrier watched once a
+bar can be crossed and recrossed inside it, which is an overshoot correction,
+and a Boom index reaches its upper barrier *in a spike* and overshoots badly
+while reaching its lower barrier in small drifting steps.
+
+So optional stopping still applies - to the stopped value **including its
+overshoot** - and the same `P = d/(u+d)` holds with `u = up + shift_up` and
+`d = down + shift_down`. On a planted skewed martingale that prediction lands
+within three decimals of the measured crossing share at every reach: predicted
+0.4538 against measured 0.4534, and 0.4718 against 0.4715.
+
+**The single defect was that `SHIFT` was one number where it needs two**, and
+`SHIFTS` carries the measured pairs. The practical size of it: a `Boom` index on
+a symmetric `+/-2` sigma geometry wins **0.4861** of the time, not half.
 """
 
 from __future__ import annotations
@@ -84,22 +108,112 @@ SHIFT = 0.5826
 #: The quantities on the surface. Exactly two are free.
 QUANTITIES = ("up", "down", "probability", "horizon")
 
+#: Measured directional shifts, as `(up, down)`, for feeds whose published
+#: process spikes one way.
+#:
+#: **One constant is wrong for a one-sided process, and the formulas are not.**
+#: `SHIFT` corrects for a barrier being watched once a bar rather than
+#: continuously, so it is an *overshoot* correction - and the overshoot is
+#: exactly where a spiking feed differs by direction. A `Boom` index reaches its
+#: upper barrier **in a spike** and overshoots it badly; it reaches its lower
+#: barrier in small drifting steps and barely overshoots at all.
+#:
+#: Measured by `research/ideas/barrier_overshoot.py` as the mean excess beyond
+#: the barrier at first crossing, in units of one bar's standard deviation, on
+#: non-overlapping windows at reaches of 2, 4 and 8 sigma. The
+#: `Volatility_*` family is the control and recovers `0.5745` to `0.6002` up
+#: and `0.5773` to `0.6058` down - a ratio of 0.948 to 1.024 - so an estimator
+#: that reproduces the constant it replaces is what produced the rest.
+#:
+#: The mirror families mirror each other, which is the internal check: Boom
+#: reads `0.65 / 0.51` where Crash reads `0.51 / 0.60`, and `DEX_UP` reads
+#: `0.72 / 0.45` where `DEX_DOWN` reads `0.47 / 0.72`.
+#: The step families are listed as symmetric **because they were measured and
+#: came out symmetric**, which is worth recording so nobody derives it twice.
+#: `Step_Index`, `Multi_Step_*` and `Skew_Step_*` read ratios of 0.881 to 1.047
+#: across reaches, and `Skew_Step` is symmetric too despite its name.
+#:
+#: They are also a genuine **lattice** - 149 distinct bar-return magnitudes on
+#: `Step_Index` against 14,000 for a diffusion, on a price grid of exactly
+#: `0.1` - which raises the question of whether a grid-aligned barrier removes
+#: the correction entirely, since a walk lands on such a barrier rather than
+#: crossing it. **It does not, and the reason is a number:** the grid spacing is
+#: `0.0166` of one bar's standard deviation, so alignment can remove at most 2.8%
+#: of a `0.5826` shift. The monitoring correction comes from within-bar path
+#: behaviour, not from grid granularity, and at this resolution the grid is far
+#: too fine to touch it.
+SHIFTS: dict[str, tuple[float, float]] = {
+    "volatility": (SHIFT, SHIFT),
+    "boom": (0.6535, 0.5100),
+    "crash": (0.5080, 0.6027),
+    "dex_up": (0.7183, 0.4500),
+    "dex_down": (0.4683, 0.7169),
+    "step": (SHIFT, SHIFT),
+    "multi_step": (SHIFT, SHIFT),
+    "skew_step": (SHIFT, SHIFT),
+}
 
-def feasible(probability: float, horizon: float, *, shift: float = SHIFT) -> bool:
+
+def shifts_for(feed: str) -> tuple[float, float]:
+    """The `(up, down)` shift for a feed name, symmetric when it is not listed.
+
+    Falls back to `(SHIFT, SHIFT)` rather than guessing: an unlisted feed has
+    not been measured, and a symmetric correction is the honest default for a
+    process whose asymmetry is unknown.
+    """
+    name = str(feed).lower()
+    if name.startswith("dex_"):
+        if name.endswith("up_index"):
+            return SHIFTS["dex_up"]
+        if name.endswith("down_index"):
+            return SHIFTS["dex_down"]
+        return (SHIFT, SHIFT)
+    for family, pair in SHIFTS.items():
+        if name.startswith(family):
+            return pair
+    return (SHIFT, SHIFT)
+
+
+def _walls(shift: float, shift_up: float | None, shift_down: float | None):
+    """Resolve the two walls, with `shift` as the symmetric shorthand."""
+    return (
+        shift if shift_up is None else float(shift_up),
+        shift if shift_down is None else float(shift_down),
+    )
+
+
+def feasible(
+    probability: float,
+    horizon: float,
+    *,
+    shift: float = SHIFT,
+    shift_up: float | None = None,
+    shift_down: float | None = None,
+) -> bool:
     """Whether a `(probability, horizon)` pair admits non-negative barriers."""
     p = float(probability)
     if not 0.0 < p < 1.0:
         return False
-    need = shift * shift * max((1.0 - p) / p, p / (1.0 - p))
-    return float(horizon) >= need
+    return float(horizon) >= least_horizon(p, shift=shift, shift_up=shift_up, shift_down=shift_down)
 
 
-def least_horizon(probability: float, *, shift: float = SHIFT) -> float:
-    """The smallest `horizon` compatible with `probability`."""
+def least_horizon(
+    probability: float,
+    *,
+    shift: float = SHIFT,
+    shift_up: float | None = None,
+    shift_down: float | None = None,
+) -> float:
+    """The smallest `horizon` compatible with `probability`.
+
+    Each wall contributes its own bound, because `u >= shift_up` and
+    `d >= shift_down` are separate constraints once the two differ.
+    """
     p = float(probability)
     if not 0.0 < p < 1.0:
         return math.inf
-    return shift * shift * max((1.0 - p) / p, p / (1.0 - p))
+    up, down = _walls(shift, shift_up, shift_down)
+    return max(up * up * p / (1.0 - p), down * down * (1.0 - p) / p)
 
 
 def solve(
@@ -109,6 +223,8 @@ def solve(
     probability: float | None = None,
     horizon: float | None = None,
     shift: float = SHIFT,
+    shift_up: float | None = None,
+    shift_down: float | None = None,
     slower: float = 1.0,
 ) -> dict[str, float]:
     """All four quantities from exactly two of them.
@@ -116,6 +232,14 @@ def solve(
     Distances are in volatility units of one bar, `horizon` in bars. `slower`
     multiplies the duration for a feed whose volatility reverts, and does not
     touch the probability.
+
+    `shift` sets both walls; `shift_up` and `shift_down` override them
+    separately, which is what a one-sided feed needs - see `SHIFTS`. The
+    algebra is unchanged by the asymmetry, because optional stopping applies to
+    the stopped value **including its overshoot**: with different overshoots the
+    same `P = d/(u+d)` holds with `u = up + shift_up` and
+    `d = down + shift_down`. Measured against a planted skewed martingale that
+    prediction holds to three decimals.
 
     Raises `ValueError` on anything but two, because the point of the item is
     that three is not a valid input.
@@ -135,9 +259,10 @@ def solve(
     if slower <= 0:
         raise ValueError(f"slower must be positive, got {slower}")
 
+    wall_up, wall_down = _walls(shift, shift_up, shift_down)
     # Work in shifted units, where the two laws are P = d/(u+d) and T = u*d.
-    u = named["up"] + shift if "up" in named else None
-    d = named["down"] + shift if "down" in named else None
+    u = named["up"] + wall_up if "up" in named else None
+    d = named["down"] + wall_down if "down" in named else None
     p = named.get("probability")
     # The caller's horizon is on the feed's clock; the algebra is Brownian.
     t = named["horizon"] / slower if "horizon" in named else None
@@ -147,9 +272,9 @@ def solve(
     if t is not None and t <= 0:
         raise ValueError(f"horizon must be positive, got {named['horizon']}")
     if u is not None and u <= 0:
-        raise ValueError(f"up must exceed -{shift}, got {named['up']}")
+        raise ValueError(f"up must exceed -{wall_up}, got {named['up']}")
     if d is not None and d <= 0:
-        raise ValueError(f"down must exceed -{shift}, got {named['down']}")
+        raise ValueError(f"down must exceed -{wall_down}, got {named['down']}")
 
     if u is not None and d is not None:
         pass
@@ -163,18 +288,18 @@ def solve(
         u = t / d
     else:
         # probability and horizon: the only pair that can be infeasible.
-        if not feasible(p, t, shift=shift):
+        if not feasible(p, t, shift_up=wall_up, shift_down=wall_down):
             raise ValueError(
                 f"probability {p:.4f} and horizon {t:.4f} bars need a barrier "
                 f"closer than zero; the least horizon for that probability is "
-                f"{least_horizon(p, shift=shift):.4f} bars"
+                f"{least_horizon(p, shift_up=wall_up, shift_down=wall_down):.4f} bars"
             )
         d = math.sqrt(t * p / (1.0 - p))
         u = math.sqrt(t * (1.0 - p) / p)
 
     return {
-        "up": u - shift,
-        "down": d - shift,
+        "up": u - wall_up,
+        "down": d - wall_down,
         "probability": d / (u + d),
         "horizon": u * d * slower,
     }
@@ -186,6 +311,8 @@ def slack(
     horizon: float,
     *,
     shift: float = SHIFT,
+    shift_up: float | None = None,
+    shift_down: float | None = None,
     slower: float = 1.0,
 ) -> float:
     """The desk's time limit over the one its geometry implies.
@@ -195,7 +322,14 @@ def slack(
     target** - it is the point at which the two mechanisms are equally
     responsible, which is usually not what a desk wants either.
     """
-    implied = solve(up=up, down=down, shift=shift, slower=slower)["horizon"]
+    implied = solve(
+        up=up,
+        down=down,
+        shift=shift,
+        shift_up=shift_up,
+        shift_down=shift_down,
+        slower=slower,
+    )["horizon"]
     return math.inf if implied <= 0 else float(horizon) / implied
 
 
@@ -205,10 +339,20 @@ def binding(
     horizon: float,
     *,
     shift: float = SHIFT,
+    shift_up: float | None = None,
+    shift_down: float | None = None,
     slower: float = 1.0,
 ) -> str:
     """Which of the three numbers is actually deciding the exit."""
-    ratio = slack(up, down, horizon, shift=shift, slower=slower)
+    ratio = slack(
+        up,
+        down,
+        horizon,
+        shift=shift,
+        shift_up=shift_up,
+        shift_down=shift_down,
+        slower=slower,
+    )
     if ratio > 2.0:
         return "barriers"
     if ratio < 0.5:

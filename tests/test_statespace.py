@@ -6046,3 +6046,107 @@ class TestBounding:
         )
         assert again["up"] == pytest.approx(2.0)
         assert again["down"] == pytest.approx(3.0)
+
+    def test_the_symmetric_case_is_untouched_by_the_two_wall_form(self):
+        """Adding a second wall must not move the single-wall answer."""
+        from till_infinity.structures.statespace import bounding
+
+        plain = bounding.solve(up=1.0, down=1.0)
+        same = bounding.solve(up=1.0, down=1.0, shift_up=bounding.SHIFT)
+        for key in bounding.QUANTITIES:
+            assert same[key] == pytest.approx(plain[key]), key
+        assert bounding.least_horizon(0.7) == pytest.approx(
+            bounding.least_horizon(0.7, shift_up=bounding.SHIFT)
+        )
+
+    def test_a_one_sided_feed_is_not_a_coin_at_equal_barriers(self):
+        """The whole point: equal barriers stop being 50/50 once the walls differ.
+
+        A Boom index spikes upward, so it overshoots its upper barrier and that
+        barrier is effectively further away - which lowers, not raises, the
+        chance of reaching it first.
+        """
+        from till_infinity.structures.statespace import bounding
+
+        up_wall, down_wall = bounding.shifts_for("Boom_300_Index")
+        assert up_wall > down_wall, "boom must overshoot upward"
+        got = bounding.solve(up=2.0, down=2.0, shift_up=up_wall, shift_down=down_wall)
+        assert got["probability"] < 0.5
+        assert got["probability"] == pytest.approx(0.4861, abs=5e-4)
+        # and the mirror family mirrors it
+        crash_up, crash_down = bounding.shifts_for("Crash_300_Index")
+        mirror = bounding.solve(up=2.0, down=2.0, shift_up=crash_up, shift_down=crash_down)
+        assert mirror["probability"] > 0.5
+
+    @pytest.mark.parametrize(
+        "pair",
+        [
+            ("up", "down"),
+            ("up", "probability"),
+            ("up", "horizon"),
+            ("down", "probability"),
+            ("down", "horizon"),
+            ("probability", "horizon"),
+        ],
+    )
+    def test_the_surface_still_closes_with_two_different_walls(self, pair):
+        """Two degrees of freedom has to survive the asymmetry, or it is not one model."""
+        from till_infinity.structures.statespace import bounding
+
+        walls = {"shift_up": 0.7183, "shift_down": 0.4500}
+        full = bounding.solve(up=2.0, down=3.0, **walls)
+        again = bounding.solve(**{key: full[key] for key in pair}, **walls)
+        for key in bounding.QUANTITIES:
+            assert again[key] == pytest.approx(full[key], rel=1e-9), key
+
+    def test_each_wall_contributes_its_own_feasibility_bound(self):
+        """With different walls the two constraints stop coinciding."""
+        from till_infinity.structures.statespace import bounding
+
+        up_wall, down_wall = 0.9, 0.3
+        for p in (0.2, 0.5, 0.8):
+            least = bounding.least_horizon(p, shift_up=up_wall, shift_down=down_wall)
+            assert least == pytest.approx(max(up_wall**2 * p / (1 - p), down_wall**2 * (1 - p) / p))
+            # at the boundary one barrier sits exactly at zero distance
+            edge = bounding.solve(
+                probability=p, horizon=least, shift_up=up_wall, shift_down=down_wall
+            )
+            assert min(edge["up"], edge["down"]) == pytest.approx(0.0, abs=1e-9)
+            assert not bounding.feasible(p, least * 0.99, shift_up=up_wall, shift_down=down_wall)
+
+    def test_the_measured_table_mirrors_the_mirror_families(self):
+        """Boom against Crash and DEX up against down are the table's own check.
+
+        Nothing forces these to agree - they are four independent measurements -
+        so their mirroring is evidence the estimator read the asymmetry rather
+        than noise.
+        """
+        from till_infinity.structures.statespace import bounding
+
+        boom_up, boom_down = bounding.SHIFTS["boom"]
+        crash_up, crash_down = bounding.SHIFTS["crash"]
+        assert boom_up > boom_down
+        assert crash_down > crash_up
+        assert boom_up / boom_down == pytest.approx(crash_down / crash_up, rel=0.25)
+
+        dex_up = bounding.SHIFTS["dex_up"]
+        dex_down = bounding.SHIFTS["dex_down"]
+        assert dex_up[0] == pytest.approx(dex_down[1], rel=0.1)
+        assert dex_up[1] == pytest.approx(dex_down[0], rel=0.1)
+
+    def test_an_unmeasured_feed_falls_back_to_symmetric(self):
+        """A guess would be worse than the constant it replaces."""
+        from till_infinity.structures.statespace import bounding
+
+        assert bounding.shifts_for("EURUSD") == (bounding.SHIFT, bounding.SHIFT)
+        assert bounding.shifts_for("Volatility_75_Index") == (
+            bounding.SHIFT,
+            bounding.SHIFT,
+        )
+        # the step families were measured and came out symmetric
+        for name in ("Step_Index", "Multi_Step_3_Index", "Skew_Step_Index_5_Up"):
+            assert bounding.shifts_for(name) == (bounding.SHIFT, bounding.SHIFT), name
+        # DEX needs its direction, and an unsuffixed DEX name must not guess
+        assert bounding.shifts_for("DEX_600_UP_Index")[0] > bounding.SHIFT
+        assert bounding.shifts_for("DEX_600_DOWN_Index")[1] > bounding.SHIFT
+        assert bounding.shifts_for("DEX_600_Index") == (bounding.SHIFT, bounding.SHIFT)
