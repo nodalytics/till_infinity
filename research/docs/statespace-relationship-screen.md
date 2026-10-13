@@ -22,6 +22,13 @@ means no pair is *constantly* cointegrated, not that no pair is related.
 tell those apart - and on this universe it is also a null, with traded pairs
 reverting in 30.8% of windows against the shuffled null's 30.8%.
 
+**And a pair is not the only shape.**
+[Leads and baskets](statespace-leads-and-baskets.md) tests the two relationships
+no pairwise screen can see at all. The basket arm found **seven** at `t` past
+`-56` against a null best of `-4.49` - every currency triangle in the universe,
+with weights at exactly ±1 and residuals of 0.8 to 3.2 basis points. Real,
+arithmetic, and not tradeable; and nothing beyond them.
+
 Two separate defects had to be removed to see that: a hedge ratio that
 manufactured the statistic, and a null whose legs were Gaussian-tailed where the
 candidates' are not.
