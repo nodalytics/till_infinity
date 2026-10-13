@@ -174,11 +174,27 @@ def shifts_for(feed: str) -> tuple[float, float]:
     return (SHIFT, SHIFT)
 
 
-def _walls(shift: float, shift_up: float | None, shift_down: float | None):
-    """Resolve the two walls, with `shift` as the symmetric shorthand."""
+def _walls(
+    shift: float,
+    shift_up: float | None,
+    shift_down: float | None,
+    feed: str | None = None,
+):
+    """Resolve the two walls, with `shift` as the symmetric shorthand.
+
+    `feed` names an instrument and resolves the measured pair through
+    `shifts_for`, which is what makes `SHIFTS` reachable without a caller
+    knowing that walls exist. An explicit `shift_up` or `shift_down` still
+    wins, because a caller who has measured their own should not be overridden
+    by a table.
+    """
+    if feed is not None:
+        measured_up, measured_down = shifts_for(feed)
+    else:
+        measured_up = measured_down = shift
     return (
-        shift if shift_up is None else float(shift_up),
-        shift if shift_down is None else float(shift_down),
+        measured_up if shift_up is None else float(shift_up),
+        measured_down if shift_down is None else float(shift_down),
     )
 
 
@@ -189,12 +205,15 @@ def feasible(
     shift: float = SHIFT,
     shift_up: float | None = None,
     shift_down: float | None = None,
+    feed: str | None = None,
 ) -> bool:
     """Whether a `(probability, horizon)` pair admits non-negative barriers."""
     p = float(probability)
     if not 0.0 < p < 1.0:
         return False
-    return float(horizon) >= least_horizon(p, shift=shift, shift_up=shift_up, shift_down=shift_down)
+    return float(horizon) >= least_horizon(
+        p, shift=shift, shift_up=shift_up, shift_down=shift_down, feed=feed
+    )
 
 
 def least_horizon(
@@ -203,6 +222,7 @@ def least_horizon(
     shift: float = SHIFT,
     shift_up: float | None = None,
     shift_down: float | None = None,
+    feed: str | None = None,
 ) -> float:
     """The smallest `horizon` compatible with `probability`.
 
@@ -212,7 +232,7 @@ def least_horizon(
     p = float(probability)
     if not 0.0 < p < 1.0:
         return math.inf
-    up, down = _walls(shift, shift_up, shift_down)
+    up, down = _walls(shift, shift_up, shift_down, feed)
     return max(up * up * p / (1.0 - p), down * down * (1.0 - p) / p)
 
 
@@ -225,6 +245,7 @@ def solve(
     shift: float = SHIFT,
     shift_up: float | None = None,
     shift_down: float | None = None,
+    feed: str | None = None,
     slower: float = 1.0,
 ) -> dict[str, float]:
     """All four quantities from exactly two of them.
@@ -259,7 +280,7 @@ def solve(
     if slower <= 0:
         raise ValueError(f"slower must be positive, got {slower}")
 
-    wall_up, wall_down = _walls(shift, shift_up, shift_down)
+    wall_up, wall_down = _walls(shift, shift_up, shift_down, feed)
     # Work in shifted units, where the two laws are P = d/(u+d) and T = u*d.
     u = named["up"] + wall_up if "up" in named else None
     d = named["down"] + wall_down if "down" in named else None
@@ -313,6 +334,7 @@ def slack(
     shift: float = SHIFT,
     shift_up: float | None = None,
     shift_down: float | None = None,
+    feed: str | None = None,
     slower: float = 1.0,
 ) -> float:
     """The desk's time limit over the one its geometry implies.
@@ -328,6 +350,7 @@ def slack(
         shift=shift,
         shift_up=shift_up,
         shift_down=shift_down,
+        feed=feed,
         slower=slower,
     )["horizon"]
     return math.inf if implied <= 0 else float(horizon) / implied
@@ -341,6 +364,7 @@ def binding(
     shift: float = SHIFT,
     shift_up: float | None = None,
     shift_down: float | None = None,
+    feed: str | None = None,
     slower: float = 1.0,
 ) -> str:
     """Which of the three numbers is actually deciding the exit."""
@@ -351,6 +375,7 @@ def binding(
         shift=shift,
         shift_up=shift_up,
         shift_down=shift_down,
+        feed=feed,
         slower=slower,
     )
     if ratio > 2.0:
