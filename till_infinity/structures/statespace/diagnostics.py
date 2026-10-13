@@ -125,6 +125,65 @@ class Residuals:
         return self.jarque_bera_p < 0.05
 
 
+def crps(quantiles: Sequence[tuple[float, float]], outcome: float) -> float:
+    """Continuous ranked probability score from a set of quantiles.
+
+    **The score the whole forecast line is judged on, and it was not in the
+    library.** `statespace-path-ensembles.md` and `statespace-tail-shape.md`
+    both conclude on CRPS - "nothing beats the walk at any horizon" - and both
+    computed it in a research harness.
+
+    Scored through the quantile-loss identity
+
+        CRPS = 2 * integral over tau of the pinball loss at level tau
+
+    which needs **only quantiles and never a density**. That is the property
+    worth having: a Gaussian band, a Student-t band and a shape-free empirical
+    band are then scored by one instrument instead of three. The tail-shape
+    work needed a closed form *and* a quadrature and had to check them against
+    each other - they agreed to `1e-4` on twenty thousand normals, which was
+    reassuring and is work this avoids.
+
+    `quantiles` is `(level, value)` in ascending level, as
+    `[(0.02, -2.05), (0.04, -1.75), ...]`. The integral is a left Riemann sum
+    over the levels supplied, so a denser grid is a more accurate score and the
+    caller chooses the trade.
+    """
+    total, last = 0.0, 0.0
+    for tau, value in quantiles:
+        if not (math.isfinite(tau) and math.isfinite(value)):
+            continue
+        loss = (outcome - value) * tau if outcome >= value else (value - outcome) * (1.0 - tau)
+        total += loss * (tau - last)
+        last = tau
+    return 2.0 * total
+
+
+def pit_flatness(values: Sequence[float], bins: int = 20) -> float:
+    """Chi-square of a PIT histogram against uniform, per degree of freedom.
+
+    1.0 is calibrated. The measured context is what makes it worth carrying:
+    **no Gaussian forecast in this package is calibrated on real data**, with
+    flatness running 18 to 461, the walk included.
+
+    A caution that belongs with the number rather than beside it: an
+    **empirical** predictive CDF scores near 1.0 almost by construction, since
+    its PIT is the rank of a new residual among past ones and a rank among
+    exchangeable draws is uniform by definition. So this measures whether a
+    *parametric* shape fits, and it cannot be used to prefer a shape-free band -
+    for that, score `crps`.
+    """
+    usable = [v for v in values if math.isfinite(v)]
+    if len(usable) < 200 or bins < 2:
+        return float("nan")
+    counts = [0] * bins
+    for v in usable:
+        at = min(int(max(min(v, 1.0 - 1e-12), 0.0) * bins), bins - 1)
+        counts[at] += 1
+    want = len(usable) / bins
+    return sum((c - want) ** 2 / want for c in counts) / (bins - 1)
+
+
 def residuals(standardised: Sequence[float], lags: int = LAGS) -> Residuals | None:
     """Diagnose a run of standardised innovations. None if there are too few.
 
