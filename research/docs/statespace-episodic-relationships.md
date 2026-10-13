@@ -150,5 +150,8 @@ an objection into a number, and it cost one function.
 
 * [The relationship screen](statespace-relationship-screen.md) - the single-`t`
   form, the live-ratio defect, and the block-shuffled null this reuses
+* [Leads and baskets](statespace-leads-and-baskets.md) - the two relationship
+  shapes no *pair* screen can see; the baskets found seven, and all seven are
+  currency-triangle identities
 * [The hierarchical prior](statespace-hierarchical-prior.md) - the other half of
   the stat-arb import, also a null
