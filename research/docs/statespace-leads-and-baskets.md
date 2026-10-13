@@ -131,5 +131,8 @@ remaining place for a relationship to hide.
 
 * [The relationship screen](statespace-relationship-screen.md) - the pairwise
   form, the live-ratio defect, and the block-shuffled null reused here
+* [N-leg spreads](statespace-n-leg-spreads.md) - the generalisation to widths
+  two through five, where the cycle rule separates identities exactly and
+  nothing else survives at any width
 * [The episodic form](statespace-episodic-relationships.md) - the relationship
   that holds and then breaks
