@@ -12,6 +12,16 @@ revealed about the method rather than which pairs it ranked.
 whose legs have the same fat tails as the candidates, **0 of 190 traded pairs
 are cointegrated**, and
 the pairs that come closest revert over a fraction of their round-trip cost.
+
+**Read that with its scope.** One ratio and one `t` test for a *time-invariant*
+relationship, and that test has **no power past 80% tied**: a pair genuinely
+tracking for 60% of its out-of-sample life reads `-2.29` here and never clears
+the bar, while the same data read in windows reads `-14.74`. So "0 of 190"
+means no pair is *constantly* cointegrated, not that no pair is related.
+[The episodic form](statespace-episodic-relationships.md) is the test that can
+tell those apart - and on this universe it is also a null, with traded pairs
+reverting in 30.8% of windows against the shuffled null's 30.8%.
+
 Two separate defects had to be removed to see that: a hedge ratio that
 manufactured the statistic, and a null whose legs were Gaussian-tailed where the
 candidates' are not.
