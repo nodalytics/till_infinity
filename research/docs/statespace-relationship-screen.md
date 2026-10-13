@@ -170,15 +170,25 @@ for *structure* and a poor one for *tails*.
 `range/cost` is the spread's own standard deviation over a round trip in both
 legs. Below 1 there is nothing to trade however good the `t`.
 
-* the pairs that **are** significant read **0.2 to 0.5** - they revert over
-  less than it costs to trade them;
-* the pairs that clear the cost gate are the gold-against-JPY-cross cluster -
-  EURJPY/XAUUSD at 18.5, AUDJPY/XAUUSD 10.7, GBPJPY/XAUUSD 10.6,
-  CHFJPY/XAUUSD 6.7 - and **none of them is significant**, with split `t` of
-  -1.74, -0.95, -2.53 and -1.53.
+> **The `range/cost` figures first published here were wrong, and the ordering
+> among them was wrong too.** The cache's `spread` column is in **integer
+> points**, not price, and dividing it by the close read a 476% round trip on
+> EURUSD. Because the error scales with the price level, a JPY pair quoted near
+> 133 was charged a hundredth of what a EUR pair near 1.1 was - so the cheap
+> and expensive pairs were **reordered**, not merely inflated. `load` now
+> recovers the quote grid from the prices themselves, and a EURUSD round trip
+> is **0.345 bp**. The gold-against-JPY "cost cluster" reported in this section
+> was an artefact of JPY being quoted in the hundreds.
 
-Statistically real but too small to trade; large enough to trade but not real.
-That is the same wall as the directional work, the barrier work and the
+What survives the correction is the shape of the wall rather than any of the
+numbers: the significant pairs revert over a range too small to trade, and the
+pairs with range are not significant. With honest spreads the cost gate is far
+easier to clear than it appeared - a 24-bar FX move is about a hundred round
+trips - so **cost is not what kills these pairs. Significance is.** Nothing
+reaches the cost gate because nothing clears its null, and that conclusion never
+depended on the cost basis.
+
+That is still the same wall as the directional work, the barrier work and the
 forecast work, reached by a fourth route.
 
 ## Gold against USDCHF, which is the pair that prompted this
@@ -187,9 +197,9 @@ forecast work, reached by a fourth route.
 -3.46, -3.94 or the -4.07 bar.**
 The hedge ratio's **sign is right** - `-0.013` fixed and `-0.176` live, and
 gold rising with USDCHF falling is the same weak dollar seen twice - so the
-economic intuition holds. But `range/cost` is **0.1**: the spread's standard
-deviation is a tenth of a round trip, so there is nothing to trade even if the
-reversion were significant.
+economic intuition holds. The `range/cost` of **0.1** reported here came from
+the points-versus-price defect above and should not be relied on; what stands is
+that the pair does not clear any of the three nulls.
 
 Worth noting for scale: the desk's own hand-studied USDJPY/XAGUSD pair ranks
 **163 of 190** on the live arm and **26 of 190** on the split one, and

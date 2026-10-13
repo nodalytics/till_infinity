@@ -80,27 +80,38 @@ distribution tail, it is two different kinds of object.
 
 The seven, with the weights fitted on the first half:
 
-| legs | w1 | w2 | residual sd | range/cost |
-| --- | ---: | ---: | ---: | ---: |
-| EURUSD/USDCHF/**EURCHF** | +1.000 | +1.000 | 1.4 bp | 0.040 |
-| EURUSD/GBPUSD/**EURGBP** | +1.000 | -1.000 | 1.2 bp | 0.036 |
-| EURUSD/AUDUSD/**EURAUD** | +1.000 | -0.999 | 1.5 bp | 0.042 |
-| GBPUSD/USDJPY/**GBPJPY** | +1.000 | +1.000 | 0.8 bp | 0.023 |
-| USDJPY/USDCHF/**CHFJPY** | +1.000 | -1.000 | 3.2 bp | 0.091 |
-| USDJPY/AUDUSD/**AUDJPY** | +1.000 | +1.000 | 0.8 bp | 0.023 |
-| EURUSD/USDJPY/**EURJPY** | +1.000 | +1.000 | 0.8 bp | 0.024 |
-| *EURUSD/USDJPY/USDCAD* | *-0.675* | *+0.161* | *118.9 bp* | *3.396* |
+| legs | w1 | w2 | residual sd | round trip | range/cost |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| EURUSD/USDCHF/**EURCHF** | +1.000 | +1.000 | 1.39 bp | 2.87 bp | 0.483 |
+| EURUSD/GBPUSD/**EURGBP** | +1.000 | -1.000 | 1.25 bp | 1.99 bp | 0.627 |
+| EURUSD/AUDUSD/**EURAUD** | +1.000 | -0.999 | 1.47 bp | 2.59 bp | 0.569 |
+| GBPUSD/USDJPY/**GBPJPY** | +1.000 | +1.000 | 0.82 bp | 2.24 bp | 0.365 |
+| USDJPY/USDCHF/**CHFJPY** | +1.000 | -1.000 | 3.17 bp | 3.93 bp | 0.807 |
+| USDJPY/AUDUSD/**AUDJPY** | +1.000 | +1.000 | 0.82 bp | 2.66 bp | 0.308 |
+| EURUSD/USDJPY/**EURJPY** | +1.000 | +1.000 | 0.82 bp | 1.65 bp | 0.498 |
+| *EURUSD/USDJPY/USDCAD* | *-0.675* | *+0.161* | *118.9 bp* | *1.03 bp* | *115.0* |
+
+> **The `range/cost` column was first published as 0.023 to 0.091 and is wrong
+> by about a factor of ten.** The cache's `spread` field is in integer points
+> rather than price, so every cost was overstated - see the note in
+> [the relationship screen](statespace-relationship-screen.md). The residual
+> standard deviations were always right; only the denominator was not.
 
 **Every one is a currency triangle and every weight is exactly ±1.000.** In
 logs `log(EURCHF) = log(EURUSD) + log(USDCHF)` is an identity, not a
 relationship, and the residual standard deviation of **0.8 to 3.2 basis points**
-is the bid-ask spread and price rounding. `range/cost` of 0.023 to 0.091 says
-the residual moves 2% to 9% of a round trip; triangular arbitrage is also the
-most competed trade in the asset class and does not survive to an hourly bar.
+is the bid-ask spread and price rounding. Corrected, `range/cost` runs **0.31 to
+0.81** - the residual moves a third to four fifths of a round trip, so it is
+closer to tradeable than first reported but still short of paying for itself,
+and triangular arbitrage is the most competed trade in the asset class and does
+not survive to an hourly bar anyway.
 
-The last row is the contrast. `EURUSD/USDJPY/USDCAD` is not a triangle, so its
-weights are fitted rather than forced (`-0.675`, `+0.161`), its residual is
-**119 bp** - a hundred times larger - and its `t` of `-3.72` is below the null.
+The last row is the cleaner statement of the wall: `EURUSD/USDJPY/USDCAD` has a
+range of **115 round trips** and a `t` of `-3.72`, below its null. **The real
+relationships have no range and the wide ranges are not relationships.**
+
+That last row is not a triangle, so its weights are fitted rather than forced
+(`-0.675`, `+0.161`) and its residual is **119 bp**, a hundred times larger.
 
 ## What this is worth, which is not nothing
 
@@ -131,5 +142,8 @@ remaining place for a relationship to hide.
 
 * [The relationship screen](statespace-relationship-screen.md) - the pairwise
   form, the live-ratio defect, and the block-shuffled null reused here
+* [N-leg spreads](statespace-n-leg-spreads.md) - the generalisation to widths
+  two through five, where the cycle rule separates identities exactly and
+  nothing else survives at any width
 * [The episodic form](statespace-episodic-relationships.md) - the relationship
   that holds and then breaks

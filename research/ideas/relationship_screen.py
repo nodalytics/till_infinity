@@ -198,14 +198,61 @@ def family(name: str) -> str:
     return "other"
 
 
-def universe(frame: str) -> list[str]:
-    """Every synthetic in the cache for `frame`, by prefix."""
-    found = []
+def universe(frame: str, cap: int = 0) -> list[str]:
+    """Every synthetic in the cache for `frame`, balanced across families.
+
+    **The cap used to truncate an alphabetical list, which silently excluded a
+    whole family.** `Volatility_*` sorts last, so a cap of 40 returned Boom,
+    Crash, DEX, Drift_Switch, Jump, Multi_Step, Range_Break, Skew_Step and Step
+    and never once included the GBM family - the one whose members are most
+    likely to share a generator, and the one the null partition was built to
+    check. Taking them round-robin by prefix means a cap thins every family
+    instead of deleting the last ones.
+    """
+    found: dict[str, list[str]] = {}
     for path in sorted(CACHE.glob(f"*.{frame}.npz")):
         name = path.name[: -len(f".{frame}.npz")]
-        if any(name.startswith(prefix) for prefix in GENERATED_PREFIXES):
-            found.append(name)
-    return found[:NULLS]
+        for prefix in GENERATED_PREFIXES:
+            if name.startswith(prefix):
+                found.setdefault(prefix, []).append(name)
+                break
+    limit = cap or NULLS
+    out: list[str] = []
+    while len(out) < limit:
+        took = False
+        for prefix in GENERATED_PREFIXES:
+            names = found.get(prefix)
+            if names:
+                out.append(names.pop(0))
+                took = True
+                if len(out) >= limit:
+                    break
+        if not took:
+            break
+    return out
+
+
+def point_size(closes) -> float:
+    """The quote grid the prices sit on, inferred from the prices themselves.
+
+    **The `spread` column is in integer points, not price.** EURUSD carries a
+    median raw spread of `2.0` at a close near `1.12`, and dividing one by the
+    other reads a 476% round trip. Worse, the error scales with the price
+    level, so a JPY pair quoted near 133 was penalised a hundred times less
+    than a EUR pair near 1.1 - which silently reorders every pair by cost
+    rather than merely inflating them all.
+
+    The grid is recoverable without a hard-coded table: the smallest non-zero
+    gap between consecutive closes *is* one point, rounded to the nearest power
+    of ten to absorb binary representation error.
+    """
+    import numpy as np
+
+    steps = np.abs(np.diff(np.asarray(closes, dtype=float)))
+    steps = steps[steps > 0]
+    if not len(steps):
+        return float("nan")
+    return float(10.0 ** round(math.log10(float(steps.min()))))
 
 
 def load(name: str, frame: str = FRAME):
@@ -231,8 +278,10 @@ def load(name: str, frame: str = FRAME):
         times, closes, spread = times[-LIMIT:], closes[-LIMIT:], spread[-LIMIT:]
     if len(times) < LEAST:
         return None
-    # Relative spread, so it is comparable across instruments priced differently.
-    return times, np.log(closes), spread / closes
+    # Relative spread, so it is comparable across instruments priced
+    # differently. `spread` is in points, so it needs the quote grid first.
+    point = point_size(closes)
+    return times, np.log(closes), spread * point / closes
 
 
 def block_shuffled(series, rng, blocks: int = 24):
