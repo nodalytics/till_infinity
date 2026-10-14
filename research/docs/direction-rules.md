@@ -180,9 +180,104 @@ follows over the next day or two.**
 It is not established, for two reasons that should be stated with it. The two
 laggards share the same leader and overlapping events, so the four readings are
 **not four independent confirmations**. And this table is **21 tests**; a single
-`z` of 2.81 among 21 is about 0.1 family-wise, which is not significance. It
-also has no cost measurement yet - though unlike the exotics above, gold and
-AUDUSD spreads are small enough that it is worth taking the next step.
+`z` of 2.81 among 21 is about 0.1 family-wise, which is not significance.
+
+## Costing the gold leg: the cost is not the problem, the decay is
+
+Unlike the exotics, this is the one leg where costing was worth a run rather
+than a formality, and the answer is favourable. The round trip is **0.43 to
+0.61 basis points of price**, or 0.025 to 0.031 of the laggard's own sigma,
+against a gross effect of 0.68 to 0.76. **Cost takes 3 to 4% of the effect**,
+where on the exotic carry pairs it took roughly 200%.
+
+| pair | round trip | h | n | gross | cost | net | net z | hit |
+|---|---|---|---|---|---|---|---|---|
+| gold -> AUDUSD | 0.61 bp | 8 | 134 | 0.144 | 0.024 | 0.120 | 0.91 | 0.455 |
+| | | 24 | 101 | 0.678 | 0.023 | **0.655** | **2.43** | 0.564 |
+| | | 48 | 80 | 0.952 | 0.023 | 0.929 | 2.20 | 0.588 |
+| gold -> USDCAD | 0.43 bp | 8 | 163 | 0.255 | 0.029 | 0.226 | 1.79 | 0.552 |
+| | | 24 | 122 | 0.757 | 0.029 | **0.728** | **2.65** | 0.574 |
+| | | 48 | 93 | 0.900 | 0.028 | 0.872 | 2.09 | 0.591 |
+
+Cost is measured from the spread **actually quoted at entry and exit** rather
+than from a median, because these events are selected on a volatility condition
+and spreads widen exactly then - a median would flatter the result in a way
+specific to this kind of event. The point size is inferred per feed from the
+series' own tick grid, since the spread column is in points.
+
+### The threshold grid is monotone, which was worth checking the right way
+
+`MOVE` of 2.0 sigma and `STILL` of 0.5 were picked out of the air, so an effect
+living only in that cell would be a fitted one. The first version of this grid
+printed `z` and appeared to show a ridge at exactly 2.0 - **which was an
+artefact of the statistic, not the data.** `n` falls fast as `MOVE` rises and
+`z` is about the effect times the root of `n`, so a `z` peak at a threshold can
+be pure power. The grid has to show the **mean**.
+
+Net mean at h=24, `MOVE` down the side and `STILL` across:
+
+| | 0.25 | 0.50 | 0.75 | 1.00 |
+|---|---|---|---|---|
+| **gold -> AUDUSD** | | | | |
+| 1.0 | -0.074 | 0.073 | -0.107 | 0.066 |
+| 1.5 | 0.153 | 0.308 | 0.125 | 0.124 |
+| 2.0 | 0.637 | 0.655 | 0.614 | 0.508 |
+| 2.5 | 0.755 | 0.512 | 0.587 | 0.562 |
+| 3.0 | 0.453 | 0.592 | 0.710 | 0.575 |
+| **gold -> USDCAD** | | | | |
+| 1.0 | 0.124 | 0.189 | 0.218 | 0.123 |
+| 1.5 | 0.420 | 0.303 | 0.295 | 0.260 |
+| 2.0 | 1.139 | 0.728 | 0.602 | 0.522 |
+| 2.5 | 0.944 | 0.607 | 0.521 | 0.469 |
+| 3.0 | 0.591 | 0.287 | 0.177 | 0.277 |
+
+The mean **rises monotonically with the leader's move** up to 2 sigma in both
+pairs - roughly threefold to ninefold from 1.0 to 2.0 - and then plateaus or
+decays on samples too small to read. That is the shape the idea predicts: a
+bigger leader move implies a bigger catch-up. It is not a ridge at the
+threshold that found it.
+
+The stillness condition behaves as claimed on USDCAD, where stricter stillness
+monotonically raises the effect from 0.522 to 1.139, and is roughly flat on
+AUDUSD. Dropping it **entirely** still nets +0.471 and +0.473 at `z` 2.69 and
+2.49 on 222 events each, so about 70% of this is plain gold-to-commodity-
+currency momentum transmission and the divergence condition supplies the rest.
+The "decoupling" framing is doing less work than the idea implies.
+
+### What closes it
+
+**It decays monotonically across the holdout**, in both pairs, in thirds:
+
+| pair | first third | second | third |
+|---|---|---|---|
+| gold -> AUDUSD | +1.219 | +0.879 | **-0.087** |
+| gold -> USDCAD | +1.646 | +0.313 | +0.251 |
+
+Each third holds only 33 to 42 events so none is precise alone, but the decline
+is monotone in both pairs and the most recent third of AUDUSD is **negative**.
+The split halves say the same more coarsely: +0.906 to +0.410 and +1.236 to
++0.221.
+
+And the best net `z` is **2.65**, against roughly 3.0 needed for a family-wise
+0.05 over the 21 tests the screen had already spent - before counting the grid.
+
+So the verdict is not the one cost usually delivers. The effect has the right
+shape, a clean placebo - gold to EURGBP is negative at every horizon and shows
+no structure anywhere in its grid - and spreads far too small to matter. It is
+**not tradable as it stands** because it is decaying toward zero in the recent
+data and it does not clear the multiple-testing bar it has to clear. An effect
+that strengthens with the leader's move, survives cost easily, and fades over
+the sample is the signature of something real that has been arbitraged, or of a
+regime that has passed. Either way it is not a forward edge now.
+
+## What outlives the ideas, continued
+
+**A threshold sweep must print the effect size, not the test statistic.** `z`
+confounds the effect with the sample, and `n` usually falls as a threshold
+tightens, so a `z` grid manufactures an apparent peak at whichever threshold
+balances the two. Print the mean and `n` separately. This one reversed a
+reading within a single session: the `z` grid said fitted ridge, the mean grid
+said monotone.
 
 ## The ideas that cannot be tested here, and why
 
