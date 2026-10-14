@@ -1300,9 +1300,15 @@ class Engine:
         self.intervals = intervals
         self.vol = VolBook()
         self.projection = pj.Book()
-        #: Recorded and scored, not voting - see `structures/zma.py`. It is
-        #: measured at 0.50 on this desk's instruments and worse than that on
-        #: Boom and Crash, so it keeps a record until the record says otherwise.
+        #: Recorded and scored, not voting - see `structures/zma.py`. The
+        #: record has now been read: `research/docs/zma-live-record.md` has it
+        #: at **0.5654 pooled** over 161 warm instrument series, so the 0.50
+        #: this note used to claim is stale. It still does not vote, and the
+        #: reason changed: the record is **4.8x overdispersed**, because a
+        #: z-score past a threshold is a state and every bar of an excursion is
+        #: scored as a fresh call. 477 nominal calls are about 21 independent
+        #: ones, accuracy falls from 0.678 at 1m to 0.494 at 4h - the intervals
+        #: where cost bites hardest - and none of it is costed.
         self.zma = zm.Book()
         #: The streaming z-score across nested timeframes, with a turn model.
         #: Recorded and scored like `zma`, and for the same reason - see

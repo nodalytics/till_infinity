@@ -118,6 +118,23 @@ STRONG, WEAK = 85.0, 65.0
 COLD_STRONG, COLD_WEAK = 1.5, 1.0
 
 #: Calls before `accuracy` is worth reading.
+#:
+#: **This counts bars, not calls, and the difference is 4.8x.** A z-score past
+#: a threshold is a *state*: it persists for runs of bars, so every bar in an
+#: excursion settles a fresh call that is near-identical to its neighbour.
+#: `research/docs/zma-live-record.md` measures the live record at 4.8 times the
+#: dispersion independent calls would give, which puts 477 nominal calls at
+#: about **21 independent ones** - and 200 at about nine.
+#:
+#: That matters because `TRADING_ZMA_GATE` is on by default and starts
+#: believing a feed's record at this count. An accuracy from nine observations
+#: carries a standard error near 0.17. Reaching 200 *effective* calls needs
+#: roughly 4,600 nominal ones.
+#:
+#: The fix is to settle **one call per excursion** - on the crossing, not on
+#: every bar past the threshold - which is the spacing discipline every
+#: research harness here already applies. Left as it is because it changes a
+#: live scoring path, and named so the next reader knows what the number is.
 WARM = 200
 
 #: The timeframe whose record licenses a trade, whatever bar the call arrived
