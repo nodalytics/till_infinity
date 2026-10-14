@@ -424,6 +424,7 @@ from .bounding import binding, feasible, least_horizon, slack, solve
 from .diagnostics import Residuals, fit_jerk, residuals
 from .facade import Desk, Readout
 from .family import MISSING, PENDING, Filter, members
+from .interacting import Attention, Depth, Interactions, Rate
 from .landau import Landau
 from .linear import Gaussian
 from .paths import Path, hourly, simulate, with_gaps
@@ -441,11 +442,15 @@ __all__ = [
     "RELATION",
     "SUBJECTS",
     "Adapting",
+    "Attention",
+    "Depth",
     "Desk",
     "Filter",
     "Gaussian",
+    "Interactions",
     "Landau",
     "Path",
+    "Rate",
     "Readout",
     "Residuals",
     "Reverting",
