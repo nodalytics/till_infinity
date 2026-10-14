@@ -500,6 +500,28 @@ class Touch(Restorable):
     edge: float = 0.0
     probability_up: float = 0.0
     base_rate_up: float = 0.0
+    #: The level's own posterior **before** this touch was counted into it.
+    #:
+    #: **Why a second field rather than reading the first.** `probability_up`
+    #: is stamped on the touch after `level.record` has already added this
+    #: touch to the level's counters, so the journalled value contains the
+    #: outcome it is scored against. Measured over 502,233 journalled touches
+    #: that reads an AUC of 0.9280 against the realised push, and exactly
+    #: **1.0000** on daily - and the calibration curve is a step at 0.5, which
+    #: is where counting one up-push carries the posterior across. Joining to
+    #: the parent decision entry does not help: 81.6% of parents carry an
+    #: identical value.
+    #:
+    #: It cannot be undone afterwards either. The count is recoverable from
+    #: `probability_up` and `up_rate`, but removing this touch from an all-up
+    #: history leaves an all-up history - and the history is all-up because
+    #: 49% of consecutive 1m touches of a level land within five bars.
+    #:
+    #: So the only fix is to record the number as it stood. Rebuilt with
+    #: spacing the same estimator reads 0.5092, so this field is what any
+    #: future direction claim has to be scored on. See
+    #: `research/docs/journal-probability.md`.
+    probability_up_before: float = 0.0
     #: Whether this touch would have been published as a call.
     actionable: bool = False
     #: The other timeframes with a level at this price, coarsest first, as
@@ -566,6 +588,7 @@ class Touch(Restorable):
             "adverse_vol": round(self.adverse_vol, 4),
             "edge": round(self.edge, 4),
             "probability_up": round(self.probability_up, 4),
+            "probability_up_before": round(self.probability_up_before, 4),
             "base_rate_up": round(self.base_rate_up, 4),
             "actionable": self.actionable,
             "confluence": self.confluence,
@@ -1632,6 +1655,9 @@ class Tracker(Restorable):
         # reverses whatever reads it.
         touch.resolved = max(when, touch.started)
         self._open.pop(self.key(level), None)
+        # Before `record`, not after: once this touch is counted, the posterior
+        # contains its own answer. One line, and the journal becomes scorable.
+        touch.probability_up_before = level.stats(side).probability_up()
         level.record(side, outcome, touch.push_vol, when)
         if outcome is Outcome.BREAK and touch.broke_at:
             # The retest clock starts when price *got through*, not when the
