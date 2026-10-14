@@ -174,13 +174,88 @@ responses to outliers. They are not interchangeable: one changes what the band
 is centred and sized by, the other changes its shape, and only the second was
 ever the defect here.
 
-## What is left
+## The remainder is neither skew nor a drifting dof
 
 The t closes 95% or more of the gap but does not close it: the best arms still
-sit at 3 to 50 times the calibrated misfit, lowest at 15m and highest at 1d
-where the samples are smallest. Whether that remainder is skew - the t is
-symmetric and returns are not - or simply the dof being held fixed where it
-drifts, is the next measurement, and it is a much smaller one than this was.
+sit at 3 to 50 times the calibrated misfit. Two suspects were named - skew,
+since the t is symmetric and returns are not, and a tail index fitted once and
+then held fixed. `sigma_skew.py` tests both, against the same held-out halves,
+and **neither is it**.
+
+Scoring a skewed density needs CRPS for a distribution that has no closed form.
+It does not need a new formula: every arm here is a standardised shape scaled
+by `sigma`, and CRPS is positively homogeneous, so the standardised CRPS is one
+fixed function of `z` per parameter pair. It is computed once on a fine grid
+from the two-sided integral of the CDF and interpolated. **The grid is
+validated against the closed form** on the symmetric t, where the exact answer
+is known, and agrees to 1e-6 or better - a quadrature that reproduces a known
+closed form can be trusted on the density that has none.
+
+### Skew: null
+
+Hansen's skewed t, fitted by maximum likelihood in `(eta, lambda)` on the
+training half:
+
+| frame | lambda median | range | flatter than the fixed t | cheaper |
+|---|---|---|---|---|
+| 15m | -0.013 | -0.045 to +0.024 | 4 of 8 | 3 of 8 |
+| 1h | -0.013 | -0.045 to +0.024 | 4 of 8 | 3 of 8 |
+| 4h | -0.007 | -0.040 to +0.012 | 7 of 8 | 7 of 8 |
+| 1d | -0.011 | -0.069 to +0.056 | 3 of 8 | 3 of 8 |
+
+`lambda` ranges over `(-1, 1)` and comes back at about **-0.01** everywhere.
+Every CRPS ratio lands between 0.999 and 1.001, which is no change at all, and
+the flatness counts are inconsistent across frames. The extra parameter buys
+nothing. Returns may be skewed; the **standardised one-bar residual** is not,
+to any degree this can measure.
+
+### A drifting tail index: real at 1d, harmful intraday
+
+Refitting dof by maximum likelihood on a trailing 2,000 bars and applying it
+one step ahead:
+
+| frame | flatter | cheaper | median refitted dof |
+|---|---|---|---|
+| 15m | 1 of 8 | 6 of 8 | - |
+| 1h | 1 of 8 | 1 of 8 | 2.68 to 3.50 |
+| 4h | 2 of 8 | 1 of 8 | 2.68 to 3.69 |
+| 1d | 6 of 8 | 6 of 8 | 3.20 to 5.45 |
+
+At 1d the drift is real and refitting wins on 6 of 8 both ways. **Intraday it
+is actively worse**, and the reason is visible in the column: the rolling fit
+runs down to **2.68 to 3.1**, below the floor the gold exception already
+implied, and pays for it on both scores. That is a second, independent
+measurement arriving at the same floor near 3.
+
+### What is actually left: the body, not the tails
+
+The decisive diagnostic costs nothing - look at **where** the surviving misfit
+sits. The signed deviation of each PIT decile from its expected share, averaged
+over the eight feeds:
+
+| frame | decile 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 |
+|---|---|---|---|---|---|---|---|---|---|---|
+| 15m | -0.002 | -0.085 | -0.055 | +0.018 | -0.005 | **+0.172** | +0.022 | -0.012 | -0.064 | +0.010 |
+| 1h | +0.033 | -0.097 | -0.070 | +0.011 | +0.024 | **+0.101** | +0.008 | -0.029 | -0.039 | +0.059 |
+| 4h | +0.019 | -0.148 | -0.088 | +0.011 | +0.114 | **+0.142** | +0.051 | -0.039 | -0.088 | +0.027 |
+| 1d | +0.073 | -0.115 | -0.175 | -0.108 | +0.169 | **+0.241** | +0.003 | -0.113 | -0.059 | +0.085 |
+
+**The tails are essentially right.** The two extreme deciles are off by -0.002
+to +0.085, and they are off by the *same* amount as each other on every frame -
+which is symmetric, and agrees with `lambda` being zero. The t did the job it
+was brought in for.
+
+What survives is in the **body**: decile 6 is over-full on all four frames, by
++0.10 to +0.24, while deciles 2 and 3 are depleted by a similar amount. A
+consistent excess just above the median with a deficit below it is not a tail
+property at all.
+
+So the open problem has moved, and shrunk. It is the **centre**, not the shape
+of the extremes, and the two candidates it admits are a scale mixture - real
+variation in `sigma` that a single EWMA does not carry, which would thicken the
+centre and thin the shoulders exactly like this - or a location term, since
+every arm here is centred on zero rather than on a drift estimate. Both are
+cheaper to test than this was, and neither is a tail model.
 
 The production change this implies is a separate piece of work: the band used
 for stops is currently calibrated against the walk, and swapping its family is
