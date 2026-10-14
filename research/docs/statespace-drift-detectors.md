@@ -84,8 +84,33 @@ per bar.
 
 ## What to take
 
-**ADWIN is worth having, and this is the first River component in this series
-that survives its own control.** The conditional quantile band lost and failed
+## Production already uses ADWIN, and already measured half of this
+
+Found after the run, and it changes what the result is a contribution to:
+`structures/learning/drift.py` imports `river.drift` and runs **ADWIN** as its
+regime detector, with **KSWIN** added to cover the mean-shift blind spot. Its
+docstring also records the comparison - *"KSWIN had fired **zero times** against
+ADWIN's 136"* - which the planted table reproduces independently, at 30% against
+89% at 0.20 sigma per bar.
+
+So "ADWIN beats KSWIN" is **prod's existing position**, arrived at before this
+ran, and this study rediscovered it. What is new here is the rest: the
+**calibration to matched false alarms**, which turns a firing count into a
+comparison; the **planted sweep**, which says where every detector goes blind;
+and the ranking against **statespace's own** two detectors, which nothing had
+scored before.
+
+It is also a correction to how this series has been framed. River is in **ten
+production modules** - `cycles`, `store`, `vol/learned`, `vol/volatility`,
+`vol/har`, `learning/regimes`, `anomaly`, `facto`, `drift`, `decay` - so "does
+River improve statespace" is often really "does statespace improve on what
+production already gets from River", which is a different question with the
+burden of proof the other way round.
+
+## What to take
+
+**ADWIN is worth having in `statespace`, which does not have it** - though
+production does. The conditional quantile band lost and failed
 its gate; the online learners' 3.6x turned out to be 87% a mis-set `Q`. A
 detector that catches 89% against a CUSUM's 38% at matched false alarms is a
 different kind of result, and `statespace` has no equivalent.
