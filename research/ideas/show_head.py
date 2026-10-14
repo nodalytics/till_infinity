@@ -1,20 +1,29 @@
-"""Print the head of another run's log, since `lab.sh log` only tails 60 lines."""
+"""Print the head of the most recent run's log, since `lab.sh log` only tails 60.
+
+Defaults to the newest log other than its own, because `lab.sh run` executes
+remotely and a locally-set environment variable does not follow it there - so a
+`WHICH` default is the one thing this cannot be steered by.
+"""
 
 from __future__ import annotations
 
 import os
 from pathlib import Path
 
-WHICH = os.environ.get("WHICH", "gold_cost")
-LINES = int(os.environ.get("LINES", "40"))
+LINES = int(os.environ.get("LINES", "58"))
+SKIP = int(os.environ.get("SKIP", "0"))
 
 
 def main() -> None:
-    path = Path.home() / "till_infinity" / "logs" / f"{WHICH}.log"
-    if not path.exists():
-        print(f"no log at {path}")
+    logs = Path.home() / "till_infinity" / "logs"
+    found = [p for p in logs.glob("*.log") if p.stem != "show_head"]
+    if not found:
+        print(f"no logs in {logs}")
         return
-    for line in path.read_text().splitlines()[:LINES]:
+    newest = max(found, key=lambda p: p.stat().st_mtime)
+    lines = newest.read_text().splitlines()
+    print(f"# {newest.name}, lines {SKIP + 1} to {SKIP + LINES} of {len(lines)}")
+    for line in lines[SKIP : SKIP + LINES]:
         print(line)
 
 
