@@ -82,8 +82,6 @@ enough for a mean-shift detector to see at this false-alarm rate - which the
 planted table predicts, since nothing catches more than half below 0.10 sigma
 per bar.
 
-## What to take
-
 ## Production already uses ADWIN, and already measured half of this
 
 Found after the run, and it changes what the result is a contribution to:
