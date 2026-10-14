@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
-WHICH = "origin_zscore"
+WHICH = "slope_auc"
 SKIP = 0
 LINES = 58
 
