@@ -67,6 +67,22 @@ and it should not be able to reach a table again.
   is precisely that a rejection bar's extreme is not just any extreme. A doji
   has no body, so the ratio is undefined and those bars are skipped, which is
   what the reference's own table does;
+* **turn / accel turn / gated turn** - asked for on 2026-10-14: *"price points
+  that had at least 1 momentum or acceleration turn could be a level"*. The only
+  candidates here built from **dynamics** rather than from volume or candle
+  geometry, and native to a state-space filter in a way a profile cannot be:
+  `levels.Kalman` carries `(price, slope, acceleration)`, so the price at which
+  the market's own momentum reversed is something it already knows and a
+  histogram never can.
+
+  Three versions, because the gate is the interesting part. **turn** is the
+  price at the most recent sign change of the filter's slope; **accel turn** the
+  same one derivative up; and **gated turn** requires the slope to have cleared
+  **two of its own standard deviations** before the turn counts - which is what
+  `Kalman.turning` means by *"earned a trend, and is now decaying toward or
+  through zero"* rather than "the slope is near zero". If a momentum turn marks
+  a level the gated version should mark it better, and if the gate changes
+  nothing the turn was noise either way;
 * **centre** - the heaviest-volume price, the point of control. The one level in
   this family `game-theory.md` did not test, and so the only one not already
   refuted.
@@ -86,6 +102,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
+from till_infinity.structures.levels import Kalman  # noqa: E402
 from till_infinity.structures.statespace.ranging import Profile  # noqa: E402
 
 CACHE = Path(os.environ.get("SEQLAB_CACHE", str(Path.home() / "till_infinity/data/seqlab")))
@@ -194,6 +211,9 @@ def main() -> None:
         "hourly high",
         "wick 2",
         "wick 3",
+        "turn",
+        "accel turn",
+        "gated turn",
     )
     print(
         f"{'group':<12}{'level':<14}{'races':>7}{'holds':>8}{'placebo':>9}"
@@ -249,6 +269,31 @@ def main() -> None:
                             float(bars["high"][i]) if upper >= lower else float(bars["low"][i])
                         )
                         break
+                # Dynamics candidates: run the production filter over the
+                # window and take the price where its slope - or its
+                # acceleration - last changed sign.
+                turns: dict[str, float] = {}
+                one = Kalman(
+                    mean=float(bars["close"][at - 300]),
+                    variance=float(move * move),
+                    updated=float(bars["time"][at - 300]),
+                )
+                prev_slope = prev_accel = 0.0
+                earned = False
+                for i in range(at - 300, at):
+                    one.predict(float(bars["time"][i]), move * 0.02)
+                    one.update(float(bars["close"][i]), move * move, float(bars["time"][i]))
+                    slope, accel = float(one.slope), float(one.accel)
+                    if one.trending:
+                        earned = True
+                    if prev_slope and slope * prev_slope < 0:
+                        turns["turn"] = float(bars["close"][i])
+                        if earned:
+                            turns["gated turn"] = float(bars["close"][i])
+                            earned = False
+                    if prev_accel and accel * prev_accel < 0:
+                        turns["accel turn"] = float(bars["close"][i])
+                    prev_slope, prev_accel = slope, accel
                 hour = int((bars["time"][at] % 86400) // 3600)
                 seasonal = Profile(window=len(bars["close"]))
                 for i in range(max(at - 300 * 6, 0), at):
@@ -283,6 +328,7 @@ def main() -> None:
                 if accepted is not None:
                     candidates += [("accept centre", accepted.centre)]
                 candidates += [(k, v) for k, v in wicks.items()]
+                candidates += [(k, v) for k, v in turns.items()]
                 if timed is not None:
                     candidates += [
                         ("hourly centre", timed.centre),
