@@ -135,6 +135,115 @@ def describe(pool: list[list[int]], label: str) -> None:
     )
 
 
+#: Minutes a bar covers, per frame name - so a scale in bars can be read in
+#: minutes, hours and days and compared across frames.
+MINUTES = {"3m": 3, "15m": 15, "1h": 60, "4h": 240, "12h": 720, "1d": 1440}
+
+
+def fits(lengths: list[int]) -> dict[str, tuple[float, float]]:
+    """Fit four duration families by maximum likelihood, as `{name: (aic, scale)}`.
+
+    **A CV puts no number on the regime, and the number is the question.** Over
+    dispersion is consistent with "rare long regimes" but does not say how long.
+    These four answer different questions:
+
+    - **geometric**: constant hazard, scale `1/p`. If it wins, durations are
+      memoryless and no cycle theory has a mechanism to stand on.
+    - **lognormal**: a characteristic scale - the median - with a long right
+      tail. If it wins there **is** a period and it is `exp(mu)`.
+    - **Weibull**: shape below one is a stretched exponential, a decaying
+      hazard whose scale still exists.
+    - **Pareto**: scale-free. If it wins there is **no** period at any scale,
+      which is a definite answer rather than an absence of one.
+    """
+    data = [float(n) for n in lengths if n >= 1]
+    if len(data) < 200:
+        return {}
+    n = float(len(data))
+    total = sum(data)
+    logs = [math.log(x) for x in data]
+    log_total = sum(logs)
+    out: dict[str, tuple[float, float]] = {}
+
+    p_hat = min(max(n / total, 1e-9), 1 - 1e-9)
+    loglike = sum((x - 1.0) * math.log1p(-p_hat) + math.log(p_hat) for x in data)
+    out["geometric"] = (2.0 - 2.0 * loglike, 1.0 / p_hat)
+
+    mu = log_total / n
+    sigma = math.sqrt(max(sum((x - mu) ** 2 for x in logs) / n, 1e-12))
+    loglike = sum(
+        -math.log(x * sigma * math.sqrt(2 * math.pi)) - (lx - mu) ** 2 / (2 * sigma * sigma)
+        for x, lx in zip(data, logs, strict=True)
+    )
+    out["lognormal"] = (4.0 - 2.0 * loglike, math.exp(mu))
+
+    shape = 1.0
+    for _ in range(80):
+        powered = [x**shape for x in data]
+        s_p = sum(powered)
+        s_pl = sum(pw * lx for pw, lx in zip(powered, logs, strict=True))
+        s_pll = sum(pw * lx * lx for pw, lx in zip(powered, logs, strict=True))
+        if s_p <= 0:
+            break
+        g = 1.0 / shape + log_total / n - s_pl / s_p
+        dg = -1.0 / (shape * shape) - (s_pll * s_p - s_pl * s_pl) / (s_p * s_p)
+        if abs(dg) < 1e-18:
+            break
+        step = g / dg
+        shape = max(min(shape - step, 20.0), 0.05)
+        if abs(step) < 1e-10:
+            break
+    scale = (sum(x**shape for x in data) / n) ** (1.0 / shape)
+    loglike = sum(
+        math.log(shape / scale) + (shape - 1) * math.log(x / scale) - (x / scale) ** shape
+        for x in data
+    )
+    out["weibull"] = (4.0 - 2.0 * loglike, scale)
+    out["_weibull_shape"] = (out["weibull"][0], shape)
+
+    floor = min(data)
+    denom = sum(math.log(x / floor) for x in data)
+    alpha = n / denom if denom > 0 else float("inf")
+    if math.isfinite(alpha) and alpha > 0:
+        loglike = sum(math.log(alpha) + alpha * math.log(floor) - (alpha + 1) * lx for lx in logs)
+        out["pareto"] = (2.0 - 2.0 * loglike, alpha)
+    return out
+
+
+def period(pool: list[list[int]], label: str, frame: str) -> None:
+    """Which duration family wins, and the period it implies in real time."""
+    flat = [n for lengths in pool for n in lengths]
+    got = fits(flat)
+    if not got:
+        print(f"      {label:<9} {len(flat):>7,} runs - too few")
+        return
+    ranked = sorted(
+        ((v[0], k, v[1]) for k, v in got.items() if not k.startswith("_")),
+        key=lambda r: r[0],
+    )
+    best_aic, best_name, best_fitted = ranked[0]
+    shape = got.get("_weibull_shape", (0.0, float("nan")))[1]
+    deltas = " ".join(f"{k} {a - best_aic:+.0f}" for a, k, _ in ranked[1:])
+    # **Pareto's parameter is a tail exponent, not a duration.** Converting it
+    # to minutes would print a number with no meaning - and an alpha below one
+    # is the opposite of a period: the mean itself does not converge, so there
+    # is no characteristic length to report in any unit.
+    if best_name == "pareto":
+        verdict = (
+            f"alpha {best_fitted:.3f} - scale-free, "
+            + ("infinite mean" if best_fitted <= 1.0 else "heavy tailed")
+            + ", no period in any unit"
+        )
+    else:
+        minutes = best_fitted * MINUTES.get(frame, 60)
+        verdict = (
+            f"scale {best_fitted:>6.1f} bars = {minutes:>7.0f} min "
+            f"= {minutes / 60.0:>6.1f} h = {minutes / 1440.0:>5.2f} d"
+        )
+    print(f"      {label:<9} {len(flat):>7,} runs  best {best_name:<10} {verdict}")
+    print(f"      {'':<9} {'':>7}  weibull shape {shape:.3f}   AIC behind: {deltas}")
+
+
 def arm(group: str, names: tuple[str, ...], rng) -> None:
     real: list[list[int]] = []
     mixed: list[list[int]] = []
@@ -160,6 +269,30 @@ def arm(group: str, names: tuple[str, ...], rng) -> None:
 
 def main() -> None:
     rng = np.random.default_rng(SEED)
+    # **Across frames, because that is what decides whether a period exists.**
+    # If the fitted scale is constant in *bars* at every frame, the process is
+    # scale-free and the number is just the bar size. If it is constant in
+    # *minutes*, there is a genuine characteristic timescale.
+    print(
+        "SCALE ACROSS FRAMES - constant in bars means scale-free, constant in minutes means a period\n"
+    )
+    for frame in ("15m", "1h", "4h", "1d"):
+        real: list[list[int]] = []
+        mixed: list[list[int]] = []
+        for name in TRADED:
+            bars = load(name, frame)
+            if bars is None:
+                continue
+            got = runs(bars)
+            if len(got) >= 50:
+                real.append(got)
+            got = runs(shuffle_blocks(bars, rng))
+            if len(got) >= 50:
+                mixed.append(got)
+        print(f"    {frame}: {len(real)} feeds")
+        period(real, "real", frame)
+        period(mixed, "shuffled", frame)
+    print()
     print(
         f"regimes = {WINDOW}-bar volatility against its own {MEDIAN}-bar median\n"
         "CV near 1 is memoryless (geometric). Patterned durations - Benner's\n"

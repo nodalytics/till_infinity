@@ -84,9 +84,9 @@ PRESENT = float(os.environ.get("PRESENT", "0.35"))
 XAHEADS = tuple(int(k) for k in os.environ.get("XAHEADS", "5,20,40,80").split(","))
 
 
-def load(name: str):
+def load(name: str, frame: str = ""):
     """Like `level_signatures.load`, with a floor an equity can clear."""
-    path = CACHE / f"{name}.{FRAME}.npz"
+    path = CACHE / f"{name}.{frame or FRAME}.npz"
     if not path.exists():
         return None
     with np.load(path) as bundle:
