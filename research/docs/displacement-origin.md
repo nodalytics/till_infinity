@@ -243,6 +243,67 @@ levels, and it is far larger and more general than anything the level-specific
 work in this repository has found - which makes depth, not identity, the thing
 worth a statespace primitive.
 
+## Orderflow, in the only form this data supports
+
+There is no L2 here, so orderflow is tick volume and candle shape. The FVG idea
+names the condition itself - *price retraces into this gap **and tick volume
+dries up***. Both the origin and the same-side control are measured, because a
+volume effect that appears at any arrival is not a level property.
+
+| frame | origin quiet / loud held (AUC) | elsewhere quiet / loud (AUC) | formation volume AUC |
+| --- | --- | --- | ---: |
+| 1h | 0.941 / 0.895 (0.3883) | 0.916 / 0.888 (0.4260) | **0.5625** |
+| 4h | 0.918 / 0.897 (0.4542) | 0.914 / 0.872 (0.4242) | **0.5516** |
+| 1d | 0.932 / 0.891 (0.4047) | 0.873 / 0.897 (0.5538) | - |
+
+**A quiet arrival does hold better - and so does a quiet arrival anywhere.** The
+control carries the same sign at 1h and 4h, 0.4260 and 0.4242 against the
+origin's 0.3883 and 0.4542, and reverses at 1d. So "volume dries up on the
+retest" is a property of **arrivals**, not of displacements, and the idea
+attributes it to the wrong object.
+
+**What is a level property is the volume on the bar that formed the zone.** It
+predicts holding at **0.5516 to 0.5625**, and the control has no formation bar
+so there is nothing to explain it away with. A zone formed on heavier volume
+holds better. That is the genuine orderflow link in this structure, and it is
+worth about six points of AUC.
+
+## How this integrates, and what should not be built
+
+The measurements order themselves by size, and that order is the opposite of
+where the apparatus points.
+
+**The large effect is retracement depth, and it deserves the primitive.** A
+retracement to *any* price at about two and a half typical bars is rejected 75%
+of the time and breaks under 10%. That is general, large, and it is a
+**calibration** - `P(reject, break, trap | depth)` - which is exactly the shape
+`no-gaussian-band-is-calibrated` says is missing, since the open problem there
+is the tail. A depth-to-outcome curve per instrument is a `statespace` module
+with a measured job, and nothing in it mentions levels.
+
+**The structures change is one line and it is now measured.**
+`drawing/displacement.py` says freshness is deliberately not applied because
+*how fast they wear out is a measurement nobody here has made*. It is three
+days: fresh zones beat a matched price by two to four points, three-day-old
+zones by nothing, fourteen-day-old zones by exactly zero. Expiring a zone at
+roughly three days is the change, and it is much shorter than a two-to-four-week
+zone implies.
+
+**The origin is a target, not an entry.** Of the arrivals that decide, it is
+reached before a mirrored price about four times in five, median seven to nine
+bars. `fade-to-origin.md` already found 89-91% of fades stopped out, because a
+stop beyond a just-made extreme is close by definition, and a 1.6-point edge in
+break rate cannot survive that. For something already in position it is a
+reasonable place to expect price to go; as a reason to open one it is not.
+
+**Formation volume belongs on the zone** as an attribute, at six points of AUC
+for holding - small, but genuinely about the level rather than about arrivals.
+
+**What should not be built** is anything that treats the origin's *identity* as
+the signal. Against the right control that is 1.6 percentage points. The
+apparatus around these zones - drawing them, scoring them, filtering them - is
+sized for an effect roughly ten times larger than the one that is there.
+
 ## So no statespace version
 
 A module publishing displacement origins would publish a function of distance

@@ -62,7 +62,7 @@ ROOT = HERE.parents[1]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from level_signatures import JITTER, SEED  # noqa: E402
+from level_signatures import JITTER, SEED, auc  # noqa: E402
 from screen import load  # noqa: E402
 
 #: Production's own constants, restated so this file can be read alone - and
@@ -218,6 +218,25 @@ def zones(bars, rng) -> list[dict]:
         # What the band did on arrival, for the origin and for its placebo. The
         # placebo's band is mirrored, so price arrives at it from the other
         # side and `up` inverts.
+        # **The orderflow link, in the only form this data supports.** No L2,
+        # so orderflow is tick volume and candle shape. The FVG idea names the
+        # condition itself - "price retraces into this gap **and tick volume
+        # dries up**" - so: volume on the arrival bar against the twenty before
+        # it, and volume on the bar that formed the zone. Both are recorded for
+        # the same-side control too, because a volume effect that appears at
+        # any retracement is not a level property.
+        v = bars["volume"]
+        quiet = slice(max(oi - 20, 0), oi)
+        base = float(np.mean(v[quiet])) if oi > 1 else 0.0
+        row["form_volume"] = float(v[oi]) / base if base > 0 else 1.0
+        for arm, arrival in (("origin", band_at), ("elsewhere", else_at)):
+            if arrival <= 0:
+                continue
+            seat = (run_end if arm == "origin" else far) + arrival
+            if seat < 21 or seat >= len(c):
+                continue
+            recent = float(np.mean(v[seat - 20 : seat]))
+            row[f"{arm}_arrival_volume"] = float(v[seat]) / recent if recent > 0 else 1.0
         if band_at > 0:
             row["origin_outcome"] = classify(
                 h, l_, c, run_end + band_at, band_low, band_high, up, margin
@@ -378,6 +397,54 @@ def respected(rows: list[dict], label: str = "") -> None:
         print(f"      {arm} held {held:.3f} of {len(decided):,} resolved")
 
 
+def orderflow(rows: list[dict]) -> None:
+    """Does volume on arrival say whether the band holds?
+
+    Reported for the origin **and** the same-side control, because the control
+    is what separates "a quiet arrival holds" from "a quiet arrival at a
+    displacement holds".
+    """
+    print(f"      {'arm':<12}{'quiet n':>9}{'held':>8}{'loud n':>9}{'held':>8}{'AUC':>8}")
+    for arm in ("origin", "elsewhere"):
+        got = [
+            r
+            for r in rows
+            if r.get(f"{arm}_outcome")
+            and f"{arm}_arrival_volume" in r
+            and r[f"{arm}_outcome"] != "chop"
+        ]
+        if len(got) < 200:
+            print(f"      {arm:<12}{len(got):>9}  too few")
+            continue
+        volume = np.array([r[f"{arm}_arrival_volume"] for r in got])
+        held = np.array([1.0 if r[f"{arm}_outcome"] in ("reject", "trap") else 0.0 for r in got])
+        cut = float(np.median(volume))
+        low, high = volume <= cut, volume > cut
+        got_auc = auc(volume[held > 0.5], volume[held < 0.5])
+        print(
+            f"      {arm:<12}{int(low.sum()):>9,}{float(held[low].mean()):>8.3f}"
+            f"{int(high.sum()):>9,}{float(held[high].mean()):>8.3f}{got_auc:>8.4f}"
+        )
+    # And the zone's own formation volume, which is a property of the level.
+    got = [
+        r
+        for r in rows
+        if r.get("origin_outcome") and "form_volume" in r and r["origin_outcome"] != "chop"
+    ]
+    if len(got) >= 200:
+        volume = np.array([r["form_volume"] for r in got])
+        held = np.array([1.0 if r["origin_outcome"] in ("reject", "trap") else 0.0 for r in got])
+        print(
+            f"      formation volume AUC for holding "
+            f"{auc(volume[held > 0.5], volume[held < 0.5]):.4f} on {len(got):,}"
+        )
+    print(
+        "      An AUC at 0.5 means volume says nothing. If the origin's column\n"
+        "      moves and the control's does not, the volume reading is about the\n"
+        "      level; if both move, it is about arrivals."
+    )
+
+
 def main() -> None:
     rng = np.random.default_rng(SEED)
     # The constants must match production or this tests nothing.
@@ -427,6 +494,8 @@ def main() -> None:
         respected(rows, "both directions")
         respected([r for r in rows if r["up"] > 0.5], "up pushes (demand zones)")
         respected([r for r in rows if r["up"] < 0.5], "down pushes (supply zones)")
+        print("    orderflow: does a quiet arrival hold?")
+        orderflow(rows)
         print()
     print(
         "  `band` is the first bar back in the origin bar's range, `line` its body\n"
