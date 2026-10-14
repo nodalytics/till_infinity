@@ -180,6 +180,41 @@ def zones(bars, rng) -> list[dict]:
             row[f"band_{horizon}"] = 1.0 if 0 < band_at <= horizon else 0.0
             row[f"line_{horizon}"] = 1.0 if 0 < line_at <= horizon else 0.0
             row[f"placebo_{horizon}"] = 1.0 if 0 < placebo_at <= horizon else 0.0
+        # **The same-side control.** The mirrored placebo is reached by price
+        # *continuing* while the origin is reached by price *retracing*, so part
+        # of "the origin holds" could be "a retracement exhausts". This third
+        # arm removes that: a band of the same width, the same distance, on the
+        # **same** side - so it is approached downward for a demand zone,
+        # exactly as the origin is - but anchored at an unrelated bar instead of
+        # at a displacement.
+        far = int(rng.integers(LOOK + 2, max(len(c) - HORIZON - 2, LOOK + 3)))
+        anchor = float(c[far])
+        depth = abs(here - line)
+        if up:
+            else_high = anchor - depth + width / 2.0
+            else_low = else_high - width
+            else_at = -1
+            for step in range(1, HORIZON + 1):
+                if far + step >= len(c):
+                    break
+                if float(l_[far + step]) <= else_high:
+                    else_at = step
+                    break
+        else:
+            else_low = anchor + depth - width / 2.0
+            else_high = else_low + width
+            else_at = -1
+            for step in range(1, HORIZON + 1):
+                if far + step >= len(c):
+                    break
+                if float(h[far + step]) >= else_low:
+                    else_at = step
+                    break
+        row["elsewhere_at"] = else_at
+        if else_at > 0 and else_low > 0:
+            row["elsewhere_outcome"] = classify(
+                h, l_, c, far + else_at, else_low, else_high, up, margin
+            )
         # What the band did on arrival, for the origin and for its placebo. The
         # placebo's band is mirrored, so price arrives at it from the other
         # side and `up` inverts.
@@ -324,7 +359,7 @@ def respected(rows: list[dict], label: str = "") -> None:
         print("      too few arrivals to classify")
         return
     print(f"      {'arm':<10}{'n':>7}" + "".join(f"{name:>10}" for name in OUTCOMES))
-    for arm in ("origin", "placebo"):
+    for arm in ("origin", "placebo", "elsewhere"):
         have = [r[f"{arm}_outcome"] for r in rows if r.get(f"{arm}_outcome")]
         if len(have) < 100:
             continue
@@ -334,7 +369,7 @@ def respected(rows: list[dict], label: str = "") -> None:
         print(f"      {arm:<10}{len(have):>7,}" + cells)
     # The number that answers the module's question: of the arrivals that
     # resolved either way, how often did the level hold?
-    for arm in ("origin", "placebo"):
+    for arm in ("origin", "placebo", "elsewhere"):
         have = [r[f"{arm}_outcome"] for r in rows if r.get(f"{arm}_outcome")]
         decided = [x for x in have if x != "chop"]
         if len(decided) < 100:

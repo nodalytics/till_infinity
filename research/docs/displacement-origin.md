@@ -177,9 +177,8 @@ break that closes back inside, `chop` neither inside thirty bars:
 
 Across 1h, 4h and 1d on 5,507, 4,167 and 1,316 arrivals.
 
-**A displacement origin is about two and a half times less likely to be broken
-than a matched price at the same distance** - 8.6% against 22%. The level is
-respected, and that is the first substantial answer this family has produced.
+That reads as a two-and-a-half-fold level effect. **It is not, and the
+same-side control is what shows it.**
 
 It also reframes everything above. Price does **not** return to an origin much
 more than to any price that far away: the return-rate edge peaks at +0.037 and
@@ -212,16 +211,37 @@ down into it, so that bar's own high is normally already above the zone - the
 reject fired on arrival. Excluding it took 0.927 to 0.775. The gap did not
 close, but the construction was carrying a fifth of it.
 
-**The confound that remains is the direction of approach.** Price reaches the
-origin by **retracing** and the placebo by **continuing**, because the placebo
-is mirrored into the push direction. So part of "the origin holds" may be "a
-retracement exhausts" rather than anything about this level.
+**The confound was the direction of approach, and it was carrying almost all of
+it.** Price reaches the origin by **retracing** and the mirrored placebo by
+**continuing**. So a third arm was added: a band of the same width at the same
+distance on the **same** side - approached downward for a demand zone, exactly
+as the origin is - but anchored at an unrelated bar instead of a displacement.
 
-The control that separates them is a placebo at the same distance **on the same
-side** - matched retracement depth, not an origin - and it has not been run.
-Until it is, this is a large, consistent, well-controlled-for-distance result
-with a known alternative explanation, which is a different thing from a
-finding.
+| arm | approach | reject | **break** | held |
+| --- | --- | ---: | ---: | ---: |
+| origin | retracement | 0.778 | **0.082** | 0.918 |
+| placebo, mirrored | continuation | 0.394 | **0.231** | 0.769 |
+| **elsewhere, same side** | **retracement** | 0.752 | **0.098** | 0.902 |
+
+The claim splits in two, and the parts are very unequal:
+
+- **0.231 to 0.098** is *a retracement of this depth exhausts*. Nothing to do
+  with displacement.
+- **0.098 to 0.082** is *this level is a displacement origin*. Real - about 2.9
+  sigma on 5,300 arrivals an arm, and consistent by direction at 0.082 against
+  0.094 on up pushes - and **1.6 percentage points**.
+
+So the correct statement is that a displacement origin breaks about **16% less
+often than a matched retracement**, not sixty percent less often than a matched
+price. An earlier version of this file said the latter and it was wrong in what
+it attributed to the level.
+
+**What survives is arguably the control, not the level.** A retracement to *any*
+price at about two and a half typical bars of depth is rejected 75% of the time
+and breaks under 10%. That is a property of retracement depth rather than of
+levels, and it is far larger and more general than anything the level-specific
+work in this repository has found - which makes depth, not identity, the thing
+worth a statespace primitive.
 
 ## So no statespace version
 
