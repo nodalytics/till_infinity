@@ -78,7 +78,10 @@ PRESENT = float(os.environ.get("PRESENT", "0.35"))
 #: and a cross-sectional study wants many dates at a short horizon. Stride
 #: equals the horizon so forward returns never overlap between dates, which is
 #: what lets each date count as one draw in the t.
-XAHEAD = int(os.environ.get("XAHEAD", "5"))
+#: Horizons for the cross-section, in bars. A single five-bar read is five
+#: **hours** on this frame - far shorter than the horizon short-term reversal
+#: operates over, which is about a week, or forty hourly bars.
+XAHEADS = tuple(int(k) for k in os.environ.get("XAHEADS", "5,20,40,80").split(","))
 
 
 def load(name: str):
@@ -131,6 +134,8 @@ FEATURES = (
     "skew",
     "kurtosis",
     "up_share",
+    "past_ret",
+    "past_ret_tail",
     # Volume and cost.
     "vol_trend",
     "volume_cv",
@@ -281,6 +286,15 @@ def read(bars, at: int) -> tuple[dict[str, float], dict[str, float], float, floa
         "skew": float((standard**3).mean()),
         "kurtosis": float((standard**4).mean()) - 3.0,
         "up_share": float((rets > 0).mean()),
+        # **The signed past return, which this library did not have.**
+        # `up_share` and `efficiency` are unsigned proxies, and for a
+        # cross-section the signed return is the canonical feature - short-term
+        # reversal is the most replicated equity anomaly there is. Leaving it
+        # out meant the cross-sectional arm never carried the one predictor
+        # most likely to work.
+        "past_ret": float(rets.sum()) / (sd * math.sqrt(WINDOW)),
+        "past_ret_tail": float(rets[-max(WINDOW // 5, 1) :].sum())
+        / (sd * math.sqrt(max(WINDOW // 5, 1))),
         "vol_trend": float(np.polyfit(np.arange(WINDOW), heat, 1)[0]) / float(heat.mean())
         if float(heat.mean()) > 0
         else 0.0,
@@ -504,7 +518,7 @@ def screen(group: str, names: list[str], mixed: bool = False) -> None:
     tail_report(group, pooled)
 
 
-def cross_section(names: list[str], mixed: bool = False) -> None:
+def cross_section(names: list[str], ahead_bars: int, mixed: bool = False) -> None:
     """Rank the cross-section, not each series - the framing that was missing.
 
     Everything else in this file asks each instrument whether its own next move
@@ -552,7 +566,7 @@ def cross_section(names: list[str], mixed: bool = False) -> None:
         )
         return
     # Stride the common grid, not each series.
-    marks = list(range(WINDOW + 2, len(common) - WINDOW - 2, XAHEAD))
+    marks = list(range(WINDOW + 2, len(common) - WINDOW - 2, ahead_bars))
     board = {f: np.full((len(marks), len(feeds)), np.nan) for f in FEATURES}
     forward = np.full((len(marks), len(feeds)), np.nan)
     for column, bars in enumerate(feeds.values()):
@@ -566,7 +580,7 @@ def cross_section(names: list[str], mixed: bool = False) -> None:
             if not holds[mark]:
                 continue
             at = int(where[mark])
-            ahead_mark = min(mark + XAHEAD, len(common) - 1)
+            ahead_mark = min(mark + ahead_bars, len(common) - 1)
             if not holds[ahead_mark]:
                 continue
             ahead = int(where[ahead_mark])
@@ -578,7 +592,7 @@ def cross_section(names: list[str], mixed: bool = False) -> None:
             forward[row, column] = math.log(closes[ahead] / closes[at])
     live = int(np.isfinite(forward).any(axis=0).sum())
     print(
-        f"  cross-section: {live} names, {len(marks)} dates on a shared grid, {XAHEAD}-bar forward"
+        f"  cross-section: {live} names, {len(marks)} dates on a shared grid, {ahead_bars}-bar forward"
     )
     rows = []
     for feature in FEATURES:
