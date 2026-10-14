@@ -1,4 +1,4 @@
-# A touch carries about a fiftieth of a standard deviation, and only where the level is built in
+# A touch carries nothing, and the one observable that looked like a signal is a tautology
 
 `statespace-conditional-holds.md` closed the **per-level** question: `tau` over
 279 levels came back at 0.0109 against a simulated null of 0.0085, so a level's
@@ -19,18 +19,23 @@ windows, on 6,902 touches over 1,164 non-overlapping matched pairs, produce
 **nothing further than 0.006 from an AUC of 0.5**, family-wise p 0.828 - while a
 planted shift of 0.02 standard deviations is caught at p 0.020.
 
-The number that matters is not that one. Deriv's range-break processes are real
-markets whose **generator has a range that breaks**, so a level exists there by
-construction, and they were added as the positive control: a panel that cannot
-see a touch at a level someone built is not evidence about levels. That control
-is **also** family-wise null, p 0.239, but its marginal readings are all in the
-direction a real level predicts and all sit at the same magnitude - about 0.02
-standard deviations, which is its own detection floor at 203 pairs.
+Deriv's range-break processes are real markets whose **generator has a range
+that breaks**, so a level exists there by construction, and they were added as
+the positive control: a panel that cannot see a touch at a level someone built
+is not evidence about levels.
 
-So the honest reading is narrower and more useful than a null: **the signature a
-touch can carry is about a fiftieth of a standard deviation even when the level
-is built into the generator**, and traded instruments show none of it with five
-times the pairs.
+That control did light up - family-wise p **0.017** on first touches, carried by
+`overshoot` at 0.4699, meaning the touching bar poked through a real boundary by
+less than it poked through a matched price. It is a tautology. To overshoot a
+100-bar extreme, price must set a **new** 100-bar extreme; a placebo inside the
+recent range faces no such barrier. The block-shuffled arm proves it, because it
+reads the same thing at **p 0.005 over 2,784 pairs** with no level structure left
+in the series at all.
+
+Drop that one observable - named by the shuffled arm, not by taste - and the
+control's 0.017 becomes **0.781**. Every arm is then null, and the answer to the
+question is that a touch carries nothing: not on traded instruments, and not
+where the level is written into the generator.
 
 ## The panel
 
@@ -102,23 +107,25 @@ costs:
 
 | | traded | generated |
 | --- | ---: | ---: |
-| matched pairs | 1,164 | 353 |
-| real-level touches | 6,902 | 2,221 |
-| widest `\|AUC - 0.5\|` | **0.006** | 0.014 |
-| marginal passes of 19 | **0** | 1 |
-| family-wise p | **0.828** | 0.100 |
-| first touch only, family-wise p | 0.993 | 0.077 |
+| matched pairs | 2,719 | 793 |
+| real-level touches | 10,100 | 3,013 |
+| widest `\|AUC - 0.5\|` | **0.006** | 0.011 |
+| marginal passes of 19 | 1 | 0 |
+| family-wise p, all 19 | **0.342** | 0.763 |
+| family-wise p, 18 non-mechanical | **0.783** | 0.741 |
+| first touch only, 18 non-mechanical | 0.783 | 0.868 |
 | visits: real vs placebo | 5.93 vs 5.95, p 0.646 | 6.29 vs 6.33, p 0.698 |
 
-Twelve feeds, 250 anchors apiece, anchors spaced a full horizon apart. The one
-generated pass is `accel_turns` at 0.4862 - on processes with no levels at all,
-which is what one pass in nineteen looks like.
+Twelve feeds, anchors spaced a full horizon apart, fifty thousand bars each. The
+one traded pass is `retrace3` at 0.5038, p 0.032 - one in nineteen, and the
+family-wise p says so.
 
 **First touch only** is its own arm, with its own power sweep, because one event
-a pair is a sixth of the sample and a null without power is not a result. On
-traded: 1,164 fresh touches, family-wise p 0.993. It was called the arm that
-makes sense, and it is - a level tested nine times is not what the question
-means. It is also the arm where the control came closest, `overshoot` at 0.4631.
+a pair is a quarter of the sample and a null without power is not a result. On
+traded: 2,719 fresh touches, family-wise p 0.783 over the eighteen. It was called
+the arm that makes sense, and it is - a level tested nine times is not what the
+question means - and it is also the arm where the tautology surfaced, which is
+its own argument for keeping the shuffled twin at the same sample size.
 
 The visit counts are a consistency check on the magnet effect already refuted in
 `docs/`, and they agree: a real level is touched no more often than a matched
@@ -141,35 +148,41 @@ found was 0.005 of AUC, a quarter of what a 0.02 sd plant produces. For the
 signal to be real and missed it would have to be smaller than 0.02 sd - which is
 below anything a spread could be crossed for.
 
+## The one observable that separated, and why it is not a finding
+
+| arm | pairs | family-wise p, all 19 | `overshoot` | after dropping it |
+| --- | ---: | ---: | ---: | ---: |
+| control, first touch | 465 | **0.017** | 0.4699, p 0.012 | **0.781** |
+| control, every touch | 465 | 0.586 | 0.4980, p 0.818 | 0.643 |
+| traded, first touch | 2,719 | 0.858 | - | 0.783 |
+| traded, every touch | 2,719 | 0.342 | 0.4957, p 0.085 | - |
+| **shuffled traded** | 2,784 | **0.007** | **0.4920, p 0.005** | - |
+
+The last row is the whole argument. A block-shuffled series has no levels - its
+blocks are fifty bars long and re-levelled in log space - and `overshoot` still
+separates real extremes from matched placebos there, at a p the control never
+reached, with five times the pairs. So the effect belongs to the **definition of
+an extreme**, not to a level.
+
+The harness now learns that set rather than being told it: the highest-powered
+shuffled arm names every observable that separates on shuffled bars, and each
+arm prints a second family-wise p with those dropped. This is why traded runs
+first.
+
 ## The positive control, which is the only reason any of this is interpretable
 
-| | every touch | first touch only |
-| --- | ---: | ---: |
-| pairs | 203 | 203 |
-| family-wise p | 0.239 | 0.135 |
-| `activity5` | **0.4865**, p 0.010 | 0.5049, p 0.711 |
-| `retrace3` | 0.4876, p 0.052 | 0.5079, p 0.633 |
-| `drift5` | **0.5125**, p 0.045 | 0.4943, p 0.661 |
-| `overshoot` | 0.4980, p 0.818 | **0.4631**, p 0.045 |
+At 465 pairs, with a horizon of a hundred bars so that a fresh touch is a level
+formed in the last hundred and tested within the next hundred, the control's
+marginal readings were all in the direction a real boundary predicts: less
+activity after, less retrace, less overshoot through, more drift through a range
+about to break. It was the tautology above, and nothing else of it survived.
 
-Three of nineteen pass marginally on every touch and one on first touch, where
-traded passes none of nineteen and the level-free volatility indices pass one.
-The signs are what a real boundary predicts: **less** activity after the touch,
-**less** retrace, **less** overshoot through, and **more** drift through - which
-is right for a process whose range is going to break.
-
-And they are the size the arm can just about see. `activity5` is 0.0135 of AUC
-from 0.5 and -0.0204 in its own units, while the planted sweep on the same arm
-needs 0.05 sd for p 0.002 and gives p 0.075 at 0.02 sd. The control's findings
-sit exactly on its floor.
-
-This is the asset to keep. Any new level observable can be put through this
-control **before** it is believed on traded data, the same way an FX screen that
-misses currency triangles is broken whatever else it reports.
-
-What it also says is that 203 pairs is not enough to settle it. The control has
-two feeds against traded's twelve, and matching its sample - more frames of the
-same two processes - is what would turn its 0.239 into a verdict either way.
+This control is still the asset to keep, and its value does not depend on it
+finding anything. Any new level observable goes through it **before** it is
+believed on traded data - the same rule that says an FX screen missing currency
+triangles is broken whatever else it reports - and it now also supplies, through
+its shuffled twin, the list of observables that separate for definitional
+reasons.
 
 ## What this closes, and the one door it leaves open
 
@@ -179,10 +192,9 @@ touching bar, and in what follows - including every candle-orderflow reading
 available without L2, and including the wick-volume combination. Fresh touches
 too. Attraction too.
 
-Not closed, and the distinction is the whole point: **levels**. The control says
-a built-in level does leave a mark in this panel, barely, so the panel is
-sensitive rather than blind - and a mark of 0.02 sd is not something to trade,
-but it is something to measure a better observable against.
+The control says the same, which is the sentence that makes it a result rather
+than a failure: where the level is in the generator, a touch at it still looks
+like a touch anywhere else, once the one definitional observable is removed.
 
 Open, and now the thing that matters: **the level definition**. This tested one
 nomination - the lookback extreme - and `structures/drawing` runs fourteen
@@ -192,7 +204,6 @@ holds there. It did not ask this question of them, and the harness takes any
 price series and any price: pointing it at `drawing`'s own proposals is one
 loop, and is the next thing worth doing.
 
-What should not be done is re-running this panel on more **traded** instruments.
-At 0.02 sd of power against 0.006 of observed effect, more FX buys precision on
-a zero. More of the **control** is the opposite - that is the arm with 203 pairs
-and findings on its floor.
+What should not be done is re-running this panel on anything. At 0.02 sd of
+power against 0.006 of observed effect, and with the control's only reading
+accounted for, more data buys precision on a zero.

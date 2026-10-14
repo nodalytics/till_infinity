@@ -77,6 +77,12 @@ if str(ROOT) not in sys.path:
 
 CACHE = Path(os.environ.get("SEQLAB_CACHE", str(Path.home() / "till_infinity/data/seqlab")))
 FRAME = os.environ.get("FRAME", "1h")
+#: Several frames of the same process count as several feeds. The control
+#: arm has two processes against traded's twelve instruments, and 203 pairs
+#: put its findings on its own detection floor - so the sample it is short
+#: of is bought here, not by adding instruments to an arm that is already
+#: flat.
+FRAMES = tuple(os.environ.get("FRAMES", FRAME).split(","))
 LIMIT = int(os.environ.get("LIMIT", "40000"))
 #: Bars behind an anchor that define the extreme and the typical bar.
 LOOKBACK = int(os.environ.get("LOOKBACK", "100"))
@@ -122,8 +128,8 @@ PANEL = BEFORE + DURING + AFTER_F
 PLANTED = ("wick", "retrace3")
 
 
-def load(name: str) -> dict[str, np.ndarray] | None:
-    path = CACHE / f"{name}.{FRAME}.npz"
+def load(name: str, frame: str = "") -> dict[str, np.ndarray] | None:
+    path = CACHE / f"{name}.{frame or FRAME}.npz"
     if not path.exists():
         return None
     with np.load(path) as bundle:
@@ -372,11 +378,21 @@ def table(pairs, rng, plant=None, only=None) -> dict:
     }
 
 
-def report(label: str, pairs, control, seed: int) -> None:
-    """One arm: the panel, its shuffled twin, what survived, and the power."""
+def report(label: str, pairs, control, seed: int, mechanical=frozenset()) -> dict:
+    """One arm: the panel, its shuffled twin, what survived, and the power.
+
+    `mechanical` names observables already shown to separate real from placebo
+    **on shuffled bars**, where no level exists. `overshoot` is the one that
+    forced this: to overshoot a 100-bar extreme price must set a new extreme,
+    and a placebo inside the recent range faces no such barrier, so low
+    overshoot is a property of the definition. The shuffled traded arm reads it
+    at p 0.005 over 2,784 pairs - and the same observable was carrying the
+    positive control's family-wise 0.017 at 465. A family-wise p including it
+    is a family-wise p over a tautology, so both are printed.
+    """
     if len(pairs) < 10 or len(control) < 10:
         print(f"  {label}: {len(pairs)} pairs, too few to ask\n")
-        return
+        return {}
     got = table(pairs, np.random.default_rng(seed))
     ctrl = table(control, np.random.default_rng(seed + 1))
     print("-" * 86)
@@ -399,6 +415,13 @@ def report(label: str, pairs, control, seed: int) -> None:
     )
     real_v, fake_v, p_v = got["visits"]
     print(f"  visits a price: real {real_v:.2f} vs placebo {fake_v:.2f} (p {p_v:.3f})")
+    rest = tuple(n for n in PANEL if n not in mechanical)
+    if mechanical and len(rest) > 1:
+        trimmed = table(pairs, np.random.default_rng(seed + 9), only=rest)
+        print(
+            f"  family-wise p over the {len(rest)} that are not mechanical "
+            f"({', '.join(sorted(mechanical))} dropped): {trimmed['family']:.3f}"
+        )
 
     for name in [n for n in PANEL if got["p"][n] < 0.05 and ctrl["p"][n] >= 0.05]:
         real_m, fake_m = got["means"][name]
@@ -440,10 +463,12 @@ def report(label: str, pairs, control, seed: int) -> None:
             line.append(f"{size:.2f}: {planted['auc'][name]:.4f} p {planted['p'][name]:.3f}")
         print(f"    {name:<10}" + " | ".join(line))
     print()
+    return ctrl
 
 
 def main() -> None:
     rng = np.random.default_rng(SEED)
+    mechanical: set[str] = set()
     print(
         f"frame {FRAME}  {LOOKBACK}-bar extremes, {HORIZON} bars watched, "
         f"{CAP} events a price, overlap {'on' if OVERLAP else 'off'}\n"
@@ -454,12 +479,14 @@ def main() -> None:
         shuffled_pairs: list[tuple] = []
         used: list[str] = []
         for name in names:
-            bars = load(name)
-            if bars is None:
-                continue
-            used.append(name)
-            real_pairs += pairs_for(bars, rng, name)
-            shuffled_pairs += pairs_for(shuffle_blocks(bars, rng), rng, name)
+            for frame in FRAMES:
+                bars = load(name, frame)
+                if bars is None:
+                    continue
+                tag = name if len(FRAMES) == 1 else f"{name}@{frame}"
+                used.append(tag)
+                real_pairs += pairs_for(bars, rng, tag)
+                shuffled_pairs += pairs_for(shuffle_blocks(bars, rng), rng, tag)
         if not real_pairs:
             continue
         print("=" * 86)
@@ -472,13 +499,17 @@ def main() -> None:
                 "  the traded null says nothing."
             )
         print("=" * 86)
-        report(f"{group}: every touch", real_pairs, shuffled_pairs, SEED + 10)
+        twin = report(f"{group}: every touch", real_pairs, shuffled_pairs, SEED + 10, mechanical)
+        # The highest-powered shuffled arm names the mechanical observables for
+        # every arm after it, which is why traded runs first.
+        if group == "traded" and twin:
+            mechanical |= {n for n in PANEL if twin["p"][n] < 0.05}
         # **Only the first visit.** A level tested nine times is not what the
         # question means; the first test is. Its own arm, with its own power,
         # because one event a pair is a tenth of the sample.
         fresh = [(pair[0][:1], pair[1][:1], pair[2], pair[3]) for pair in real_pairs]
         fresh_ctrl = [(pair[0][:1], pair[1][:1], pair[2], pair[3]) for pair in shuffled_pairs]
-        report(f"{group}: first touch only", fresh, fresh_ctrl, SEED + 20)
+        report(f"{group}: first touch only", fresh, fresh_ctrl, SEED + 20, mechanical)
 
 
 if __name__ == "__main__":
