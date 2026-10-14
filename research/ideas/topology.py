@@ -628,7 +628,26 @@ def shapes_arm(group: str, names: tuple[str, ...], rng) -> None:
     )
 
 
+def selftest() -> None:
+    """The prominence sweep against prominences worked out by hand.
+
+    This is the one piece of real algorithm in the file - everything else is
+    bookkeeping around `ripser` - and a persistence sweep that pairs the wrong
+    peaks fails quietly, by returning plausible numbers.
+    """
+    two = dict(superlevel_pairs(np.array([0.0, 1.0, 0.5, 2.0, 0.0])))
+    assert two == {3: 2.0, 1: 0.5}, two
+    # 5 at index 1, 3 at index 3, 4 at index 5; saddles 2 and 1.
+    three = dict(superlevel_pairs(np.array([0.0, 5.0, 2.0, 3.0, 1.0, 4.0, 0.0])))
+    assert {k: round(v, 6) for k, v in three.items()} == {1: 5.0, 3: 1.0, 5: 3.0}, three
+    # A flat function has one mode, not nine; a ramp has one, at the top.
+    assert len(superlevel_pairs(np.zeros(9))) == 1
+    ramp = superlevel_pairs(np.arange(10.0))
+    assert len(ramp) == 1 and ramp[0][0] == 9, ramp
+
+
 def main() -> None:
+    selftest()
     rng = np.random.default_rng(SEED)
     if persistence(np.random.default_rng(0).normal(size=(20, 2))) is None:
         print("ripser is not installed; the H1 arms cannot run")

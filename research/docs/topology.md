@@ -1,137 +1,171 @@
-# Market topology and complex-systems early warning: nothing beyond what the shock forecaster knows
+# Persistent homology finds levels, ranges and shapes, and every one of them is something a ruler already had
 
-Harness: [`research/harness/topology.py`](../harness/topology.py). Lab run 2026-09-30, logs
-`logs/topology_{real,walks,report}.log`, cells in `data/topology/cells.csv`.
+Three questions, asked on 2026-10-14 while `level-signatures.md` was closing: *also
+try topological data analysis, betti numbers, etc*; *we are also looking for tiny
+signals in TDA and also can TDA be used to extract levels too*; *also check for
+shapes over time and what happened before and after each shape*.
 
-## The question
+All three are answered, each with a positive control and each with its confound
+named rather than argued away. None of them survives.
 
-[`findings.md`](findings.md): this desk forecasts risk, not direction. The user's cross-disciplinary
-agenda proposed tools from topological data analysis, complex systems and statistical physics for
-exactly that, as early warnings of regime transitions. Do they warn of a transition *before* it
-comes, *beyond* what the production shock forecaster already reads? That forecaster uses
-volatility state, clustering and the clock (AUC 0.73-0.76, [`anomalies.md`](anomalies.md)). And the
-user's "killer question": are regimes told apart by topology when the conventional moments look the
-same?
+## Why topology is a reasonable thing to ask for
 
-Related work not repeated here: [`susceptibility.md`](susceptibility.md) (the Ising susceptibility
-of the efficiency ratio), [`manifold.md`](manifold.md) and [`state-and-memory.md`](state-and-memory.md).
+A price level, stated carefully, is a mode of the measure that says how much
+trading happened where - and a volume profile's answer to that depends on its bin
+width. The **prominence** of a mode, how far the density must fall before it
+merges into a taller one, is its persistence under the superlevel filtration, and
+persistence is stable under perturbation. So the bandwidth stops deciding which
+levels exist and only decides how fine a mode may be. That is a real improvement
+in construction, independent of whether it pays.
 
-## Method
+A range is a **loop**: embedded as `(price_t, price_{t+k})`, a range-bound stretch
+goes out to one boundary, back to the other, and round again, while a trend does
+not close. So the longest-lived `H1` class is a range score with an unambiguous
+positive control, because Deriv publishes processes whose generator *has* a range
+that breaks.
 
-Every statistic is computed causally, at every 4th bar at 15m, 2nd at 1h and every bar at 1d. It
-uses the last 50 returns in units of the trailing 500-bar mean |return| (`z`):
+`research/ideas/topology.py` implements both. The prominence sweep is the elder
+rule over a 1-D function - exact, no library - and is unit-tested against
+hand-computed prominences, including that a flat function has one mode and a ramp
+has one mode at the top. The homology is `ripser`.
 
-| group | statistics | source |
-|---|---|---|
-| `tda` | persistent homology of the Takens delay embedding of z (dimension 3, delay 1): Vietoris-Rips H0 and H1 by ripser; persistence-landscape L1 and L2 norms, exact from the lifetimes (summed over layers, L1 = Σl²/4, L2² = Σl³/12); the count of H1 features living > 0.5 | Gidea & Katz 2018 |
-| `tda_shape` | the same on the window standardised by its own sd (volatility level removed) | |
-| `csd` | lag-1 autocorrelation of z and of \|z\|, variance, and Kendall's τ of variance over five 20-bar blocks | Scheffer et al. 2009 |
-| `phys` | Hill tail exponent (250 bars, top 25), sample entropy at scales 1 and 2 (m = 2, r = 0.2 sd, 100 bars), Rosenstein largest Lyapunov exponent | |
+## The four arms
 
-- **Baseline:** the production shock forecaster's features computed from bars (volatility over its
-  norm and its square, rank and its square, vol-of-vol, recent shock counts, hour, hours to the
-  weekly close).
-- **Targets, pre-registered:**
-  - a shock (|r| > 4× the trailing mean) within 4 bars;
-  - a range blowout (4×) within 4 bars;
-  - a volatility-regime shift, meaning the next 20 bars' sd is at least 2× the last 100 bars'.
+| arm | what it is | what it must do |
+| --- | --- | --- |
+| control | `Range_Break_100`, `Range_Break_200` | has a range by construction |
+| regime | `Drift_Switch_Index_10/20/30` | has a planted drift and no range |
+| traded | twelve FX and metals | the question |
+| generated | six volatility and step indices | driftless, no levels |
 
-  The last is a defined proxy for a Markov-switching or Bai-Perron break, which would need the
-  future to place.
-- **Fit and score:** gradient boosting on the baseline against baseline + each group; train on the
-  first 60% by time, test on the last 40%. The incremental AUC gets a paired day-bootstrap 95% CI
-  and is reported for each half.
-- **Families:**
-  - FX (8 pairs), metals, crypto;
-  - Deriv as a market (Volatility 75, Boom 1000, Crash 1000, Jump 50, Range Break 100);
-  - walks we generate: iid t(3), and **GARCH(1,1) with t innovations**. GARCH has volatility
-    clustering and nothing else, so it is the key control.
+## Levels from topological prominence
 
-  Intervals 15m, 1h and 1d; about 1.35 million rows.
-- **Pass bar:** incremental AUC ≥ 0.01, CI above 0, positive in both halves, and not on the GARCH
-  walks. BH across all 250 cells, and the best cell deflated against the expected maximum of 250
-  null draws ([`lopez-de-prado.md`](lopez-de-prado.md)).
+Each window's visitation density is built by spreading every bar's volume across
+its own range, smoothed, and its three most prominent modes are nominated as
+levels. Each nomination is raced against a distance-matched placebo: does price
+come back one typical bar before it goes through one?
 
-## Results
+| | control | regime | traded | generated |
+| --- | ---: | ---: | ---: | ---: |
+| nominations | 318 | 371 | 2,181 | 628 |
+| hold at a prominent mode | 0.2637 | 0.4429 | 0.4973 | 0.4858 |
+| hold at a matched price | 0.2671 | 0.4456 | 0.4960 | 0.4834 |
+| paired difference | +0.0016 | -0.0045 | -0.0017 | +0.0008 |
+| p | 0.833 | 0.603 | 0.621 | 0.893 |
+| prominent half | +0.0042 | -0.0034 | -0.0008 | -0.0068 |
+| less prominent half | -0.0010 | -0.0057 | -0.0025 | +0.0083 |
 
-**The baseline is strong on real markets and on GARCH walks, and weak on iid walks:**
+Nothing, anywhere, including where the level is in the generator. And the deep
+modes do not beat the shallow ones, which is the specific claim persistence was
+making: if prominence does not order them, persistence added nothing to a
+histogram.
 
-| target, baseline AUC | FX 15m | FX 1h | metals 1h | crypto 1h | Deriv 15m | GARCH walks 1h | iid walks 1h |
-|---|---|---|---|---|---|---|---|
-| shock | 0.796 | 0.756 | 0.773 | 0.766 | 0.779 | 0.666 | 0.496 |
-| range | 0.780 | 0.785 | 0.811 | 0.802 | 0.817 | 0.706 | 0.527 |
-| vol shift | 0.766 | 0.641 | 0.705 | 0.662 | 0.821 | 0.627 | 0.484 |
+One arm did look alive. `dispersion.differ` - the estimator merged in #223 - said
+the control's nominated modes **genuinely differ from each other**, `tau` 0.0862
+against a simulated null of 0.0080, p 0.002, where traded gave p 0.406 and the
+driftless indices gave exactly zero. A per-unit statistic with real dispersion is
+worth an estimator, so the obvious next step was a better selector.
 
-**The borrowed tools add almost nothing to it.** Of 250 incremental cells, 4 pass the pre-registered
-bar and 3 survive BH. None is on the GARCH walks.
+It is not. The same question asked of the **placebos** on the same process
+returns `tau` **0.0965**, p 0.002 - more dispersion than the modes have. The
+spread belongs to the process, which spends part of its life in a range and part
+breaking out of one, and any price measured during it inherits that. Asking the
+placebo was the whole discipline of `statespace-conditional-holds.md` and it
+earns its place again here.
 
-| cell | + group | incremental AUC [95%] | halves | GARCH walks, same cell |
-|---|---|---|---|---|
-| metals 1d vol shift | phys | +0.032 [+0.015, +0.048] | +0.080 / +0.028 | +0.008 |
-| metals 1d vol shift | tda | +0.025 [+0.005, +0.045] | +0.129 / +0.002 | −0.019 |
-| Deriv 15m range | phys | +0.010 [+0.005, +0.017] | +0.012 / +0.009 | −0.000 |
-| FX 1h vol shift | tda | +0.012 [+0.001, +0.025] | (passes, not BH) | +0.003 |
+## Ranges from one-dimensional homology
 
-Everywhere else the increments sit within ±0.005, and are often negative. For example, FX 15m
-shocks: tda −0.0001, csd −0.0012, phys −0.0016, all −0.0022. The median `tda` increment by family is
-−0.002 to +0.002.
+The outcome is scale-free: did the next hundred bars' range come in no wider than
+this window's?
 
-**Deflation.** The best real cell (metals 1d vol shift, `phys`) has t = 3.35 against an expected
-maximum of 2.84 over 250 null cells. It survives nominally, but it is fragile:
-- the second half is a third of the first (+0.080 / +0.028);
-- the "all" group, which contains the same statistics, reads −0.003;
-- it rests on 2 instruments' daily bars, 3,262 test rows and about 150 events.
+| | control | regime | traded | generated |
+| --- | ---: | ---: | ---: | ---: |
+| windows | 198 | 198 | 1,188 | 449 |
+| `H1` score, unmatched | 0.3468 | 0.3247 | 0.3307 | 0.2791 |
+| **window width, no topology** | **0.8029** | **0.8433** | **0.7387** | **0.8241** |
+| `H1` within 5 width strata | 0.4867 | 0.4772 | 0.4418, p 0.002 | 0.4593 |
+| `H1` within 10 | 0.4830 | 0.5391 | 0.4530, p 0.007 | 0.4843 |
+| `H1` within 20 | 0.5345 | 0.5528 | 0.4601, p 0.027 | 0.4891 |
+| `H1` within 40 | - | - | 0.4650, p 0.052 | 0.5209 |
 
-The FX 1h cell does not survive BH.
+The second row is the finding, and it is not topological: **how wide the window's
+range already is** predicts whether the next one fits inside it at an AUC of 0.74
+to 0.84. A ruler knew that.
 
-**Deriv 15m range blowouts** is the one clean survivor: +0.010 in both halves and nothing on GARCH.
-The single statistics say what it is. Low sample entropy (AUC 0.266) and a low Hill exponent (0.286)
-come before range blowouts, meaning the window is step-like and fat-tailed. That reads as the
-mechanics of the Range Break and Boom/Crash indices, which follow their own generators
-([`deriv-variants.md`](deriv-variants.md)). It is a finding about those instruments, not a general
-early warning.
+The unmatched `H1` row reads 0.28 to 0.35 - strongly inverted - on every group
+including driftless walks, which is the tell for a mechanical relationship rather
+than a market one: a range-bound window has a narrow range and is therefore easy
+to exceed. Matching on width is what turns it back into a question about shape.
 
-### The killer question: topology beyond matched moments
+Matched, traded reads 0.4418 at p 0.002, and then it **walks to 0.5 as the strata
+narrow** - 0.4530, 0.4601, 0.4650, p 0.002 to 0.052 - which is precisely what
+residual confounding looks like and precisely what the sweep was built to detect.
+The controls do not move off 0.5 at all.
 
-Against a baseline of the window's *moments* only (sd, skew and kurtosis of z, plus their tercile
-cells), adding the volatility-free topology (`tda_shape`) does help:
+## Shapes over time, and what sits either side of each
 
-| family | shock | range |
-|---|---|---|
-| FX 15m | +0.006 [+0.001, +0.011] | **+0.021 [+0.005, +0.036]** |
-| crypto 15m | +0.012 [+0.006, +0.020] | **+0.028 [+0.017, +0.042]** |
-| metals 15m | +0.015 [+0.001, +0.029] | +0.010 [−0.015, +0.035] |
-| **GARCH walks 15m** | **+0.015 [+0.006, +0.023]** | +0.009 [−0.001, +0.019] |
-| **GARCH walks 1h** | **+0.013 [+0.006, +0.019]** | **+0.017 [+0.004, +0.030]** |
-| iid walks 1h | +0.003 [−0.011, +0.018] | −0.005 [−0.027, +0.018] |
+Six shapes are fitted by k-means on the persistence descriptor of each window -
+`H0` total and max, `b1`, `H1` total and max, and the `L1` norm of the first
+persistence landscape, all computed on the delay embedding of returns
+**standardised inside the window** so that no shape is a volatility reading in
+disguise - plus the loop score. Fitted on the earlier half of each feed, read on
+the later half.
 
-So yes: regimes with matched moments *are* told apart by the shape of the delay embedding. But the
-GARCH walks show the same gain, and they have nothing but volatility clustering. What topology sees
-beyond static moments is **the dynamics of clustering**, the ordering that moments throw away. The
-production forecaster already reads that through its volatility-state and shock-history features,
-which is why topology adds nothing once they are in the baseline.
+Traded, 2,388 held-out windows:
 
-## What this means
+| shape | n | vol before | move before | vol after | size after | drift after | held |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 0 | 240 | 1.099 | -0.021 | 1.136 | 0.955 | -0.051 | 0.067 |
+| 1 | 558 | 1.078 | 0.134 | 1.035 | 0.784 | 0.024 | 0.113 |
+| 2 | 290 | 0.846 | 0.076 | 0.846 | 0.684 | 0.123 | 0.162 |
+| 3 | 539 | 1.026 | 0.027 | 1.053 | 0.834 | 0.053 | 0.130 |
+| 4 | 341 | 1.130 | 0.112 | 1.114 | 0.802 | 0.143 | 0.126 |
+| 5 | 420 | 1.093 | 0.186 | 1.119 | 0.910 | 0.006 | 0.114 |
 
-- **None of these tools is an early warning beyond what the desk already has.** Persistent
-  homology, critical slowing down, tail exponents, entropy and Lyapunov estimates carry information
-  about coming transitions: single-statistic AUCs reach 0.60-0.73. But that information is
-  volatility clustering, which the production shock forecaster already reads.
-- **The killer question has a precise answer.** Topology distinguishes regimes that moments cannot,
-  because moments discard ordering. The same holds on GARCH walks, so the extra information is
-  clustering dynamics, not a topological property of markets.
-- **Critical slowing down does not appear.** Autocorrelation and variance trends add nothing (csd
-  within ±0.004 in every real cell), consistent with markets not approaching bifurcations the way
-  ecosystems do at these horizons.
-- **Two narrow survivors, neither for production yet:**
-  - Deriv 15m range blowouts (+0.010, instrument mechanics);
-  - metals daily volatility shifts (+0.032, fragile: a small sample, a weak second half, and absent
-    when all tools are added).
+The shapes are real: they separate what came before and what came after at
+p 0.002. Shape 2 is the quiet one and stays quiet, shape 0 the loud one and gets
+louder, and shape 2 is twice as likely as shape 0 to hold its range.
 
-  Either could be re-tested on a longer or fresh sample before being considered.
-- **For the cross-disciplinary agenda:** tools that measure the *shape* or *complexity* of a price
-  window are re-measuring volatility clustering on these markets. Borrowed methods are more likely
-  to add something if they bring **new information** that the price series does not contain. On the
-  agenda's list, that means information flow across assets (the network and transfer-entropy
-  program), causal interventions, and real order-flow data (the VPIN study now running), rather
-  than another transform of the same bars.
+Then the line that matters - the same table scored against **six bins of plain
+realised volatility**:
+
+| outcome | `eta^2` shape | p | `eta^2` vol bins | p |
+| --- | ---: | ---: | ---: | ---: |
+| vol before | 0.0593 | 0.002 | **0.0684** | 0.002 |
+| move before | 0.0046 | 0.037 | **0.0080** | 0.002 |
+| vol after | 0.0469 | 0.002 | **0.0619** | 0.002 |
+| size after | 0.0107 | 0.002 | **0.0118** | 0.002 |
+| drift after | 0.0028 | 0.257 | 0.0026 | 0.244 |
+| held | 0.0052 | 0.027 | **0.0106** | 0.002 |
+
+A volatility bin beats the shape on **every single outcome**. The persistence
+diagram of a standardised window is a volatility measurement that has been
+through more machinery and arrives with less. On the controls the shapes are
+mostly null while the volatility bins separate `vol before` and `vol after` at
+`eta^2` of 0.08 to 0.20 - volatility clustering, which is the thing that is
+always there.
+
+And `drift after` is null for both, everywhere, which is the fourth independent
+arrival at the same place: direction is closed.
+
+## What is worth keeping
+
+Not the arms - the two instruments they were tested with.
+
+`dispersion.differ` was merged two hours before this and immediately did the job
+it was written for: it found dispersion in the control's modes, which is exactly
+when a desk starts building a selector, and the placebo column stopped it. It
+cost one line.
+
+The **strata sweep** is the other. An effect that survives matching at five bins
+and walks toward the null at forty was never the thing being matched out, and
+that pattern is readable in four numbers. It belongs in any harness here that
+conditions on a confound rather than removing it.
+
+## What should not be tried next
+
+A finer frame, more instruments, a different embedding dimension or delay, or
+`H2`. The level arm is null at 2,181 nominations with the placebo column
+explaining its one positive reading; the range arm is a ruler; the shape arm
+loses to a volatility bin on every outcome it wins on. None of those is a
+precision problem.
