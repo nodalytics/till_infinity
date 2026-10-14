@@ -1,4 +1,4 @@
-# A range statespace can build, and fourteen levels that do not hold
+# A range statespace can build, and seventeen levels that do not hold
 
 Asked for on 2026-10-14, across four messages that are one piece of work:
 statespace should pick **levels** and a **range** with the current price inside
@@ -68,6 +68,33 @@ travel one typical bar **back** before one bar **through**, within 24 bars?
 
 Every lift is inside `+/-1.6%` and every hold rate is a coin.
 
+## Momentum turns are not levels either, and the gate says so
+
+Asked for on 2026-10-14: *"price points that had at least 1 momentum or
+acceleration turn could be a level"*. These are the only candidates here built
+from **dynamics** rather than from volume or candle geometry, and they are
+native to a state-space filter in a way a profile cannot be - `levels.Kalman`
+carries `(price, slope, acceleration)`, so the price where momentum reversed is
+something it already knows.
+
+| level | holds | placebo | lift | races |
+| --- | ---: | ---: | ---: | ---: |
+| turn, slope sign change | 49.0% | 48.7% | +0.4% | 1,905 |
+| accel turn | 46.2% | 47.0% | -0.8% | 1,352 |
+| **gated turn** | 49.0% | 49.1% | **-0.2%** | 1,838 |
+
+**The gated row is the informative one.** `Kalman.turning` means *"earned a
+trend, and is now decaying toward or through zero"* rather than "the slope is
+near zero" - the slope has to clear **two of its own standard deviations**
+before a turn counts. That is the sharper hypothesis, and if a momentum turn
+marked a level the gated version should mark it **better**. It is marginally
+worse.
+
+That is the same internal inconsistency the published wick thresholds showed,
+where tightening 2:1 to 3:1 moved the lift from `+1.2%` to `-0.3%`. A real
+effect does not weaken when its filter is tightened; twice now, in two
+unrelated families, the tighter filter has been the worse one.
+
 ## Three independent reasons that is a null and not a small effect
 
 **The generated feeds set the noise floor and it is wider than every lift.**
@@ -81,10 +108,12 @@ construction calls 2:1 "significant rejection" and 3:1 a source of
 **-0.3%**. A real effect does not weaken when its filter is tightened; noise
 does exactly that.
 
-**And re-running moves each lift by more than the lift.** Between two runs on
-the same data, differing only in the placebo draws, `value low` went from
-`+0.6%` to `-1.3%` and `hourly low` from `-0.5%` to `+1.4%`. A run-to-run
-spread of about `+/-1.5%` is the whole range of the table.
+**And re-running moves each lift by more than the lift.** Across runs on the
+same data, differing only in the placebo draws, `value low` went from `+0.6%`
+to `-1.3%`, `hourly low` from `-0.5%` to `+1.4%`, `centre` from `+0.7%` to
+`+2.3%` and `value high` from `-0.1%` to `-2.2%`. A run-to-run spread of about
+`+/-2%` is wider than every lift in the table, which is the plainest possible
+statement that none of them is an effect.
 
 ## So the seasonal combination makes it worse, not more powerful
 
@@ -110,7 +139,7 @@ liquidity-aware edges, a point of control, a value area with an explicit
 in a way levels are not.
 
 **What does not survive is the extra claim** - that the edges turn price. They
-do not, by any of the fourteen constructions, which now includes the
+do not, by any of the seventeen constructions, which now includes the
 liquidity-aware, the candlestick-aware, the seasonal and the two published
 wick thresholds.
 
