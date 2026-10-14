@@ -304,6 +304,50 @@ the signal. Against the right control that is 1.6 percentage points. The
 apparatus around these zones - drawing them, scoring them, filtering them - is
 sized for an effect roughly ten times larger than the one that is there.
 
+## Traded, with every filter this session found
+
+`fade-to-origin.md` traded this three ways and found no edge, 89-91% stopped
+out, -0.259R on 1d. The measurements above give four filters it did not have -
+freshness, a twenty-bar horizon, formation volume, and depth - so the question
+is whether they turn it.
+
+Enter at the body edge on arrival within twenty bars, target the push extreme,
+hold sixty bars, spread charged on both legs:
+
+| 4h, stop 1 typical bar | n | median R | **uncosted mean R** | win | R:R | median cost | t |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| all | 2,275 | -1.00 | **-0.008** | 0.340 | 1.92 | 0.254 | -0.27 |
+| fresh, <= 3 days | 2,144 | -1.00 | -0.007 | 0.341 | 1.90 | 0.259 | -0.22 |
+| formed on high volume | 1,138 | -1.00 | -0.033 | 0.341 | 1.90 | 0.272 | -0.80 |
+| quiet arrival | 1,138 | -1.00 | +0.005 | 0.348 | 1.90 | 0.341 | +0.12 |
+| depth >= 2.5 | 1,096 | -1.00 | -0.049 | 0.271 | 2.51 | 0.261 | -1.01 |
+| all three filters | 555 | -1.00 | **+0.027** | 0.360 | 1.86 | 0.396 | +0.45 |
+
+**Uncosted the trade is exactly breakeven, and no filter moves it.** Every
+t-statistic is between -1.01 and +0.45. That is a null on traded R quite apart
+from costs - which matters, because it means the filters found by measuring
+return rates and hold rates **do not transfer to R at all**.
+
+They cannot. The level-specific residual is 1.6 percentage points on the break
+rate; the breakeven win rate at an R:R of 1.92 is 34.2% and the observed rate
+is 34.0%. A 1.6-point improvement in whether a band holds does not move a
+34% win rate into profit.
+
+### The cost is decisive, and the filters make it worse
+
+The spread eats **25% of risk per trade** at a one-bar stop and 15% at two
+bars, by the median. And the filters *raise* it - median cost 0.254R becomes
+0.396R with all three applied - because selecting fresh, quiet, high-volume
+setups selects **tighter bands**, so the risk distance shrinks and the spread
+becomes a larger fraction of it. The filters damage the economics by
+construction.
+
+An earlier version of this section reported **-0.604R** for the unfiltered
+case. That figure was the *mean cost*, 0.596R, inflated by trades where a
+narrow band and a small typical bar make `spread / risk` explode; the median
+cost is 0.254R. The conclusion was right and the number was not, which is why
+both the median and the mean are now printed.
+
 ## So no statespace version
 
 A module publishing displacement origins would publish a function of distance
