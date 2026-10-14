@@ -107,6 +107,12 @@ GENERATED = tuple(
     os.environ.get("GENERATED", "Volatility_75_Index,Volatility_10_Index,Step_Index_200").split(",")
 )
 
+#: Deriv's range-break processes: a real market whose generator has a range
+#: that breaks, so a level exists by construction. The positive control - an
+#: FX screen that misses currency triangles is broken, and a level panel that
+#: misses these is too.
+CONTROL = tuple(os.environ.get("CONTROL", "Range_Break_100_Index,Range_Break_200_Index").split(","))
+
 BEFORE = ("approach", "decel", "ramp", "vramp", "standoff", "turns", "accel_turns")
 DURING = ("wick", "body", "reject", "overshoot", "spike", "vspike", "sprd", "wickvol")
 AFTER_F = ("retrace3", "activity5", "vafter5", "drift5")
@@ -292,53 +298,64 @@ def auc(a: np.ndarray, b: np.ndarray) -> float:
     return float(np.mean(lo + 0.5 * (hi - lo)) / len(order))
 
 
+def pack(pairs, names: tuple[str, ...]) -> dict:
+    """Every event of every pair as flat arrays, which is what makes this cheap.
+
+    The first version rebuilt a list of per-pair arrays and concatenated it once
+    per feature per draw - 7,600 times for one table - and took four minutes on
+    a thousand pairs. Flat here, a draw is two fancy-index operations.
+    """
+    values = {name: [] for name in names}
+    pair_of: list[int] = []
+    real: list[bool] = []
+    for k, pair in enumerate(pairs):
+        for side, evs in ((True, pair[0]), (False, pair[1])):
+            for event in evs:
+                pair_of.append(k)
+                real.append(side)
+                for name in names:
+                    values[name].append(event[name])
+    return {
+        "values": {n: np.asarray(v, dtype=float) for n, v in values.items()},
+        "pair_of": np.asarray(pair_of, dtype=int),
+        "real": np.asarray(real, dtype=bool),
+        "pairs": len(pairs),
+    }
+
+
 def table(pairs, rng, plant=None, only=None) -> dict:
     """Observed AUCs, their matched-pair permutation nulls, and the family p."""
     names = tuple(only) if only else PANEL
-    stacked = {
-        name: (
-            [np.array([e[name] for e in pair[0]]) for pair in pairs],
-            [np.array([e[name] for e in pair[1]]) for pair in pairs],
-        )
-        for name in names
-    }
+    got = pack(pairs, names)
+    values, pair_of, real, npairs = got["values"], got["pair_of"], got["real"], got["pairs"]
     if plant is not None:
         pname, size = plant
-        sd = float(
-            np.std(
-                np.concatenate(
-                    [np.concatenate(stacked[pname][0]), np.concatenate(stacked[pname][1])]
-                )
-            )
-        )
-        stacked[pname] = ([r + size * sd for r in stacked[pname][0]], stacked[pname][1])
+        values = dict(values)
+        values[pname] = values[pname] + size * float(np.std(values[pname])) * real
 
-    observed = {n: auc(np.concatenate(r), np.concatenate(f)) for n, (r, f) in stacked.items()}
-    means = {
-        n: (float(np.mean(np.concatenate(r))), float(np.mean(np.concatenate(f))))
-        for n, (r, f) in stacked.items()
-    }
+    observed = {n: auc(v[real], v[~real]) for n, v in values.items()}
+    means = {n: (float(v[real].mean()), float(v[~real].mean())) for n, v in values.items()}
     beaten = dict.fromkeys(names, 0)
     family = 0
     seen = max(abs(observed[n] - 0.5) for n in names)
     # Whether a real level is **visited more often** than its placebo. Outside
     # the family because the magnet effect is already refuted in `docs/` - this
     # is a consistency check on that, not a new claim.
-    counts = np.array([float(len(pair[0])) for pair in pairs])
-    other = np.array([float(len(pair[1])) for pair in pairs])
+    counts = np.bincount(pair_of[real], minlength=npairs).astype(float)
+    other = np.bincount(pair_of[~real], minlength=npairs).astype(float)
     wider = 0
     seen_gap = abs(float(counts.mean() - other.mean()))
     for _ in range(DRAWS):
-        flip = rng.random(len(pairs)) < 0.5
-        left_n = np.where(flip, other, counts).mean()
-        right_n = np.where(flip, counts, other).mean()
-        if abs(float(left_n - right_n)) >= seen_gap:
+        flip = rng.random(npairs) < 0.5
+        side = real ^ flip[pair_of]
+        if (
+            abs(float(np.where(flip, other, counts).mean() - np.where(flip, counts, other).mean()))
+            >= seen_gap
+        ):
             wider += 1
         widest = 0.0
-        for n, (real, fake) in stacked.items():
-            left = [fake[i] if flip[i] else real[i] for i in range(len(pairs))]
-            right = [real[i] if flip[i] else fake[i] for i in range(len(pairs))]
-            drawn = auc(np.concatenate(left), np.concatenate(right))
+        for n, v in values.items():
+            drawn = auc(v[side], v[~side])
             if abs(drawn - 0.5) >= abs(observed[n] - 0.5):
                 beaten[n] += 1
             widest = max(widest, abs(drawn - 0.5))
@@ -349,133 +366,119 @@ def table(pairs, rng, plant=None, only=None) -> dict:
         "means": means,
         "p": {n: (beaten[n] + 1) / (DRAWS + 1) for n in names},
         "family": (family + 1) / (DRAWS + 1),
-        "events": sum(len(pair[0]) for pair in pairs),
-        "pairs": len(pairs),
+        "events": int(real.sum()),
+        "pairs": npairs,
         "visits": (float(counts.mean()), float(other.mean()), (wider + 1) / (DRAWS + 1)),
     }
+
+
+def report(label: str, pairs, control, seed: int) -> None:
+    """One arm: the panel, its shuffled twin, what survived, and the power."""
+    if len(pairs) < 10 or len(control) < 10:
+        print(f"  {label}: {len(pairs)} pairs, too few to ask\n")
+        return
+    got = table(pairs, np.random.default_rng(seed))
+    ctrl = table(control, np.random.default_rng(seed + 1))
+    print("-" * 86)
+    print(
+        f"  {label}  -  {got['events']:,} touches over {got['pairs']} pairs; "
+        f"shuffled {ctrl['events']:,} over {ctrl['pairs']}"
+    )
+    print("-" * 86)
+    print(f"  {'':<12}{'AUC':>8}{'p':>8}{'shuffled':>10}{'p':>8}   window")
+    for name in PANEL:
+        window = "before" if name in BEFORE else "during" if name in DURING else "after"
+        mark = "  <--" if got["p"][name] < 0.05 and ctrl["p"][name] >= 0.05 else ""
+        print(
+            f"  {name:<12}{got['auc'][name]:>8.4f}{got['p'][name]:>8.3f}"
+            f"{ctrl['auc'][name]:>10.4f}{ctrl['p'][name]:>8.3f}   {window}{mark}"
+        )
+    print(
+        f"\n  family-wise p over all {len(PANEL)}: real {got['family']:.3f}, "
+        f"shuffled {ctrl['family']:.3f}"
+    )
+    real_v, fake_v, p_v = got["visits"]
+    print(f"  visits a price: real {real_v:.2f} vs placebo {fake_v:.2f} (p {p_v:.3f})")
+
+    for name in [n for n in PANEL if got["p"][n] < 0.05 and ctrl["p"][n] >= 0.05]:
+        real_m, fake_m = got["means"][name]
+        print(f"\n  {name.upper()}  AUC {got['auc'][name]:.4f}, so: is it real?")
+        print(
+            f"    in its own units : real {real_m:.4f} vs placebo {fake_m:.4f}"
+            f"  ({real_m - fake_m:+.4f})"
+        )
+        parts = []
+        for feed in sorted({pair[2] for pair in pairs}):
+            sub = [pair for pair in pairs if pair[2] == feed]
+            if len(sub) < 6:
+                continue
+            one = table(sub, np.random.default_rng(seed + 7), only=(name,))
+            parts.append(f"{feed} {one['auc'][name]:.4f} ({one['p'][name]:.3f})")
+        print("    by feed         : " + "; ".join(parts))
+        for text, want in (("beyond the extreme", True), ("inside it", False)):
+            sub = [pair for pair in pairs if pair[3] is want]
+            if len(sub) < 6:
+                continue
+            one = table(sub, np.random.default_rng(seed + 8), only=(name,))
+            print(
+                f"    placebo {text:<18}: AUC {one['auc'][name]:.4f} "
+                f"(p {one['p'][name]:.3f}, {one['pairs']} pairs)"
+            )
+        print(
+            "      A pooled AUC no feed shows alone is Simpson's. An effect\n"
+            "      living only where the placebo landed past the extreme is the\n"
+            "      construction, not the level."
+        )
+
+    print("\n  POWER  a known shift planted on the real events only")
+    for name in PLANTED:
+        line = []
+        for size in (0.02, 0.05, 0.10, 0.20):
+            planted = table(
+                pairs, np.random.default_rng(seed + 3), plant=(name, size), only=(name,)
+            )
+            line.append(f"{size:.2f}: {planted['auc'][name]:.4f} p {planted['p'][name]:.3f}")
+        print(f"    {name:<10}" + " | ".join(line))
+    print()
 
 
 def main() -> None:
     rng = np.random.default_rng(SEED)
     print(
         f"frame {FRAME}  {LOOKBACK}-bar extremes, {HORIZON} bars watched, "
-        f"{CAP} events a price\n{DRAWS} matched-pair label flips\n"
+        f"{CAP} events a price, overlap {'on' if OVERLAP else 'off'}\n"
+        f"{DRAWS} matched-pair label flips\n"
     )
-    for group, names in (("traded", TRADED), ("generated", GENERATED)):
-        real_pairs: list[tuple[list[dict], list[dict]]] = []
-        shuffled_pairs: list[tuple[list[dict], list[dict]]] = []
+    for group, names in (("traded", TRADED), ("generated", GENERATED), ("control", CONTROL)):
+        real_pairs: list[tuple] = []
+        shuffled_pairs: list[tuple] = []
         used: list[str] = []
         for name in names:
             bars = load(name)
             if bars is None:
-                print(f"  (no {name}.{FRAME})")
                 continue
             used.append(name)
             real_pairs += pairs_for(bars, rng, name)
             shuffled_pairs += pairs_for(shuffle_blocks(bars, rng), rng, name)
         if not real_pairs:
             continue
-        got = table(real_pairs, np.random.default_rng(SEED + 1))
-        ctrl = table(shuffled_pairs, np.random.default_rng(SEED + 2))
         print("=" * 86)
         print(f"{group}: {', '.join(used)}")
+        if group == "control":
+            print(
+                "  Deriv's range-break processes, whose generator **has** a range\n"
+                "  that breaks - a real market with a level by construction and no\n"
+                "  auction. If the panel cannot see a touch here it is blind, and\n"
+                "  the traded null says nothing."
+            )
         print("=" * 86)
-        print(
-            f"  {got['events']:,} real-level touches over {got['pairs']} matched pairs; "
-            f"shuffled control {ctrl['events']:,} over {ctrl['pairs']}\n"
-        )
-        print(f"  {'':<12}{'AUC':>8}{'p':>8}{'shuffled':>10}{'p':>8}   window")
-        for name in PANEL:
-            window = "before" if name in BEFORE else "during" if name in DURING else "after"
-            mark = "  <--" if got["p"][name] < 0.05 and ctrl["p"][name] >= 0.05 else ""
-            print(
-                f"  {name:<12}{got['auc'][name]:>8.4f}{got['p'][name]:>8.3f}"
-                f"{ctrl['auc'][name]:>10.4f}{ctrl['p'][name]:>8.3f}   {window}{mark}"
-            )
-        print(
-            f"\n  family-wise p over all {len(PANEL)}: real {got['family']:.3f}, "
-            f"shuffled {ctrl['family']:.3f}"
-        )
-        real_v, fake_v, p_v = got["visits"]
-        ctrl_v, ctrl_f, ctrl_p = ctrl["visits"]
-        print(
-            f"  visits a price: real {real_v:.2f} vs placebo {fake_v:.2f} "
-            f"(p {p_v:.3f}); shuffled {ctrl_v:.2f} vs {ctrl_f:.2f} (p {ctrl_p:.3f})"
-        )
-        print(
-            "  An arrow is a marginal pass that the shuffled copy of the same\n"
-            "  bars does not reproduce. Without the family-wise p below 0.05 it\n"
-            "  is still one of nineteen chances.\n"
-        )
-        survivors = [n for n in PANEL if got["p"][n] < 0.05 and ctrl["p"][n] >= 0.05]
-        for name in survivors:
-            real_m, fake_m = got["means"][name]
-            print(f"  {name.upper()}  AUC {got['auc'][name]:.4f}, so: is it real?")
-            print(
-                f"    in its own units : real {real_m:.4f} vs placebo {fake_m:.4f}"
-                f"  ({real_m - fake_m:+.4f})"
-            )
-            feeds = sorted({pair[2] for pair in real_pairs})
-            parts = []
-            for feed in feeds:
-                sub = [pair for pair in real_pairs if pair[2] == feed]
-                if len(sub) < 6:
-                    continue
-                one = table(sub, np.random.default_rng(SEED + 7), only=(name,))
-                parts.append(f"{feed} {one['auc'][name]:.4f} (p {one['p'][name]:.3f})")
-            print("    by instrument   : " + "; ".join(parts))
-            print(
-                "      A pooled AUC that no instrument shows on its own is\n"
-                "      Simpson's, which this desk has been caught by before."
-            )
-            for label, want in (("beyond the extreme", True), ("inside it", False)):
-                sub = [pair for pair in real_pairs if pair[3] is want]
-                if len(sub) < 6:
-                    continue
-                one = table(sub, np.random.default_rng(SEED + 8), only=(name,))
-                print(
-                    f"    placebo {label:<18}: AUC {one['auc'][name]:.4f} "
-                    f"(p {one['p'][name]:.3f}, {one['pairs']} pairs)"
-                )
-            print(
-                "      Half the placebos land past the extreme, where only a bar\n"
-                "      that broke it can arrive. If the effect lives in that half\n"
-                "      alone it is the construction, not the level.\n"
-            )
-
-        # **Only the first visit.** A level that has been tested nine times is
-        # not the thing anyone means by a level emitting a signal; the first
-        # test is. Same panel, same null, one event per price.
+        report(f"{group}: every touch", real_pairs, shuffled_pairs, SEED + 10)
+        # **Only the first visit.** A level tested nine times is not what the
+        # question means; the first test is. Its own arm, with its own power,
+        # because one event a pair is a tenth of the sample.
         fresh = [(pair[0][:1], pair[1][:1], pair[2], pair[3]) for pair in real_pairs]
         fresh_ctrl = [(pair[0][:1], pair[1][:1], pair[2], pair[3]) for pair in shuffled_pairs]
-        first = table(fresh, np.random.default_rng(SEED + 5))
-        first_ctrl = table(fresh_ctrl, np.random.default_rng(SEED + 6))
-        widest = sorted(PANEL, key=lambda n: -abs(first["auc"][n] - 0.5))[:4]
-        print(
-            f"  FIRST VISIT ONLY  {first['events']:,} events, family-wise p "
-            f"{first['family']:.3f} (shuffled {first_ctrl['family']:.3f})"
-        )
-        for name in widest:
-            print(
-                f"    {name:<12}{first['auc'][name]:>8.4f}{first['p'][name]:>8.3f}"
-                f"{first_ctrl['auc'][name]:>10.4f}{first_ctrl['p'][name]:>8.3f}"
-            )
-        print()
-
-        print("  POWER  a known shift planted on the real events only")
-        for name in PLANTED:
-            line = []
-            for size in (0.02, 0.05, 0.10, 0.20, 0.40):
-                planted = table(real_pairs, np.random.default_rng(SEED + 3), plant=(name, size))
-                line.append(
-                    f"{size:.2f}: AUC {planted['auc'][name]:.4f} p {planted['p'][name]:.3f}"
-                )
-            print(f"    {name:<10}" + "  |  ".join(line))
-        print(
-            "\n  The smallest shift with p < 0.05 is the smallest signal this\n"
-            "  design could have seen. A null above it means absent; a null\n"
-            "  below it means only smaller than that.\n"
-        )
+        report(f"{group}: first touch only", fresh, fresh_ctrl, SEED + 20)
 
 
 if __name__ == "__main__":
