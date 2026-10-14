@@ -267,6 +267,104 @@ distribution instead of geometric dwell times, and fit it decreasing.** His
 insight - that durations carry information - survives. His periodicity does not,
 and the sign is measured.
 
+## The ideas behind the cycle theories, taken the way Benner was
+
+Benner's surface claim - a nine-year period - was untestable on six
+repetitions. Its **idea** - that durations carry information - was testable on
+25,918 transitions. The rest of the list, treated the same way:
+
+| framework | the mechanism | general form | where it is tested |
+| --- | --- | --- | --- |
+| Benner | durations carry information | duration distribution | `dwell.py` |
+| Kitchin, Juglar | lagged negative feedback | damped oscillator | `mechanisms.py`, arm one |
+| Kondratiev, 17.6y | rare structural shifts | over-dispersed dwell | `dwell.py`, the CV |
+| Gann | price and time commensurable | scaling exponent | `mechanisms.py`, arm two |
+| BTC halving | scheduled known shock | exogenous `Q` input | `statespace-seasonal.md`, +197 nats |
+| M2 liquidity | slow exogenous state | `inputs.py` channel | data absent |
+
+Three of those need no new data at all, and one of them already passed.
+
+### Kitchin and Juglar are one mechanism, and it is absent
+
+Forty months and seven-to-eleven years are the same thing at different lags: a
+stock adjusted with a delay overshoots and the overshoot corrects. That
+mechanism is **scale-free**, which is what makes it testable where the period is
+not - delayed negative feedback produces **negative autocorrelation at a
+characteristic lag**, and pure persistence produces none at any lag.
+
+| series | arm | 2 | 8 | 32 | 64 | 128 | 512 |
+| --- | --- | ---: | ---: | ---: | ---: | ---: | ---: |
+| returns | real | -0.001 | 0.003 | -0.002 | 0.004 | -0.005 | 0.002 |
+| returns | shuffled | -0.001 | 0.001 | 0.001 | 0.000 | -0.002 | 0.000 |
+| log volatility | real | **0.947** | 0.784 | 0.470 | 0.413 | 0.376 | 0.287 |
+| log volatility | shuffled | 0.942 | 0.732 | 0.194 | 0.010 | 0.002 | 0.002 |
+
+Returns carry nothing at any of nine lags from 2 to 512, and the shuffled arm
+matches them. **There is no lag at which price reliably reverses.**
+
+What is there is **long memory in volatility** - never negative, decaying
+slowly, and real: 0.413 against a shuffled 0.010 at lag 64. That is the same
+conclusion the dwell-time hazard reached from an independent direction.
+Persistence, not periodicity.
+
+### Gann's premise rests on one number, and it is 0.56
+
+Squaring price against time presumes a stable exchange rate between them, a
+move of one unit per bar being a meaningful constant. That requires
+
+    |price move| ~ horizon ** H     with H near 1
+
+and **diffusion gives H = 0.5**, at which the ratio of move to time decays as
+`1 / sqrt(horizon)` so no fixed angle holds at two horizons at once.
+
+Measured: **H = 0.5577**, standard deviation 0.0119 across twelve feeds, with
+the **block-shuffled arm at 0.5788** - so even the small excess over a half is
+not market structure. At 0.5577 an angle calibrated over ten bars is wrong by a
+factor of about 2.7 over a hundred.
+
+The density tests agree and are worth reading carefully, because two of them
+produce unanimous-looking lifts that are artefacts:
+
+| arm | reading |
+| --- | --- |
+| angles, slope ratios | lifts -0.0006 to +0.0024, 33% to 75% of feeds. Null. |
+| squaring, raw slope | `0.25` and `0.33` lift **+0.0135** and **+0.0140** at **100% of 12** - and `1.0`, `2.0`, `3.0`, `4.0` are **negative at 0%** |
+| time counts | `30` lifts +0.0085 at 92%, `45` at +0.0048, and `60`, `90`, `180`, `360` are null or negative |
+
+The squaring row is the Hurst result restated: slope is `move / N`, which at
+H = 0.56 goes as `N ** -0.44`, so longer legs have smaller slopes and the
+typical slope sits well below one. Real legs are longer than shuffled ones -
+shuffling destroys the trends that extend a leg - so real carries more mass at a
+quarter and a third. **Diffusive scaling, and it points away from the 1x1
+rather than toward it.**
+
+The time-count row fails on harmonics. A genuine thirty-bar count has to appear
+at sixty and ninety; these are null or negative there. What the lift measures is
+the leg-duration distribution differing between real and shuffled bars.
+
+### The halving idea already works here, as a variance
+
+A scheduled, publicly known supply shock is an exogenous input on a known
+future date. That is exactly what the session clock is, and it is the one item
+on this list that **measured positive**: a time-of-day profile on innovation
+size worth **+197 nats** at the median, FX and metals moving three to four
+times as far per hour at 14:00-15:00 UTC as at 03:00, nothing on markets with a
+known generator and no session, and **-443 with the clock deliberately
+misaligned**.
+
+So the generalised halving mechanism - scheduled events move variance - is
+confirmed on this desk's own data. What fails is reading it directionally.
+
+### And the CV discriminates between the two families
+
+`dwell.py` measured a coefficient of variation of **1.332**, which is **above**
+one: durations are over-dispersed, a mixture of short regimes and rare long
+ones. Fixed-interval recurrence needs a CV well **below** one. So the same
+measurement that refutes Benner, Kitchin and Juglar is **consistent** with
+Kondratiev's and the 17.6-year model's structural-shift form - occasional very
+long regimes - while saying nothing about their periods, which remain out of
+reach at one repetition in the data we hold.
+
 ## Sources
 
 - [Pivot points, CrossTrade](https://crosstrade.io/learn/technical-indicators/pivot-points) - Classic and Woodie
