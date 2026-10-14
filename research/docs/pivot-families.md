@@ -212,11 +212,60 @@ that frequency carries a standard error about equal to its own value. To reject
 at the five percent level on six events the cycle would have to be very nearly
 deterministic.
 
-So the honest answer is that this desk cannot test Benner, and the number that
-says so is six. Reporting a null from six events would be reporting the sample
-size. What *is* available is the periodogram of 55 years of daily data with its
-confidence band attached - informative about where power is not, and not a test
-of the claim.
+So the honest answer is that this desk cannot test Benner **as a frequency**,
+and the number that says so is six.
+
+### But the logic is derivable, and then it is testable
+
+That framing was too narrow. Benner's structure is not a sinusoid - it is a
+**repeating sequence of intervals**:
+
+    pig iron lows  : 11, 9, 7, 11, 9, 7, ...   (summing to 27)
+    pig iron peaks : 8, 9, 10, 8, 9, 10, ...   (summing to 27)
+    corn peaks     : 5, 6, 5, 6, ...           (summing to 11)
+
+a deterministic renewal process whose inter-arrival times cycle through a fixed
+list. The general object containing it is already in this package's vocabulary.
+A standard hidden Markov model has **geometric** dwell times - memoryless, a
+constant hazard of leaving a state - while Benner's durations are **patterned**,
+the extreme opposite. The model spanning both is a hidden **semi**-Markov model
+with an explicit duration distribution per state, and Benner is the degenerate
+case where that distribution is a point mass cycling 11, 9, 7.
+
+A nine-year cycle needs decades. **Duration dependence needs transitions**, and
+intraday data has tens of thousands. Regimes defined crudely on purpose -
+20-bar volatility against its own 500-bar median, because the claim is about
+durations rather than about a clever state definition:
+
+| arm | runs | mean | CV | h(1) | h(2) | h(3) | h(5) | h(8) | h(13) |
+| --- | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| traded, real | 25,918 | 18.3 | **1.332** | 0.144 | 0.100 | 0.087 | 0.063 | 0.038 | 0.032 |
+| traded, shuffled | 21,474 | 22.0 | 1.225 | 0.132 | 0.093 | 0.076 | 0.055 | 0.033 | 0.027 |
+| control, real | 5,051 | 15.6 | 1.102 | 0.137 | 0.102 | 0.086 | 0.071 | 0.044 | 0.037 |
+| generated, real | 8,155 | 12.2 | 1.253 | 0.209 | 0.151 | 0.117 | 0.087 | 0.061 | 0.041 |
+| generated, shuffled | 8,256 | 12.1 | 1.254 | 0.215 | 0.147 | 0.116 | 0.087 | 0.065 | 0.037 |
+
+**Dwell times are not memoryless.** The hazard falls more than fourfold from
+h(1) to h(13), so duration dependence is real and the geometric assumption in a
+plain HMM is wrong here.
+
+**The direction is the opposite of Benner's.** Patterned durations need a CV
+well below one and a hazard that **peaks** at the patterned interval. Measured:
+CV **1.332** and a monotonically **falling** hazard - the longer a regime has
+lasted the less likely it is to end. That is persistence and long memory, not
+periodicity. A cycle needs a hump; this is a decay.
+
+**And most of it is mechanical.** The shuffled arm reproduces the falling
+hazard, and on the generated feeds real and shuffled agree to three decimals -
+1.253 against 1.254 - which is the negative control working exactly: no regime
+structure, so destroying the ordering changes nothing. The part that needs the
+real ordering is the traded gap, CV 1.332 against 1.225, consistent across all
+eight hazard steps but small.
+
+So the usable form of Benner is: **give `switching.py` an explicit duration
+distribution instead of geometric dwell times, and fit it decreasing.** His
+insight - that durations carry information - survives. His periodicity does not,
+and the sign is measured.
 
 ## Sources
 
