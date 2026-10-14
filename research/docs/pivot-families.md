@@ -362,8 +362,43 @@ one: durations are over-dispersed, a mixture of short regimes and rare long
 ones. Fixed-interval recurrence needs a CV well **below** one. So the same
 measurement that refutes Benner, Kitchin and Juglar is **consistent** with
 Kondratiev's and the 17.6-year model's structural-shift form - occasional very
-long regimes - while saying nothing about their periods, which remain out of
-reach at one repetition in the data we hold.
+long regimes.
+
+### And the period itself, which a CV does not give
+
+A coefficient of variation says "over-dispersed" and puts no number on the
+regime. Fitting four duration families by maximum likelihood does, and the
+answer **changing with the frame** is the whole result:
+
+| frame | best fit | period | Weibull shape |
+| --- | --- | --- | ---: |
+| 15m | Weibull | 19.7 bars = **296 min**, 4.9 h | 0.840 |
+| 1h | lognormal | 8.5 bars = **508 min**, 8.5 h | 0.827 |
+| 4h | **Pareto, alpha 0.485** | **none - infinite mean** | 0.782 |
+| 1d | **Pareto, alpha 0.501** | **none - infinite mean** | 0.686 |
+
+A characteristic regime length does exist intraday, around **five to eight and
+a half hours** - but it is not one number. 296 minutes at 15m against 508 at 1h
+means it drifts with the measuring frame, which is partial self-similarity
+rather than a clean period.
+
+**At four hours and above it is gone.** Pareto wins, and an alpha below one has
+an **infinite mean** - there is no characteristic length to quote in any unit,
+which is a definite answer rather than an absence of one. The discriminator is
+the 4h shuffled arm: real fits Pareto while shuffled fits a lognormal at 9.4
+bars, so the scale-freeness **needs the real ordering** and is not something the
+estimator invented.
+
+The Weibull shape falls monotonically as the frame lengthens - 0.840, 0.827,
+0.782, 0.686 - the hazard decaying ever more steeply, converging on scale-free.
+On that trend there is no reason for a period to reappear at decadal scale,
+which is as close as this data comes to addressing Kondratiev and should be read
+as an extrapolation rather than a test of his claim.
+
+One reporting defect was fixed on the way and is worth naming: Pareto's
+parameter is a **tail exponent**, not a duration, and the first version printed
+it through the same bars-to-minutes conversion as the others - "scale 0.5 bars
+= 721 min". A number with no meaning, in the column that mattered most.
 
 ## Sources
 
