@@ -400,6 +400,65 @@ parameter is a **tail exponent**, not a duration, and the first version printed
 it through the same bars-to-minutes conversion as the others - "scale 0.5 bars
 = 721 min". A number with no meaning, in the column that mattered most.
 
+### Every one of those three claims fails its own stress test
+
+The three readings above were each put against their own specific flaw, and
+none survived intact.
+
+**The drift is the detector, and no windowing is neutral.** "Partial
+self-similarity" assumed the detector measured the same object at every frame.
+It does not - a 20-bar volatility window is five hours at 15m and twenty at 1h
+- so the window was held constant in **real time** instead, at 1200 minutes
+against a 30,000-minute median:
+
+| frame | window | best fit | period |
+| --- | ---: | --- | --- |
+| 15m | 80 bars | lognormal | 17.7 bars = **266 min** |
+| 1h | 20 bars | lognormal | 8.5 bars = **508 min** |
+| 4h | 5 bars | **geometric** | 6.2 bars = **1483 min** |
+
+It drifts **further**, not less. And at 4h a real-time window of 1200 minutes is
+only five bars, which turns the detector into a noise-flipper: 72,512 runs
+against 24,387, a geometric best fit, and a Weibull shape of **1.193** - a
+hazard that *rises*. There is no windowing that measures one object across
+frames, so **the period is not identifiable independently of the detector**, and
+the self-similarity reading was a reading of the parameter.
+
+**The Pareto win at 4h was the mass at one and two bars.** A continuous Pareto
+MLE on discrete run lengths floored at one bar is driven by exactly that mass,
+so the floor was swept:
+
+| floor | 4h | 1d |
+| --- | --- | --- |
+| >= 1 | pareto, alpha 0.485 | pareto, alpha 0.501 |
+| >= 3 | **lognormal, 14.3 bars** | pareto, alpha 0.620 |
+| >= 5 | **lognormal, 19.0 bars** | pareto, alpha 0.685 |
+| >= 10 | pareto, alpha 1.004 | pareto, alpha 0.871 |
+
+At 4h the scale reappears as soon as the shortest runs leave. At 1d Pareto
+survives every cut but its alpha climbs monotonically with the floor, 0.501 to
+0.871, which is what a mis-specified tail does rather than what a real exponent
+does - so **"infinite mean" is not established**.
+
+**And the discriminator was sample composition.** The arms had 24,387 and
+19,985 runs and different mean lengths, so each was subsampled to the smaller
+count before refitting:
+
+| frame | real | shuffled |
+| --- | --- | --- |
+| 4h, 20,111 each | **lognormal**, 7.9 bars | **lognormal**, 9.3 bars |
+| 1d, 5,346 each | **pareto**, 0.500 | **pareto**, 0.467 |
+
+The same family on both arms at both frames. The scale-freeness does **not**
+need the real ordering, and the one line that made it look like a finding was
+the run counts differing.
+
+**What survives.** Over-dispersion at a CV of 1.332 and a hazard falling more
+than fourfold from h(1) to h(13). Those hold at every frame, every floor and
+both arms, and they are the part `switching.py` can use: durations are not
+memoryless and the hazard decreases. The **period** does not survive, in any
+unit, and neither does the scale-free reading.
+
 ## Sources
 
 - [Pivot points, CrossTrade](https://crosstrade.io/learn/technical-indicators/pivot-points) - Classic and Woodie

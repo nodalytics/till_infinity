@@ -74,22 +74,24 @@ MEDIAN = int(os.environ.get("MEDIAN", "500"))
 STEPS = (1, 2, 3, 5, 8, 13, 21, 34)
 
 
-def runs(bars) -> list[int]:
+def runs(bars, window: int = 0, median: int = 0) -> list[int]:
     """Lengths of consecutive stretches on one side of rolling median volatility."""
     closes = bars["close"]
-    if len(closes) < MEDIAN + 4 * WINDOW:
+    window = window or WINDOW
+    median = median or MEDIAN
+    if len(closes) < median + 4 * window:
         return []
     rets = np.diff(np.log(closes))
     if not np.isfinite(rets).all():
         return []
     # Rolling standard deviation, then its own rolling median as the split.
     cumulative = np.cumsum(rets**2)
-    vol = np.sqrt((cumulative[WINDOW:] - cumulative[:-WINDOW]) / WINDOW)
-    if len(vol) < MEDIAN + 10:
+    vol = np.sqrt((cumulative[window:] - cumulative[:-window]) / window)
+    if len(vol) < median + 10:
         return []
-    high = np.empty(len(vol) - MEDIAN, dtype=bool)
+    high = np.empty(len(vol) - median, dtype=bool)
     for i in range(len(high)):
-        high[i] = vol[MEDIAN + i] > np.median(vol[i : MEDIAN + i])
+        high[i] = vol[median + i] > np.median(vol[i : median + i])
     out: list[int] = []
     length = 1
     for i in range(1, len(high)):
@@ -267,6 +269,82 @@ def arm(group: str, names: tuple[str, ...], rng) -> None:
     print()
 
 
+#: Real-time windows for the frame sweep, in minutes. The bar-count version
+#: measures a **different object** at every frame - a 20-bar window is five
+#: hours at 15m and twenty at 1h - so a period drifting across frames may be
+#: this parameter drifting rather than the market.
+WINDOW_MINUTES = int(os.environ.get("WINDOW_MINUTES", "1200"))
+MEDIAN_MINUTES = int(os.environ.get("MEDIAN_MINUTES", "30000"))
+
+
+def in_bars(minutes: int, frame: str) -> int:
+    return max(int(round(minutes / MINUTES.get(frame, 60))), 3)
+
+
+def stress(rng) -> None:
+    """Each period claim against its own flaw."""
+    print("=" * 96)
+    print("STRESS TESTS on the period claims")
+    print("=" * 96)
+    print(
+        f"\n  ONE  the same regime at every frame: {WINDOW_MINUTES} min of volatility"
+        f" against {MEDIAN_MINUTES} min of median"
+    )
+    print("       if the period is real it is constant in minutes now, not in bars")
+    for frame in ("15m", "1h", "4h"):
+        window = in_bars(WINDOW_MINUTES, frame)
+        median = in_bars(MEDIAN_MINUTES, frame)
+        pool: list[list[int]] = []
+        for name in TRADED:
+            bars = load(name, frame)
+            if bars is None:
+                continue
+            got = runs(bars, window, median)
+            if len(got) >= 50:
+                pool.append(got)
+        if pool:
+            print(f"    {frame} (window {window} bars, median {median} bars)")
+            period(pool, "real", frame)
+
+    print("\n  TWO  does Pareto survive dropping the short runs it feeds on?")
+    print("       a continuous Pareto MLE on discrete lengths floored at one bar")
+    print("       is driven by the mass at one and two bars")
+    for frame in ("4h", "1d"):
+        for least in (1, 3, 5, 10):
+            pool = []
+            for name in TRADED:
+                bars = load(name, frame)
+                if bars is None:
+                    continue
+                got = [n for n in runs(bars) if n >= least]
+                if len(got) >= 50:
+                    pool.append(got)
+            if pool:
+                period(pool, f"{frame} >={least}", frame)
+
+    print("\n  THREE  real against shuffled at a matched run count")
+    print("       the arms had 24,387 and 19,985 runs, so the winner could have")
+    print("       changed from sample composition alone")
+    for frame in ("4h", "1d"):
+        real: list[list[int]] = []
+        mixed: list[list[int]] = []
+        for name in TRADED:
+            bars = load(name, frame)
+            if bars is None:
+                continue
+            a = runs(bars)
+            b = runs(shuffle_blocks(bars, rng))
+            if len(a) >= 50 and len(b) >= 50:
+                keep = min(len(a), len(b))
+                real.append([int(x) for x in rng.permutation(a)[:keep]])
+                mixed.append([int(x) for x in rng.permutation(b)[:keep]])
+        if real:
+            print(f"    {frame}, matched to {sum(len(x) for x in real):,} runs each")
+            period(real, "real", frame)
+            period(mixed, "shuffled", frame)
+    print()
+
+
 def main() -> None:
     rng = np.random.default_rng(SEED)
     # **Across frames, because that is what decides whether a period exists.**
@@ -304,6 +382,7 @@ def main() -> None:
         print(group)
         print("=" * 88)
         arm(group, names, rng)
+    stress(rng)
 
 
 if __name__ == "__main__":
