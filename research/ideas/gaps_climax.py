@@ -88,7 +88,13 @@ def weekend_gaps(bars) -> list[dict]:
             continue
         row = {"gap": abs(gap) / typical, "up": 1.0 if gap > 0 else 0.0}
         for hours in FILL_HOURS:
-            window = slice(at, at + hours)
+            # **From the bar after the gap, not from the gap bar.** The first
+            # version measured from `at`, so the Sunday bar's own range counted
+            # toward the fill - while the intraday control measured from the bar
+            # *after* its jump. A wide first bar would then hand the weekend arm
+            # a fill the control could not have, and the comparison is the whole
+            # test.
+            window = slice(at + 1, at + 1 + hours)
             # Filled means price traded back through Friday's close.
             filled = (
                 float(l_[window].min()) <= friday if gap > 0 else float(h[window].max()) >= friday
@@ -104,6 +110,80 @@ def weekend_gaps(bars) -> list[dict]:
             row[f"placebo_{hours}"] = 1.0 if reached else 0.0
         out.append(row)
     return out
+
+
+#: Size buckets, in typical bars of the prior week. A weekend gap is only
+#: special if it fills more than an intraday move of the **same size**.
+BUCKETS = ((0.5, 1.0), (1.0, 2.0), (2.0, 4.0), (4.0, 99.0))
+
+
+def intraday_jumps(bars) -> list[dict]:
+    """Single-bar moves, scored exactly as a weekend gap is.
+
+    **The control the gap arm was missing.** Filling a gap is mean reversion
+    while its placebo requires continuation, so the 86% could be the general
+    post-jump reversion rather than anything about weekends. The analogue of a
+    gap in continuous data is a bar that moved `s` typical bars - after which,
+    does price come back to where it started?
+
+    Bars adjacent to a time break are excluded, so a weekend cannot be counted
+    here as well.
+    """
+    when, h, l_, c = bars["time"], bars["high"], bars["low"], bars["close"]
+    steps = np.diff(when)
+    typical_step = float(np.median(steps)) if len(steps) else 0.0
+    out: list[dict] = []
+    at = 120
+    end = len(c) - max(FILL_HOURS) - 2
+    while at < end:
+        # Continuous on both sides: no weekend, no missing session.
+        if steps[at - 1] > 1.5 * typical_step or steps[at] > 1.5 * typical_step:
+            at += 1
+            continue
+        before = slice(at - 120, at)
+        typical = float(np.median(h[before] - l_[before]))
+        anchor = float(c[at - 1])
+        if not (typical > 0 and anchor > 0):
+            at += 1
+            continue
+        jump = float(c[at]) - anchor
+        if abs(jump) < LEAST_GAP * typical:
+            at += 1
+            continue
+        row = {"gap": abs(jump) / typical, "up": 1.0 if jump > 0 else 0.0}
+        for hours in FILL_HOURS:
+            window = slice(at + 1, at + 1 + hours)
+            row[f"filled_{hours}"] = float(
+                (float(l_[window].min()) <= anchor)
+                if jump > 0
+                else (float(h[window].max()) >= anchor)
+            )
+            scale = 1.0 + float(np.random.default_rng(int(at)).uniform(-JITTER, JITTER))
+            mirror = float(c[at]) + jump * scale
+            row[f"placebo_{hours}"] = float(
+                (float(h[window].max()) >= mirror)
+                if jump > 0
+                else (float(l_[window].min()) <= mirror)
+            )
+        out.append(row)
+        # No two jumps share a forward window.
+        at += max(FILL_HOURS) + 1
+    return out
+
+
+def by_size(label: str, rows: list[dict]) -> None:
+    """Fill rates bucketed by size, so weekend and intraday meet at like for like."""
+    for lo, hi in BUCKETS:
+        got = [r for r in rows if lo <= r["gap"] < hi]
+        if len(got) < 40:
+            continue
+        cells = ""
+        for hours in FILL_HOURS:
+            filled = float(np.mean([r[f"filled_{hours}"] for r in got]))
+            placebo = float(np.mean([r[f"placebo_{hours}"] for r in got]))
+            cells += f"{filled:>10.3f}{placebo:>10.3f}"
+        span = f"{lo:g}-{hi:g}" if hi < 90 else f"{lo:g}+"
+        print(f"    {label:<12}{span:<8}{len(got):>7,}" + cells)
 
 
 def climax(bars) -> tuple[list[float], list[float], dict[str, list[float]]]:
@@ -177,6 +257,47 @@ def lead_lag(leader: str, follower: str, frame: str) -> None:
 
 def main() -> None:
     rng = np.random.default_rng(SEED)
+    # The named target assets, plus crypto as a negative control: BTCUSD and
+    # ETHUSD trade continuously, so a weekend gap should not exist there. If
+    # the detector finds them anyway and they fill like FX, the detector is
+    # the finding.
+    groups = {
+        "fx": list(PAIRS),
+        "index": [
+            "Germany_40",
+            "US_SP_500",
+            "US_Tech_100",
+            "UK_100",
+            "Japan_225",
+            "France_40",
+            "Europe_50",
+            "Hong_Kong_50",
+        ],
+        "energy": ["US_Oil", "UK_Brent_Oil", "NGAS"],
+        "crypto (24/7, control)": ["BTCUSD", "ETHUSD"],
+    }
+    print("WEEKEND GAPS BY ASSET FAMILY - the claim is over 80% filled in 24 to 48h\n")
+    print(
+        f"    {'family':<24}{'gaps':>7}"
+        + "".join(f"{f'fill {h}h':>10}{'placebo':>10}" for h in FILL_HOURS)
+    )
+    for family, names in groups.items():
+        rows: list[dict] = []
+        for name in names:
+            bars = load(name, "1h")
+            if bars is None:
+                continue
+            rows += weekend_gaps(bars)
+        if len(rows) < 40:
+            print(f"    {family:<24}{len(rows):>7}  too few")
+            continue
+        cells = ""
+        for hours in FILL_HOURS:
+            cells += f"{float(np.mean([r[f'filled_{hours}'] for r in rows])):>10.3f}"
+            cells += f"{float(np.mean([r[f'placebo_{hours}'] for r in rows])):>10.3f}"
+        print(f"    {family:<24}{len(rows):>7,}" + cells)
+    print()
+
     print("WEEKEND GAPS - the claim is over 80% filled within 24 to 48 hours\n")
     print(
         f"    {'arm':<10}{'gaps':>7}"
@@ -204,13 +325,40 @@ def main() -> None:
         "      `placebo` is a price the same distance the **other** side of the\n"
         "      open. A gap fill only means something if it beats that.\n"
     )
+    print("    matched on size, against intraday moves of the same size\n")
+    print(
+        f"    {'arm':<12}{'size':<8}{'n':>7}"
+        + "".join(f"{f'fill {h}h':>10}{'placebo':>10}" for h in FILL_HOURS)
+    )
+    weekend: list[dict] = []
+    intraday: list[dict] = []
+    for name in PAIRS:
+        bars = load(name, "1h")
+        if bars is None:
+            continue
+        weekend += weekend_gaps(bars)
+        intraday += intraday_jumps(bars)
+    by_size("weekend", weekend)
+    by_size("intraday", intraday)
+    print(
+        "\n      If the two arms agree inside a size bucket, the weekend is not\n"
+        "      the story - post-jump mean reversion is, and a gap is simply a\n"
+        "      jump that happened to occur over a weekend.\n"
+    )
 
     print("VOLUME CLIMAX - a spike at a 20-day extreme, read as exhaustion\n")
     print(f"    {'arm':<10}{'calls':>7}{'reversal rate':>15}{'AUC of spike':>14}")
     for label, mixed in (("real", False), ("shuffled", True)):
         every_score: list[float] = []
         every_truth: list[float] = []
-        for name in PAIRS:
+        for name in tuple(PAIRS) + (
+            "US_Oil",
+            "UK_Brent_Oil",
+            "BTCUSD",
+            "ETHUSD",
+            "Germany_40",
+            "US_SP_500",
+        ):
             bars = load(name, "1d")
             if bars is None:
                 continue
@@ -231,8 +379,16 @@ def main() -> None:
     )
 
     print("LEAD-LAG - fitted on the first half, scored on the second\n")
-    for leader, follower in (("XAUUSD", "AUDUSD"), ("XAUUSD", "EURUSD"), ("EURUSD", "GBPUSD")):
-        lead_lag(leader, follower, "30m")
+    # The cache has no 30m frame, which is why this arm silently printed
+    # "missing" three times on its first run.
+    for leader, follower in (
+        ("XAUUSD", "AUDUSD"),
+        ("US_Oil", "USDCAD"),
+        ("UK_Brent_Oil", "USDCAD"),
+        ("XAUUSD", "EURUSD"),
+        ("EURUSD", "GBPUSD"),
+    ):
+        lead_lag(leader, follower, "1h")
     print(
         "\n      The sign of the relationship is taken from the first half only.\n"
         "      An AUC at 0.5 with a large contemporaneous r is this desk's\n"
