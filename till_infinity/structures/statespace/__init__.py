@@ -422,6 +422,7 @@ from __future__ import annotations
 from .adapting import Adapting
 from .bounding import binding, feasible, least_horizon, slack, solve
 from .diagnostics import Residuals, fit_jerk, residuals
+from .facade import Desk, Readout
 from .family import MISSING, PENDING, Filter, members
 from .landau import Landau
 from .linear import Gaussian
@@ -440,10 +441,12 @@ __all__ = [
     "RELATION",
     "SUBJECTS",
     "Adapting",
+    "Desk",
     "Filter",
     "Gaussian",
     "Landau",
     "Path",
+    "Readout",
     "Residuals",
     "Reverting",
     "Robust",
