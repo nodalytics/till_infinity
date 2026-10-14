@@ -73,6 +73,85 @@ the follower moves **at the same time**. Its own bar is therefore wider, its
 origin further away, and a further price is harder to reach. The relationship is
 real; it hurts this statistic precisely because it is contemporaneous.
 
+## Production's own definition, which is a different object
+
+The test above used a **single large bar** with a mark at its midpoint, which
+is the fair-value-gap construction the MT5 idea describes. It is **not** this
+desk's displacement, and `drawing/displacement.py` is explicit that the two
+disagree: there a move is violent because it is **one-sided** - `PUSH_N` = 2
+bars with bodies of at least `PUSH_BODY` = 0.65 of their range, all one colour -
+and the level is the **preceding** bar's body edge, that bar having a body
+between 0.10 and 0.60 of its range, with the leg travelling at least
+`MIN_LEG_VOL` = 1.5 volatility units. "A slow grind of four units over six bars
+is an `origin` and is not a displacement."
+
+Re-run with those constants, asserted against the source so the two cannot
+drift, and with the return counted as `order-block-zones.md` counts it - the
+first bar back in the band, once per zone:
+
+| frame | zones | band | line | placebo | diff |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| 1h | 6,708 | 0.890 | 0.843 | 0.876 | +0.015 |
+| 4h | 5,252 | 0.878 | 0.837 | 0.864 | +0.014 |
+| 1d | 1,546 | 0.877 | 0.840 | 0.867 | +0.010 |
+
+The **82%** on record reproduces - 0.877 to 0.890 at 300 bars - and the matched
+placebo sits one and a half points under it. So the recorded rate is right and
+the level is worth about **+0.014** of it.
+
+## The horizon was the hypothesis, and it was correct
+
+`order-block-zones.md` flagged the objection itself: fifty days is long enough
+to wander back to most places. If so, the edge should be **early**:
+
+| horizon | 1h diff | 4h diff | 1d diff |
+| ---: | ---: | ---: | ---: |
+| 100 bars | **+0.024** | +0.019 | +0.018 |
+| 150 bars | +0.020 | +0.019 | +0.010 |
+| 250 bars | +0.015 | +0.015 | +0.010 |
+| 500 bars | +0.011 | +0.012 | +0.006 |
+
+It is. The gap halves between 100 and 500 bars while both rates rise, so the
+window was diluting the measurement rather than making it.
+
+## And the edge is in time, not in probability
+
+A probability saturates - given long enough, both the origin and a matched
+price are reached. Order of arrival does not:
+
+| frame | origin first | ties | **of decided** | median bars, origin / placebo | only origin / only placebo |
+| --- | ---: | ---: | ---: | --- | --- |
+| 1h | 0.317 | 0.615 | **82.3%** | 10 / 13 | 85 / 11 |
+| 4h | 0.277 | 0.648 | **78.7%** | 12 / 14 | 75 / 14 |
+| 1d | 0.316 | 0.618 | **82.7%** | - | - |
+
+Both are hit on the same bar 61 to 65% of the time, because one bar's range
+spans the pair. **Of the cases that decide, the origin arrives first about four
+times in five** - and when only one of the two is ever reached, it is the origin
+by 85 to 11. Retracement beats continuation at matched distance by roughly 4:1
+in order of arrival while the probability gap is a point and a half.
+
+## How fast they wear out, which nobody here had measured
+
+`drawing/displacement.py` says so in its own docstring: freshness is a property
+of the moment of trading, and *how fast they wear out is a measurement nobody
+here has made*. Conditioned on a zone still being unvisited at a given age, is
+it reached in the next five days?
+
+| age | 1h origin / placebo / diff | 4h | 1d |
+| --- | --- | --- | --- |
+| **fresh** | 0.830 / 0.808 / **+0.022** | 0.621 / 0.591 / **+0.030** | 0.297 / 0.256 / **+0.041** |
+| 3 days | 0.377 / 0.376 / **+0.002** | 0.345 / 0.344 / +0.001 | 0.232 / 0.227 / +0.005 |
+| 14 days | 0.125 / 0.125 / **0.000** | 0.139 / 0.139 / 0.000 | 0.123 / 0.118 / +0.005 |
+| 28 days | 0.000 / 0.000 / 0.000 | 0.103 / 0.095 / +0.008 | 0.080 / 0.080 / -0.000 |
+
+**The edge lasts about three days.** Fresh, a zone beats a matched price by two
+to four points; at three days old by nothing measurable; at fourteen by exactly
+zero on two of three frames. It is largest on **daily** bars, not intraday.
+
+That is the desk's freshness rule confirmed with a number on it, and it is a
+much shorter number than a two-to-four-week zone implies.
+
 ## So no statespace version
 
 A module publishing displacement origins would publish a function of distance
