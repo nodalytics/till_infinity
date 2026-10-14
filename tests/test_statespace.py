@@ -7237,3 +7237,104 @@ class TestFacade:
         assert desk.tracking == 2
         assert desk.forget() == 2
         assert desk.tracking == 0
+
+
+class TestRanging:
+    """A range the price sits inside, and the three profiles behind it."""
+
+    @staticmethod
+    def _filled(seed: int = 4, bars: int = 400):
+        import random
+
+        from till_infinity.structures.statespace.ranging import Profile
+
+        random.seed(seed)
+        profile, price = Profile(), 100.0
+        for _ in range(bars):
+            price += random.gauss(0.0, 0.2)
+            opened = price + random.gauss(0.0, 0.05)
+            low = min(opened, price) - abs(random.gauss(0.0, 0.08))
+            high = max(opened, price) + abs(random.gauss(0.0, 0.08))
+            profile.observe(low, high, abs(random.gauss(1000.0, 300.0)), open_=opened, close=price)
+        return profile, price
+
+    def test_the_thin_edges_always_contain_the_price(self):
+        """The property the first version got wrong, on every seed.
+
+        Walking out from the current bin and stopping on the first thin one
+        returns that bin **twice** whenever the price is itself in a thin bin -
+        which is exactly when price has just moved somewhere little was traded.
+        That gave a zero-width range that did not contain the price it was
+        asked about, which is the one thing this object promises.
+        """
+        from till_infinity.structures.statespace.ranging import Profile
+
+        for seed in (3, 4, 7, 11, 19):
+            profile, price = self._filled(seed)
+            got = profile.range_at(price)
+            assert got is not None, seed
+            assert got.thin_low <= got.price <= got.thin_high, seed
+            assert got.width > 0, seed
+            assert 0.0 <= got.position <= 1.0, seed
+        assert Profile().range_at(100.0) is None
+
+    def test_the_three_profiles_are_different_objects(self):
+        """Volume, acceptance and rejection disagree, which is the point.
+
+        A price can be heavily traded *and* heavily rejected, which is what an
+        absorbing level is supposed to look like - so a single profile cannot
+        express it and the three are not interchangeable.
+        """
+        profile, price = self._filled()
+        seen = {}
+        for weight in ("volume", "acceptance", "rejection"):
+            got = profile.range_at(price, weight)
+            assert got is not None, weight
+            assert got.thin_low <= price <= got.thin_high, weight
+            seen[weight] = (got.centre, got.thin_low, got.thin_high)
+        assert seen["acceptance"] != seen["rejection"]
+
+    def test_a_bar_with_no_candle_given_is_all_body(self):
+        """Without an open and a close there is no candlestick information.
+
+        Treating such a bar as all body is the honest default - it says the
+        profile has no rejection data rather than inventing some - and a caller
+        that forgets to pass them gets a rejection profile that is empty rather
+        than a plausible-looking one.
+        """
+        from till_infinity.structures.statespace.ranging import Profile
+
+        plain = Profile()
+        for i in range(200):
+            plain.observe(100.0 + i * 0.01, 100.5 + i * 0.01, 1000.0)
+        accepted = plain.histogram("acceptance")
+        rejected = plain.histogram("rejection")
+        assert accepted is not None
+        assert sum(accepted[1]) > 0
+        assert sum(rejected[1]) == 0
+
+    def test_the_value_area_holds_its_share_and_need_not_contain_the_price(self):
+        """A value area is a share of **past** volume, so price can be outside it.
+
+        That is the ordinary meaning of "price has left value", and `inside`
+        exists so a caller checks rather than assumes. The thin edges are the
+        ones that bracket by construction.
+        """
+        from till_infinity.structures.statespace.ranging import VALUE_SHARE, Profile
+
+        profile, price = self._filled()
+        got = profile.range_at(price)
+        assert got.value_low < got.value_high
+        assert isinstance(got.inside, bool)
+        centres, weights = profile.histogram()
+        total = sum(weights)
+        held = sum(
+            w for c, w in zip(centres, weights, strict=True) if got.value_low <= c <= got.value_high
+        )
+        assert held >= VALUE_SHARE * total * 0.95
+        _ = Profile
+
+    def test_an_unknown_weight_is_refused(self):
+        profile, _ = self._filled()
+        with pytest.raises(ValueError, match="unknown weight"):
+            profile.histogram("liquidity")
