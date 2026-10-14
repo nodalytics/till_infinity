@@ -435,9 +435,12 @@ from .robust import Robust
 from .smoothing import Smoothed, smooth
 from .spanning import Span, garman_klass, parkinson, rogers_satchell
 from .subjects import INSTRUMENT, LEVEL, RELATION, SUBJECTS, Subject
+from .tails import DOF, LEAST_DOF, coverage, dof_for, reach
 
 __all__ = [
+    "DOF",
     "INSTRUMENT",
+    "LEAST_DOF",
     "LEVEL",
     "MISSING",
     "PENDING",
@@ -463,7 +466,9 @@ __all__ = [
     "Subject",
     "binding",
     "borrow_weight",
+    "coverage",
     "differ",
+    "dof_for",
     "feasible",
     "fit_jerk",
     "garman_klass",
@@ -471,6 +476,7 @@ __all__ = [
     "least_horizon",
     "members",
     "parkinson",
+    "reach",
     "residuals",
     "rogers_satchell",
     "simulate",

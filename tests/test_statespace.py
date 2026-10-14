@@ -7687,3 +7687,132 @@ class TestSpanning:
         quiet.predict(1.0, control=fresh.factor() - 1.0)
         quiet.update(0.0, 1e-6, 1.0)
         assert quiet.value == pytest.approx(member.value, abs=1.0)
+
+
+class TestTails:
+    """The band's width once the residuals are known not to be Gaussian."""
+
+    def test_the_quantile_matches_published_t_tables(self):
+        """Checked against the table, not against another implementation.
+
+        `scipy` is not a dependency here, so the t distribution is written out
+        in full. A library-free special function is only worth having if it is
+        right, and the honest check is the published value rather than a second
+        copy of the same code.
+        """
+        from till_infinity.structures.statespace import tails
+
+        for dof, probability, published in (
+            (3.0, 0.975, 3.182446),
+            (4.0, 0.975, 2.776445),
+            (4.0, 0.995, 4.604095),
+            (5.0, 0.995, 4.032143),
+            (10.0, 0.975, 2.228139),
+            (30.0, 0.975, 2.042272),
+        ):
+            assert tails.quantile(probability, dof) == pytest.approx(published, abs=1e-5)
+        # And the inverse really inverts, both sides of zero.
+        for dof in (3.0, 4.5, 12.0):
+            for z in (-3.0, -0.4, 0.0, 1.7):
+                assert tails.quantile(tails.cdf(z, dof), dof) == pytest.approx(z, abs=1e-6)
+
+    def test_the_gaussian_is_too_wide_below_95_percent_and_too_narrow_above(self):
+        """The finding is a reshaping, not a widening, and it crosses near 95%.
+
+        A fat-tailed density held to unit variance has to be **more peaked** in
+        the body to pay for its tails, so below the crossover the Gaussian is
+        too wide. This is worth pinning because the result is easy to overstate
+        into "every band here was too narrow", which is not what was measured:
+        at two sigmas the two agree and nothing reading one was wrong.
+        """
+        from till_infinity.structures.statespace import tails
+
+        # Below: the t is strictly narrower.
+        assert tails.reach(0.90, 4.0) < 1.644854
+        # At 95%: they agree to well under a percent.
+        assert tails.reach(0.95, 4.0) == pytest.approx(1.959964, rel=0.01)
+        # Above: the Gaussian is badly too narrow, and it gets worse.
+        assert tails.reach(0.99, 4.0) > 1.2 * 2.575829
+        assert tails.reach(0.999, 4.0) > 1.5 * 3.290527
+        # Monotone in coverage, which a quantile must be.
+        widths = [tails.reach(c, 4.0) for c in (0.5, 0.8, 0.9, 0.95, 0.99, 0.999)]
+        assert widths == sorted(widths)
+
+    def test_a_three_sigma_band_is_breached_several_times_as_often_as_labelled(self):
+        """The diagnostic reading, which is the one that changes a decision."""
+        from till_infinity.structures.statespace import tails
+
+        # Two sigmas is still about 95%, so the common case is untouched.
+        assert tails.coverage(2.0, 4.0) == pytest.approx(0.9545, abs=0.005)
+        # Three is not 99.73%, and the breach rate is what matters.
+        got = tails.coverage(3.0, 4.0)
+        assert got < 0.99
+        assert (1.0 - got) / (1.0 - 0.997300) > 3.0
+        # Coverage rises with the multiplier and never leaves [0, 1].
+        seen = [tails.coverage(s, 4.0) for s in (0.0, 0.5, 1.0, 2.0, 3.0, 6.0)]
+        assert seen == sorted(seen)
+        assert seen[0] == pytest.approx(0.0, abs=1e-9)
+        assert seen[-1] < 1.0
+
+    def test_a_large_tail_index_recovers_the_gaussian(self):
+        """The limit case, which says the correction is the only difference."""
+        from till_infinity.structures.statespace import tails
+
+        for coverage, gaussian in ((0.95, 1.959964), (0.99, 2.575829), (0.999, 3.290527)):
+            assert tails.reach(coverage, 5_000.0) == pytest.approx(gaussian, rel=0.01)
+
+    def test_the_floor_binds_and_the_measured_table_rises_with_the_interval(self):
+        """Gold's maximum likelihood ran past the floor and scored worse for it.
+
+        `LEAST_DOF` is not the mathematical bound of 2 where the variance
+        stops existing - it is where the fit measurably stopped describing the
+        distribution and started chasing a few bars.
+        """
+        from till_infinity.structures.statespace import tails
+
+        assert tails.LEAST_DOF > 2.0
+        # Anything below the floor is treated as the floor, not passed through.
+        assert tails.reach(0.99, 2.5) == tails.reach(0.99, tails.LEAST_DOF)
+        assert tails.coverage(3.0, 1.0) == tails.coverage(3.0, tails.LEAST_DOF)
+        # Every measured entry clears the floor, and an unmeasured interval
+        # falls back to the fattest rather than the average.
+        assert all(v >= tails.LEAST_DOF for v in tails.DOF.values())
+        assert tails.dof_for("nonsense") == tails.DEFAULT_DOF
+        # Aggregational Gaussianity: the daily tail is thinner than intraday.
+        assert tails.dof_for("1d") > tails.dof_for("1h")
+        # And a bad ask is refused rather than silently clamped.
+        for bad in (0.0, 1.0, -0.2, 1.5):
+            with pytest.raises(ValueError, match="coverage"):
+                tails.reach(bad)
+
+    def test_the_readout_offers_coverage_beside_sigmas(self):
+        """The facade's two readings agree where they should and part where they should."""
+        from till_infinity.structures.statespace import tails
+        from till_infinity.structures.statespace.facade import Readout
+
+        got = Readout(feed="EURUSD", interval="1h", at=0.0, value=100.0, spread=0.04)
+        sd = 0.2
+
+        # At 95% the coverage band and the 1.96-sigma band land together.
+        low, high = got.band_covering(0.95)
+        near_low, near_high = got.band(1.959964)
+        assert low == pytest.approx(near_low, rel=0.02)
+        assert high == pytest.approx(near_high, rel=0.02)
+
+        # In the far tail it is strictly wider than the Gaussian's own answer.
+        far_low, far_high = got.band_covering(0.999)
+        gauss_low, gauss_high = got.band(3.290527)
+        assert far_high > gauss_high
+        assert far_low < gauss_low
+
+        # Both bands stay centred on the value, and the width is the sd times
+        # the multiplier - so the spread really is being read as a variance.
+        assert 0.5 * (low + high) == pytest.approx(got.value)
+        assert (high - low) / 2.0 == pytest.approx(
+            tails.reach(0.95, tails.dof_for("1h")) * sd, rel=1e-9
+        )
+
+        # And `covers` is the inverse of `band_covering` on the same interval.
+        assert got.covers(2.0) == pytest.approx(tails.coverage(2.0, tails.dof_for("1h")))
+        middle = got.covers(2.0)
+        assert got.band_covering(middle)[1] == pytest.approx(got.band(2.0)[1], rel=1e-6)
