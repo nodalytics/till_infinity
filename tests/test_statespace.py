@@ -7087,3 +7087,153 @@ class TestResearchPrimitives:
         assert behaving.absorption(1.13, 1.0) > 0
         assert math.isnan(behaving.absorption(0.5, 0.0))
         assert behaving.geometry([1.0], [1.0], [1.0], [1.0]) == {}
+
+
+class TestFacade:
+    """The one boundary a caller talks to, and the rule that keeps it one."""
+
+    def test_statespace_imports_no_sibling_structures_module(self):
+        """The containment rule, as an assertion rather than a convention.
+
+        The façade only works if statespace stays standalone: a boundary inside
+        a package that reaches back into `levels` and `reactions` inverts the
+        dependency and makes the package neither standalone nor deletable. The
+        spec's step one proposed exactly that - a façade "calling today's
+        modules in today's order" - and this is the test that says why it had
+        to be built the other way round.
+
+        `shared` is allowed; it is the only thing that is.
+        """
+        import pathlib
+        import re
+
+        here = pathlib.Path("till_infinity/structures/statespace")
+        offenders = {}
+        for path in sorted(here.glob("*.py")):
+            text = path.read_text()
+            # `from ..something` reaches a sibling of the package; `from
+            # ...shared` and `from ..shared` are the permitted exception.
+            for match in re.finditer(r"^from \.\.([a-z_][a-z_0-9.]*) import", text, re.M):
+                target = match.group(1).split(".")[0]
+                if target != "shared":
+                    offenders.setdefault(path.name, set()).add(target)
+        assert offenders == {}, offenders
+
+    def test_one_call_returns_what_a_caller_publishes(self):
+        import random
+
+        from till_infinity.structures.statespace.facade import Desk
+
+        desk = Desk()
+        random.seed(5)
+        level, out = 100.0, None
+        for i in range(600):
+            level += random.gauss(0.0, 0.05)
+            out = desk.read("EURUSD", "1h", float(i) * 3600.0, level, 1e-4, volume=1000.0)
+        assert out is not None
+        assert out.seen == 600
+        assert out.warm
+        assert len(out.quantiles) == 19
+        assert out.family == "fx_major"
+        assert out.absorbs is True
+        assert math.isfinite(out.value)
+        assert out.spread > 0
+        low, high = out.band()
+        assert low < out.value < high
+
+    def test_the_spread_is_predictive_and_not_the_state_s(self):
+        """`p00 + R`, which is the lesson a missing `R` taught at some cost.
+
+        Scoring a filter's state spread as if it were the predictive spread
+        leaves out the measurement noise and makes every member look
+        over-confident by exactly that term - which nearly handed a River tree
+        a 3.6x rout it had not earned. The façade publishes the predictive one
+        so no caller has to know to add it.
+        """
+        from till_infinity.structures.statespace.facade import Desk
+
+        desk = Desk()
+        noise = 4e-4
+        out = None
+        for i in range(60):
+            out = desk.read("EURUSD", "1h", float(i) * 3600.0, 100.0, noise)
+        member = desk._members[("EURUSD", "1h")]
+        assert out.spread == pytest.approx(float(member.variance) + noise)
+        assert out.spread > float(member.variance)
+
+    def test_activity_drives_q_only_where_it_measurably_can(self):
+        """A generated feed is inert without the caller knowing to ask."""
+        from till_infinity.structures.statespace.facade import Desk
+
+        desk = Desk()
+        traded = desk.read("EURUSD", "1h", 0.0, 1.1, 1e-8, volume=1500.0)
+        assert traded.paced
+        for feed in ("Step_Index_200", "Boom_500_Index", "Volatility_75_Index"):
+            got = desk.read(feed, "1h", 0.0, 5000.0, 1e-4, volume=1800.0)
+            assert not got.paced, feed
+            assert got.pace_factor == 1.0, feed
+        # And no volume at all leaves it inert whatever the feed is.
+        assert not desk.read("EURUSD", "4h", 0.0, 1.1, 1e-8).paced
+
+    def test_the_quantiles_are_ascending_and_feed_crps(self):
+        import random
+
+        from till_infinity.structures.statespace.diagnostics import crps
+        from till_infinity.structures.statespace.facade import Desk
+
+        desk = Desk()
+        random.seed(6)
+        level, out = 50.0, None
+        for i in range(700):
+            level += random.gauss(0.0, 0.02)
+            out = desk.read("XAUUSD", "1h", float(i) * 3600.0, level, 1e-4)
+        assert [level for level, _ in out.quantiles] == [i / 20.0 for i in range(1, 20)]
+        assert all(a[1] <= b[1] for a, b in itertools.pairwise(out.quantiles))
+        assert math.isfinite(crps(out.quantiles, level))
+
+    def test_an_unmeasured_class_says_so_instead_of_guessing(self):
+        from till_infinity.structures.statespace.facade import Desk
+
+        got = Desk().read("NOTASYMBOL", "1h", 0.0, 1.0, 1e-6)
+        assert got.family == "unknown"
+        assert got.absorbs is None
+        # And it still gets the activity channel, because `Pace` is
+        # self-limiting and refusing an unstudied market is the worse error.
+        assert Desk().read("NOTASYMBOL", "1h", 0.0, 1.0, 1e-6, volume=10.0).paced
+
+    def test_a_readout_cannot_be_edited_by_its_consumer(self):
+        from till_infinity.structures.statespace.facade import Desk
+
+        got = Desk().read("EURUSD", "1h", 0.0, 1.1, 1e-8)
+        with pytest.raises(AttributeError):
+            got.value = 2.0
+
+    def test_the_barrier_geometry_refuses_an_infeasible_pair(self):
+        """Optional stopping leaves two degrees of freedom in four quantities."""
+        from till_infinity.structures.statespace.facade import Desk
+
+        got = Desk().read("Boom_500_Index", "1h", 0.0, 5000.0, 1e-4)
+        least = got.least_horizon(0.4)
+        assert least > 0
+        assert got.barrier(0.4, least * 0.5) is None
+        # And the feed's own measured walls reach the geometry, not the
+        # symmetric default: Boom is 0.6535 up against 0.5100 down.
+        assert got.walls == (0.6535, 0.5100)
+        assert got.least_horizon(0.4) != Desk().read("EURUSD", "1h", 0.0, 1.1, 1e-8).least_horizon(
+            0.4
+        )
+
+    def test_the_desk_holds_the_state_so_a_caller_does_not(self):
+        from till_infinity.structures.statespace.facade import Desk
+
+        desk = Desk()
+        for interval in ("1h", "4h"):
+            for feed in ("EURUSD", "GBPUSD"):
+                desk.read(feed, interval, 0.0, 1.1, 1e-8)
+        assert desk.tracking == 4
+        assert desk.forget("EURUSD", "1h") == 1
+        assert desk.tracking == 3
+        assert desk.forget("EURUSD") == 1
+        assert desk.tracking == 2
+        assert desk.forget() == 2
+        assert desk.tracking == 0
