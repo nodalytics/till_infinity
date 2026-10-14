@@ -7550,3 +7550,140 @@ class TestDispersion:
         text = pathlib.Path("till_infinity/structures/statespace/dispersion.py").read_text()
         assert "from ..shrinkage" not in text
         assert "structures.shrinkage" not in text
+
+
+class TestSpanning:
+    """`Q` driven by the bar's range rather than its closes."""
+
+    @staticmethod
+    def _bars(n, body=0.0, span=0.02, step=0.0, seed=1):
+        """Bars with a fixed range and a controllable close-to-close step."""
+        import random
+
+        rng = random.Random(seed)
+        out = []
+        price = 1.0
+        for _ in range(n):
+            open_ = price
+            close = price * (1.0 + step * (1 if rng.random() < 0.5 else -1))
+            high = max(open_, close) * (1.0 + span / 2.0)
+            low = min(open_, close) * (1.0 - span / 2.0)
+            out.append((open_, high, low, close))
+            price = close
+        return out
+
+    def test_the_estimators_agree_on_a_flat_bar(self):
+        """All three measure the same thing: variance that happened inside the bar."""
+        from till_infinity.structures.statespace import spanning
+
+        o, h, l_, c = 1.0, 1.01, 0.99, 1.0
+        park = spanning.parkinson(h, l_)
+        gk = spanning.garman_klass(o, h, l_, c)
+        rs = spanning.rogers_satchell(o, h, l_, c)
+        for got in (park, gk, rs):
+            assert got > 0
+        # Within a factor of two of each other on the same bar.
+        assert 0.5 < gk / park < 2.0
+        assert 0.5 < rs / park < 2.0
+        # Degenerate input is zero, not a crash or a negative variance.
+        assert spanning.parkinson(0.0, 0.0) == 0.0
+        assert spanning.garman_klass(1.0, 0.9, 1.1, 1.0) == 0.0
+        assert spanning.rogers_satchell(1.0, 1.0, 1.0, 1.0) == 0.0
+
+    def test_the_factor_is_a_variance_ratio_not_a_size_ratio(self):
+        """The mistake `Driven`'s own docstring warns about.
+
+        `Driven.control` and `Driven.clock` take a **variance** multiplier. The
+        measured `gk_cc` is a ratio of standard deviations, so passing it
+        through unsquared under-drives every bar by its own square. A bar whose
+        range implies twice the close-to-close *volatility* must arrive as four.
+        """
+        from till_infinity.structures.statespace.spanning import Span
+
+        quiet = Span(half_life=10.0, memory=500.0, high=100.0)
+        for bar in self._bars(400, span=0.02, step=0.001):
+            quiet.observe(*bar)
+        assert quiet.ready
+        loud = Span(half_life=10.0, memory=500.0, high=100.0)
+        # Same closes, twice the intrabar range: four times the variance ratio.
+        for bar in self._bars(400, span=0.04, step=0.001):
+            loud.observe(*bar)
+        assert loud.ready
+        assert loud.ratio() / quiet.ratio() == pytest.approx(4.0, rel=0.15)
+
+    def test_the_factor_averages_one(self):
+        """A multiplier whose mean is not one changes the average `Q` too.
+
+        That is not a subtlety: on FX volume the same mistake measured 2.23 and
+        turned +1734 nats into +2365 of artefact, and a sweep of the base
+        process noise cannot remove it because the sweep refits the arm that is
+        not being driven.
+        """
+        from till_infinity.structures.statespace.spanning import Span
+
+        span = Span(half_life=20.0, memory=400.0)
+        seen = []
+        for i, bar in enumerate(self._bars(4000, span=0.02, step=0.002, seed=3)):
+            span.observe(*bar)
+            if i > 1000:
+                seen.append(span.factor())
+        assert seen
+        assert sum(seen) / len(seen) == pytest.approx(1.0, abs=0.1)
+
+    def test_it_never_freezes_or_runs_away(self):
+        from till_infinity.structures.statespace.spanning import Span
+
+        span = Span(half_life=5.0, memory=100.0, low=0.25, high=4.0)
+        for bar in self._bars(300, span=0.02, step=0.001):
+            span.observe(*bar)
+        # One malformed bar must not hand it the whole filter.
+        span.observe(1.0, 1e9, 1e-9, 1.0)
+        assert 0.25 <= span.factor() <= 4.0
+        # Nor may a run of them freeze the state.
+        for _ in range(50):
+            span.observe(1.0, 1.0, 1.0, 1.0)
+        assert 0.25 <= span.factor() <= 4.0
+
+    def test_it_says_one_until_it_knows_anything(self):
+        """An unready driver has to be the identity, so the control arm exists."""
+        from till_infinity.structures.statespace.spanning import Span
+
+        span = Span(half_life=40.0)
+        assert span.factor() == 1.0
+        assert span.ratio() == 1.0
+        span.observe(1.0, 1.01, 0.99, 1.0)
+        assert not span.ready
+        assert span.factor() == 1.0
+
+    def test_the_normaliser_must_be_slower_than_the_signal(self):
+        from till_infinity.structures.statespace.spanning import Span
+
+        with pytest.raises(ValueError, match="slower"):
+            Span(half_life=100.0, memory=50.0)
+        with pytest.raises(ValueError, match="estimator"):
+            Span(estimator="nonsense")
+
+    def test_it_drives_a_member_through_driven(self):
+        """The wiring this exists for: `Span.factor` into `Driven`."""
+        from till_infinity.structures.statespace.driven import Driven
+        from till_infinity.structures.statespace.linear import Gaussian
+        from till_infinity.structures.statespace.spanning import Span
+
+        span = Span(half_life=10.0, memory=400.0)
+        for bar in self._bars(300, span=0.02, step=0.001):
+            span.observe(*bar)
+        assert span.ready
+        member = Driven(build=lambda: Gaussian(jerk=1e-4))
+        # `Driven` reads `control` as a deviation - it sets the lever to
+        # `base * (1 + gain * control)` - so a mean-one variance factor has to
+        # arrive as `factor - 1`, which is zero when the driver says nothing.
+        member.predict(1.0, control=span.factor() - 1.0)
+        member.update(0.0, 1e-6, 1.0)
+        assert math.isfinite(member.value)
+        assert math.isfinite(member.sd)
+        # And the identity: an unready driver must leave the member untouched.
+        quiet = Driven(build=lambda: Gaussian(jerk=1e-4))
+        fresh = Span()
+        quiet.predict(1.0, control=fresh.factor() - 1.0)
+        quiet.update(0.0, 1e-6, 1.0)
+        assert quiet.value == pytest.approx(member.value, abs=1.0)
