@@ -343,6 +343,99 @@ relative to their own bar ranges.** The placebo arms go from +0.013 gross to
 bar-ranges. It does not affect their use as controls, where only the gross
 reading matters, but it rules them out as venues for anything short-horizon.
 
+## z over the OHLC prices: the detector manufactures the effect
+
+A z-score of the **price level** is a different object from a z-score of a
+return or a volume. Price does not return to its mean between bars, so a
+stretched reading persists and a run of forty bars can sit above 2.5 the whole
+way. Both event definitions were therefore tested - **crossing**, the first bar
+of an excursion, and **level**, every bar above - on the open, high, low, close
+and typical price, at 1h and 4h.
+
+The direction question inverts too: for a stretched price it is **breakout
+against mean reversion**.
+
+### Nothing clears the bar, and `crossing` against `level` barely differed
+
+The largest of roughly a hundred cells is FX crosses on the open at `z` -2.56
+on crossings, whose **shuffled twin reads -0.051 against the live -0.055**.
+Metals are positive throughout but their twin is *larger* than the live arm -
++0.065 against +0.058 on the open. Every net is negative except metals' close
+and open.
+
+`crossing` and `level` came out close - FX crosses on the open reads -0.055 at
+`n` 6,864 against -0.039 at `n` 9,772 - because **spacing by the full horizon
+had already done the de-overlapping**, which is worth recording as a case where
+the spacing rule made a separate event definition almost unnecessary.
+
+### The up/down asymmetry, and why the twin had to be split
+
+The pooled cells were flat but the sides were not: FX crosses on the close read
+**+0.074 up and -0.137 down**. In a convention signed by the stretch's own
+direction, -0.137 means price *rose* after an oversold stretch, so the
+reversion bet earns that gross against a round trip near 0.056.
+
+The first harness printed the twin **only for the pooled side**, so it could not
+say whether that asymmetry was mechanical. Splitting it answers the question
+completely, stated as the reversion bet:
+
+| group | kind | side | n | gross | cost | net | z | twin | **edge** |
+|---|---|---|---|---|---|---|---|---|---|
+| fx crosses | close | down | 3,346 | +0.137 | 0.065 | +0.072 | **4.23** | **+0.111** | **+0.026** |
+| fx crosses | low | down | 3,371 | +0.111 | 0.107 | +0.004 | 3.31 | +0.085 | +0.026 |
+| fx crosses | open | down | 3,398 | +0.088 | 0.108 | -0.020 | 2.85 | +0.093 | **-0.005** |
+| fx crosses | open | up | 3,473 | +0.025 | 0.044 | -0.019 | 0.83 | +0.000 | +0.025 |
+| fx majors | close | down | 3,268 | -0.001 | 0.034 | -0.035 | -0.03 | -0.003 | +0.002 |
+| placebo synth | close | down | 1,534 | +0.006 | 1.668 | -1.662 | 0.22 | +0.023 | -0.017 |
+
+**A `z` of 4.23 that block-shuffled bars reproduce almost entirely.** The edge
+over the surrogate is +0.026 against a cost of 0.065, so there is nothing left.
+
+The mechanism is worth stating plainly because it is general: **a
+trailing-window z-score of a price level manufactures mean reversion on a random
+walk**, since the window's mean is backward-looking and a walk that has drifted
+away from it has no tendency to come back - the *statistic* comes back as the
+window catches up. The twin puts that artefact at **+0.085 to +0.111
+bar-ranges**, which is larger than the round trip. Any test of a price z-score
+without this surrogate reads a strong false positive.
+
+The threshold sweep says the same: gross 0.095, 0.137, 0.095, 0.075 against a
+twin of 0.081, 0.111, 0.095 and **0.135** - at `z` over 4 the surrogate exceeds
+the live arm.
+
+### The one thread left open
+
+The horizon sweep is where the two part. The twin decays with the horizon and
+the live reading does not:
+
+| h | gross | twin | edge |
+|---|---|---|---|
+| 1 | 0.066 | 0.045 | +0.021 |
+| 3 | 0.137 | 0.111 | +0.026 |
+| 6 | 0.135 | 0.056 | **+0.079** |
+| 12 | 0.133 | 0.012 | **+0.121** |
+
+At 6 and 12 bars the edge exceeds the 0.065 cost. Per instrument it is
+concentrated rather than general:
+
+| pair | gross | net | z | twin | edge |
+|---|---|---|---|---|---|
+| EURCHF | 0.223 | 0.133 | 2.63 | 0.104 | **+0.119** |
+| CHFJPY | 0.187 | 0.072 | 2.35 | 0.091 | +0.096 |
+| EURAUD | 0.172 | 0.121 | 2.54 | 0.093 | +0.079 |
+| EURGBP | 0.190 | 0.125 | 2.11 | **0.241** | **-0.051** |
+| GBPJPY | 0.100 | 0.046 | 1.02 | 0.052 | +0.048 |
+| EURJPY | 0.062 | 0.026 | 0.72 | 0.048 | +0.014 |
+| AUDJPY | 0.020 | -0.024 | 0.22 | 0.028 | -0.008 |
+
+EURGBP's twin **exceeds** its gross, so the pair with the second-best headline
+is entirely mechanical, and AUDJPY is flat. What is left is EURCHF, CHFJPY and
+EURAUD - **managed or heavily anchored crosses**, which is a plausible mechanism
+for genuine mean reversion and also a regime-specific one. It is reported
+unclosed rather than clean: it is small, it is three instruments out of seven,
+it needs a longer horizon than the ideas propose, and this exploration has now
+spent well over a hundred cells.
+
 ## What outlives the ideas, continued
 
 **A threshold sweep must print the effect size, not the test statistic.** `z`
