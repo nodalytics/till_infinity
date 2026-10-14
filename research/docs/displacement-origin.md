@@ -145,6 +145,11 @@ it reached in the next five days?
 | 14 days | 0.125 / 0.125 / **0.000** | 0.139 / 0.139 / 0.000 | 0.123 / 0.118 / +0.005 |
 | 28 days | 0.000 / 0.000 / 0.000 | 0.103 / 0.095 / +0.008 | 0.080 / 0.080 / -0.000 |
 
+These are from the run with a five-hundred-bar horizon. The wear-out window is
+derived from the longest horizon asked for, so a short sweep caps what can be
+reached and prints spurious zeroes at fourteen and twenty-eight days - a
+parameter interaction worth naming rather than discovering twice.
+
 **The edge lasts about three days.** Fresh, a zone beats a matched price by two
 to four points; at three days old by nothing measurable; at fourteen by exactly
 zero on two of three frames. It is largest on **daily** bars, not intraday.
@@ -181,6 +186,23 @@ more than to any price that far away: the return-rate edge peaks at +0.037 and
 decays to +0.011. But **when price gets there, the origin holds** - a thirteen
 point difference in the held rate and a two-and-a-half-fold difference in the
 break rate.
+
+### Symmetric in direction, which rules out drift
+
+A displacement is up or down, and a sample with net drift revisits demand and
+supply zones differently - so an effect living in one direction would read as a
+level property when it is a drift property. Split:
+
+| | origin break | origin held | placebo break | placebo held |
+| --- | ---: | ---: | ---: | ---: |
+| up pushes, demand, 2,893 | **0.082** | 0.918 | 0.249 | 0.750 |
+| down pushes, supply, 2,614 | **0.083** | 0.917 | 0.205 | 0.795 |
+
+Identical to three decimals on the origin side, and the return-rate edge at
+twenty bars is +0.043 up against +0.039 down. The only asymmetry is in the
+**placebo** - continuation breaks 0.249 after an up push and 0.205 after a down
+one, a mild long bias in the sample that touches the control arm and not the
+level.
 
 ### One construction defect, and one confound still open
 

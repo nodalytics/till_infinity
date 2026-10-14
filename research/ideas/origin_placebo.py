@@ -170,6 +170,7 @@ def zones(bars, rng) -> list[dict]:
         placebo_at = first_bar(mirror_near if offset > 0 else mirror_far, offset <= 0)
         margin = RESOLVE * typical
         row: dict = {
+            "up": 1.0 if up else 0.0,
             "distance": distance,
             "band_at": band_at,
             "placebo_at": placebo_at,
@@ -308,8 +309,17 @@ def classify(h, l_, c, start: int, low: float, high: float, up: bool, margin: fl
     return "break" if broke else "chop"
 
 
-def respected(rows: list[dict]) -> None:
-    """Outcome distribution at the origin against its placebo."""
+def respected(rows: list[dict], label: str = "") -> None:
+    """Outcome distribution at the origin against its placebo.
+
+    **Split by direction, because a displacement is up or down and this desk
+    has had a pooled answer agree with a claim every subgroup refuted.** A
+    sample with net drift revisits demand zones and supply zones differently,
+    so an effect living in one direction only would read as a level property
+    when it is a drift property.
+    """
+    if label:
+        print(f"      -- {label}")
     if sum(1 for r in rows if r.get("origin_outcome")) < 100:
         print("      too few arrivals to classify")
         return
@@ -372,11 +382,16 @@ def main() -> None:
         )
         for horizon in HORIZONS:
             show(f"{horizon} bars", rows, horizon)
+        for name, side in (("up", 1.0), ("down", 0.0)):
+            got = [r for r in rows if (r["up"] > 0.5) == (side > 0.5)]
+            show(f"{name}, {HORIZONS[0]}b", got, HORIZONS[0])
         print("    time to return:")
         timing(rows)
         wear(rows, frame)
         print("    what the band did on arrival:")
-        respected(rows)
+        respected(rows, "both directions")
+        respected([r for r in rows if r["up"] > 0.5], "up pushes (demand zones)")
+        respected([r for r in rows if r["up"] < 0.5], "down pushes (supply zones)")
         print()
     print(
         "  `band` is the first bar back in the origin bar's range, `line` its body\n"
