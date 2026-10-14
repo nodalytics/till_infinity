@@ -433,6 +433,7 @@ from .rates import Slope, slope_per_bar, slope_per_hour
 from .reverting import Reverting
 from .robust import Robust
 from .smoothing import Smoothed, smooth
+from .spanning import Span, garman_klass, parkinson, rogers_satchell
 from .subjects import INSTRUMENT, LEVEL, RELATION, SUBJECTS, Subject
 
 __all__ = [
@@ -458,16 +459,20 @@ __all__ = [
     "Robust",
     "Slope",
     "Smoothed",
+    "Span",
     "Subject",
     "binding",
     "borrow_weight",
     "differ",
     "feasible",
     "fit_jerk",
+    "garman_klass",
     "hourly",
     "least_horizon",
     "members",
+    "parkinson",
     "residuals",
+    "rogers_satchell",
     "simulate",
     "slack",
     "slope_per_bar",
