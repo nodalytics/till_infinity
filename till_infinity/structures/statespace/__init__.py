@@ -422,6 +422,7 @@ from __future__ import annotations
 from .adapting import Adapting
 from .bounding import binding, feasible, least_horizon, slack, solve
 from .diagnostics import Residuals, fit_jerk, residuals
+from .dispersion import borrow_weight, differ, tau, tau_squared
 from .facade import Desk, Readout
 from .family import MISSING, PENDING, Filter, members
 from .interacting import Attention, Depth, Interactions, Rate
@@ -459,6 +460,8 @@ __all__ = [
     "Smoothed",
     "Subject",
     "binding",
+    "borrow_weight",
+    "differ",
     "feasible",
     "fit_jerk",
     "hourly",
@@ -471,6 +474,8 @@ __all__ = [
     "slope_per_hour",
     "smooth",
     "solve",
+    "tau",
+    "tau_squared",
     "with_gaps",
 ]
 

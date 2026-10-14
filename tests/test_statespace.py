@@ -7461,3 +7461,92 @@ class TestInteracting:
         assert 0.0 <= got["hold_rate"] <= 1.0
         # A trap rate is only meaningful on a break, so it counts breaks only.
         assert one.trapped.seen < one.held.seen
+
+
+class TestDispersion:
+    """Whether units differ, with the floor simulated rather than chosen."""
+
+    @staticmethod
+    def _pool(rates, each=40, seed=1):
+        import random
+
+        rng = random.Random(seed)
+        return [
+            (float(each), float(sum(1 for _ in range(each) if rng.random() < p))) for p in rates
+        ]
+
+    @staticmethod
+    def _mean(samples):
+        return sum(h for _, h in samples) / sum(n for n, _ in samples)
+
+    def test_identical_units_do_not_read_as_different(self):
+        """The defect a constant threshold had, and why the null is simulated.
+
+        Sixty units of forty observations, every one drawn at the same rate,
+        produce a `tau` near **0.029** from sampling alone. A first version
+        gated on `tau > 0.02` and called them different. The floor is not a
+        number - it is a function of how many units there are and how often
+        each was counted - so it has to be simulated.
+        """
+        from till_infinity.structures.statespace.dispersion import differ
+
+        same = self._pool([0.5] * 60)
+        observed, null, p = differ(same, self._mean(same))
+        assert observed > 0.02, observed
+        assert p > 0.05, (observed, null, p)
+        # And the floor falls as the pool grows, which is the whole reason a
+        # constant cannot express it.
+        big = self._pool([0.5] * 279, seed=3)
+        _, wider, _ = differ(big, self._mean(big))
+        assert wider < null
+
+    def test_units_that_really_differ_are_found(self):
+        from till_infinity.structures.statespace.dispersion import differ, tau
+
+        spread = self._pool([0.3, 0.5, 0.7] * 20)
+        mean = self._mean(spread)
+        observed, null, p = differ(spread, mean)
+        assert p < 0.05, (observed, null, p)
+        assert observed > 4 * null
+        assert tau(spread, mean) == pytest.approx(observed)
+
+    def test_a_pool_too_small_to_speak_says_so(self):
+        from till_infinity.structures.statespace.dispersion import UNITS, differ, tau_squared
+
+        tiny = self._pool([0.5] * 4)
+        observed, null, p = differ(tiny, self._mean(tiny))
+        assert math.isnan(null)
+        assert math.isnan(p)
+        assert math.isfinite(observed)
+        # One unit, or a degenerate mean, returns zero rather than raising.
+        assert tau_squared([(40.0, 20.0)], 0.5) == (0.0, 1)
+        assert tau_squared([(40.0, 0.0)] * UNITS, 0.0) == (0.0, 0)
+
+    def test_borrowed_evidence_is_worth_more_when_units_agree(self):
+        """`K` in `own / (own + K)`: large when units are alike, small when not."""
+        from till_infinity.structures.statespace.dispersion import borrow_weight
+
+        same = self._pool([0.5] * 60)
+        spread = self._pool([0.2, 0.5, 0.8] * 20)
+        alike = borrow_weight(same, self._mean(same))
+        apart = borrow_weight(spread, self._mean(spread))
+        assert alike > apart
+        # Clamped at both ends: at zero one observation overrides the pool, and
+        # unbounded means a unit never gets to speak.
+        assert 0.5 <= apart <= 50.0
+        assert 0.5 <= alike <= 50.0
+        # A pool that cannot say returns the caller's fallback unchanged.
+        assert borrow_weight(self._pool([0.5] * 3), 0.5, fallback=7.0) == 7.0
+
+    def test_statespace_still_imports_no_sibling(self):
+        """The reason this module exists at all.
+
+        `conditional_holds.py` had to import `shrinkage.tau_squared` from a
+        sibling package to ask this question. A harness may reach across; the
+        library may not, and `TestFacade` asserts it. This keeps that true.
+        """
+        import pathlib
+
+        text = pathlib.Path("till_infinity/structures/statespace/dispersion.py").read_text()
+        assert "from ..shrinkage" not in text
+        assert "structures.shrinkage" not in text
