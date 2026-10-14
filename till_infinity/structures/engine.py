@@ -96,12 +96,23 @@ log = get_logger(__name__)
 
 #: Sigmas of wick spread a stop has to clear beyond the level's own average.
 #:
-#: One would be roughly the depth 84% of sweeps stay inside if the depths were
-#: normal, which they are not - they are bounded below at zero with a long
-#: right tail, so real coverage at one sigma is higher than that. Two produces
-#: stops wide enough that the size the risk budget then allows is uninteresting
-#: on the tighter instruments. This is the setting most worth measuring against
-#: outcomes rather than reasoning about.
+#: **Measured, and it is not 84%.** `research/docs/sweep-depth.md` collected
+#: 44,000 sweeps past a rolling extreme across twelve instruments: one sigma
+#: contains **0.907 to 0.918** of them, not the 84% a normal would give. The
+#: earlier note here guessed the direction right - depths are bounded below at
+#: zero with a long right tail, skew 2.5 to 40 - and understated the size.
+#:
+#: The multiplier for a target coverage, pooled: **0.5 for 84%**, 0.84 to 0.94
+#: for 90%, 1.46 to 1.59 for 95%. So if 84% was the intent, this should be 0.5,
+#: which is also *tighter* than today and therefore does not trade against the
+#: other constraint recorded here - that two produces stops wide enough to make
+#: the size the risk budget allows uninteresting on the tighter instruments.
+#:
+#: Left at 1.0 because narrowing it re-sizes every live position, which is a
+#: trading decision and not a measurement one. The depths fit a Weibull or a
+#: lognormal by a wide AIC margin, so a fitted quantile would be exact where
+#: this rule only approximates - that is the change worth making here, and it
+#: belongs in `levels.SideStats.wick_deep_vol` rather than in this constant.
 SWEEP_SIGMAS = 1.0
 
 
