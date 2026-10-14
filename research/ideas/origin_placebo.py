@@ -168,6 +168,7 @@ def zones(bars, rng) -> list[dict]:
         band_at = first_bar(band_high if up else band_low, up)
         line_at = first_bar(line, up)
         placebo_at = first_bar(mirror_near if offset > 0 else mirror_far, offset <= 0)
+        margin = RESOLVE * typical
         row: dict = {
             "distance": distance,
             "band_at": band_at,
@@ -178,6 +179,17 @@ def zones(bars, rng) -> list[dict]:
             row[f"band_{horizon}"] = 1.0 if 0 < band_at <= horizon else 0.0
             row[f"line_{horizon}"] = 1.0 if 0 < line_at <= horizon else 0.0
             row[f"placebo_{horizon}"] = 1.0 if 0 < placebo_at <= horizon else 0.0
+        # What the band did on arrival, for the origin and for its placebo. The
+        # placebo's band is mirrored, so price arrives at it from the other
+        # side and `up` inverts.
+        if band_at > 0:
+            row["origin_outcome"] = classify(
+                h, l_, c, run_end + band_at, band_low, band_high, up, margin
+            )
+        if placebo_at > 0:
+            row["placebo_outcome"] = classify(
+                h, l_, c, run_end + placebo_at, mirror_near, mirror_far, not up, margin
+            )
         out.append(row)
         at = run_end + 1
     return out
@@ -257,6 +269,70 @@ def wear(rows: list[dict], frame: str) -> None:
         )
 
 
+#: Bars an arrival is followed for, and the margin a resolution needs.
+PATIENCE = int(os.environ.get("PATIENCE", "30"))
+RESOLVE = float(os.environ.get("RESOLVE", "0.5"))
+OUTCOMES = ("reject", "break", "trap", "chop")
+
+
+def classify(h, l_, c, start: int, low: float, high: float, up: bool, margin: float) -> str:
+    """What the band did when price arrived - the desk's own taxonomy.
+
+    `drawing/displacement.py` says the open question is whether the **level is
+    respected**, which is different from whether an entry paid, and that none of
+    the fade work asked it. A return rate cannot answer it: price arriving says
+    nothing about what happened next.
+
+    For a demand zone - price returning down into the band - `reject` is a move
+    back up by `margin` without closing below the band, `break` is a close
+    below it, `trap` is a break that closes back inside, and `chop` is neither
+    resolving inside `PATIENCE` bars.
+    """
+    through = (low - margin) if up else (high + margin)
+    away = (high + margin) if up else (low - margin)
+    broke = False
+    # **From the bar after arrival.** Price reaches the band by coming into it,
+    # so the arrival bar's own far extreme is usually already past `away` - a
+    # bar that dips into a demand zone normally has its high above the zone.
+    # Counting it fired `reject` on arrival and read 0.927 against a placebo's
+    # 0.375, which is the asymmetry and not the level.
+    for step in range(start + 1, min(start + 1 + PATIENCE, len(c))):
+        if not broke:
+            if (float(c[step]) <= through) if up else (float(c[step]) >= through):
+                broke = True
+                continue
+            if (float(h[step]) >= away) if up else (float(l_[step]) <= away):
+                return "reject"
+        elif low <= float(c[step]) <= high:
+            return "trap"
+    return "break" if broke else "chop"
+
+
+def respected(rows: list[dict]) -> None:
+    """Outcome distribution at the origin against its placebo."""
+    if sum(1 for r in rows if r.get("origin_outcome")) < 100:
+        print("      too few arrivals to classify")
+        return
+    print(f"      {'arm':<10}{'n':>7}" + "".join(f"{name:>10}" for name in OUTCOMES))
+    for arm in ("origin", "placebo"):
+        have = [r[f"{arm}_outcome"] for r in rows if r.get(f"{arm}_outcome")]
+        if len(have) < 100:
+            continue
+        cells = "".join(
+            f"{sum(1 for x in have if x == name) / len(have):>10.3f}" for name in OUTCOMES
+        )
+        print(f"      {arm:<10}{len(have):>7,}" + cells)
+    # The number that answers the module's question: of the arrivals that
+    # resolved either way, how often did the level hold?
+    for arm in ("origin", "placebo"):
+        have = [r[f"{arm}_outcome"] for r in rows if r.get(f"{arm}_outcome")]
+        decided = [x for x in have if x != "chop"]
+        if len(decided) < 100:
+            continue
+        held = sum(1 for x in decided if x in ("reject", "trap")) / len(decided)
+        print(f"      {arm} held {held:.3f} of {len(decided):,} resolved")
+
+
 def main() -> None:
     rng = np.random.default_rng(SEED)
     # The constants must match production or this tests nothing.
@@ -299,6 +375,8 @@ def main() -> None:
         print("    time to return:")
         timing(rows)
         wear(rows, frame)
+        print("    what the band did on arrival:")
+        respected(rows)
         print()
     print(
         "  `band` is the first bar back in the origin bar's range, `line` its body\n"

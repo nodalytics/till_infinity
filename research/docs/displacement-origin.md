@@ -152,6 +152,55 @@ zero on two of three frames. It is largest on **daily** bars, not intraday.
 That is the desk's freshness rule confirmed with a number on it, and it is a
 much shorter number than a two-to-four-week zone implies.
 
+## What the band does on arrival, which is the question the module asked
+
+`drawing/displacement.py` says the open question is whether the **level is
+respected** - *"a different question from whether a particular entry made
+money, and one none of that work asked"*. A return rate cannot answer it:
+arriving says nothing about what happened next.
+
+Classified on arrival with the desk's own taxonomy - `reject` is a move back by
+half a typical bar without closing through, `break` a close through, `trap` a
+break that closes back inside, `chop` neither inside thirty bars:
+
+| | origin | placebo |
+| --- | ---: | ---: |
+| reject | 0.763-0.778 | 0.388-0.410 |
+| **break** | **0.082-0.093** | **0.213-0.229** |
+| trap | 0.138-0.144 | 0.374-0.396 |
+| **held** (reject or trap) | **0.907-0.918** | 0.771-0.786 |
+
+Across 1h, 4h and 1d on 5,507, 4,167 and 1,316 arrivals.
+
+**A displacement origin is about two and a half times less likely to be broken
+than a matched price at the same distance** - 8.6% against 22%. The level is
+respected, and that is the first substantial answer this family has produced.
+
+It also reframes everything above. Price does **not** return to an origin much
+more than to any price that far away: the return-rate edge peaks at +0.037 and
+decays to +0.011. But **when price gets there, the origin holds** - a thirteen
+point difference in the held rate and a two-and-a-half-fold difference in the
+break rate.
+
+### One construction defect, and one confound still open
+
+The first version counted the **arrival bar** itself and read `reject` at
+**0.927** against the placebo's 0.375. Price reaches a demand zone by coming
+down into it, so that bar's own high is normally already above the zone - the
+reject fired on arrival. Excluding it took 0.927 to 0.775. The gap did not
+close, but the construction was carrying a fifth of it.
+
+**The confound that remains is the direction of approach.** Price reaches the
+origin by **retracing** and the placebo by **continuing**, because the placebo
+is mirrored into the push direction. So part of "the origin holds" may be "a
+retracement exhausts" rather than anything about this level.
+
+The control that separates them is a placebo at the same distance **on the same
+side** - matched retracement depth, not an origin - and it has not been run.
+Until it is, this is a large, consistent, well-controlled-for-distance result
+with a known alternative explanation, which is a different thing from a
+finding.
+
 ## So no statespace version
 
 A module publishing displacement origins would publish a function of distance
