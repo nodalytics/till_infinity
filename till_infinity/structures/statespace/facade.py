@@ -65,6 +65,9 @@ from .behaving import classify, drives_q, traits_for
 from .bounding import feasible, least_horizon, shifts_for
 from .pacing import Pace
 from .pooling import Pooled
+from .tails import coverage as _coverage
+from .tails import dof_for
+from .tails import reach as _reach
 
 #: Standardised residuals kept for the interval. Long enough for a 5% tail to
 #: have observations behind it, which `statespace-conditional-quantiles.md`
@@ -135,6 +138,37 @@ class Readout:
         """A symmetric band, for a caller that wants one number either side."""
         reach = sigmas * math.sqrt(max(self.spread, 0.0))
         return self.value - reach, self.value + reach
+
+    def band_covering(self, coverage: float = 0.95) -> tuple[float, float]:
+        """A band asked for by **coverage** rather than by sigmas.
+
+        `band(sigmas)` is a Gaussian coverage claim - two sigmas means 95.4%
+        only if the residuals are Gaussian, and `one-bar-band.md` measured that
+        they are not: at one bar they are Student-t with 3 to 5 degrees of
+        freedom, beating a Gaussian on both PIT flatness and CRPS on 64 of 64
+        out-of-sample feed-frames.
+
+        The correction is **not uniform**. Near 95% this and `band(2.0)` agree
+        to a fraction of a percent, so nothing already reading a two-sigma band
+        was wrong. Past that they separate fast, and at 99.9% the Gaussian is
+        nearly half too narrow.
+
+        Prefer `quantiles` in the body, where they are measured rather than
+        assumed. Use this in the **far tail**, which they cannot reach: there
+        are `WINDOW` of them, sized by its own comment for a 5% tail, and a
+        99.9% band wants the 1-in-1000 residual.
+        """
+        reach = _reach(coverage, dof_for(self.interval)) * math.sqrt(max(self.spread, 0.0))
+        return self.value - reach, self.value + reach
+
+    def covers(self, sigmas: float = 2.0) -> float:
+        """What `band(sigmas)` actually covers on this interval's measured tail.
+
+        The diagnostic reading of the same fact. A three-sigma band is not
+        99.73% of anything here - on a tail index of 4 it is breached about
+        five times as often as that label promises.
+        """
+        return _coverage(sigmas, dof_for(self.interval))
 
     def barrier(self, probability: float, horizon: float) -> dict[str, float] | None:
         """The barrier geometry for this feed, or `None` if it is infeasible.
