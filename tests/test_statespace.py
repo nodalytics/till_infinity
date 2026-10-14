@@ -7338,3 +7338,126 @@ class TestRanging:
         profile, _ = self._filled()
         with pytest.raises(ValueError, match="unknown weight"):
             profile.histogram("liquidity")
+
+
+class TestInteracting:
+    """Per-level statistics as posteriors, and the production number they mirror."""
+
+    def test_the_same_ratio_is_not_the_same_evidence(self):
+        """The whole reason these are posteriors and not divisions.
+
+        `levels.SideStats.hold_rate` is `rejects / decisive`. Three holds of
+        four and three hundred of four hundred give it the same answer, and
+        they are not the same claim. A ratio cannot say which, so it cannot be
+        pooled, shrunk or compared between levels.
+        """
+        from till_infinity.structures.statespace.interacting import Rate
+
+        thin, thick = Rate(), Rate()
+        for _ in range(3):
+            thin.observe(True)
+        thin.observe(False)
+        for _ in range(300):
+            thick.observe(True)
+        for _ in range(100):
+            thick.observe(False)
+
+        assert thin.raw == pytest.approx(thick.raw)
+        assert thin.mean < thick.mean
+        assert thin.sd > 5 * thick.sd
+        assert not thin.beats(0.5)
+        assert thick.beats(0.5)
+
+    def test_no_evidence_reads_as_a_coin_with_a_wide_posterior(self):
+        """Zero variance reads as *no information*, not as certainty.
+
+        The mistake `Kalman.var_slope` documents, in the other object: an
+        unobserved rate must not come back as 0.0 and sure of it.
+        """
+        from till_infinity.structures.statespace.interacting import Rate
+
+        empty = Rate()
+        assert empty.mean == pytest.approx(0.5)
+        assert empty.sd > 0.2
+        assert not empty.beats(0.5)
+        assert empty.raw == 0.0
+
+    def test_attention_reproduces_the_production_strength_exactly(self):
+        """It has seventeen consumers, so a swap must change nothing.
+
+        `Attention` exists to make the four weights an **argument** rather than
+        a choice - `levels.Level.strength` fixes them at 0.4 / 0.25 / 0.2 /
+        0.15 and nothing has ever measured a better set. Defaulting to the same
+        numbers is what makes measuring one safe.
+        """
+        import math
+
+        from till_infinity.structures.statespace.interacting import WEIGHTS, Attention
+
+        for touches, spread, unit, since, swings in (
+            (8.0, 0.3, 1.0, 86_400.0, 4.0),
+            (2.0, 0.9, 1.0, 10 * 86_400.0, 1.0),
+            (25.0, 0.05, 2.0, 0.0, 9.0),
+            (0.0, 5.0, 1.0, 60 * 86_400.0, 0.0),
+        ):
+            # The production expression, written out rather than imported, so
+            # this test fails if either side drifts.
+            evidence = min(touches, 10.0) / 10.0
+            agreement = 1.0 - min(1.0, spread / max(unit, 1e-9))
+            recency = math.exp(-max(0.0, since) / (14 * 86_400))
+            breadth = min(swings, 5) / 5.0
+            want = round(
+                0.4 * evidence + 0.25 * max(0.0, agreement) + 0.2 * recency + 0.15 * breadth,
+                4,
+            )
+            got = Attention().of(
+                touches=touches, spread=spread, unit=unit, since=since, swings=swings
+            )
+            assert got == pytest.approx(want), (touches, spread, since)
+
+        # And the terms come back unweighted, which is what a fit needs.
+        terms = Attention().terms(touches=8.0, spread=0.3, unit=1.0, since=86_400.0, swings=4.0)
+        assert len(terms) == len(WEIGHTS)
+        assert all(0.0 <= t <= 1.0 for t in terms)
+        assert sum(w * t for w, t in zip(WEIGHTS, terms, strict=True)) == pytest.approx(
+            Attention().of(touches=8.0, spread=0.3, unit=1.0, since=86_400.0, swings=4.0),
+            abs=1e-4,
+        )
+
+    def test_sweep_depth_is_a_distribution_rather_than_a_shape(self):
+        """`wick_deep_vol` returns `mean + sigmas * sd`, which assumes a shape.
+
+        No Gaussian band on this desk has ever been calibrated, and a sweep
+        depth is a tail quantity, which is where the assumption costs most. A
+        skewed sample is where the two answers part company.
+        """
+        from till_infinity.structures.statespace.interacting import Depth
+
+        depth = Depth()
+        for value in [0.1] * 90 + [3.0] * 10:
+            depth.observe(value)
+        assert depth.seen == 100
+        assert depth.typical == pytest.approx(0.1)
+        assert depth.unusual(0.9) == pytest.approx(3.0)
+        # The Gaussian answer on this sample is far out in empty space: the
+        # mean is 0.39 with an sd near 0.87, so two sigmas is about 2.1 - a
+        # depth no sweep in the sample ever took.
+        assert depth.quantile(0.5) < depth.unusual(0.95)
+        assert Depth().unusual() == 0.0
+
+    def test_interactions_publishes_its_uncertainty_beside_every_rate(self):
+        from till_infinity.structures.statespace.interacting import Interactions
+
+        one = Interactions()
+        for k in range(20):
+            one.observe_touch(rejected=k % 3 != 0, trapped=k % 2 == 0)
+            one.observe_symmetric(k % 3 != 0)
+            one.observe_sweep(0.1 * k)
+        got = one.reading()
+        for name in ("hold", "trap", "symmetric"):
+            assert f"{name}_rate" in got
+            assert f"{name}_sd" in got
+        assert got["decisive"] == 20.0
+        assert 0.0 <= got["hold_rate"] <= 1.0
+        # A trap rate is only meaningful on a break, so it counts breaks only.
+        assert one.trapped.seen < one.held.seen
