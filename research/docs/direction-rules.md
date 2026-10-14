@@ -270,6 +270,79 @@ that strengthens with the leader's move, survives cost easily, and fades over
 the sample is the signature of something real that has been arbitraged, or of a
 regime that has passed. Either way it is not a forward edge now.
 
+## z above 2.5: the trigger two ideas read in opposite directions
+
+A z-score past 2.5 is the most reused trigger in the batches, and two of them
+disagree about what it means. **Tick velocity** says a burst is institutional
+size arriving, so take the move's direction for 3 to 5 bars - momentum.
+**Volume climax** says a reading past 2.5 sd at the end of a run is retail
+capitulation into institutional supply, so take the other side - exhaustion.
+Same trigger, opposite bets, and the sign of the forward return in the burst's
+own direction settles it: positive is momentum, negative is exhaustion.
+
+Tick-arrival timestamps are not in a bar cache, so the four quantities bar data
+can carry a z-score of each get a row - the **signed return**, the **absolute
+return**, the **tick volume** and the **bar range**, which is what the ideas
+name between them. The window is trailing and causal.
+
+### The headline, at a 50-bar window, z over 2.5, held 3 bars
+
+| class | kind | n | mean | net | z | hit | twin |
+|---|---|---|---|---|---|---|---|
+| fx majors | signed return | 4,112 | -0.052 | -0.081 | -1.59 | 0.484 | **-0.070** |
+| fx majors | absolute return | 8,379 | -0.048 | -0.082 | -2.12 | 0.476 | **-0.047** |
+| fx majors | volume | 5,493 | +0.017 | -0.011 | 0.57 | 0.499 | -0.002 |
+| fx majors | range | 7,286 | -0.030 | -0.064 | -1.18 | 0.483 | -0.011 |
+| fx crosses | volume | 4,644 | -0.069 | -0.113 | -2.31 | 0.480 | -0.038 |
+| metals | signed return | 1,255 | +0.113 | **+0.065** | 1.82 | 0.525 | +0.011 |
+| metals | volume | 1,767 | +0.104 | **+0.062** | 1.94 | 0.504 | +0.044 |
+| spike synth | volume | 520 | +0.110 | -0.005 | 1.78 | 0.521 | +0.006 |
+| placebo synth | absolute return | 3,033 | +0.004 | -1.576 | 0.20 | 0.506 | +0.003 |
+
+At 4h every cell falls inside `|z|` 2 except the placebo's own range at -2.07.
+
+**Nothing reaches `|z|` 2.5 in 40 headline cells**, the largest being -2.31.
+And where a reading does appear, **the block-shuffled twin matches it**: fx
+majors absolute return is -0.048 live against -0.047 shuffled, and its signed
+return's twin is *larger* than the live arm at -0.070 against -0.052. Those
+small negatives are bar geometry.
+
+### It is a null rather than an underpowered test, for five reasons
+
+- **The samples are large** - 4,000 to 12,000 events a cell. Nothing here is
+  short of data.
+- **The detector is proven to work.** Boom and Crash indices carry engineered
+  one-way spikes, and it fires on them 184 to 2,555 times, returning the mild
+  reversion their generator implies. A burst detector that could not see those
+  would be broken, and this one is not.
+- **No monotonicity in the threshold.** A real burst effect should strengthen
+  as the burst gets bigger. fx majors absolute return reads -0.036, -0.048,
+  -0.027 and then **+0.018** at z over 4 - it wanders and flips sign.
+- **No monotonicity in the horizon** either: the same row reads -0.035, -0.048,
+  +0.008, +0.019 from 1 to 12 bars.
+- **Flat across the window.** At 50, 70, 100 and 200 bars the readings are
+  -0.069, -0.065, -0.067, -0.041 and -0.048, -0.046, -0.063, -0.045. The
+  lookback does not matter, which here means the null is robust to it.
+
+### What is faintly there, and the cost that is not faint
+
+**Metals are the only cells with a positive net** - signed return +0.065 and
+volume +0.062 after cost, at `z` 1.82 and 1.94, with twins near zero. A weak
+momentum tendency after a burst in gold and silver, in the opposite direction
+to what 1h FX does. At `z` under 2 across 40 cells it is not significant, but
+it is the one cell worth naming and the only one pointing the way the tick
+velocity idea claims.
+
+**Every other net is negative.** The spread takes more than the effect in
+almost every cell, which closes both ideas on this data independently of the
+significance question.
+
+One incidental fact worth keeping: **Deriv synthetic spreads are enormous
+relative to their own bar ranges.** The placebo arms go from +0.013 gross to
+**-1.552 net** at 1h and -3.169 at 4h - a round trip of one and a half to three
+bar-ranges. It does not affect their use as controls, where only the gross
+reading matters, but it rules them out as venues for anything short-horizon.
+
 ## What outlives the ideas, continued
 
 **A threshold sweep must print the effect size, not the test statistic.** `z`
