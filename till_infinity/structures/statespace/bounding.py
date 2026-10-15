@@ -142,6 +142,21 @@ QUANTITIES = ("up", "down", "probability", "horizon")
 #: of a `0.5826` shift. The monitoring correction comes from within-bar path
 #: behaviour, not from grid granularity, and at this resolution the grid is far
 #: too fine to touch it.
+#: How much the wall grows per **doubling** of the barrier distance, on traded
+#: instruments. On a diffusion `B` is an asymptotic constant and does not depend
+#: on the distance - which the synthetic control confirms, reading 0.5923,
+#: 0.5681 and 0.5954 at reaches of 2, 4 and 8. Traded instruments read 0.6472,
+#: 0.7525 and 0.8619 over the same reaches: a straight line in `log2(reach)`
+#: with this slope, from `REACH_BASE`.
+#:
+#: Not threaded through `solve`, and the reason is circular: `solve`'s job is to
+#: find a missing barrier, so the reach that sets the wall is the thing being
+#: solved for. `wall_at` applies it for a caller who already knows the distance,
+#: and `SHIFTS` carries the pooled-over-reaches figure that `solve` uses.
+REACH_SLOPE = 0.1074
+#: The reach the traded entries in `SHIFTS` are anchored at, in sigmas.
+REACH_BASE = 2.0
+
 SHIFTS: dict[str, tuple[float, float]] = {
     "volatility": (SHIFT, SHIFT),
     "boom": (0.6535, 0.5100),
@@ -151,6 +166,42 @@ SHIFTS: dict[str, tuple[float, float]] = {
     "step": (SHIFT, SHIFT),
     "multi_step": (SHIFT, SHIFT),
     "skew_step": (SHIFT, SHIFT),
+    # **Traded walls, measured 2026-10-15 by `research/ideas/barrier_traded.py`**
+    # on 15m, 1h and 4h - see `research/docs/barrier-traded.md`. Until then this
+    # table held no traded instrument at all and every live feed fell back to the
+    # diffusion constant, which understates the wall by a quarter.
+    #
+    # Pooled over 64 instrument-reach rows, traded `B` is **0.7262** against the
+    # synthetic control's 0.5850 - a gap of +0.1412 at `z` +16.71, or 3.8 control
+    # standard deviations, with the control itself recovering the theoretical
+    # 0.5826 as it must.
+    #
+    # The two directions differ, and the ordering is the **skew** of the bar
+    # return rather than the class: pooled log-ratio by skew bucket is -0.2603
+    # (`z` -11.70) below -0.5 skew, -0.1171 (`z` -5.78) within +/-0.5, and
+    # -0.0373 (`z` -1.14, symmetric) above +0.5, against a control at +0.0259.
+    # So the JPY pairs need it most and `EURGBP`, at a skew of +0.04, reads a
+    # ratio of 1.008. A class-keyed table cannot express that, which is why
+    # these entries are class medians and the per-instrument asymmetry is not
+    # claimed: the control's own ratio wanders from 0.741 to 1.229, so a single
+    # instrument's reading is not individually reliable even where the pooled
+    # ordering is certain.
+    #
+    # **Kurtosis does not order it, which was the expected mechanism and is
+    # refuted.** Traded kurtosis runs 13.4 to 35.5 against the synthetics' 3.2,
+    # so fat tails were the obvious explanation for the level - but across
+    # instruments the correlation between kurtosis and `B` is **+0.113**. The
+    # level is up and kurtosis is not what orders it.
+    "fx_major": (0.6836, 0.7560),
+    "fx_cross": (0.6791, 0.7626),
+    # Thin: four instrument-reach rows, and listed because the alternative is
+    # the diffusion constant, which the same four rows refute. Consistent with
+    # the two FX classes, which is the only reason it is trusted at all.
+    "metal": (0.6645, 0.7413),
+    # `energy`, `basket`, `soft` and `equity` are **not** listed on purpose.
+    # They were not measured, and an FX-measured wall on an equity is an
+    # extrapolation - the same reason `shifts_for` falls back rather than
+    # guessing.
 }
 
 
@@ -164,6 +215,46 @@ def shifts_for(feed: str) -> tuple[float, float]:
     from .behaving import classify
 
     return SHIFTS.get(classify(feed), (SHIFT, SHIFT))
+
+
+#: Classes `REACH_SLOPE` was measured on, and the only ones `wall_at` grows.
+#: Keyed the same way as `SHIFTS`, through `behaving.classify`.
+TRADED_CLASSES = frozenset({"fx_major", "fx_cross", "metal"})
+
+
+def classify_feed(feed: str) -> str:
+    """`behaving.classify`, imported late for the same reason `shifts_for` does."""
+    from .behaving import classify
+
+    return classify(feed)
+
+
+def wall_at(feed: str, reach: float) -> tuple[float, float]:
+    """The `(up, down)` wall for `feed` at a barrier `reach` sigmas away.
+
+    `shifts_for` returns the figure pooled over reaches, which is what `solve`
+    can use. This applies the measured growth on top, for a caller who already
+    knows how far the barrier is:
+
+        B(reach) = B(REACH_BASE) + REACH_SLOPE * log2(reach / REACH_BASE)
+
+    A generated or unlisted feed comes back unchanged, because `REACH_SLOPE` was
+    measured on traded instruments and the synthetic control is flat across the
+    same reaches - applying a traded slope to a diffusion would invent a
+    dependence that is known not to be there.
+
+    The guard is on the **class**, not on whether the wall happens to equal
+    `SHIFT`. The first version tested the wall, which let `Boom` and `DEX`
+    through - they are asymmetric, so their walls differ from the constant, and
+    they are generated, so the traded slope has no business touching them.
+    """
+    if classify_feed(feed) not in TRADED_CLASSES:
+        return shifts_for(feed)
+    up, down = shifts_for(feed)
+    if reach <= 0.0:
+        return up, down
+    grown = REACH_SLOPE * math.log2(float(reach) / REACH_BASE)
+    return max(0.0, up + grown), max(0.0, down + grown)
 
 
 def _walls(
