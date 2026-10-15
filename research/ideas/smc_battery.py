@@ -512,13 +512,23 @@ def resolve(bars, start: int, entry: float, stop: float, up: bool, target: float
     Returns the realised multiple of the stop distance, or `None` if neither is
     reached - unresolved races are dropped rather than scored as flat, the same
     rule `conditional_holds` uses for the same reason.
+
+    **The race starts on the bar after the fill, and that is not fussiness.**
+    The fill bar is the bar whose extreme reached the entry, and settling on it
+    uses the same bar's other extreme - which may have happened before the
+    entry touch. Measured on a driftless walk, where a target of `k`R against a
+    1R stop must win about `1/(k+1)`: including the fill bar, the imbalance arm
+    won **0.470** of its 2R races against a required 0.333, for an expectancy of
+    **+0.411R** that no stopping rule can have on a martingale. Excluding it,
+    0.309. At 3R the whole population then lands at 0.251 against a required
+    0.250, which is the check that the resolver is now fair.
     """
     risk = abs(entry - stop)
     if risk <= 0:
         return None
     aim = entry - target * risk if up else entry + target * risk
-    end = min(start + HOLD + 1, len(bars["close"]))
-    for i in range(start, end):
+    end = min(start + HOLD + 2, len(bars["close"]))
+    for i in range(start + 1, end):
         hit_stop = bars["high"][i] >= stop if up else bars["low"][i] <= stop
         hit_aim = bars["low"][i] <= aim if up else bars["high"][i] >= aim
         if hit_stop and hit_aim:

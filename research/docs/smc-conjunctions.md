@@ -1,4 +1,4 @@
-# Two SMC frameworks, decomposed: every filter and every conjunction is a walk
+# Two SMC frameworks, decomposed - and a lookahead bug that made a walk pay
 
 **Measured 2026-10-15.** Code: [`smc_battery.py`](../ideas/smc_battery.py).
 516 arm-by-cell rows, four timeframe pairs, four instrument groups.
@@ -40,42 +40,59 @@ worst of it and leaves the walk at −0.27R.
 So a negative expectancy means nothing on its own, and a positive one means
 nothing either. The column is `gross − walk`.
 
-## The result: nothing beats its own walk
+## First, a bug that inflated everything, found by asking a fair question
 
-Across all 516 rows with 300 or more setups, the **largest** `gross − walk`
-reaches `z` of **+1.95**, and the next eleven sit between +1.00 and +1.12. With
-516 rows that is what chance produces.
+A driftless walk is a **martingale**, so no time-bounded stopping rule can have
+positive expectancy on it. The first run of this study reported the
+internal-imbalance arm making **+0.432R** on a walk. That is not a pattern in
+the walk - it is impossible - so it was a leak, and finding it was worth more
+than the study.
 
-| cell | arm | R | n | gross | walk | vs walk | z |
-|---|---|---:|---:|---:|---:|---:|---:|
-| 4h/15m fx crosses | CRT | 1 | 2,655 | −0.128 | −0.167 | +0.039 | +1.95 |
-| 4h/15m fx crosses | key level | 1 | 1,049 | −0.043 | −0.079 | +0.036 | +1.12 |
-| 4h/15m metals | key level | 1 | 350 | −0.051 | −0.120 | +0.069 | +1.10 |
-| 4h/15m metals | sweep | 1 | 484 | −0.017 | −0.120 | +0.103 | +1.03 |
+`resolve` began the race **on the fill bar**. The fill bar is the one whose
+extreme reached the entry, and settling on it uses the same bar's *other*
+extreme, which may have happened before the entry touch. A short entered at a
+zone high was being booked a winner off a low that came earlier in that bar.
 
-## The one arm that looked real, and what the walk did to it
-
-**Internal-range liquidity - the three-bar imbalance - is the trap worth
-recording.** On 1d/4h fx majors it reads a gross expectancy of **+0.309R at 2R
-with a `z` of +4.44**, and +0.336R at 3R. Taken alone that is a strong result on
-479 setups.
-
-The same filter on a matched walk returns **+0.432R**.
+Measured on a walk, where a target of `k`R against a 1R stop must win about
+`1 / (k + 1)`:
 
 | | 1R | 2R | 3R |
 |---|---:|---:|---:|
-| real | +0.065 | +0.309 | +0.336 |
-| walk | +0.145 | **+0.432** | +0.409 |
-| vs walk | −0.080 | **−0.123** | −0.073 |
+| required win rate | 0.500 | 0.333 | 0.250 |
+| imbalance, settling on the fill bar | 0.567 | **0.470** | 0.346 |
+| imbalance, settling from the next bar | 0.369 | 0.309 | 0.258 |
+| all setups, from the next bar | 0.357 | 0.300 | **0.251** |
 
-Across all 33 imbalance cells, `gross − walk` is **negative in 32**. The filter
-produces positive expectancy by **selecting the fill**: requiring a gap means
-the trade only triggers if price retraces into the zone, which conditions on a
-retracement having happened and then collects the continuation. A walk does
-that at least as well.
+The last cell is the check: with the lookahead removed, the whole population
+lands at 0.251 against a required 0.250. The imbalance filter was the biggest
+beneficiary because it selects gap situations, where the fill bar is large and
+spans both barriers - the apparent edge was largest exactly where the bug had
+most room.
 
-A `z` of +4.44 against zero and −0.123 against the walk is the same number
-read two ways, and only one of them is a claim about markets.
+**Every number below is after the fix.** Walk expectancies now span -0.389 to
++0.371 across cells, where they reached +0.57 before it.
+
+## The result: nothing clears its own walk and the multiplicity
+
+| cell | arm | R | n | gross | walk | gap | z |
+|---|---|---:|---:|---:|---:|---:|---:|
+| 1h/15m fx crosses | CRT | 2 | 2,531 | -0.008 | -0.113 | +0.105 | +3.75 |
+| 1h/15m fx crosses | CRT | 3 | 2,522 | +0.101 | -0.030 | +0.131 | +3.64 |
+| 4h/15m fx crosses | engulf | 1 | 5,459 | -0.199 | -0.243 | +0.044 | +3.14 |
+| 1h/15m fx crosses | CRT | 1 | 2,537 | -0.215 | -0.273 | +0.058 | +3.05 |
+| 4h/15m fx crosses | origin body | 1 | 3,450 | -0.187 | -0.237 | +0.050 | +2.94 |
+
+With **516 rows**, the largest `|z|` expected under the null is about 3.2, so a
+peak of 3.75 is at the edge of what multiplicity produces by itself. Two things
+make it worth a line rather than a dismissal: the three CRT rows are one cell at
+three targets, agreeing in sign and rough size, and **every one of the top eight
+rows is an FX cross or major with a 15m confirming frame** - a coherent corner
+rather than scatter. Against that, they are nested rather than independent
+confirmations, and none is positive in absolute terms at 1R or 2R.
+
+**The honest reading is that nothing here survives.** The one corner worth a
+pre-registered out-of-sample test is Candle Range Theory on FX crosses with a
+15m entry; everything else sits inside its own walk.
 
 ## Three encodings the walk and the overlap table rejected first
 
