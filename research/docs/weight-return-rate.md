@@ -19,8 +19,8 @@ The **return rate** is the one that is not - `fade-to-value` measures 82% of
 displacement origins being returned to, and a target hit rate is exactly what a
 weight should order if a weight means anything.
 
-**Answer: directly proportional, on swing levels only, and it is the `recency`
-term doing all of it.**
+**Answer: directly proportional, on swing levels only, at the longer horizon
+only, and it is the `recency` term doing all of it.**
 
 ## The confound, which is most of the measurement
 
@@ -54,20 +54,40 @@ error.
 
 | type | 1h h=24 | 1h h=96 | 4h h=24 | 4h h=96 |
 |---|---:|---:|---:|---:|
-| **swing** | **+0.062 (z 2.53)** | **+0.064 (z 4.44)** | **+0.053 (z 2.04)** | **+0.067 (z 4.50)** |
+| **swing** | +0.036 (z 1.47) | **+0.067 (z 4.65)** | +0.032 (z 0.90) | **+0.059 (z 2.76)** |
 | prev_week | +0.025 (1.06) | +0.029 (2.18) | +0.007 (0.49) | +0.003 (0.28) |
 | origin | +0.023 (1.20) | +0.019 (1.62) | −0.015 (−0.79) | −0.006 (−0.46) |
 | round | −0.003 (−0.16) | +0.002 (0.09) | −0.005 (−0.43) | −0.005 (−0.42) |
 | prev_day | −0.008 (−0.62) | +0.001 (0.10) | −0.008 (−0.57) | −0.001 (−0.06) |
 | dopen | −0.013 (−1.11) | −0.005 (−0.38) | −0.004 (−0.35) | −0.003 (−0.18) |
 | turn | −0.002 (−0.16) | +0.001 (0.09) | −0.006 (−0.58) | −0.002 (−0.24) |
-| poc | −0.016 (−1.00) | −0.012 (−1.07) | −0.018 (−1.31) | −0.010 (−0.99) |
+| poc | −0.002 (−0.11) | −0.011 (−0.93) | −0.028 (−1.16) | −0.002 (−0.12) |
 
-**Swing is the only type that replicates**, on both frames and both horizons.
-And the positive control agrees the right way round: on `Range_Break_*`, where a
-range exists by construction, the same measurement reads **+0.2547 at z 4.07** -
-four times the traded effect on the feed where levels are real by design.
+**Swing is the only type that replicates, and only at the longer horizon.** The
+positive control agrees the right way round: on `Range_Break_*`, where a range
+exists by construction, the same measurement reads **+0.2399 at z 3.84**, four
+times the traded effect on the feed where levels are real by design.
 
+### The h=24 cells are not stable, and finding that out was an accident
+
+The first run of this read the volume key as `tick_volume`, which the cache does
+not have, and fell back to an array of ones - so the `poc` row was the mode of a
+**mid-price** histogram rather than a volume point of control. Fixing it changed
+how many levels each decision point nominated, which changed the placebo jitter
+draws downstream, which moved every number a little.
+
+The long-horizon cells barely moved - swing at 1h h=96 went from +0.064 (z 4.44)
+to +0.067 (z 4.65), and at 4h from +0.067 (z 4.50) to +0.059 (z 2.76). **The
+short-horizon cells moved a lot**: 1h h=24 from z 2.53 to **z 1.47**, and 4h
+h=24 from z 2.04 to **z 0.90**. A result that halves its own `z` when the
+placebo is redrawn was never a result, so the h=24 row is withdrawn and only
+h=96 is claimed. The corrected `poc` figures are in the table above and the
+conclusion for that type is unchanged - it was null either way.
+
+The general lesson is that one placebo draw is not enough when the effect is
+this size. Averaging the placebo over several jitter seeds is the fix and is not
+done here; the h=96 result is reported because it survived the accident, not
+because the design was adequate.
 **Displacement origins are the null case**, which is the opposite of what the
 question expected. The sign reverses between frames, +0.019 at 1h against
 −0.006 at 4h, and neither clears its own error. The 82% return rate is real and
@@ -79,6 +99,10 @@ is found at z 2.91 to 3.20, a share of 0.10 at z 2.08 on 1h and missed on 4h,
 and the unplanted redraw reads 0.5118 and 0.4993 as it must. So the nulls above
 are nulls against an effect about a third the size of the one found on swings,
 and smaller effects are not excluded.
+
+Combined with the instability above, the defensible claim is narrow: **a swing
+level's weight orders its return rate over about four days of bars, by roughly
++0.06 of AUC, and nothing else here orders anything.**
 
 ## The composite dilutes the one term that works
 

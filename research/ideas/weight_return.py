@@ -151,11 +151,14 @@ def load(name: str, frame: str):
             return None
         order = np.argsort(bundle["time"])
         got = {k: np.asarray(bundle[k], dtype=float)[order] for k in need}
-        got["volume"] = (
-            np.asarray(bundle["tick_volume"], dtype=float)[order]
-            if "tick_volume" in bundle
-            else np.ones_like(got["close"])
-        )
+        # The cache calls it `volume` and it is a **tick count** - median 827 at
+        # 15m and 2,544 at 1h on EURUSD. The first version of this read
+        # `tick_volume`, which does not exist, and fell back to `ones` - which
+        # makes a volume profile a plain mid-price histogram and a tick z-score
+        # all-NaN, since a constant has no spread. Raise rather than fall back.
+        if "volume" not in bundle:
+            raise KeyError(f"no volume in {path.name}")
+        got["volume"] = np.asarray(bundle["volume"], dtype=float)[order]
     keep = (got["high"] >= got["low"]) & (got["low"] > 0)
     got = {k: v[keep] for k, v in got.items()}
     if len(got["close"]) < 8000:
