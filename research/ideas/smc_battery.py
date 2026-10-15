@@ -92,9 +92,19 @@ REACH = 0.25
 TARGETS = (1.0, 2.0, 3.0)
 #: Readings of the entry band, swept for the headline arms.
 ZONES = ("engulfed", "origin zone", "order block")
-#: Setups a row needs before it is printed. Without it the table was topped by
-#: 21-setup cells whose apparent edge was one lucky fill.
+#: Setups a row needs before it is printed per cell. Without it the table was
+#: topped by 21-setup cells whose apparent edge was one lucky fill.
+#:
+#: **It also hid the arms the study exists for.** EMS, SLK and the other
+#: conjunctions never reached it on any single cell, so they produced *no rows
+#: at all* and the table silently contained only primitives - while the
+#: document claimed to have tested the conjunctions. Rare arms are now pooled
+#: across every cell in a group and reported with their count, and a census
+#: prints each arm's setup total whether or not it is scored, so an absent arm
+#: is visible instead of missing.
 LEAST_SETUPS = 200
+#: Setups a **pooled** arm needs, across all cells of one group.
+LEAST_POOLED = 60
 JITTER = 0.15
 SEED = 20261015
 MAJORS = ("EURUSD", "GBPUSD", "USDJPY", "AUDUSD", "USDCAD", "USDCHF", "NZDUSD")
@@ -478,9 +488,9 @@ def structure(lower, begin: float, end: float, low: float, high: float, up: bool
 
     `up` is a short - the zone is a resistance - so the sweep is a poke above a
     local high that closes back below it, and the break is a close under the
-    lowest low since that sweep. Both must happen between `begin` and `end`,
-    which is the signal bar's own span, and the sweep must occur inside the
-    zone's price range.
+    lowest low since that sweep. Both must happen between `begin` and `end` -
+    the **retrace**, from the engulfing bar to the bar that fills - and the
+    sweep must occur inside the zone's price range.
     """
     when = lower["time"]
     inside = np.flatnonzero((when >= begin) & (when <= end))
@@ -572,10 +582,14 @@ def setups(bars, lower, name: str, placebo: bool, rng):
         passed["displaced"] = displaced(bars, at, up, unit)
         passed["origin body"] = origin_shaped(bars, at, unit)
         zone_low, zone_high = float(lows[at - 1]), float(highs[at - 1])
-        passed["structure"] = structure(
-            lower, float(bars["time"][at]), float(bars["time"][at + 1]),
-            zone_low, zone_high, up,
-        ) if lower is not None else False
+        # Structure is evaluated **over the retrace**, from the engulfing bar to
+        # the bar that fills, not inside the signal bar's own span. The first
+        # version used one signal bar and cut `engulf + level` from 2,147
+        # setups to **12** - so EMS fired a dozen times in 11,361 engulfs and
+        # SLK never fired at all, which is not a strict test but an untested
+        # one. The method says to drop timeframes *while waiting for the
+        # entry*, which is the retrace, and that is what this window is.
+        passed["structure"] = False
         # Four readings of the same zone, scored side by side.
         desk_low, desk_high = desk_zone(bars, at, move)
         block = order_block(bars, at, up)
@@ -603,6 +617,16 @@ def setups(bars, lower, name: str, placebo: bool, rng):
                     break
         if not fills:
             continue
+        if lower is not None:
+            last = max(when for _entry, when in fills.values())
+            passed["structure"] = structure(
+                lower,
+                float(bars["time"][at]),
+                float(bars["time"][min(last, len(closes) - 1)]),
+                zone_low,
+                zone_high,
+                up,
+            )
         out.append(
             {
                 "feed": name,
@@ -655,6 +679,7 @@ def main() -> None:
     rng = np.random.default_rng(SEED)
     for signal, confirm in PAIRS:
         for group, names in GROUPS:
+            real_rows: dict[str, list] = {}
             for which in ("real", "walk", "placebo", "twin"):
                 rows: dict[str, list] = {}
                 frames: dict[str, dict] = {}
@@ -663,6 +688,22 @@ def main() -> None:
                     lower = load(name, confirm)
                     if bars is None:
                         continue
+                    # **Clip the signal frame to the span the lower frame
+                    # covers.** `LIMIT` bars of 4h reach back about eighteen
+                    # years where `LIMIT` bars of 15m reach back one and a
+                    # half, so without this most signal bars have no lower
+                    # frame at all and `structure` is false by default rather
+                    # than by measurement. It is what left EMS firing 13 times
+                    # in 11,361 engulfs and SLK never - an unavailable filter
+                    # reads exactly like a strict one, and the census is what
+                    # made the difference visible.
+                    if lower is not None:
+                        begin = float(lower["time"][0])
+                        keep = bars["time"] >= begin
+                        if keep.sum() < 400:
+                            lower = None
+                        else:
+                            bars = {k: v[keep] for k, v in bars.items()}
                     if which == "twin":
                         bars = shuffled(bars, rng)
                         if bars is None:
@@ -680,6 +721,7 @@ def main() -> None:
                 if not rows:
                     continue
                 if which == "real":
+                    real_rows = rows
                     print("=" * 96)
                     print(f"{signal} signal / {confirm} confirm   {group}")
                     print("=" * 96)
@@ -710,14 +752,37 @@ def main() -> None:
                         gross = sum(p["gross"] * p["n"] for p in parts) / total
                         net = sum(p["net"] * p["n"] for p in parts) / total
                         error = (sum((p["error"] * p["n"]) ** 2 for p in parts) ** 0.5) / total
-                        if total < LEAST_SETUPS:
+                        if total < LEAST_POOLED:
                             continue
                         cost = gross - net
+                        thin = " thin" if total < LEAST_SETUPS else ""
                         print(
                             f"  {label:<20}{zone[:11]:<12}{which:<8}{target:>6.0f}{total:>7}"
                             f"{hit:>8.3f}{gross:>+9.3f}{error:>8.3f}"
-                            f"{gross / error if error else float('nan'):>+7.2f}{cost:>8.3f}"
+                            f"{gross / error if error else float('nan'):>+7.2f}{cost:>8.3f}{thin}"
                         )
+            # The census: every arm's setup count, scored or not.
+            # The census, from the **real** arm, which the loop above has left
+            # in `real_rows`. Built outside the loop on purpose: an arm that
+            # scores on no cell must still appear here, or the table is a list
+            # of the arms that happened to survive rather than of the arms
+            # tested.
+            if real_rows:
+                census: dict[str, int] = {}
+                for found in real_rows.values():
+                    for label, need in ARMS:
+                        kept = [g for g in found if all(g["passed"].get(k) for k in need)]
+                        census[label] = census.get(label, 0) + len(kept)
+                print(f"\n  setups per arm, real ({group}, {signal}/{confirm}):")
+                for label, _need in ARMS:
+                    count = census.get(label, 0)
+                    if count >= LEAST_SETUPS:
+                        mark = ""
+                    elif count >= LEAST_POOLED:
+                        mark = "   thin"
+                    else:
+                        mark = "   <- NOT SCORED, too few"
+                    print(f"    {label:<22}{count:>7,}{mark}")
             print(
                 "  **`gross R` is the column to read, and `cost R` is carried beside it**\n"
                 "  rather than subtracted into one number. The spread charged against a\n"

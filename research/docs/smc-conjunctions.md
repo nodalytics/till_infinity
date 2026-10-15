@@ -1,4 +1,4 @@
-# Two SMC frameworks, decomposed - and a lookahead bug that made a walk pay
+# Two SMC frameworks: the primitives are walks, the conjunctions are untestable
 
 **Measured 2026-10-15.** Code: [`smc_battery.py`](../ideas/smc_battery.py).
 516 arm-by-cell rows, four timeframe pairs, four instrument groups.
@@ -90,9 +90,10 @@ rows is an FX cross or major with a 15m confirming frame** - a coherent corner
 rather than scatter. Against that, they are nested rather than independent
 confirmations, and none is positive in absolute terms at 1R or 2R.
 
-**The honest reading is that nothing here survives.** The one corner worth a
-pre-registered out-of-sample test is Candle Range Theory on FX crosses with a
-15m entry; everything else sits inside its own walk.
+**The honest reading is that no primitive here survives.** The one corner worth
+a pre-registered out-of-sample test is Candle Range Theory on FX crosses with a
+15m entry; every other primitive sits inside its own walk. The conjunctions are
+a separate matter and the section below is about them.
 
 ## Three encodings the walk and the overlap table rejected first
 
@@ -116,6 +117,49 @@ engulfing bars by construction, and over a twenty-bar window a structure shift
 in the trade direction occurs on 0.741 - with a Jaccard of 0.552 between them.
 Key levels and external sweeps overlap at 0.418, because a sweep is a poke past
 a prior extreme and a key level **is** a prior extreme.
+
+## The conjunctions are not measurable, which is not the same as null
+
+**This is the correction that matters most, and a census is what found it.**
+The first version of this table printed only rows reaching 200 setups in a
+cell, so the arms the study exists for produced **no rows at all** and the table
+silently contained primitives while the document claimed to have tested the
+conjunctions. Every arm's setup count is now printed whether or not it scores.
+
+Across all sixteen cells, from 18,855 engulfing setups and 3,226 that also had
+a key-level rejection:
+
+| arm | setups, all cells |
+|---|---:|
+| engulf | 18,855 |
+| engulf + key level | 3,226 |
+| **EMS** (engulf + level + structure) | **29** |
+| **SLK** (bias + level + structure) | **3** |
+| everything | 3 |
+
+The binding constraint is the lower-frame structure filter - a sweep inside the
+zone followed by a break of structure - and it needs a long lower-frame window
+to have any chance of occurring. It fires only where the frame ratio is 16:1
+(4h signal, 15m confirm) and essentially never at 4:1 or 6:1, which is a
+property of the window rather than of the market.
+
+Two further things had to be fixed before even that was visible. The signal
+frame is now **clipped to the span the lower frame covers**: `LIMIT` bars of 4h
+reach back about eighteen years where `LIMIT` bars of 15m reach back one and a
+half, so most signal bars had no lower frame at all and `structure` was false by
+default rather than by measurement. And structure is evaluated over the
+**retrace**, from the engulfing bar to the bar that fills, rather than inside
+the signal bar's own span, because the method says to drop timeframes while
+waiting for the entry.
+
+**So the honest statement is narrower than the title of the first draft.** The
+primitives are measured on thousands of setups each and every one sits inside
+its own walk. The conjunctions - the actual claim both frameworks make - are
+**untested**, because on the overlapping history available they fire between
+three and twenty-nine times. Testing them needs lower-frame history long enough
+to cover the signal frame, which this cache does not have; the alternative is
+loosening the definitions until they fire, which would be inventing a method
+rather than testing one.
 
 ## What this does not test
 
