@@ -153,6 +153,63 @@ def steps_for(family: str, theta, common: dict[str, np.ndarray]) -> np.ndarray:
         hit = common["jump"] < rate
         extra = ndtri(np.clip(common["size"], 1e-12, 1 - 1e-12)) * size
         out = out + np.where(hit, extra, 0.0)
+    elif family == "joint":
+        # **The prediction, corrected.** Holding the efficient price at the
+        # fitted GARCH and adding noise fixes the three shape statistics and
+        # *dilutes the tails* - kurtosis fell from 17.0 to 13.8 at an amplitude
+        # of 1 and to 1.7 at 4, because stationary noise added to a fat-tailed
+        # walk is a thinner-tailed sum. So the two have to be fitted together:
+        # the efficient process must be fatter than it needed to be alone, to
+        # survive the dilution. Three parameters, shock, memory and amplitude.
+        shock = float(np.clip(theta[0], 0.001, 0.6))
+        memory = float(np.clip(theta[1], 0.0, 0.998 - shock))
+        amplitude = float(np.clip(theta[2], 0.0, 20.0))
+        constant = max(1.0 - shock - memory, 1e-6)
+        efficient = np.empty(count)
+        variance = 1.0
+        previous = 0.0
+        for i in range(count):
+            variance = constant + shock * previous**2 + memory * variance
+            previous = np.sqrt(variance) * normal[i]
+            efficient[i] = previous
+        efficient = efficient / max(float(np.std(efficient)), 1e-12)
+        level = np.where(common["state"] > 0.5, 1.0, -1.0)
+        noise = amplitude * level
+        out = efficient + np.diff(np.concatenate(([0.0], noise)))
+    elif family in {"micro", "bounce"}:
+        # **The prediction from `family-fits.md`, built as a family.** The
+        # efficient price is GARCH at the point every traded class picked,
+        # (0.18, 0.80), so the tails and the clustering are held fixed at what
+        # already fits. On top of it sits a **stationary** term that does not
+        # accumulate: `bounce` is the Roll model, an i.i.d. sign times a half
+        # spread; `micro` is an Ornstein-Uhlenbeck noise with its own reversion
+        # rate. Both reverse inside the bar and neither moves the efficient
+        # price, which is exactly the mechanism the three unreachable
+        # statistics pointed at.
+        from scipy.signal import lfilter
+
+        efficient = np.empty(count)
+        variance = 1.0
+        previous = 0.0
+        for i in range(count):
+            variance = 0.02 + 0.18 * previous**2 + 0.80 * variance
+            previous = np.sqrt(variance) * normal[i]
+            efficient[i] = previous
+        efficient = efficient / max(float(np.std(efficient)), 1e-12)
+        other = ndtri(np.clip(common["size"], 1e-12, 1 - 1e-12))
+        if family == "bounce":
+            amplitude = float(np.clip(theta[0], 0.0, 20.0))
+            level = np.where(common["state"] > 0.5, 1.0, -1.0)
+        else:
+            amplitude = float(np.clip(theta[0], 0.0, 20.0))
+            pull = float(np.clip(theta[1], 0.01, 0.95))
+            level = lfilter([1.0], [1.0, -(1.0 - pull)], other)
+            spread_level = float(np.std(level))
+            level = level / spread_level if spread_level > 0 else level
+        # A level term contributes its **difference** to the steps, so the
+        # cumulative sum downstream reproduces `efficient + amplitude * level`.
+        noise = amplitude * level
+        out = efficient + np.diff(np.concatenate(([0.0], noise)))
     elif family == "regime":
         wake = float(np.clip(theta[0], 1e-5, 0.5))
         sleep = float(np.clip(theta[1], 1e-5, 0.5))
@@ -207,6 +264,23 @@ GRIDS: dict[str, tuple] = {
         for wake in (0.001, 0.01)
         for sleep in (0.005, 0.05)
         for ratio in (2.0, 5.0, 12.0)
+    ),
+    #: The amplitude is in units of one **sub-bar** efficient standard
+    #: deviation, and a bar is `SUB` of those - so the efficient price moves
+    #: about `sqrt(SUB)` = 4 over a bar and an amplitude of 4 makes the noise
+    #: comparable to the bar's own move. The grid spans well under to well over.
+    "bounce": tuple((amp,) for amp in (0.25, 0.5, 1.0, 2.0, 4.0, 8.0)),
+    "micro": tuple(
+        (amp, pull)
+        for amp in (0.5, 1.0, 2.0, 4.0, 8.0)
+        for pull in (0.05, 0.2, 0.6)
+    ),
+    "joint": tuple(
+        (shock, memory, amp)
+        for shock in (0.18, 0.22, 0.26, 0.30, 0.38, 0.50)
+        for memory in (0.45, 0.60, 0.70, 0.80)
+        for amp in (0.4, 0.7, 1.0, 1.5)
+        if shock + memory < 0.999
     ),
 }
 FAMILIES = tuple(GRIDS)

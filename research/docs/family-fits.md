@@ -1,4 +1,4 @@
-# Fitted, a process describes a synthetic and not a market - and three statistics say why
+# Fitted, a process describes a synthetic and not a market - until the bar reverses inside
 
 **Measured 2026-10-15.** Code: [`family_fits.py`](../ideas/family_fits.py).
 Ten families fitted by simulated method of moments to eleven asset classes on
@@ -97,6 +97,73 @@ That is a statement about microstructure, and it is one the construction makes
 unreachable: every family here is a random walk at sub-bar resolution, with
 dependence imposed only on the returns. Bid-ask bounce, liquidity provision and
 market-making all act *within* the bar and none of them is represented.
+
+## The prediction, tested
+
+The section below was written before the test and is left as it stood. The
+prediction had two halves: that a mean-reverting sub-bar term would close most
+of the distance, and that it would do so by moving the three shape statistics
+and **not** the tails. **The first half is confirmed and the second is
+refuted.**
+
+Three new families, all with a stationary term added to the price that does not
+accumulate. `bounce` is the Roll model - an i.i.d. sign times a half spread -
+on top of the fitted GARCH. `micro` replaces that sign with an
+Ornstein-Uhlenbeck noise carrying its own reversion rate. `joint` fits the
+efficient process and the bounce **together**.
+
+| class | garch (previous best) | bounce | micro | joint | now best |
+|---|---:|---:|---:|---:|---|
+| fx majors | 109.0 | 16.3 | **4.8** | 6.9 | micro (1.0, 0.6) |
+| baskets | 114.3 | 14.3 | **6.6** | 9.4 | micro (1.0, 0.6) |
+| fx crosses | 130.9 | 18.8 | **6.9** | 11.2 | micro (1.0, 0.6) |
+| energy | 89.4 | 46.1 | 18.3 | **7.4** | joint (0.38, 0.60, 0.7) |
+| indices | 94.2 | 52.9 | 20.9 | **7.6** | joint (0.38, 0.60, 0.7) |
+| metals | 130.3 | 33.5 | 11.0 | **8.5** | joint (0.38, 0.60, 0.7) |
+| softs | 70.2 | 50.1 | 27.3 | **25.4** | joint (0.38, 0.60, 0.4) |
+
+**Traded markets now fit as well as the generated feeds do.** Four point eight
+to 8.5 against the Deriv families' own 6.1 to 9.9, where before the gap was 70
+to 131 against 6 to 27. One mechanism and one or two parameters account for an
+order of magnitude.
+
+### The half that was wrong, and why it mattered
+
+Adding stationary noise to a fat-tailed walk **thins the tails**: holding the
+efficient price at the fitted GARCH, kurtosis fell from 17.0 to 13.8 at an
+amplitude of 1 and to 1.7 at 4, because a sum of a fat-tailed term and an
+independent bounded one is less heavy-tailed than the first alone. So the
+efficient process has to be **fatter than it needed to be on its own** to
+survive the dilution, which is why `joint` exists and why it wins wherever the
+tails matter most. At (0.38, 0.60) the shock weight is twice what plain GARCH
+wanted.
+
+The prediction said this mechanism would leave the tails alone. It does not -
+it trades them off, and reading the two parameters separately would have been
+wrong.
+
+### Two microstructures, not one
+
+FX majors, crosses and baskets prefer `micro`: an Ornstein-Uhlenbeck noise at
+amplitude 1.0 with a reversion rate of 0.6, on a GARCH already fitted. Metals,
+indices and energy prefer `joint`: a fatter efficient process with a plain
+i.i.d. bounce. That split is consistent across three classes each and is the
+kind of thing worth re-testing rather than explaining now.
+
+### What is left
+
+The three statistics that no parameterisation could reach are gone from the
+residuals. `body share` survives on only two classes, `imbalance` on none of
+the traded ones, and `CRT` at `z` of 3.5 to 4.5. **The new leading residual is
+`inside bar` on every traded class**, at `z` of 4.9 to 13.7: markets read 0.149
+to 0.194 where the fitted families give 0.126 to 0.135.
+
+An inside bar is a bar whose whole range sits within the previous bar's, which
+is compression - a quiet bar following a wide one. That is a
+volatility-of-volatility story rather than a microstructure one, and it is a
+different mechanism from the one just added. It is also much smaller: a `z` of
+13.7 on the worst class against the 18 to 30 the shape statistics carried
+before.
 
 ## The prediction this makes
 
