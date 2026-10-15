@@ -422,7 +422,16 @@ from __future__ import annotations
 from .adapting import Adapting
 from .bounding import binding, feasible, least_horizon, slack, solve
 from .diagnostics import Residuals, fit_jerk, residuals
-from .dispersion import borrow_weight, differ, tau, tau_squared
+from .dispersion import (
+    borrow_weight,
+    borrow_weight_of_means,
+    differ,
+    differ_means,
+    tau,
+    tau_of_means,
+    tau_squared,
+    tau_squared_of_means,
+)
 from .facade import Desk, Readout
 from .family import MISSING, PENDING, Filter, members
 from .interacting import Attention, Depth, Interactions, Rate
@@ -466,8 +475,10 @@ __all__ = [
     "Subject",
     "binding",
     "borrow_weight",
+    "borrow_weight_of_means",
     "coverage",
     "differ",
+    "differ_means",
     "dof_for",
     "feasible",
     "fit_jerk",
@@ -486,7 +497,9 @@ __all__ = [
     "smooth",
     "solve",
     "tau",
+    "tau_of_means",
     "tau_squared",
+    "tau_squared_of_means",
     "with_gaps",
 ]
 

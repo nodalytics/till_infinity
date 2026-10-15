@@ -639,6 +639,13 @@ class Inference(Restorable):
     #: and published nowhere, so nothing downstream could rank on it.
     record_hold: float = 0.0
     record_n: float = 0.0
+    #: The shrinkage weight this inference was made with, in pseudo-touches.
+    #: Published because it was not: `engine._prior_weight` estimates it, caches
+    #: it for `PRIOR_WEIGHT_RECHECK` and returns it into the arithmetic below,
+    #: and nothing ever wrote it down - so the fact that it sits at
+    #: `shrinkage.MAX_WEIGHT` on every traded pool was invisible to the journal.
+    #: level-shrinkage.md measures it there on four pools of 265 to 279 levels.
+    prior_weight: float = 0.0
 
     @property
     def direction(self) -> str:
@@ -796,6 +803,7 @@ class Inference(Restorable):
             "comparable": round(self.comparable, 2),
             "actionable": self.actionable,
             "mixed": self.mixed,
+            "prior_weight": round(self.prior_weight, 2),
             "detail": self.detail,
         }
 
@@ -974,6 +982,26 @@ def infer(
     # constant is a guess at a quantity with a closed form; the estimate is
     # that quantity, measured, and it falls back to the guess when it cannot
     # be measured.
+    #
+    # **One weight serves both lines below, and they are different quantities.**
+    # `shrinkage.prior_weight` forms `p(1-p)/tau_squared` from the direction
+    # **rate**, which is the right closed form for `probability_up` and not for
+    # `mean_push`: a continuous mean's sampling variance is `s_squared/n`, and
+    # its between-level spread is a different number in different units.
+    #
+    # level-shrinkage.md measured both. On every traded pool the estimate comes
+    # back at `MAX_WEIGHT` - 50 - because the direction rate has no between-level
+    # spread to find and `SideStats.decay` leaves `n` a decayed pseudo-count, so
+    # `p(1-p)/n` is overstated and `tau` biased down. And push wants to be pooled
+    # just as hard: no between-level spread in sweep depth or push either, on
+    # 126,002 interactions, with the test resolving a 5% spread at p of 0.03 and
+    # every arm that reached significance matched by its own placebo.
+    #
+    # So the arithmetic is right and the coupling is not. If the direction rate's
+    # `tau` ever rises - a regime, a feed, a changed decay factor - `K` falls and
+    # `push` stops pooling as a side effect of a question it was not asked. They
+    # should be separate weights that happen to agree, because they agree for
+    # unrelated reasons.
     weight = own.touches / (own.touches + prior_weight) if own.touches else 0.0
     probability = weight * own.probability_up(prior_up, prior_weight) + (1 - weight) * prior_up
     push = weight * own.mean_push + (1 - weight) * prior_push
@@ -998,6 +1026,7 @@ def infer(
         detail=detail,
         backcheck=bool(features.backcheck),
         risk_vol=level.risk_vol(side, price or level.price, vol),
+        prior_weight=float(prior_weight),
         record_hold=own.hold_rate,
         record_n=own.decisive,
     )

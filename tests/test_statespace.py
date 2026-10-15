@@ -7816,3 +7816,146 @@ class TestTails:
         assert got.covers(2.0) == pytest.approx(tails.coverage(2.0, tails.dof_for("1h")))
         middle = got.covers(2.0)
         assert got.band_covering(middle)[1] == pytest.approx(got.band(2.0)[1], rel=1e-6)
+
+
+class TestDispersionOfMeans:
+    """The continuous counterpart, where the null has to survive dependence."""
+
+    @staticmethod
+    def _units(offset_sd, rho=0.0, units=150, each=30, seed=3, base=1.0, spread=0.4):
+        """Units that are identical when `offset_sd` is zero, AR(1) inside each.
+
+        `rho` is the point: a continuous observation can be correlated with the
+        one before it, and that is what breaks an i.i.d. null.
+        """
+        import random
+
+        rng = random.Random(seed)
+        out = []
+        for _ in range(units):
+            offset = rng.gauss(0.0, offset_sd) if offset_sd else 0.0
+            carried, values = 0.0, []
+            for _ in range(each):
+                carried = rho * carried + rng.gauss(0.0, spread)
+                values.append(max(0.0, base + offset + carried))
+            out.append(values)
+        return out
+
+    def test_identical_units_do_not_read_as_different(self):
+        from till_infinity.structures.statespace.dispersion import differ_means
+
+        observed, null, p = differ_means(self._units(0.0), draws=120, seed=1)
+        # The claim is never `tau == 0`. DerSimonian and Laird truncates at
+        # zero, and because the within-unit variances are estimated rather
+        # than known it is biased up, so on identical units it lands anywhere
+        # from 0.00 to about 0.03. What has to hold is that it is level with
+        # its own null.
+        assert observed >= 0.0
+        assert p > 0.05
+        assert observed == pytest.approx(null, abs=0.04)
+
+    def test_units_that_really_differ_are_found(self):
+        from till_infinity.structures.statespace.dispersion import differ_means, tau_of_means
+
+        groups = self._units(0.20)
+        observed, null, p = differ_means(groups, draws=120, seed=1)
+        assert p < 0.05
+        assert observed > null
+        # And the recovered spread is near the planted one.
+        assert tau_of_means(groups) == pytest.approx(0.20, abs=0.07)
+
+    def test_the_block_null_survives_dependence_where_an_iid_one_would_not(self):
+        """The measurement that decided the null's shape.
+
+        Identical units with an AR(1) inside each. Dealing single observations
+        destroys the dependence and so lowers the floor without lowering the
+        observed value; dealing contiguous runs does not.
+        """
+        import random
+
+        from till_infinity.structures.statespace.dispersion import (
+            differ_means,
+            tau_squared_of_means,
+        )
+
+        groups = self._units(0.0, rho=0.6, seed=9)
+        _, _, blocked = differ_means(groups, draws=150, seed=9)
+        assert blocked > 0.05
+
+        # The i.i.d. version, built here rather than offered as an option.
+        observed = math.sqrt(tau_squared_of_means(groups)[0])
+        laid = [v for values in groups for v in values]
+        counts = [len(values) for values in groups]
+        rng = random.Random(9)
+        over = 0
+        for _ in range(150):
+            rng.shuffle(laid)
+            cut, drawn = 0, []
+            for n in counts:
+                drawn.append(laid[cut : cut + n])
+                cut += n
+            over += math.sqrt(tau_squared_of_means(drawn)[0]) >= observed
+        assert (over + 1) / 151 < blocked / 5
+
+    def test_logs_stop_one_observation_from_carrying_a_unit(self):
+        """The reason `logs` exists, on the quantity shape it exists for.
+
+        A sweep depth is heavy-tailed, and in raw units a unit's mean is
+        carried by its largest one or two observations - which is within-unit
+        variance that no between-unit difference can out-shout.
+        """
+        import random
+
+        rng = random.Random(6)
+        units = [[math.exp(rng.gauss(0.0, 1.5)) for _ in range(30)] for _ in range(80)]
+        raw = sorted(max(v) / sum(v) for v in units)
+        logs = sorted(max(math.log1p(x) for x in v) / sum(math.log1p(x) for x in v) for v in units)
+        even = 1 / 30
+        assert raw[len(raw) // 2] > 4 * even
+        assert logs[len(logs) // 2] < raw[len(raw) // 2] / 2
+
+    def test_a_whole_unit_block_is_the_conservative_default(self):
+        """`block` trades size against power, and the default picks size.
+
+        On units that are identical by construction with strong dependence
+        inside each, the default must not reject and a short block does.
+        """
+        from till_infinity.structures.statespace.dispersion import differ_means, lag_one
+
+        groups = self._units(0.0, rho=0.6, seed=11)
+        assert lag_one(groups) > 0.3
+        assert differ_means(groups, draws=150, seed=11)[2] > 0.05
+        assert differ_means(groups, draws=150, seed=11, block=8)[2] < 0.05
+
+    def test_a_pool_too_small_to_ask_says_so(self):
+        from till_infinity.structures.statespace.dispersion import UNITS, differ_means
+
+        observed, null, p = differ_means(self._units(0.2, units=UNITS - 1), draws=20)
+        assert observed >= 0.0
+        assert math.isnan(null)
+        assert math.isnan(p)
+
+    def test_the_weight_goes_to_the_clamp_when_units_do_not_differ(self):
+        """And that is correct behaviour, not an answer about the quantity.
+
+        `borrow_weight_of_means` is a ratio with `tau_squared` underneath, so a
+        pool with no spread pools maximally. The docstring says to read it only
+        after `differ_means` has opened the gate, and this is why.
+        """
+        from till_infinity.structures.statespace.dispersion import borrow_weight_of_means
+
+        pooled = borrow_weight_of_means(self._units(0.0))
+        spread = borrow_weight_of_means(self._units(0.40))
+        assert pooled == pytest.approx(50.0)
+        assert 0.5 <= spread < pooled
+
+    def test_a_mean_needs_more_observations_than_a_rate(self):
+        from till_infinity.structures.statespace.dispersion import (
+            LEAST,
+            LEAST_VALUES,
+            tau_squared_of_means,
+        )
+
+        assert LEAST_VALUES > LEAST
+        _, _, used = tau_squared_of_means([[1.0, 2.0]] * 40)
+        assert used == 0
