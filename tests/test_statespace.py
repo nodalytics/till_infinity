@@ -6135,10 +6135,16 @@ class TestBounding:
         assert dex_up[1] == pytest.approx(dex_down[0], rel=0.1)
 
     def test_an_unmeasured_feed_falls_back_to_symmetric(self):
-        """A guess would be worse than the constant it replaces."""
+        """A guess would be worse than the constant it replaces.
+
+        `EURUSD` used to be the example here and is now measured - see
+        `TestTradedWalls` - so the unmeasured cases are the traded classes that
+        still have not been: energy, softs, baskets, indices and equities.
+        """
         from till_infinity.structures.statespace import bounding
 
-        assert bounding.shifts_for("EURUSD") == (bounding.SHIFT, bounding.SHIFT)
+        for feed in ("US_Oil", "Sugar", "USD_Basket", "Germany_40", "AAPL.OQ"):
+            assert bounding.shifts_for(feed) == (bounding.SHIFT, bounding.SHIFT), feed
         assert bounding.shifts_for("Volatility_75_Index") == (
             bounding.SHIFT,
             bounding.SHIFT,
@@ -6430,7 +6436,8 @@ class TestBoundingFeed:
         assert bounding.shifts_for("Boom_500_Index") == bounding.SHIFTS["boom"]
         assert bounding.shifts_for("DEX_900_UP_Index") == bounding.SHIFTS["dex_up"]
         # An unlisted feed is symmetric, which is the documented fallback.
-        assert bounding.shifts_for("EURUSD") == (bounding.SHIFT, bounding.SHIFT)
+        # Not `EURUSD`: that is measured now, see `TestTradedWalls`.
+        assert bounding.shifts_for("US_Oil") == (bounding.SHIFT, bounding.SHIFT)
 
     def test_feed_changes_what_solve_returns_on_a_skewed_family(self):
         from till_infinity.structures.statespace import bounding
@@ -6725,8 +6732,13 @@ class TestBehaving:
         ):
             family = behaving.classify(feed)
             assert bounding.shifts_for(feed) == bounding.SHIFTS[family], feed
+        # The traded classes resolve through the same classifier, now that they
+        # are measured - which is the point of the table being one lookup.
+        for feed in ("EURUSD", "EURJPY", "XAUUSD"):
+            family = behaving.classify(feed)
+            assert bounding.shifts_for(feed) == bounding.SHIFTS[family], feed
         # An unlisted family still falls back to the symmetric wall.
-        assert bounding.shifts_for("EURUSD") == (bounding.SHIFT, bounding.SHIFT)
+        assert bounding.shifts_for("US_Oil") == (bounding.SHIFT, bounding.SHIFT)
         assert bounding.shifts_for("AAPL.OQ") == (bounding.SHIFT, bounding.SHIFT)
 
     def test_the_table_is_three_way_and_step_is_the_middle_row(self):
@@ -7959,3 +7971,110 @@ class TestDispersionOfMeans:
         assert LEAST_VALUES > LEAST
         _, _, used = tau_squared_of_means([[1.0, 2.0]] * 40)
         assert used == 0
+
+
+class TestTradedWalls:
+    """The barrier wall on instruments the desk actually trades."""
+
+    def test_every_traded_class_is_wider_than_the_diffusion_constant(self):
+        """The measurement: 0.7262 traded against 0.5850 on the control.
+
+        `SHIFTS` held no traded instrument at all until this was measured, so
+        every live feed took the diffusion constant and understated the wall.
+        """
+        from till_infinity.structures.statespace import bounding
+
+        for feed in ("EURUSD", "USDJPY", "EURJPY", "GBPJPY", "XAUUSD"):
+            up, down = bounding.shifts_for(feed)
+            assert up > bounding.SHIFT
+            assert down > bounding.SHIFT
+
+    def test_the_down_wall_is_the_wider_one_on_traded_feeds(self):
+        """Pooled log-ratio -0.1571 at `z` -11.53, against a control at +0.0259.
+
+        Per-instrument asymmetry is deliberately **not** claimed - the control's
+        own ratio wanders 0.741 to 1.229 - so the table carries class medians
+        and only the direction of the pooled ordering is asserted.
+        """
+        from till_infinity.structures.statespace import bounding
+
+        for feed in ("EURUSD", "EURJPY", "XAUUSD"):
+            up, down = bounding.shifts_for(feed)
+            assert down > up
+
+    def test_generated_feeds_keep_their_own_walls(self):
+        from till_infinity.structures.statespace import bounding
+
+        assert bounding.shifts_for("Volatility_75_Index") == (
+            bounding.SHIFT,
+            bounding.SHIFT,
+        )
+        assert bounding.shifts_for("Boom_500_Index")[0] > bounding.shifts_for("Boom_500_Index")[1]
+
+    def test_unmeasured_classes_are_not_given_a_measured_wall(self):
+        """An FX-measured wall on an equity is an extrapolation, so it is refused."""
+        from till_infinity.structures.statespace import bounding
+
+        for feed in ("AAPL.OQ", "JPM.N"):
+            assert bounding.shifts_for(feed) == (bounding.SHIFT, bounding.SHIFT)
+
+    def test_the_wall_grows_with_the_reach_on_traded_feeds_only(self):
+        """Traded reads 0.6472, 0.7525, 0.8619 at reaches 2, 4, 8.
+
+        The control reads 0.5923, 0.5681, 0.5954 over the same reaches, which is
+        flat - so the slope must not be applied to it. The first version of
+        `wall_at` guarded on the wall rather than the class and let `Boom` and
+        `DEX` through.
+        """
+        from till_infinity.structures.statespace import bounding
+
+        near = bounding.wall_at("EURUSD", 2.0)
+        far = bounding.wall_at("EURUSD", 8.0)
+        assert far[0] > near[0]
+        assert far[1] > near[1]
+        # Two doublings from the base, so twice the slope.
+        assert far[0] - near[0] == pytest.approx(2 * bounding.REACH_SLOPE)
+        # And the generated families keep theirs flat, asymmetric or not.
+        for feed in ("Volatility_75_Index", "Boom_500_Index", "DEX_900_UP_Index"):
+            assert bounding.wall_at(feed, 8.0) == bounding.shifts_for(feed)
+
+    def test_at_the_anchor_reach_the_wall_is_the_table(self):
+        from till_infinity.structures.statespace import bounding
+
+        assert bounding.wall_at("EURUSD", bounding.REACH_BASE) == bounding.shifts_for("EURUSD")
+        assert bounding.wall_at("EURUSD", 0.0) == bounding.shifts_for("EURUSD")
+
+    def test_a_wider_wall_lengthens_the_horizon_more_than_it_moves_the_probability(self):
+        """Which is why the level matters and the asymmetry barely does.
+
+        `T = u * d` is second order in the wall where `P = d / (u + d)` is a
+        ratio, so the horizon moves and the probability barely does. Swept over
+        up and down from 0.5 to 12 sigmas, replacing 0.5826 with the traded
+        0.7262 lengthens every horizon - by at least 2.3%, and by 3.4% at eight
+        sigmas a side rising to 11.4% at two - and moves the probability by at
+        most **0.0155**, worst at a 0.5-against-3 geometry where both walls are
+        a large share of the near barrier. The lengthening shrinks as the
+        barriers widen because the wall is additive, so it is a smaller share
+        of a bigger distance.
+        """
+        from till_infinity.structures.statespace import bounding
+
+        worst = 0.0
+        for up in (0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0):
+            for down in (0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0):
+                thin = bounding.solve(up=up, down=down, shift=bounding.SHIFT)
+                wide = bounding.solve(up=up, down=down, shift=0.7262)
+                assert wide["horizon"] > thin["horizon"]
+                worst = max(worst, abs(wide["probability"] - thin["probability"]))
+        assert worst == pytest.approx(0.0155, abs=0.001)
+        # And the symmetric cases, where the probability cannot move at all and
+        # the lengthening falls away as the barriers widen.
+        grew = []
+        for side in (2.0, 4.0, 8.0):
+            thin = bounding.solve(up=side, down=side, shift=bounding.SHIFT)
+            wide = bounding.solve(up=side, down=side, shift=0.7262)
+            assert wide["probability"] == pytest.approx(thin["probability"])
+            grew.append(wide["horizon"] / thin["horizon"] - 1.0)
+        assert grew[0] == pytest.approx(0.114, abs=0.004)
+        assert grew[-1] == pytest.approx(0.034, abs=0.004)
+        assert grew[0] > grew[1] > grew[2]
