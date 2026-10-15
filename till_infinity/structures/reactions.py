@@ -637,6 +637,16 @@ class Inference(Restorable):
     #: strength.md measures this as the strongest thing a level knows: AUC
     #: 0.648 against `Level.strength`'s 0.548. It was computed on every touch
     #: and published nowhere, so nothing downstream could rank on it.
+    #:
+    #: **The event that 0.648 orders has to travel with it.** strength.md's
+    #: outcome is "did price get through the level at all", with a trap counted
+    #: as getting through and coming back, at a base rate near 81% - its own
+    #: main run is 3,987 rejects and 12 breaks. On a **balanced** race, where
+    #: price travels one bar range back before one through at a base rate near
+    #: 49%, the same record orders nothing: record-auc.md reads 0.4977 to 0.5104
+    #: across twelve configurations with the placebo inside 0.003 of every one,
+    #: and ties, pooling and overlapping races are each worth under 0.005 of it.
+    #: Neither figure refutes the other and neither generalises past its event.
     record_hold: float = 0.0
     record_n: float = 0.0
     #: The shrinkage weight this inference was made with, in pseudo-touches.
