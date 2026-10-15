@@ -89,6 +89,21 @@ That distinction is the honest limit of this study: it shows the hold rate
 carries nothing, and it does not show that nothing about a level carries
 anything.
 
+**And "the hold rate" here is one event, not the only one.** `strength.md`
+reports a level's same-side record at AUC 0.648 against a *different* outcome -
+whether price gets through the level at all, with a trap counted as getting
+through, at a base rate near 81% on the production book - where the race settled
+above is symmetric by construction at a base rate near 0.49. The two do not
+contradict each other. [`record-auc.md`](record-auc.md) separates them and shows
+that the three mechanisms which could have reconciled the gap arithmetically -
+tie handling, pooling across feeds, and overlapping races - are each worth under
+0.005 on this event, so the difference is the event itself.
+
+The two continuous quantities this study named as untested, the sweep-depth and
+push distributions, were measured afterwards in
+[`level-shrinkage.md`](level-shrinkage.md) and are null in the same way, with
+the test resolving a 5% between-level spread. The trap rate is still untested.
+
 ## A defect in the table above
 
 `auc` ranks by sorted position and **does not handle ties**, so the constant
