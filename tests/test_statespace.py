@@ -8232,3 +8232,121 @@ class TestOutputLayer:
         assert saturated < 1e-5
         assert used > 0.15
         assert used > 1_000 * saturated
+
+
+class TestReadoutTerms:
+    """What a `Readout` can hand an output layer, and what it must not.
+
+    `facade.Desk.read` computes the standardised one-step innovation to build
+    its quantile band and, until 2026-10-16, did not publish it - so a caller
+    wanting statespace's own reading of a bar had to reconstruct it from
+    `value` and `spread`, which gives a different and smaller number.
+    """
+
+    @staticmethod
+    def _run(prices, noise=0.0004, feed="EURUSD"):
+        from till_infinity.structures.statespace.facade import Desk
+
+        desk = Desk()
+        return [
+            desk.read(feed, "1h", float(i) * 3600.0, price, noise, volume=0.0)
+            for i, price in enumerate(prices)
+        ]
+
+    def test_a_predicted_bar_is_no_surprise_and_the_first_one_is_all_surprise(self) -> None:
+        """A series the filter tracks exactly reports an innovation of zero.
+
+        Except the first bar, which reports **173** on a flat series at 100:
+        the prior sits at zero and the first observation is the whole of the
+        level. That is correct and it is a trap for a consumer, so it is
+        pinned here. `Readout.warm` is already False there - the quantile band
+        needs a history - so a caller that checks `warm`, as the field's own
+        docstring tells it to, never sees the cold-start value.
+        """
+        got = self._run([100.0] * 60)
+        assert got[0].surprise > 100.0
+        assert not got[0].warm
+        assert max(abs(r.surprise) for r in got[1:]) < 1e-9
+
+    def test_the_innovation_is_not_the_post_update_residual(self) -> None:
+        """And the difference is an attenuation, not a rounding.
+
+        The naive reconstruction divides a residual that has already been
+        pulled toward the price by a spread meant for the *next* observation.
+        Both errors shrink it, so it reads as a weak signal rather than as a
+        bug - which is why `surprise` is published and this test exists.
+        """
+        prices = [100.0] * 60 + [100.5]
+        got = self._run(prices)
+        last = got[-1]
+        naive = (prices[-1] - last.value) / math.sqrt(last.spread)
+        assert last.surprise > 10.0
+        assert naive > 0.0
+        # Same sign, materially different size: the naive one is smaller.
+        assert naive < last.surprise
+        assert last.surprise / naive == pytest.approx(1.72, abs=0.15)
+
+    def test_terms_from_offers_two_and_names_them(self) -> None:
+        """Surprise and pace, with pace at zero when the mechanism is inert."""
+        from till_infinity.structures.statespace import terms_from
+
+        last = self._run([100.0] * 60 + [100.5])[-1]
+        terms = terms_from(last)
+        assert set(terms) == {"surprise", "pace"}
+        assert terms["surprise"] == pytest.approx(last.surprise)
+        # `volume=0` leaves pacing inert, and an inert mechanism has to
+        # contribute nothing rather than contributing one.
+        assert last.pace_factor == 1.0
+        assert terms["pace"] == 0.0
+
+    def test_spread_needs_a_reference_before_it_is_a_term(self) -> None:
+        """A spread is in the instrument's units, so it is scale-free only
+        against something. No reference, no term."""
+        from till_infinity.structures.statespace import terms_from
+
+        got = self._run([100.0] * 60 + [100.5])
+        last, earlier = got[-1], got[-6]
+        assert "spread" not in terms_from(last)
+        assert "spread" not in terms_from(last, reference_spread=0.0)
+        with_ref = terms_from(last, reference_spread=earlier.spread)
+        assert with_ref["spread"] == pytest.approx(last.spread / earlier.spread - 1.0)
+
+    def test_constants_are_not_offered_as_terms(self) -> None:
+        """`walls`, `family` and `absorbs` are per-feed lookups.
+
+        Each is the same number on every bar of a feed, so as a term it is a
+        bias wearing a term's name - it shifts every signal equally and changes
+        no ordering, while looking as though it had been measured.
+        """
+        from till_infinity.structures.statespace import terms_from
+
+        got = self._run([100.0 + 0.01 * i for i in range(60)])
+        walls = {r.walls for r in got}
+        families = {r.family for r in got}
+        assert len(walls) == 1
+        assert len(families) == 1
+        for readout in got:
+            offered = set(terms_from(readout, reference_spread=1.0))
+            assert offered == {"surprise", "pace", "spread"}
+            assert "walls" not in offered
+            assert "family" not in offered
+            assert "absorbs" not in offered
+
+    def test_a_layer_on_these_terms_saturates_without_a_temperature(self) -> None:
+        """Which is what `Layer.scaled` is for.
+
+        An innovation of 21 through a weight of 0.5 is `tanh(10)`, so a jump
+        and a much larger jump are the same signal. The layer does not pick a
+        temperature for the caller, but the need for one is a property of these
+        terms and belongs in a test.
+        """
+        from till_infinity.structures.statespace import Layer, terms_from
+
+        big = terms_from(self._run([100.0] * 60 + [100.5])[-1])
+        bigger = terms_from(self._run([100.0] * 60 + [101.0])[-1])
+        hot = Layer(weights={"surprise": -0.5, "pace": 0.2})
+        assert hot(big).value == pytest.approx(-1.0, abs=1e-6)
+        assert hot(bigger).value == pytest.approx(-1.0, abs=1e-6)
+        cool = hot.scaled(0.02)
+        assert cool(bigger).value < cool(big).value < 0.0
+        assert cool(big).value - cool(bigger).value > 0.05

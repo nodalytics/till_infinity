@@ -441,7 +441,7 @@ from .paths import Path, hourly, simulate, with_gaps
 from .rates import Slope, slope_per_bar, slope_per_hour
 from .reverting import Reverting
 from .robust import Robust
-from .signalling import BOUNDS, NEUTRAL, Layer, Signal, squash
+from .signalling import BOUNDS, NEUTRAL, Layer, Signal, squash, terms_from
 from .smoothing import Smoothed, smooth
 from .spanning import Span, garman_klass, parkinson, rogers_satchell
 from .subjects import INSTRUMENT, LEVEL, RELATION, SUBJECTS, Subject
@@ -506,6 +506,7 @@ __all__ = [
     "tau_of_means",
     "tau_squared",
     "tau_squared_of_means",
+    "terms_from",
     "with_gaps",
 ]
 

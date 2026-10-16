@@ -91,6 +91,43 @@ def squash(total: float, activation: str) -> float:
     raise ValueError(f"unknown activation {activation!r}")
 
 
+def terms_from(readout, *, reference_spread: float = 0.0) -> dict[str, float]:
+    """The terms a `facade.Readout` can offer a layer, and only those.
+
+    Two, by default, and the shortness of the list is the point.
+
+    * **`surprise`** - the standardised one-step innovation. Signed,
+      scale-free, and the one quantity here that is genuinely statespace's own
+      reading of the bar. Taken from the field rather than reconstructed:
+      `(price - readout.value) / readout.spread` is a **post-update** residual
+      against a **next-step** spread, attenuated by an unknown amount.
+    * **`pace`** - `pace_factor - 1.0`, so an inert pacing mechanism
+      contributes exactly nothing rather than contributing one.
+
+    **What is deliberately not here.** `walls`, `family` and `absorbs` are
+    constant for a feed - `shifts_for` and `traits_for` are lookups by class -
+    so each would enter a weighted sum as the same number on every bar. That is
+    a **bias wearing a term's name**: it shifts every signal for that feed
+    equally, changes no ordering, and makes the bias look as though it had been
+    measured. Put them in the weights, in the choice of layer, or in a gate -
+    not in the sum.
+
+    `spread` and `seen` do vary, and neither is scale-free on its own: a spread
+    is in the instrument's units and `seen` only grows. `spread` is offered
+    against a `reference_spread` the caller supplies - its own trailing median,
+    typically - as `spread / reference - 1.0`, and left out entirely when no
+    reference is given, because dividing by the wrong thing silently is worse
+    than not offering the term at all.
+    """
+    terms = {
+        "surprise": float(readout.surprise),
+        "pace": float(readout.pace_factor) - 1.0,
+    }
+    if reference_spread > 0:
+        terms["spread"] = float(readout.spread) / float(reference_spread) - 1.0
+    return terms
+
+
 @dataclass(frozen=True, slots=True)
 class Signal:
     """One output, with the arithmetic that produced it kept alongside it."""
