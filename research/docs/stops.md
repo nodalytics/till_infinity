@@ -193,3 +193,61 @@ where the edge is.** Two mechanisms fit and one measurement separates them:
 `adverse_r` now records how much of its stop a *winner* actually used. A few
 dozen gold trades carrying it will separate these: if winners spend most of the
 stop, it is too tight; if they barely touch it, the entries are wrong.
+
+## The question above, re-asked once `adverse_r` existed - and still blocked
+
+Measured 2026-10-16 on 1,202 closes, 2026-08-30 to 2026-09-26.
+
+`adverse_r` is now on the record, so "does a winner spend most of its stop" has
+an answer in principle. It does not have one in practice, and the reason is
+worth more than the number would have been.
+
+**What is solid.** The stop is a configured width, not a per-trade judgement:
+recovering it as `adverse_vol / adverse_r` gives p25 2.99, median 3.00, p75 3.42
+volatility units, clustered hard on 3.0, 2.45 and 4.0. (Note which field this
+is. The journal's `risk_vol` is a *structures* feature about the level, median
+1.55, and reading it as the stop distance is a mistake that makes every ratio
+built on it wrong - the trade's own stop is `Intent.stop_vol`, set by the
+strategies as `abs(entry - stop) / unit`.)
+
+**What the record appears to say.** A winner used a median 0.19 of its stop,
+p75 0.41, p90 0.61, and only 3% of winners ever saw price reach the stop level
+and survive. That holds in one direction inside every subgroup - the
+highest-using feed is uk100 at 0.57, by interval it runs 0.08 (30m) to 0.28
+(3m), by strategy 0.10 (level-scalp) to 0.29 (cycle-scalp) - so it is not a
+pooled median hiding an instrument, which is the failure this file already
+records once.
+
+Read naively that says the stop is five times wider than winners need.
+
+**Why that reading does not survive.** Two independent problems, both from the
+same root: `_best` and `_worst` are process memory and no restart restores
+them, so a position adopted mid-flight has a floor rather than a measurement.
+
+* *The filter selects.* A stopped trade reached its stop, so `adverse_r` under
+  1.0 is impossible - and 179 of 282 stops (**63%**) report exactly that.
+  Dropping them leaves 406 closes netting **+207** against the full book's
+  **−1,185**, because the rows dropped are the losses. No profit-and-loss
+  counterfactual can be run on that subset.
+* *The survivors understate.* The same lost path truncates the adverse extreme
+  too, so a winner's measured heat is a floor. The bias runs toward making
+  winners look like they use *less* of the stop than they did, which is the
+  direction that would flatter a tightening.
+
+The counterfactual, for the record and not as a recommendation: a stop at `k`
+of the current distance kills exactly the trades whose heat exceeded `k`, and on
+the clean subset every `k` from 0.25 to 1.5 nets below what the desk actually
+made (worst −723 at k=0.25, least bad −154 at k=1.5), with the ordering
+non-monotonic across k, which is a few large trades rather than a shape. The
+few winners carrying high heat are the ones that pay, so tightening kills more
+value than it saves. That direction is believable and its size is not.
+
+**What would answer it.** `excursion_partial` is written on every close as of
+2026-10-08 and marks these rows at adopt time, before the result exists - which
+is the one filter that does not select on the outcome. It postdates this
+journal, so the question is not blocked on a new measurement, only on waiting
+for closes that carry the marker. Ask again when a few hundred do.
+
+One thing not to wait for: nothing was reading that marker. It was written and
+gated nothing, including in the turn-exit comparison that reads the same
+`_best`. See [turn-exit-silence.md](turn-exit-silence.md).

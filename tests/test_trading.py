@@ -847,9 +847,16 @@ async def test_a_turn_suggestion_on_the_signal_reaches_the_close(tmp_path):
     real `turn_price`, and `turn_side` agrees with the trade's side about as often as
     it disagrees, so it is not being systematically refused either.
 
-    This pins the path itself. If it passes, the wiring is sound and the live silence
-    is environmental - a recovered intent after a restart, whose features default
-    empty, being the documented candidate. If it fails, the break is here.
+    This pins the path itself, and the break was here. `_turn_exit` had exactly one
+    caller - `_unattributed_context` - so the comparison was wired solely into the
+    records that cannot satisfy it: an unattributed close has no decision, hence no
+    `turn_price` in its features, hence `suggestion_from` returns 0 and `_turn_exit`
+    returns `{}` every time. Every attributed close goes through `_settle`, which
+    never called it.
+
+    The old assertion here hid that, by accepting any `turn_*` key: `turn_price`
+    itself arrives via `Intent.to_context`, so the record looked scored when nothing
+    had scored it. It now asserts on the scored fields.
     """
     bus = Bus()
     async with Journal(tmp_path / "journal.db") as book:
@@ -883,8 +890,21 @@ async def test_a_turn_suggestion_on_the_signal_reaches_the_close(tmp_path):
             if isinstance(getattr(e, "context", None), dict) and "best_r" in e.context
         ]
         assert outcomes, "no outcome carried best_r"
-        turned = [c for c in outcomes if any(k.startswith("turn_") for k in c)]
-        assert turned, "the close carried no turn_* field, so the shadow never ran"
+        # **Not `any(k.startswith("turn_"))`.** That is what this asserted, and
+        # it passed for the wrong reason: `Intent.to_context` splats the
+        # features, so the signal's own `turn_price` lands on the close record
+        # whether or not anything scored it. The test therefore went green
+        # while `_turn_exit` was wired only into `_unattributed_context` and
+        # the comparison was never written for an attributed close at all. The
+        # scored fields are the ones `report.compare_turn_exits` reads.
+        scored = [c for c in outcomes if "turn_suggested_r" in c and "turn_took_r" in c]
+        assert scored, "the close carried no scored comparison, so the shadow never ran"
+        got = scored[0]
+        assert not got.get("turn_reason"), f"refused to score: {got.get('turn_reason')!r}"
+        assert float(got["turn_ahead_r"]) == pytest.approx(
+            (4410.0 - float(got["entry_filled"])) / abs(float(got["entry"]) - float(got["stop"])),
+            rel=1e-3,
+        ), "the suggestion is measured from the fill, in units of the risk it was sized for"
 
 
 async def test_a_close_records_when_each_extreme_came_not_only_how_far(tmp_path):

@@ -3623,6 +3623,14 @@ class Trader:
                 suggested=suggested,
                 ticket=live.position.ticket,
                 by=live.by,
+                # `_reach` reads `_best`, which no restart restores, so a
+                # position adopted mid-flight hands `score` a floor. Scored
+                # anyway it reads as "never reached", which sets the
+                # suggestion equal to what the trade took and contributes
+                # zero to the numerator and one to the denominator of
+                # `gained_r_per_trade` - diluting the headline by the partial
+                # share, which ran at 85-94% of closes in October.
+                partial=live.position.ticket in self._partial,
             )
             outcome = turning.score(
                 ride,
@@ -4413,6 +4421,23 @@ class Trader:
                         (position.price_open - live.intent.entry) * live.intent.side.sign, 8
                     ),
                     **live.intent.to_context(),
+                    # **The turn model's exit, beside the one this trade took.**
+                    # `_unattributed_context` has carried this since it was
+                    # written and this path - the one every attributed close
+                    # takes - did not, so the comparison was wired exclusively
+                    # to the records that can never satisfy it: an unattributed
+                    # close has no decision, so no `turn_price` in its
+                    # features, so `_turn_exit` returns `{}` every time. Across
+                    # 1,825 outcomes in the live journal not one carried a
+                    # `turn_*` field while 1,163 of the decisions behind them
+                    # published a real `turn_price` and 404 of those cleared
+                    # `scorable`. `trading.turn_exit` reported inert for the
+                    # whole period and the cause was read as the depth head
+                    # being cold.
+                    #
+                    # Last, like the spread in `Intent.to_context`, so a
+                    # feature named `turn_*` cannot shadow the scored row.
+                    **self._turn_exit(live, price),
                 },
                 tags=(live.intent.feed, str(live.intent.side), why, live.by or "unattributed"),
             )

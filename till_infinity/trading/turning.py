@@ -21,10 +21,13 @@ level is chosen after the fact. This one is not, for two reasons:
 * **The level is fixed before the trade opens.** `turn_price` is on the signal,
   and the signal is what opened the position. Nothing about it can move
   afterwards.
-* **The path is already tracked.** `_best` and `_worst` follow every open trade
-  from the quote stream, because `Shadow` and `best_r` already need them. So
-  whether a level *was reached* is a fact this service already holds, not a
-  reconstruction from bars that may have missed the touch.
+* **The path is already tracked, where it was tracked at all.** `_best` and
+  `_worst` follow every open trade from the quote stream, because `Shadow` and
+  `best_r` already need them, so whether a level *was reached* is usually a
+  fact this service already holds rather than a reconstruction from bars that
+  may have missed the touch. Nothing restores them across a restart, though, so
+  a position adopted mid-flight carries a floor instead of a measurement.
+  `TurnExit.partial` says which, and `score` refuses those rows.
 
 What it still cannot know is the **fill**. A limit at the suggested level would
 have been filled at that level or not at all, so the comparison is fair for a
@@ -86,6 +89,20 @@ class TurnExit:
     suggested: float
     ticket: int = 0
     by: str = ""
+    #: **Whether the path behind this trade is a floor rather than a record.**
+    #: `_best` is process memory and nothing restores it, so a position adopted
+    #: across a restart is first marked long after it opened and everything
+    #: before that is gone. `Trader._partial` sets this at adopt time, which is
+    #: before the result exists.
+    #:
+    #: A floor is not uniformly useless: `best_r` clearing `ahead` still proves
+    #: the level was crossed, because a floor can only understate. Keeping those
+    #: and dropping only the rows that read short is the tempting half-fix, and
+    #: it is worse than the bug it fixes - the lost peaks belong to winners,
+    #: since a loser never had one, so it would select on the very outcome being
+    #: measured and bias `gained_per_trade` upward. These rows come out
+    #: whichever way they read.
+    partial: bool = False
 
     @property
     def ahead(self) -> float:
@@ -101,7 +118,7 @@ class TurnExit:
 
     @property
     def scorable(self) -> bool:
-        return self.risk > 0 and MIN_AHEAD <= self.ahead <= MAX_R
+        return not self.partial and self.risk > 0 and MIN_AHEAD <= self.ahead <= MAX_R
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,7 +182,12 @@ def score(ride: TurnExit, *, best_r: float, took_r: float) -> TurnOutcome:
     See `trading-turning.md` in research/docs.
     """
     if not ride.scorable:
-        why = "no risk" if ride.risk <= 0 else f"suggestion {ride.ahead:+.2f}R from entry"
+        if ride.risk <= 0:
+            why = "no risk"
+        elif ride.partial:
+            why = "excursion partial"
+        else:
+            why = f"suggestion {ride.ahead:+.2f}R from entry"
         return TurnOutcome(
             ticket=ride.ticket,
             feed=ride.feed,
