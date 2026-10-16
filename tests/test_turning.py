@@ -141,6 +141,58 @@ class TestTally:
         assert got["scored"] == 0
 
 
+class TestAPartialPath:
+    """A trade whose excursion record starts mid-flight cannot be scored.
+
+    `_best` is process memory and no restart restores it, so a position adopted
+    after a deploy is first marked long after it opened. `_reach` cannot tell
+    that from a trade that never went in front: both read 0.0. Scored anyway,
+    the row says "never reached", which sets the suggestion equal to what the
+    trade took - zero into the numerator of `gained_per_trade` and one into its
+    denominator. In October that was 85-94% of closes, so the headline the
+    module calls the whole question would have read about a tenth of itself.
+    """
+
+    def test_a_floor_is_not_a_measurement(self):
+        assert not ride(partial=True).scorable
+        assert ride(partial=False).scorable
+
+    def test_it_says_which_refusal_it_was(self):
+        got = tn.score(ride(partial=True), best_r=0.0, took_r=-1.0)
+        assert got.reason == "excursion partial"
+        assert not got.reached
+        assert got.suggested_r == got.took
+
+    def test_no_risk_still_wins_the_explanation(self):
+        """Both are true at once on a ride with neither; the reader wants the
+        one that is structural."""
+        assert tn.score(ride(risk=0.0, partial=True), best_r=0.0, took_r=0.0).reason == "no risk"
+
+    def test_a_floor_that_already_clears_the_suggestion_is_refused_too(self):
+        """**The tempting half-fix, and it is worse than the bug.**
+
+        A floor can only understate, so `best_r` at 1.75 against a suggestion
+        1.5R out does prove the level was crossed - keeping it would be sound
+        in isolation. But the lost peaks belong to winners, because a loser
+        never had one, so keeping the rows that read long and dropping the ones
+        that read short selects on the outcome being measured and biases
+        `gained_per_trade` upward instead of down.
+        """
+        got = tn.score(ride(suggested=103.0, partial=True), best_r=1.75, took_r=0.4)
+        assert not got.reached, "a partial row comes out whichever way it reads"
+        assert got.gained == pytest.approx(0.0)
+
+    def test_the_tally_counts_the_ride_and_not_the_score(self):
+        """Dropped, not hidden: `rides` against `scored` is how a reader sees
+        how much of the book the comparison never covered."""
+        tally = tn.TurnTally()
+        tally.add(tn.score(ride(suggested=103.0, partial=True), best_r=1.75, took_r=0.4))
+        tally.add(tn.score(ride(suggested=103.0), best_r=1.75, took_r=0.5))
+        assert tally.rides == 2
+        assert tally.scored == 1
+        assert tally.gained_per_trade == pytest.approx(1.0)
+
+
 class TestReportAggregation:
     """The durable answer lives in the journal, not in a running tally.
 

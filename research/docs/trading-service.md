@@ -7,6 +7,55 @@ measurement, the failure it came from, the thing that was tried and did
 not work. The code keeps what the function *is*; this keeps why it is
 that way. Nothing was discarded.
 
+## The exit geometry is not the lever
+
+Part of the mantra in the module docstring, kept here with the numbers.
+Measured 2026-10-16 on 1,202 closes, 2026-08-30 to 2026-09-26.
+
+The stop is where the account goes, which is not in dispute:
+
+| how it ended | n | net | per trade |
+| --- | --- | --- | --- |
+| **stop** | 282 | **-4,984.88** | -17.68 |
+| target | 252 | +3,299.83 | +13.09 |
+| hold | 599 | +538.17 | +0.90 |
+| stale | 69 | -452.47 | -6.56 |
+
+That invites a geometry fix every time somebody reads it. Three were proposed
+and the record refused all three.
+
+| hypothesis | verdict |
+| --- | --- |
+| the target sits beyond the hold's time budget | **wrong direction** - targets outside the forecast budget pay better than ones inside it, in every strategy with the sample: -1.95 vs -2.19, -0.57 vs -3.74, -1.82 vs -6.87 |
+| `floored_target` pushes the target past the origin | past-origin pays **+1.31 against -3.72**, better in four of five strategies |
+| the stop is too tight (a winner uses 0.19 of it) | tightening **loses at every width** from 0.25 to 1.5 of the current distance |
+
+One more hypothesis died in the same pass and is worth recording because it
+was *mine* and it was built on a corrupt field: "fade-to-value's entries are
+better than the desk average, since only 31% of its stops never moved in front
+against 60% elsewhere". That comparison is a filter on `best_r`, which reads
+exactly zero on 45% of journal closes for reasons that have nothing to do with
+the trade - and the damage is correlated with the outcome, so the comparison
+was selecting on winning. Withdrawn.
+
+**What travels and what does not.** The third row is measured on the 406
+closes whose excursion record is self-consistent, and that subset nets +207
+where the whole book nets -1,185, because the rows the filter removes are the
+losses. The direction survives the selection; the magnitudes do not.
+
+**What it leaves.** Conditional on a barrier actually resolving, the desk sits
+on the geometric null `1/(1+r)` up to a reward-to-risk of about 1.2 and falls
+below it above that - 0.72 against 0.75 needed, 0.62 against 0.58, 0.43
+against 0.46, then 0.30 against 0.36, 0.23 against 0.29, 0.06 against 0.21.
+Half to two thirds of trades never resolve on a barrier at all, so the
+two-barrier null is the wrong one to quote unconditionally. A high
+reward-to-risk is a **far target and not a tight stop**: the stop distance is
+flat at 1.3 to 1.9 across every band while the target climbs from 0.70 to
+25.20.
+
+See [stops.md](stops.md) for the sweep, and [turn-exit-silence.md](turn-exit-silence.md)
+for why the excursion fields cannot be trusted before `excursion_partial`.
+
 ## `Waiting`
 
     Entry is a market order, so a call arriving after price has already left

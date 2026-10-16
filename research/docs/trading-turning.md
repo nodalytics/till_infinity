@@ -7,6 +7,9 @@ measurement, the failure it came from, the thing that was tried and did
 not work. The code keeps what the function *is*; this keeps why it is
 that way. Nothing was discarded.
 
+Why this shadow produced nothing at all for its whole life, and the two
+defects behind that, are in `turn-exit-silence.md`.
+
 ## `score`
 
     **Both arguments are in R, and that is deliberate.** `best_r` is what the

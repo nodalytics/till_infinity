@@ -23,6 +23,34 @@ the open set is compared on every heartbeat and a ticket that has vanished is
 recorded as closed at its last known price. That is a slightly stale exit for
 a real broker and an exact one on paper, and it is honest about which: the
 journal entry says where the number came from.
+
+**The exit geometry is not the lever, and three refutations say so.** The stop
+is unambiguously where the account goes - `stop` exits run -4,984.88 against
+`target` +3,299.83, `hold` +538.17 and `stale` -452.47 - and that fact invites
+a geometry fix every time somebody looks at it. Three were proposed on
+2026-10-16 and the record refused all three:
+
+* *the target sits beyond what the hold can deliver* - **wrong direction.**
+  Targets outside the forecast time budget pay better than targets inside it,
+  in every strategy with the sample to say so: -1.95 against -2.19, -0.57
+  against -3.74, -1.82 against -6.87.
+* *`floored_target` pushes the target past the origin it was aiming at* - it
+  does, and those trades pay **+1.31 against -3.72**, better in four of five
+  strategies.
+* *the stop is too tight* - a winner uses a median **0.19** of its stop and
+  p90 0.61, which reads like a stop five times wider than needed. Tightening
+  it loses at **every** width from 0.25 to 1.5 of the current distance,
+  because the few winners carrying real heat are the ones that pay.
+
+So a proposal to move a stop or a target needs to beat those three before it
+is worth harnessing, and the honest reading is that the losses are in *entry
+selection* rather than in where the barriers sit. One caveat travels with the
+third point and must not be dropped: it is measured on the 406 closes whose
+excursion record is self-consistent, a subset netting +207 where the whole
+book nets -1,185, because the rows the filter removes are the losses. The
+direction survives that; the magnitudes do not. `research/docs/stops.md` has
+the sweep and why the question stays open until `excursion_partial` has
+accumulated.
 """
 
 from __future__ import annotations
@@ -3623,6 +3651,14 @@ class Trader:
                 suggested=suggested,
                 ticket=live.position.ticket,
                 by=live.by,
+                # `_reach` reads `_best`, which no restart restores, so a
+                # position adopted mid-flight hands `score` a floor. Scored
+                # anyway it reads as "never reached", which sets the
+                # suggestion equal to what the trade took and contributes
+                # zero to the numerator and one to the denominator of
+                # `gained_r_per_trade` - diluting the headline by the partial
+                # share, which ran at 85-94% of closes in October.
+                partial=live.position.ticket in self._partial,
             )
             outcome = turning.score(
                 ride,
@@ -4413,6 +4449,23 @@ class Trader:
                         (position.price_open - live.intent.entry) * live.intent.side.sign, 8
                     ),
                     **live.intent.to_context(),
+                    # **The turn model's exit, beside the one this trade took.**
+                    # `_unattributed_context` has carried this since it was
+                    # written and this path - the one every attributed close
+                    # takes - did not, so the comparison was wired exclusively
+                    # to the records that can never satisfy it: an unattributed
+                    # close has no decision, so no `turn_price` in its
+                    # features, so `_turn_exit` returns `{}` every time. Across
+                    # 1,825 outcomes in the live journal not one carried a
+                    # `turn_*` field while 1,163 of the decisions behind them
+                    # published a real `turn_price` and 404 of those cleared
+                    # `scorable`. `trading.turn_exit` reported inert for the
+                    # whole period and the cause was read as the depth head
+                    # being cold.
+                    #
+                    # Last, like the spread in `Intent.to_context`, so a
+                    # feature named `turn_*` cannot shadow the scored row.
+                    **self._turn_exit(live, price),
                 },
                 tags=(live.intent.feed, str(live.intent.side), why, live.by or "unattributed"),
             )
