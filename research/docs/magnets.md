@@ -193,3 +193,74 @@ under the bucket threshold. These are reported as unmeasured rather than as
 measured-and-null, and the slow references are the ones to re-run first if
 this is picked up again - they are also the most-watched, which is exactly
 where the reflexive thesis makes its strongest prediction.
+
+## The most-watched references, powered
+
+The first pass starved exactly the rows where the reflexive thesis makes its
+strongest prediction, so they were re-run on 2026-10-16 with 40 instruments a
+class and a 120-bar stride, the heavy already-settled emitters dropped to buy
+the windows, and - the fix that mattered most - **every pattern instance
+emitted once** instead of only the most recent one per window. A pattern was
+previously reported only if it was the last of its kind in the window, which
+discarded almost all of them; reporting all of them would have counted each
+three times over, because the windows overlap. Keeping those that formed in
+the last `STRIDE` bars gives every occurrence exactly once, and it moved
+`pin_tip` from 451 levels to 19,802.
+
+| level | n (fx_major) | slope | `b-when` | vs b |
+| --- | ---: | ---: | ---: | ---: |
+| pin tip | 19,802 | 0.91 | 0.91 | **+0.00** |
+| apex | 8,532 | 0.91 | 0.91 | **+0.00** |
+| apex body | 8,808 | 0.89 | 0.95 | −0.06 |
+| engulf edge | 7,326 | 0.91 | 0.91 | **+0.00** |
+| last bar H/L | 4,194 | 0.85 | 0.81 | +0.04 |
+| ema20 | 2,191 | 1.01 | 1.07 | −0.06 |
+| double bottom neck | 2,130 | 0.93 | 0.92 | +0.01 |
+| double top neck | 2,000 | 0.94 | 0.94 | −0.00 |
+| double top | 1,993 | 0.91 | 1.05 | −0.14 |
+| double bottom | 1,959 | 0.95 | 0.89 | +0.05 |
+| ema100 | 1,814 | 0.95 | 0.93 | +0.02 |
+| ema200 | 1,390 | 0.88 | 0.93 | −0.05 |
+| sma200 | 1,239 | 1.15 | 1.29 | −0.14 |
+| vwap | 684 | 1.27 | 0.88 | +0.39 |
+
+**Read it against the control, not against zero.** `last_bar` - the previous
+bar's high and low, with no story attached to it at all - scatters +0.04,
+−0.14, +0.07, +0.07 across the four classes. That ±0.14 is this measurement's
+noise floor at these sample sizes, and **every candidate sits inside it**:
+
+| level | vs b, by class |
+| --- | --- |
+| vwap | +0.39 (n=684), +0.13 (2,975), −0.08 (2,757) |
+| ema200 | −0.05 (1,390), −0.03 (3,230), −0.08 (834), −0.37 (1,019) |
+| sma200 | −0.14, −0.01, −0.64, +0.17 |
+| double top | −0.14, +0.14, +0.05, −0.05 |
+| double bottom | +0.05, +0.06, −0.06, −0.02 |
+| ema20 | −0.06, −0.03, +0.12, −0.04 |
+
+Every one of them **changes sign between classes**, which is noise and not a
+weak effect, and the two largest readings - `sma200` at −0.64 and `ema200` at
+−0.37 - both carry unstable null fits (`b-when` of 1.65 and 1.85) on the
+smallest samples in the table. VWAP's one large positive is the wrong sign for
+a magnet anyway: it says VWAP is reached in *less* linear time than an
+arbitrary price the same distance out.
+
+The calibration rows settle the earlier table too. `ema20` read **+0.17** at 14
+instruments and **−0.06** at 40, and `last_bar` moved −0.05 to +0.04 - so the
+±0.17 scatter in the first panel was sampling noise, as it was read at the
+time rather than afterwards.
+
+**So the reflexive thesis gets no support.** It makes a specific, falsifiable
+prediction - that a level's pull scales with how widely it is watched - and the
+most-watched prices in existence (the 200-period averages, VWAP, the necklines
+everybody's stops sit behind) are indistinguishable from the previous bar's
+high.
+
+### The one row still genuinely unmeasured
+
+`equal` - the shipped equal-highs-and-lows rule - never reached a fittable
+slope on any class: 144, 496, 107 and 191 levels. That is the rule's own
+rarity rather than a sampling choice, and loosening its tolerance would be
+measuring a different rule. It needs roughly ten times the instruments, and
+its median-time differences are scattered (−4.0, −1.0, −2.5, +14.5 bars) with
+no sign to them.

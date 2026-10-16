@@ -87,13 +87,13 @@ from till_infinity.structures.vol.volatility import Volatility  # noqa: E402
 
 FRAME = "1h"
 SEED = 20261016
-PER_CLASS = 14
+PER_CLASS = 40
 WINDOW = 600
 #: Bars between calls. Tightened from 400 after the first pass left the
 #: slow-moving references - EMA 100/200, SMA 200, VWAP - with too few
 #: resolved buckets to fit a slope, which reports as `nan` and must not
 #: be read as a null.
-STRIDE = 200
+STRIDE = 120
 HORIZON = 1000
 #: Distance buckets in volatility units. The floor is 0.1 and not 0.5
 #: because a moving average usually sits *close* to price - at a 0.5 floor
@@ -110,7 +110,23 @@ SMAS = (50, 200)
 FIBS = (0.382, 0.5, 0.618, 0.786)
 #: How close two swing highs must be, in volatility units, to count as a
 #: double top - the M - and the same for a W.
-TWIN_VOL = 0.75
+TWIN_VOL = 1.0
+#: The levels this pass is for. The first panel answered the common ones at
+#: 40,000-plus samples and starved the rare ones, and the rare ones are the
+#: **most-watched** references - which is exactly where a thesis about shared
+#: agreement makes its strongest prediction, so "unmeasured" was the weakest
+#: row in that table. Dropping the heavy emitters that are already settled
+#: buys the windows and instruments these need. `ema20` and `last_bar` stay as
+#: calibration: they were measured at +0.17 and -0.05 before, so if they move
+#: far from that here, the change of sampling moved them and not the market.
+FOCUS = frozenset(
+    {
+        "vwap", "equal", "ema200", "sma200", "ema100",
+        "double_top", "double_bottom", "double_top_neck", "double_bottom_neck",
+        "apex", "apex_body", "engulf_edge", "pin_tip",
+        "ema20", "last_bar",
+    }
+)
 
 TRADED = ("fx_major", "fx_cross", "metal")
 GENERATED = ("jump",)
@@ -180,19 +196,22 @@ def local(window: dict[str, np.ndarray], unit: float) -> dict[str, list[float]]:
 
     # M and W: two swings at the same price. The neckline between them is
     # where the stops of everyone who traded the pattern are resting.
+    fresh = len(closes) - STRIDE
     for name, turns, pick in (("double_top", ph, max), ("double_bottom", pl, min)):
-        if len(turns) >= 2:
-            one, two = turns[-2][1], turns[-1][1]
-            if abs(one - two) / spot * 10_000.0 / unit <= TWIN_VOL:
-                out[name] = [float(pick(one, two))]
-                between = window["low"] if name == "double_top" else window["high"]
-                lo, hi = sorted((turns[-2][0], turns[-1][0]))
-                if hi > lo:
-                    chunk = between[lo:hi]
-                    if len(chunk):
-                        out[f"{name}_neck"] = [
-                            float(chunk.min() if name == "double_top" else chunk.max())
-                        ]
+        for (i_one, one), (i_two, two) in zip(turns, turns[1:], strict=False):
+            if i_two < fresh:
+                continue
+            if abs(one - two) / spot * 10_000.0 / unit > TWIN_VOL:
+                continue
+            out.setdefault(name, []).append(float(pick(one, two)))
+            between = window["low"] if name == "double_top" else window["high"]
+            lo, hi = sorted((i_one, i_two))
+            if hi > lo:
+                chunk = between[lo:hi]
+                if len(chunk):
+                    out.setdefault(f"{name}_neck", []).append(
+                        float(chunk.min() if name == "double_top" else chunk.max())
+                    )
 
     # A and V: a single-bar apex, price in and straight back out. The claim is
     # that a rejection that sharp left business unfinished at the extreme.
@@ -200,13 +219,17 @@ def local(window: dict[str, np.ndarray], unit: float) -> dict[str, list[float]]:
     typical = float(np.median(span[span > 0])) if (span > 0).any() else 0.0
     if typical > 0:
         sharp = span > 3.0 * typical
-        where = np.flatnonzero(sharp)
-        if len(where):
-            i = int(where[-1])
-            body_top = max(float(window["open"][i]), float(closes[i]))
-            body_low = min(float(window["open"][i]), float(closes[i]))
-            out["apex"] = [float(highs[i]), float(lows[i])]
-            out["apex_body"] = [body_top, body_low]
+        for i in np.flatnonzero(sharp):
+            i = int(i)
+            if i < fresh:
+                continue
+            out.setdefault("apex", []).extend([float(highs[i]), float(lows[i])])
+            out.setdefault("apex_body", []).extend(
+                [
+                    max(float(window["open"][i]), float(closes[i])),
+                    min(float(window["open"][i]), float(closes[i])),
+                ]
+            )
 
     # Support and resistance by agreement: prices the window's bars touched
     # most often. The purest statement of "a level is a price people keep
@@ -225,22 +248,17 @@ def local(window: dict[str, np.ndarray], unit: float) -> dict[str, list[float]]:
     top = np.maximum(opens, closes)
     bottom = np.minimum(opens, closes)
     up = closes > opens
-    for i in range(len(closes) - 1, 0, -1):
+    for i in range(max(1, fresh), len(closes)):
         if bottom[i] < bottom[i - 1] and top[i] > top[i - 1] and up[i] != up[i - 1]:
-            out["engulf_edge"] = [float(bottom[i] if up[i] else top[i])]
-            break
-    for i in range(len(closes) - 1, -1, -1):
+            out.setdefault("engulf_edge", []).append(float(bottom[i] if up[i] else top[i]))
+    for i in range(max(0, fresh), len(closes)):
         rng_ = highs[i] - lows[i]
         if rng_ <= 0:
             continue
-        upper = highs[i] - top[i]
-        lower = bottom[i] - lows[i]
-        if upper > 0.66 * rng_:
-            out["pin_tip"] = [float(highs[i])]
-            break
-        if lower > 0.66 * rng_:
-            out["pin_tip"] = [float(lows[i])]
-            break
+        if highs[i] - top[i] > 0.66 * rng_:
+            out.setdefault("pin_tip", []).append(float(highs[i]))
+        elif bottom[i] - lows[i] > 0.66 * rng_:
+            out.setdefault("pin_tip", []).append(float(lows[i]))
 
     # The trivial control: last bar's extremes. No story at all, so whatever
     # this reads is the floor every other row has to clear.
@@ -303,12 +321,14 @@ def collect(bars: dict[str, np.ndarray], rng) -> dict[str, list[tuple[float, flo
         spots.append((at, spot, unit))
         drawn: dict[str, list[float]] = {}
         for name, call in made.items():
+            if name not in FOCUS:
+                continue
             try:
                 drawn[name] = [float(p.price) for p in call(window, live)]
             except Exception:
                 drawn[name] = []
         try:
-            drawn.update(local(window, unit))
+            drawn.update({k: v for k, v in local(window, unit).items() if k in FOCUS})
         except Exception:
             pass
         for name, levels in drawn.items():
