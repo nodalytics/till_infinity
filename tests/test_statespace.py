@@ -8102,6 +8102,40 @@ class TestOutputLayer:
         "regime": -0.1,
     }
 
+    def test_the_sign_convention_is_fixed(self) -> None:
+        """-1 to +1, 0 neutral, +1 bullish and -1 bearish. Fixed 2026-10-16.
+
+        A convention is not arithmetic, so nothing else in this file would
+        catch it drifting - and a signal whose sign convention moves is worse
+        than no signal, because every consumer written against the old one
+        silently inverts.
+        """
+        from till_infinity.structures.statespace import BOUNDS, NEUTRAL, Layer
+
+        layer = Layer(weights={"up": 1.0})
+        assert layer.activation == "tanh", "the default encoding is -1..+1"
+        assert BOUNDS["tanh"] == (-1.0, 1.0)
+        assert NEUTRAL["tanh"] == 0.0
+
+        bullish = layer({"up": 0.8})
+        bearish = layer({"up": -0.8})
+        flat = layer({"up": 0.0})
+
+        assert bullish.side == 1, "a positive sum is bullish"
+        assert bearish.side == -1, "a negative sum is bearish"
+        assert flat.side == 0, "zero is no opinion"
+        assert flat.value == 0.0
+        assert 0.0 < bullish.value < 1.0
+        assert -1.0 < bearish.value < 0.0
+        assert bullish.value == pytest.approx(-bearish.value), "symmetric about zero"
+
+        # Stronger means further from zero, on both sides, and `strength` is
+        # the same number either way - which is what a consumer reads.
+        stronger = layer({"up": 3.0})
+        assert stronger.value > bullish.value
+        assert stronger.strength > bullish.strength
+        assert layer({"up": -3.0}).strength == pytest.approx(stronger.strength)
+
     def test_weighs_adds_and_squashes(self) -> None:
         """The arithmetic is the stated arithmetic, and the parts are kept."""
         from till_infinity.structures.statespace import Layer

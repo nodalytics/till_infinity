@@ -122,6 +122,17 @@ confirmed**, and a magnitude layer is not recommended on this evidence.
   coin. It is a place to put the arithmetic once, with per-term contributions
   visible, for the day a term with an edge turns up.
 
+## Decided
+
+Settled on 2026-10-16: **-1 to +1, with 0 neutral, closer to +1 more strongly
+bullish and closer to -1 more strongly bearish.** It is a convention rather
+than a result, and it had to be - this file's whole finding is that no
+measurement can separate the two encodings, because they are the same function
+under `tanh(x) = 2 logistic(2x) - 1`. The reasons are the ergonomic ones listed
+above, and the one that matters most is that a sign convention which moves is
+worse than no signal at all. `signalling.py` records it and
+`statespace/README.md` draws it.
+
 ## A note on the harness
 
 Calling a Python object once per decision point costs minutes per arm, so the

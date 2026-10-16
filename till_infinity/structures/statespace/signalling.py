@@ -47,8 +47,17 @@ measurable one:
   the desk has already shipped one number that was read as a probability and
   was not (`probability_up`).
 
-`tanh` is therefore the default. `Signal.strength` is computed the same way
-under either, so a consumer never has to know which was used.
+`tanh` is therefore the default, and on 2026-10-16 it was fixed as the
+convention rather than left as a default: **the signal runs -1 to +1 with 0
+neutral, closer to +1 meaning more strongly bullish and closer to -1 meaning
+more strongly bearish.** `Signal.side` is that sign and matches the desk's
+`Side.sign` with no adapter; `Signal.strength` is the conviction and is
+computed the same way under either encoding, so a consumer never has to know
+which it was handed.
+
+A sign convention that moves is worse than no signal, so this one does not move
+again. `as_logistic` and `as_tanh` exist for anything that needs the other
+form.
 
 ## Missing terms are recorded, not silently zeroed
 
