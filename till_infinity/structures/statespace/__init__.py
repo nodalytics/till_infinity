@@ -441,17 +441,20 @@ from .paths import Path, hourly, simulate, with_gaps
 from .rates import Slope, slope_per_bar, slope_per_hour
 from .reverting import Reverting
 from .robust import Robust
+from .signalling import BOUNDS, NEUTRAL, Layer, Signal, squash
 from .smoothing import Smoothed, smooth
 from .spanning import Span, garman_klass, parkinson, rogers_satchell
 from .subjects import INSTRUMENT, LEVEL, RELATION, SUBJECTS, Subject
 from .tails import DOF, LEAST_DOF, coverage, dof_for, reach
 
 __all__ = [
+    "BOUNDS",
     "DOF",
     "INSTRUMENT",
     "LEAST_DOF",
     "LEVEL",
     "MISSING",
+    "NEUTRAL",
     "PENDING",
     "RELATION",
     "SUBJECTS",
@@ -463,12 +466,14 @@ __all__ = [
     "Gaussian",
     "Interactions",
     "Landau",
+    "Layer",
     "Path",
     "Rate",
     "Readout",
     "Residuals",
     "Reverting",
     "Robust",
+    "Signal",
     "Slope",
     "Smoothed",
     "Span",
@@ -496,6 +501,7 @@ __all__ = [
     "slope_per_hour",
     "smooth",
     "solve",
+    "squash",
     "tau",
     "tau_of_means",
     "tau_squared",

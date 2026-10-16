@@ -11,6 +11,7 @@ from __future__ import annotations
 import itertools
 import math
 import statistics
+from typing import ClassVar
 
 import pytest
 
@@ -8078,3 +8079,156 @@ class TestTradedWalls:
         assert grew[0] == pytest.approx(0.114, abs=0.004)
         assert grew[-1] == pytest.approx(0.034, abs=0.004)
         assert grew[0] > grew[1] > grew[2]
+
+
+class TestOutputLayer:
+    """The output layer: weights, a bias, an activation, and its two encodings.
+
+    `signalling.py` claims that 0..1 and -1..+1 are the same layer rather than
+    a choice with consequences. That claim is arithmetic, so it is asserted
+    here instead of being described in a docstring.
+    """
+
+    TERMS: ClassVar[dict[str, float]] = {
+        "slope t": 1.5,
+        "tick velocity": -0.5,
+        "ema gap": 0.8,
+        "regime": 0.2,
+    }
+    WEIGHTS: ClassVar[dict[str, float]] = {
+        "slope t": 0.4,
+        "tick velocity": 0.3,
+        "ema gap": 0.2,
+        "regime": -0.1,
+    }
+
+    def test_weighs_adds_and_squashes(self) -> None:
+        """The arithmetic is the stated arithmetic, and the parts are kept."""
+        from till_infinity.structures.statespace import Layer
+
+        layer = Layer(weights=self.WEIGHTS, bias=-0.1)
+        got = layer(self.TERMS)
+        wanted = -0.1 + sum(self.WEIGHTS[k] * self.TERMS[k] for k in self.WEIGHTS)
+        assert got.total == pytest.approx(wanted)
+        assert got.value == pytest.approx(math.tanh(wanted))
+        # Every contribution is kept, largest in absolute value first, and they
+        # add back up to the total once the bias is removed.
+        assert sum(share for _n, share in got.contributions) == pytest.approx(wanted + 0.1)
+        sizes = [abs(share) for _n, share in got.contributions]
+        assert sizes == sorted(sizes, reverse=True)
+        assert got.leading == got.contributions[0]
+        assert got.side == 1
+        assert got.strength == pytest.approx(abs(got.value))
+
+    def test_the_two_encodings_are_one_layer(self) -> None:
+        """`tanh(x) == 2 logistic(2x) - 1`, so the twin is an affine image.
+
+        The consequence that matters: the two order every pair of inputs
+        identically, so no AUC can separate them and the choice is ergonomic.
+        """
+        from till_infinity.structures.statespace import Layer
+
+        signed = Layer(weights=self.WEIGHTS, bias=-0.1)
+        unsigned = signed.as_logistic()
+        assert unsigned.activation == "logistic"
+        assert unsigned.bias == pytest.approx(-0.2)
+        draws = [
+            {k: v * scale for k, v in self.TERMS.items()}
+            for scale in (-3.0, -1.0, -0.25, 0.0, 0.25, 1.0, 3.0)
+        ]
+        ranked_signed, ranked_unsigned = [], []
+        for terms in draws:
+            here, there = signed(terms), unsigned(terms)
+            assert there.value == pytest.approx((here.value + 1.0) / 2.0, abs=1e-15)
+            assert there.strength == pytest.approx(here.strength, abs=1e-12)
+            assert there.side == here.side
+            ranked_signed.append(here.value)
+            ranked_unsigned.append(there.value)
+        # The same order, which is what an AUC reads.
+        order = sorted(range(len(draws)), key=lambda i: ranked_signed[i])
+        assert sorted(range(len(draws)), key=lambda i: ranked_unsigned[i]) == order
+        # And the conversion is a round trip.
+        assert unsigned.as_tanh() == signed
+
+    def test_neutral_sits_where_the_encoding_puts_it(self) -> None:
+        """No terms and no bias means no opinion, under either encoding."""
+        from till_infinity.structures.statespace import NEUTRAL, Layer
+
+        for activation in ("tanh", "logistic", "identity"):
+            layer = Layer(weights=self.WEIGHTS, activation=activation)
+            got = layer(dict.fromkeys(self.WEIGHTS, 0.0))
+            assert got.value == pytest.approx(NEUTRAL[activation])
+            assert got.side == 0
+            assert got.strength == pytest.approx(0.0)
+
+    def test_missing_terms_are_named_not_zeroed_quietly(self) -> None:
+        """An absent or `nan` term contributes nothing and is reported.
+
+        The layer cannot know whether a missing term's own neutral was 0, 0.5
+        or 1, so it refuses to guess and says what it did not have.
+        """
+        from till_infinity.structures.statespace import Layer
+
+        layer = Layer(weights=self.WEIGHTS)
+        got = layer({"slope t": 1.5, "ema gap": float("nan")})
+        assert set(got.missing) == {"tick velocity", "ema gap", "regime"}
+        assert got.total == pytest.approx(0.4 * 1.5)
+        assert [name for name, _s in got.contributions] == ["slope t"]
+        # A term the layer carries no weight for cannot move it at all, so
+        # adding a reading upstream is inert until a weight is added here.
+        assert layer({**self.TERMS, "invented": 99.0}).value == layer(self.TERMS).value
+
+    def test_saturates_instead_of_overflowing(self) -> None:
+        """A huge total returns the bound, not a `nan` and a warning."""
+        from till_infinity.structures.statespace import BOUNDS, Layer, squash
+
+        for activation in ("tanh", "logistic"):
+            layer = Layer(weights={"a": 1.0}, activation=activation)
+            low, high = BOUNDS[activation]
+            assert layer({"a": 1e12}).value == pytest.approx(high)
+            assert layer({"a": -1e12}).value == pytest.approx(low)
+            assert layer({"a": 1e12}).strength == pytest.approx(1.0)
+        assert squash(1e12, "identity") == 1e12
+        with pytest.raises(ValueError, match="unknown activation"):
+            squash(0.0, "relu")
+
+    def test_the_deadband_is_in_strength_units(self) -> None:
+        """So it means the same width under either encoding."""
+        from till_infinity.structures.statespace import Layer
+
+        layer = Layer(weights={"a": 1.0}, deadband=0.5)
+        assert layer.settled({"a": 0.3}) == 0
+        assert layer.settled({"a": 3.0}) == 1
+        assert layer.settled({"a": -3.0}) == -1
+        twin = layer.as_logistic()
+        for value in (0.3, 3.0, -3.0):
+            assert twin.settled({"a": value}) == layer.settled({"a": value})
+        with pytest.raises(ValueError, match="deadband"):
+            Layer(weights={"a": 1.0}, deadband=1.5)
+        with pytest.raises(ValueError, match="unknown activation"):
+            Layer(weights={"a": 1.0}, activation="softmax")
+
+    def test_scaling_is_a_temperature_and_cannot_reorder(self) -> None:
+        """`scaled` changes saturation, never the order of two signals."""
+        from till_infinity.structures.statespace import Layer
+
+        layer = Layer(weights=self.WEIGHTS, bias=-0.1)
+        draws = [{k: v * s for k, v in self.TERMS.items()} for s in (-2.0, 0.5, 1.0, 4.0)]
+        for factor in (0.25, 3.0):
+            hotter = layer.scaled(factor)
+            before = [layer(terms).value for terms in draws]
+            after = [hotter(terms).value for terms in draws]
+            assert sorted(range(len(draws)), key=lambda i: after[i]) == sorted(
+                range(len(draws)), key=lambda i: before[i]
+            )
+        # A `t`-statistic layer saturates without it: tanh(3) is already 0.995,
+        # so four terms at t = 3 are indistinguishable from four at t = 10.
+        flat = Layer(weights=dict.fromkeys(self.WEIGHTS, 1.0))
+        tight = flat.scaled(0.1)
+        three = dict.fromkeys(self.WEIGHTS, 3.0)
+        ten = dict.fromkeys(self.WEIGHTS, 10.0)
+        saturated = flat(ten).value - flat(three).value
+        used = tight(ten).value - tight(three).value
+        assert saturated < 1e-5
+        assert used > 0.15
+        assert used > 1_000 * saturated
