@@ -165,6 +165,13 @@ different mechanism from the one just added. It is also much smaller: a `z` of
 13.7 on the worst class against the 18 to 30 the shape statistics carried
 before.
 
+**Measured since, in [`inside-bars.md`](inside-bars.md).** It is the trading
+day: the hour-of-day reach cycle, calibrated from each class's own span rather
+than fitted, reproduces the suppression and the reach dispersion, and a mild
+i.i.d. activity burst closes the level. The volatility-of-volatility reading
+above is refuted in its slow form - reordering whole days changes the inside
+rate by nothing, so all of the dependence lives inside six bars.
+
 ## The prediction this makes
 
 A family with **mean-reverting sub-bar dynamics** - a diffusive component plus
