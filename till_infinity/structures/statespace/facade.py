@@ -125,6 +125,21 @@ class Readout:
     #: The measured `(up, down)` barrier walls for this feed's family.
     walls: tuple[float, float] = (0.0, 0.0)
 
+    #: The **standardised one-step innovation**: how far this observation fell
+    #: from where the filter said it would, in units of the spread the filter
+    #: expected. Signed, scale-free, and zero before the first prediction.
+    #:
+    #: It is published because `read` already computes it - the quantile band
+    #: is built from exactly these - and because a caller cannot reconstruct
+    #: it from the rest of this object. `(value - this.value) / this.spread`
+    #: is **not** it: `value` is the state *after* the observation was folded
+    #: in, so that residual has already been pulled toward the price it is
+    #: measuring, and `spread` is the spread of the **next** observation
+    #: rather than the one this bar was scored against. The difference is an
+    #: attenuation of unknown size, which is the kind of error that reads as a
+    #: weak signal rather than as a bug.
+    surprise: float = 0.0
+
     #: Observations folded in. The number a score is read against, not a
     #: warm-up gate.
     seen: int = 0
@@ -250,6 +265,7 @@ class Desk:
             self._residuals[key] = deque(maxlen=self.window)
 
         pace, kept = self._paces[key], self._residuals[key]
+        surprise = 0.0
         paced = drives_q(feed)
         factor = 1.0
         if paced and volume > 0:
@@ -263,7 +279,8 @@ class Desk:
         spread = float(member.variance) + max(float(noise), 0.0)
         before = float(member.value)
         if spread > 0:
-            kept.append((float(value) - before) / math.sqrt(spread))
+            surprise = (float(value) - before) / math.sqrt(spread)
+            kept.append(surprise)
         member.update(float(value), float(noise), float(when))
 
         traits = traits_for(feed)
@@ -279,6 +296,7 @@ class Desk:
             paced=bool(paced and volume > 0),
             pace_factor=factor,
             walls=shifts_for(feed),
+            surprise=float(surprise),
             seen=int(member.seen),
         )
 

@@ -11,6 +11,7 @@ from __future__ import annotations
 import itertools
 import math
 import statistics
+from typing import ClassVar
 
 import pytest
 
@@ -8078,3 +8079,308 @@ class TestTradedWalls:
         assert grew[0] == pytest.approx(0.114, abs=0.004)
         assert grew[-1] == pytest.approx(0.034, abs=0.004)
         assert grew[0] > grew[1] > grew[2]
+
+
+class TestOutputLayer:
+    """The output layer: weights, a bias, an activation, and its two encodings.
+
+    `signalling.py` claims that 0..1 and -1..+1 are the same layer rather than
+    a choice with consequences. That claim is arithmetic, so it is asserted
+    here instead of being described in a docstring.
+    """
+
+    TERMS: ClassVar[dict[str, float]] = {
+        "slope t": 1.5,
+        "tick velocity": -0.5,
+        "ema gap": 0.8,
+        "regime": 0.2,
+    }
+    WEIGHTS: ClassVar[dict[str, float]] = {
+        "slope t": 0.4,
+        "tick velocity": 0.3,
+        "ema gap": 0.2,
+        "regime": -0.1,
+    }
+
+    def test_the_sign_convention_is_fixed(self) -> None:
+        """-1 to +1, 0 neutral, +1 bullish and -1 bearish. Fixed 2026-10-16.
+
+        A convention is not arithmetic, so nothing else in this file would
+        catch it drifting - and a signal whose sign convention moves is worse
+        than no signal, because every consumer written against the old one
+        silently inverts.
+        """
+        from till_infinity.structures.statespace import BOUNDS, NEUTRAL, Layer
+
+        layer = Layer(weights={"up": 1.0})
+        assert layer.activation == "tanh", "the default encoding is -1..+1"
+        assert BOUNDS["tanh"] == (-1.0, 1.0)
+        assert NEUTRAL["tanh"] == 0.0
+
+        bullish = layer({"up": 0.8})
+        bearish = layer({"up": -0.8})
+        flat = layer({"up": 0.0})
+
+        assert bullish.side == 1, "a positive sum is bullish"
+        assert bearish.side == -1, "a negative sum is bearish"
+        assert flat.side == 0, "zero is no opinion"
+        assert flat.value == 0.0
+        assert 0.0 < bullish.value < 1.0
+        assert -1.0 < bearish.value < 0.0
+        assert bullish.value == pytest.approx(-bearish.value), "symmetric about zero"
+
+        # Stronger means further from zero, on both sides, and `strength` is
+        # the same number either way - which is what a consumer reads.
+        stronger = layer({"up": 3.0})
+        assert stronger.value > bullish.value
+        assert stronger.strength > bullish.strength
+        assert layer({"up": -3.0}).strength == pytest.approx(stronger.strength)
+
+    def test_weighs_adds_and_squashes(self) -> None:
+        """The arithmetic is the stated arithmetic, and the parts are kept."""
+        from till_infinity.structures.statespace import Layer
+
+        layer = Layer(weights=self.WEIGHTS, bias=-0.1)
+        got = layer(self.TERMS)
+        wanted = -0.1 + sum(self.WEIGHTS[k] * self.TERMS[k] for k in self.WEIGHTS)
+        assert got.total == pytest.approx(wanted)
+        assert got.value == pytest.approx(math.tanh(wanted))
+        # Every contribution is kept, largest in absolute value first, and they
+        # add back up to the total once the bias is removed.
+        assert sum(share for _n, share in got.contributions) == pytest.approx(wanted + 0.1)
+        sizes = [abs(share) for _n, share in got.contributions]
+        assert sizes == sorted(sizes, reverse=True)
+        assert got.leading == got.contributions[0]
+        assert got.side == 1
+        assert got.strength == pytest.approx(abs(got.value))
+
+    def test_the_two_encodings_are_one_layer(self) -> None:
+        """`tanh(x) == 2 logistic(2x) - 1`, so the twin is an affine image.
+
+        The consequence that matters: the two order every pair of inputs
+        identically, so no AUC can separate them and the choice is ergonomic.
+        """
+        from till_infinity.structures.statespace import Layer
+
+        signed = Layer(weights=self.WEIGHTS, bias=-0.1)
+        unsigned = signed.as_logistic()
+        assert unsigned.activation == "logistic"
+        assert unsigned.bias == pytest.approx(-0.2)
+        draws = [
+            {k: v * scale for k, v in self.TERMS.items()}
+            for scale in (-3.0, -1.0, -0.25, 0.0, 0.25, 1.0, 3.0)
+        ]
+        ranked_signed, ranked_unsigned = [], []
+        for terms in draws:
+            here, there = signed(terms), unsigned(terms)
+            assert there.value == pytest.approx((here.value + 1.0) / 2.0, abs=1e-15)
+            assert there.strength == pytest.approx(here.strength, abs=1e-12)
+            assert there.side == here.side
+            ranked_signed.append(here.value)
+            ranked_unsigned.append(there.value)
+        # The same order, which is what an AUC reads.
+        order = sorted(range(len(draws)), key=lambda i: ranked_signed[i])
+        assert sorted(range(len(draws)), key=lambda i: ranked_unsigned[i]) == order
+        # And the conversion is a round trip.
+        assert unsigned.as_tanh() == signed
+
+    def test_neutral_sits_where_the_encoding_puts_it(self) -> None:
+        """No terms and no bias means no opinion, under either encoding."""
+        from till_infinity.structures.statespace import NEUTRAL, Layer
+
+        for activation in ("tanh", "logistic", "identity"):
+            layer = Layer(weights=self.WEIGHTS, activation=activation)
+            got = layer(dict.fromkeys(self.WEIGHTS, 0.0))
+            assert got.value == pytest.approx(NEUTRAL[activation])
+            assert got.side == 0
+            assert got.strength == pytest.approx(0.0)
+
+    def test_missing_terms_are_named_not_zeroed_quietly(self) -> None:
+        """An absent or `nan` term contributes nothing and is reported.
+
+        The layer cannot know whether a missing term's own neutral was 0, 0.5
+        or 1, so it refuses to guess and says what it did not have.
+        """
+        from till_infinity.structures.statespace import Layer
+
+        layer = Layer(weights=self.WEIGHTS)
+        got = layer({"slope t": 1.5, "ema gap": float("nan")})
+        assert set(got.missing) == {"tick velocity", "ema gap", "regime"}
+        assert got.total == pytest.approx(0.4 * 1.5)
+        assert [name for name, _s in got.contributions] == ["slope t"]
+        # A term the layer carries no weight for cannot move it at all, so
+        # adding a reading upstream is inert until a weight is added here.
+        assert layer({**self.TERMS, "invented": 99.0}).value == layer(self.TERMS).value
+
+    def test_saturates_instead_of_overflowing(self) -> None:
+        """A huge total returns the bound, not a `nan` and a warning."""
+        from till_infinity.structures.statespace import BOUNDS, Layer, squash
+
+        for activation in ("tanh", "logistic"):
+            layer = Layer(weights={"a": 1.0}, activation=activation)
+            low, high = BOUNDS[activation]
+            assert layer({"a": 1e12}).value == pytest.approx(high)
+            assert layer({"a": -1e12}).value == pytest.approx(low)
+            assert layer({"a": 1e12}).strength == pytest.approx(1.0)
+        assert squash(1e12, "identity") == 1e12
+        with pytest.raises(ValueError, match="unknown activation"):
+            squash(0.0, "relu")
+
+    def test_the_deadband_is_in_strength_units(self) -> None:
+        """So it means the same width under either encoding."""
+        from till_infinity.structures.statespace import Layer
+
+        layer = Layer(weights={"a": 1.0}, deadband=0.5)
+        assert layer.settled({"a": 0.3}) == 0
+        assert layer.settled({"a": 3.0}) == 1
+        assert layer.settled({"a": -3.0}) == -1
+        twin = layer.as_logistic()
+        for value in (0.3, 3.0, -3.0):
+            assert twin.settled({"a": value}) == layer.settled({"a": value})
+        with pytest.raises(ValueError, match="deadband"):
+            Layer(weights={"a": 1.0}, deadband=1.5)
+        with pytest.raises(ValueError, match="unknown activation"):
+            Layer(weights={"a": 1.0}, activation="softmax")
+
+    def test_scaling_is_a_temperature_and_cannot_reorder(self) -> None:
+        """`scaled` changes saturation, never the order of two signals."""
+        from till_infinity.structures.statespace import Layer
+
+        layer = Layer(weights=self.WEIGHTS, bias=-0.1)
+        draws = [{k: v * s for k, v in self.TERMS.items()} for s in (-2.0, 0.5, 1.0, 4.0)]
+        for factor in (0.25, 3.0):
+            hotter = layer.scaled(factor)
+            before = [layer(terms).value for terms in draws]
+            after = [hotter(terms).value for terms in draws]
+            assert sorted(range(len(draws)), key=lambda i: after[i]) == sorted(
+                range(len(draws)), key=lambda i: before[i]
+            )
+        # A `t`-statistic layer saturates without it: tanh(3) is already 0.995,
+        # so four terms at t = 3 are indistinguishable from four at t = 10.
+        flat = Layer(weights=dict.fromkeys(self.WEIGHTS, 1.0))
+        tight = flat.scaled(0.1)
+        three = dict.fromkeys(self.WEIGHTS, 3.0)
+        ten = dict.fromkeys(self.WEIGHTS, 10.0)
+        saturated = flat(ten).value - flat(three).value
+        used = tight(ten).value - tight(three).value
+        assert saturated < 1e-5
+        assert used > 0.15
+        assert used > 1_000 * saturated
+
+
+class TestReadoutTerms:
+    """What a `Readout` can hand an output layer, and what it must not.
+
+    `facade.Desk.read` computes the standardised one-step innovation to build
+    its quantile band and, until 2026-10-16, did not publish it - so a caller
+    wanting statespace's own reading of a bar had to reconstruct it from
+    `value` and `spread`, which gives a different and smaller number.
+    """
+
+    @staticmethod
+    def _run(prices, noise=0.0004, feed="EURUSD"):
+        from till_infinity.structures.statespace.facade import Desk
+
+        desk = Desk()
+        return [
+            desk.read(feed, "1h", float(i) * 3600.0, price, noise, volume=0.0)
+            for i, price in enumerate(prices)
+        ]
+
+    def test_a_predicted_bar_is_no_surprise_and_the_first_one_is_all_surprise(self) -> None:
+        """A series the filter tracks exactly reports an innovation of zero.
+
+        Except the first bar, which reports **173** on a flat series at 100:
+        the prior sits at zero and the first observation is the whole of the
+        level. That is correct and it is a trap for a consumer, so it is
+        pinned here. `Readout.warm` is already False there - the quantile band
+        needs a history - so a caller that checks `warm`, as the field's own
+        docstring tells it to, never sees the cold-start value.
+        """
+        got = self._run([100.0] * 60)
+        assert got[0].surprise > 100.0
+        assert not got[0].warm
+        assert max(abs(r.surprise) for r in got[1:]) < 1e-9
+
+    def test_the_innovation_is_not_the_post_update_residual(self) -> None:
+        """And the difference is an attenuation, not a rounding.
+
+        The naive reconstruction divides a residual that has already been
+        pulled toward the price by a spread meant for the *next* observation.
+        Both errors shrink it, so it reads as a weak signal rather than as a
+        bug - which is why `surprise` is published and this test exists.
+        """
+        prices = [100.0] * 60 + [100.5]
+        got = self._run(prices)
+        last = got[-1]
+        naive = (prices[-1] - last.value) / math.sqrt(last.spread)
+        assert last.surprise > 10.0
+        assert naive > 0.0
+        # Same sign, materially different size: the naive one is smaller.
+        assert naive < last.surprise
+        assert last.surprise / naive == pytest.approx(1.72, abs=0.15)
+
+    def test_terms_from_offers_two_and_names_them(self) -> None:
+        """Surprise and pace, with pace at zero when the mechanism is inert."""
+        from till_infinity.structures.statespace import terms_from
+
+        last = self._run([100.0] * 60 + [100.5])[-1]
+        terms = terms_from(last)
+        assert set(terms) == {"surprise", "pace"}
+        assert terms["surprise"] == pytest.approx(last.surprise)
+        # `volume=0` leaves pacing inert, and an inert mechanism has to
+        # contribute nothing rather than contributing one.
+        assert last.pace_factor == 1.0
+        assert terms["pace"] == 0.0
+
+    def test_spread_needs_a_reference_before_it_is_a_term(self) -> None:
+        """A spread is in the instrument's units, so it is scale-free only
+        against something. No reference, no term."""
+        from till_infinity.structures.statespace import terms_from
+
+        got = self._run([100.0] * 60 + [100.5])
+        last, earlier = got[-1], got[-6]
+        assert "spread" not in terms_from(last)
+        assert "spread" not in terms_from(last, reference_spread=0.0)
+        with_ref = terms_from(last, reference_spread=earlier.spread)
+        assert with_ref["spread"] == pytest.approx(last.spread / earlier.spread - 1.0)
+
+    def test_constants_are_not_offered_as_terms(self) -> None:
+        """`walls`, `family` and `absorbs` are per-feed lookups.
+
+        Each is the same number on every bar of a feed, so as a term it is a
+        bias wearing a term's name - it shifts every signal equally and changes
+        no ordering, while looking as though it had been measured.
+        """
+        from till_infinity.structures.statespace import terms_from
+
+        got = self._run([100.0 + 0.01 * i for i in range(60)])
+        walls = {r.walls for r in got}
+        families = {r.family for r in got}
+        assert len(walls) == 1
+        assert len(families) == 1
+        for readout in got:
+            offered = set(terms_from(readout, reference_spread=1.0))
+            assert offered == {"surprise", "pace", "spread"}
+            assert "walls" not in offered
+            assert "family" not in offered
+            assert "absorbs" not in offered
+
+    def test_a_layer_on_these_terms_saturates_without_a_temperature(self) -> None:
+        """Which is what `Layer.scaled` is for.
+
+        An innovation of 21 through a weight of 0.5 is `tanh(10)`, so a jump
+        and a much larger jump are the same signal. The layer does not pick a
+        temperature for the caller, but the need for one is a property of these
+        terms and belongs in a test.
+        """
+        from till_infinity.structures.statespace import Layer, terms_from
+
+        big = terms_from(self._run([100.0] * 60 + [100.5])[-1])
+        bigger = terms_from(self._run([100.0] * 60 + [101.0])[-1])
+        hot = Layer(weights={"surprise": -0.5, "pace": 0.2})
+        assert hot(big).value == pytest.approx(-1.0, abs=1e-6)
+        assert hot(bigger).value == pytest.approx(-1.0, abs=1e-6)
+        cool = hot.scaled(0.02)
+        assert cool(bigger).value < cool(big).value < 0.0
+        assert cool(big).value - cool(bigger).value > 0.05

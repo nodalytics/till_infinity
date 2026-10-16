@@ -31,6 +31,7 @@ What stays below is the part that describes the code rather than the market.
 
 | | |
 | --- | --- |
+| **Architecture** | what is connected to what, the output layer, and the sign convention |
 | **Making this module work well** | the current priority, and what is already closed |
 | **Measured** | the eurusd and four-symbol runs, the four quantities on real data, and what each one actually showed |
 | **The members** | `selective` and `swarm` - what they are, what they cost, and what fixes each trade-off |
@@ -45,6 +46,163 @@ wrong - the touch price was never missing, numpy did not speed up the smoother,
 and "zero-order hold, which is what Mamba uses" was wrong twice over. They are
 kept with their measurements rather than quietly fixed, because each one was
 believed for a while and the reason it was believed is the useful part.
+
+## Architecture: what is connected to what
+
+`Desk.read` is the only entry point, and it folds one observation into one
+`Readout`. Everything in the package is either on that path, or on the bench
+beside it waiting to earn its way on.
+
+### One observation in, one readout out
+
+```
+   feed, interval, when, value, noise, volume
+                     |
+                     v
+  +----------------------------------------------------------------+
+  |  Desk.read            state kept per (feed, interval)          |
+  +----------------------------------------------------------------+
+                     |
+     +---------------+----------------+---------------------+
+     |               |                |                     |
+     v               v                v                     v
+ behaving.py     bounding.py      pacing.Pace          pooling.Pooled
+ classify        shifts_for       volume -> factor     the filter itself
+ traits_for      -> walls         inert unless              |
+ drives_q                         drives_q(feed)            |
+     |               |                |                     |
+     | family        | walls          | pace_factor         |
+     | absorbs       |                |                     |
+     |               |                v                     |
+     |               |     predict(when, factor - 1.0) -----+
+     |               |     the driver enters as 1 + gain*u
+     |               |                |
+     |               |                v
+     |               |     spread = variance + noise     (prior)
+     |               |     before = value                (prior mean)
+     |               |                |
+     |               |                v
+     |               |     surprise = (value - before) / sqrt(spread)
+     |               |         the innovation, measured BEFORE the update
+     |               |                |
+     |               |                +--> residuals deque(window)
+     |               |                |         |
+     |               |                v         v
+     |               |     update(value, noise, when)   tails.py
+     |               |                |         _quantiles: the shape-free
+     |               |                |         band, once LEAST residuals
+     |               |                |         are in hand
+     |               |                v         |
+     +---------------+----------------+---------+
+                                      |
+                                      v
+                    +---------------------------+
+                    |          Readout          |
+                    +---------------------------+
+          value  spread  quantiles  surprise  pace_factor
+          family  absorbs  walls  paced  seen  feed  interval  at
+```
+
+The ordering of three lines in there is the whole correctness argument.
+`spread` and `before` are read from the **prior**, `surprise` is formed from
+them, and only then does `update` run. Reading
+`(price - readout.value) / readout.spread` off the finished readout instead
+gives a post-update residual against a next-step spread - a different, smaller
+quantity. Measured: the naive reconstruction reads **+12.28** where the
+innovation is **+21.16**, attenuated about 1.7x. See
+`research/docs/statespace-terms.md`.
+
+### How it comes together in the output layer
+
+```
+                                    Readout
+                                    |
+                                    v
+                     signalling.terms_from(readout,
+                                 reference_spread=...)
+                                    |
+          +-------------------------+--------------------------+
+          |                         |                          |
+          v                         v                          v
+      surprise                  pace                       spread
+   the innovation         pace_factor - 1.0        spread/reference - 1.0
+   signed, scale-free     inert pacing gives 0     omitted with no reference
+          |                         |                          |
+          |   refused on purpose: walls, family and absorbs are per-feed
+          |   lookups, so each would enter the sum as the same number on
+          |   every bar - a bias wearing a term's name
+          |                         |                          |
+          +-------------------------+--------------------------+
+                                    |
+                                    v
+          +-------------------------------------------------------+
+          |  Layer(weights, bias, activation="tanh", deadband)    |
+          |                                                       |
+          |     total = bias + SUM over terms of w[i] * term[i]   |
+          |     value = tanh(total)                               |
+          |                                                       |
+          |  an absent or nan term is recorded, not zeroed        |
+          +-------------------------------------------------------+
+                                    |
+                                    v
+          +-------------------------------------------------------+
+          |  Signal                                               |
+          |     value         -1 .. +1, the signal itself         |
+          |     side          +1 bullish / -1 bearish / 0 neutral |
+          |     strength      |value| in 0..1, the conviction     |
+          |     total         the pre-activation sum              |
+          |     contributions every term's share, largest first   |
+          |     missing       the terms it never received         |
+          |     leading       the term that moved the sum most    |
+          +-------------------------------------------------------+
+                                    |
+                                    v
+                       Layer.settled(terms) -> +1 / 0 / -1
+                       0 whenever strength <= deadband
+                                    |
+                                    v
+                      consumers - none yet. Nothing in this
+                      package publishes, by the rule above.
+```
+
+### The sign convention is fixed
+
+**The output is -1 to +1 with 0 as neutral: closer to +1 is more strongly
+bullish, closer to -1 is more strongly bearish.** Chosen on 2026-10-16 and not
+negotiable afterwards, because a signal whose sign convention moves is worse
+than no signal.
+
+That is a readability decision rather than a measured one, and it has to be,
+because the two candidate encodings are *the same function*:
+`tanh(x) = 2 * logistic(2x) - 1` exactly, so a `tanh` layer at weights `w` and
+a `logistic` layer at `2w` are affine images of each other and order every pair
+of inputs identically. No measurement can prefer one - see
+`research/docs/output-encoding.md`, which reports every AUC identical to
+floating point. What `-1..+1` buys is that `side` is `sign`, the magnitude is
+the conviction, a deadband is symmetric by construction, and the desk's
+existing `Side.sign` arithmetic needs no adapter. What `0..1` costs is that it
+reads like a probability, and this number is not one: the desk has already
+shipped one quantity that was read as a probability and was not.
+
+`Layer.as_logistic()` and `Layer.as_tanh()` convert between them for anything
+that needs the other form, and `Signal.strength` is the same number under
+either, so a consumer never has to ask which it was handed.
+
+### The rings of the package
+
+| ring | modules | status |
+| --- | --- | --- |
+| **the contract** | `__init__.py` | what may be claimed, and the rule that nothing publishes |
+| **the entry point** | `facade.py` | `Desk.read` and `Readout` - the only path a caller touches |
+| **on that path** | `behaving.py`, `bounding.py`, `pacing.py`, `pooling.py`, `tails.py` | reached by every `read` |
+| **the output layer** | `signalling.py` | composes a `Readout` into a `Signal`. No consumer yet |
+| **the subject** | `subjects.py` | names the quantity being modelled before any filter touches it |
+| **the members** | `reverting.py`, `linear.py`, `robust.py`, `hmm.py`, `selective.py`, `swarm.py`, `landau.py`, `adapting.py`, and the rest | alternatives on the bench, scored in `research/docs/statespace-measured.md` |
+| **the instruments** | `diagnostics.py`, `nulls.py`, `symmetry.py`, `spanning.py`, `dispersion.py` | how a member is shown to be wrong |
+
+Only the third ring runs on a `read`. The members are reachable from tests and
+research harnesses and from nowhere else, which is the phasing the spec asked
+for: the new thing runs beside the old one and loses on its own merits first.
 
 ## Making this module work well — the current priority
 
