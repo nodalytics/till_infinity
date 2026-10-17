@@ -9,6 +9,8 @@ three is only **what the three numbers mean and what a measurement is**:
 | `LEVEL` | where the level is | a touch price | the zone |
 | `INSTRUMENT` | this name against its kind | its deviation from its family | how far is normal |
 | `RELATION` | the fair spread of a set | the realised spread | the deviation's dispersion |
+| `DISPERSION` | how wide a bar is | its range-based variance, logged | the width's own spread |
+| `RELATION_DISPERSION` | how wide a deviation swings | its variance, logged | the width's spread |
 
 Statistical arbitrage is not a second system here. It is `RELATION`: level
 becomes relationship, distance becomes deviation, zone becomes deviation
@@ -93,6 +95,15 @@ class Subject:
     #: subject that cannot say how uncertain it starts is a subject whose first
     #: reading is being handled by a default nobody chose.
     px0: float = 1.0
+
+    #: `"level"` or `"dispersion"` - which half of the problem this subject is
+    #: about. Added 2026-10-17 with the emission rule in the README: every
+    #: member and component forecasts dispersion, and a subject that tracks a
+    #: level has to say so, because the level half is the one this desk has
+    #: measured closed. It is not cosmetic - a harness can select the
+    #: dispersion subjects and a reader can see at a glance which subjects are
+    #: claiming the open half.
+    tracks: str = "level"
 
     def filter(self, *, at: float | None = None) -> object:
         """A filter configured for this subject. Nothing is wired to it.
@@ -258,6 +269,87 @@ RELATION = Subject(
     member="relating",
 )
 
+DISPERSION = Subject(
+    name="dispersion",
+    quantity="log realised variance of this instrument over one bar",
+    measurement="the log of the bar's range-based variance estimate",
+    units="log variance, which is unconstrained - the reason it is logged",
+    jerk=1e-3,
+    noise=0.30,
+    provenance=(
+        "**both placeholders, and this subject is the README's item 6 rather "
+        "than a measurement.** The argument for it is the strongest in this "
+        "package and it is still an argument: price is a near-martingale - it "
+        "diffuses at 1.00 to 1.07 times sqrt(h), direction is a coin in every "
+        "test, and a random walk wins the point forecast at every horizon on "
+        "17 to 21 of 39 series - while log-variance is persistent and "
+        "forecastable, 79% of achievable with HAR-Parkinson. Everything in "
+        "this family that failed on price has a reason to work here: the "
+        "multi-timescale basis because HAR's win *is* the multi-scale result, "
+        "`reverting` because volatility mean-reverts and price does not, a "
+        "persistent anchor because variance has a level to return to. "
+        "`noise` is 0.30 because a single bar's range-based variance is a "
+        "noisy estimate of the bar's true variance and its log carries about "
+        "that much spread; the fit has the same shape as every other subject "
+        "here - `var(m2 - m1) = jerk_equivalent * dt + 2R` over measurement "
+        "pairs - and the measurements are available from any OHLC history, so "
+        "this is unfitted rather than unfittable. **The null is named and "
+        "cheap**: HAR-Parkinson is a linear regression on three realised "
+        "variances and it already captures 79%, so a state space here has a "
+        "high bar and a working incumbent to beat, which is the right shape "
+        "for this package"
+    ),
+    member="reverting",
+    tracks="dispersion",
+)
+
+
+RELATION_DISPERSION = Subject(
+    name="relation dispersion",
+    quantity="log variance of the deviation between this set of instruments",
+    measurement="the log of the realised variance of the deviation over one bar",
+    units="log variance of the deviation",
+    jerk=1e-3,
+    noise=0.30,
+    provenance=(
+        "**placeholders, and the subject exists because the level version of "
+        "it is measured closed.** Asked for on 2026-10-17 - dispersion in the "
+        "relationship component - and the measurements say it is the only "
+        "half worth tracking. `crossing.md` ran a 16-pair study with "
+        "unrelated-instrument controls and found contemporaneous correlations "
+        "of **0.27 to 0.77** on related pairs against **-0.00 to 0.32** on "
+        "the controls, and concluded *there is no lead; there is "
+        "simultaneity* - in a 325-pair study the largest correlation anywhere "
+        "was between two unrelated instruments. So the deviation's **level** "
+        "has no lead-lag to forecast, and the cost table closes it "
+        "independently: the largest implied move taking the best correlation "
+        "at face value is 0.089bps against a 2.35bps spread, with all sixteen "
+        "pairs negative net. The deviation's **dispersion** is a different "
+        "quantity and is where the relationship actually lives, which is also "
+        "why `never-test-cointegration-on-a-live-ratio` matters here: "
+        "`relating.Relating`'s adaptive ratio returns a null Dickey-Fuller t "
+        "of -29 out of pure noise, so any level claim about a live ratio has "
+        "to be fitted on a training half before it means anything. A "
+        "dispersion claim does not inherit that trap, because the ratio's "
+        "adaptation does not manufacture variance the way it manufactures "
+        "stationarity"
+    ),
+    member="reverting",
+    tracks="dispersion",
+)
+
+
 #: Every subject, so a test can assert the invariants hold for all of them rather
 #: than for whichever one was added first.
-SUBJECTS: tuple[Subject, ...] = (LEVEL, INSTRUMENT, RELATION, SPREAD)
+SUBJECTS: tuple[Subject, ...] = (
+    LEVEL,
+    INSTRUMENT,
+    RELATION,
+    SPREAD,
+    DISPERSION,
+    RELATION_DISPERSION,
+)
+
+#: The subjects that claim the open half of the problem. A harness pointing the
+#: family at dispersion walks this rather than filtering by name.
+DISPERSIONS: tuple[Subject, ...] = tuple(s for s in SUBJECTS if s.tracks == "dispersion")

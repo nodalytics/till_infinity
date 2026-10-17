@@ -438,6 +438,7 @@ from .interacting import Attention, Depth, Interactions, Rate
 from .landau import Landau
 from .linear import Gaussian
 from .paths import Path, hourly, simulate, with_gaps
+from .projecting import Projection, basis_price, project
 from .rates import Slope, slope_per_bar, slope_per_hour
 from .reverting import Reverting
 from .robust import Robust
@@ -469,6 +470,7 @@ __all__ = [
     "Landau",
     "Layer",
     "Path",
+    "Projection",
     "Rate",
     "Readout",
     "Residuals",
@@ -479,6 +481,7 @@ __all__ = [
     "Smoothed",
     "Span",
     "Subject",
+    "basis_price",
     "binding",
     "borrow_weight",
     "borrow_weight_of_means",
@@ -493,6 +496,7 @@ __all__ = [
     "least_horizon",
     "members",
     "parkinson",
+    "project",
     "reach",
     "residuals",
     "rogers_satchell",

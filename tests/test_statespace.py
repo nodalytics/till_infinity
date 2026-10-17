@@ -284,13 +284,22 @@ class TestSubjects:
         number moves with the composition of the flow. A cost that is
         forecast is a different gate from a cost that is averaged.
         """
-        assert len(SUBJECTS) == 4
+        assert len(SUBJECTS) == 6
         assert {s.name for s in SUBJECTS} == {
             "level",
             "instrument",
             "relation",
             "spread",
+            # The two that claim the open half of the problem, added
+            # 2026-10-17 with the emission rule: every member forecasts
+            # dispersion, and a subject now says which half it tracks.
+            "dispersion",
+            "relation dispersion",
         }
+        from till_infinity.structures.statespace.subjects import DISPERSIONS
+
+        assert {s.name for s in DISPERSIONS} == {"dispersion", "relation dispersion"}
+        assert all(s.tracks in ("level", "dispersion") for s in SUBJECTS)
         for s in SUBJECTS:
             assert s.quantity, s.name
             assert s.measurement, s.name
@@ -7836,6 +7845,181 @@ class TestTails:
         assert got.covers(2.0) == pytest.approx(tails.coverage(2.0, tails.dof_for("1h")))
         middle = got.covers(2.0)
         assert got.band_covering(middle)[1] == pytest.approx(got.band(2.0)[1], rel=1e-6)
+
+
+class TestForwardPaths:
+    """`projecting` - the one module here that emits a price.
+
+    Every claim it makes is about dispersion turned into price, so the tests
+    are the identities a path distribution has to satisfy. The barrier one is
+    the important one: a driftless race at reward-to-risk `r` must pay
+    `1 / (1 + r)`, and an arm that pays more than that on a martingale is a
+    bug, not an edge.
+    """
+
+    @staticmethod
+    def _readout(*, skew=0.0, warm=True, value=100.0, spread=1.0):
+        """A readout whose residual grid is a standard normal, exactly symmetric.
+
+        Built from the normal quantile rather than from a sample, because a
+        sampled grid carries its own asymmetry and the symmetry identities
+        below would then be testing the sample instead of the module.
+        """
+        from till_infinity.structures.statespace.facade import Readout
+
+        if not warm:
+            return Readout(feed="W", interval="1h", at=0.0, value=value, spread=spread)
+        normal = statistics.NormalDist()
+        grid = []
+        for i in range(1, 20):
+            level = i / 20.0
+            z = normal.inv_cdf(level)
+            grid.append((level, value + math.sqrt(spread) * (z + skew * z * abs(z))))
+        return Readout(
+            feed="W", interval="1h", at=0.0, value=value, spread=spread, quantiles=tuple(grid)
+        )
+
+    def test_a_driftless_race_pays_the_geometric_share(self):
+        """`1 / (1 + r)`, and it has to converge as the barriers leave the step."""
+        from till_infinity.structures.statespace.projecting import project
+
+        got = project(self._readout(), ahead=1200, paths=1500, seed=4)
+
+        # At r = 1 the problem is symmetric, so this must hold at *every*
+        # distance rather than converging to it - and it is what caught a mean
+        # of +0.0127 per step leaking in from a sampled grid.
+        for stop in (2.0, 10.0, 25.0):
+            out = got.barrier(up=100.0 + stop, down=100.0 - stop)
+            resolved = out["up"] + out["down"]
+            assert resolved > 0
+            assert out["up"] / resolved == pytest.approx(0.5, abs=0.06)
+
+        # At r = 2 it converges from above as the barriers move away from the
+        # step scale. Tight barriers are breached by overshoot - a fat-tailed
+        # step jumps *through* a stop rather than stopping on it, which is what
+        # real stops do, so the gap is a property and not an error.
+        near = got.barrier(up=100.0 + 2 * 2.0, down=100.0 - 2.0)
+        far = got.barrier(up=100.0 + 2 * 20.0, down=100.0 - 20.0)
+        near_share = near["up"] / (near["up"] + near["down"])
+        far_share = far["up"] / (far["up"] + far["down"])
+        assert near_share > far_share
+        assert far_share == pytest.approx(1.0 / 3.0, abs=0.06)
+
+    def test_the_step_is_driftless_unless_asked_otherwise(self):
+        """`centred` is why `drift=0` means what it says."""
+        import random
+
+        from till_infinity.structures.statespace.projecting import _sampler
+
+        skewed = self._readout(skew=0.35)
+        table_on, _ = _sampler(skewed, 1.0)
+        raw, _ = _sampler(skewed, 1.0, False)
+
+        rng = random.Random(2)
+        centred = [table_on(rng) for _ in range(40000)]
+        rng = random.Random(2)
+        uncentred = [raw(rng) for _ in range(40000)]
+
+        # The skewed grid has a real mean offset, and centring removes it.
+        assert abs(statistics.fmean(centred)) < abs(statistics.fmean(uncentred))
+        assert statistics.fmean(centred) == pytest.approx(0.0, abs=0.02)
+        # The shape is kept: the same draws, shifted, so the spread is identical.
+        assert statistics.pstdev(centred) == pytest.approx(statistics.pstdev(uncentred), rel=1e-9)
+        # The two differ by exactly one constant, which is what "the location
+        # is pinned and the shape is untouched" means.
+        shifts = {round(a - b, 12) for a, b in zip(uncentred, centred, strict=True)}
+        assert len(shifts) == 1
+
+    def test_an_iid_fan_grows_as_the_square_root(self):
+        """No dispersion forecast means a walk, and a walk is `sqrt(k)`."""
+        from till_infinity.structures.statespace.projecting import project
+
+        got = project(self._readout(), ahead=64, paths=3000, seed=7)
+        assert not got.paced
+        widths = {}
+        for step in (1, 4, 16, 64):
+            low, high = got.band(0.95, step=step)
+            widths[step] = 0.5 * (high - low) / math.sqrt(step)
+        # Flat once divided by sqrt(step), to the sampling error of 3000 paths.
+        assert max(widths.values()) / min(widths.values()) < 1.2
+        assert len(got.fan(0.95)) == got.ahead
+
+    def test_a_dispersion_forecast_is_what_paces_the_fan(self):
+        """`scales` is the arm the members are pointed at dispersion to feed."""
+        from till_infinity.structures.statespace.projecting import project
+
+        quiet = project(self._readout(), ahead=20, paths=1500, scales=(0.25,) * 20, seed=3)
+        loud = project(self._readout(), ahead=20, paths=1500, scales=(2.0,) * 20, seed=3)
+        assert quiet.paced
+        assert loud.paced
+        assert loud.band(0.95)[1] - loud.band(0.95)[0] > 4.0 * (
+            quiet.band(0.95)[1] - quiet.band(0.95)[0]
+        )
+        with pytest.raises(ValueError, match="scales"):
+            project(self._readout(), ahead=20, scales=(1.0, 1.0))
+
+    def test_a_touch_is_a_lower_bound_until_reach_is_set(self):
+        """A close-only path cannot touch what it passed through intrabar."""
+        from till_infinity.structures.statespace.projecting import project
+
+        plain = project(self._readout(), ahead=40, paths=2000, seed=9)
+        with_reach = project(self._readout(), ahead=40, paths=2000, reach=0.8, seed=9)
+        level = 100.0 + 6.0
+        assert with_reach.touches(level) > plain.touches(level)
+        # Monotone in the level, which a running extreme guarantees.
+        assert plain.touches(100.0 + 2.0) > plain.touches(100.0 + 8.0)
+        # And a touch is never less likely than ending beyond the same level.
+        assert plain.touches(level) >= plain.above(level)
+
+    def test_the_time_to_touch_is_conditional_and_says_when_it_cannot_answer(self):
+        from till_infinity.structures.statespace.projecting import project
+
+        got = project(self._readout(), ahead=40, paths=2000, seed=6)
+        near = got.when(100.0 + 1.0, 0.5)
+        far = got.when(100.0 + 1.0, 0.9)
+        assert near is not None
+        assert far is not None
+        assert 1 <= near <= far <= got.ahead
+        # Nothing reaches thirty standard deviations in forty bars, and the
+        # honest answer is None rather than the horizon.
+        assert got.when(100.0 + 300.0) is None
+
+    def test_a_cold_readout_still_projects_and_says_the_shape_was_assumed(self):
+        from till_infinity.structures.statespace.projecting import project
+
+        got = project(self._readout(warm=False), ahead=20, paths=500, seed=1)
+        assert got.source == "assumed"
+        assert got.paths == 500
+
+    def test_the_basis_is_named_and_not_inferred(self):
+        from till_infinity.structures.statespace.projecting import basis_price, project
+
+        assert basis_price(102.0, 99.0, 100.0, "close") == 100.0
+        assert basis_price(102.0, 99.0, 100.0, "ohlc3") == pytest.approx(
+            (102.0 + 99.0 + 100.0) / 3.0
+        )
+        for bad in ("hlc3", "typical", ""):
+            with pytest.raises(ValueError, match="basis"):
+                basis_price(1.0, 1.0, 1.0, bad)
+            with pytest.raises(ValueError, match="basis"):
+                project(self._readout(), basis=bad)
+
+    def test_bad_asks_are_refused(self):
+        from till_infinity.structures.statespace.projecting import project
+
+        got = project(self._readout(), ahead=10, paths=400, seed=2)
+        with pytest.raises(ValueError, match="step"):
+            got.band(0.95, step=99)
+        with pytest.raises(ValueError, match="coverage"):
+            got.band(1.5)
+        with pytest.raises(ValueError, match="level"):
+            got.quantile(0.0)
+        with pytest.raises(ValueError, match="straddle"):
+            got.barrier(up=99.0, down=98.0)
+        with pytest.raises(ValueError, match="reach"):
+            project(self._readout(), reach=-1.0)
+        with pytest.raises(ValueError, match="at least one"):
+            project(self._readout(), ahead=0)
 
 
 class TestS4DRealPromoted:

@@ -228,6 +228,69 @@ one-directional and stated there: too **wide** an `R` it survives, too narrow
 it does not, because the grid is then built from moves the filter has already
 absorbed.
 
+### Forward paths: dispersion turned into price
+
+`projecting.project` is the price layer, asked for on 2026-10-17 and bounded by
+the emission rule above. Dispersion goes in, a distribution over paths comes
+out, and nothing in it claims a direction.
+
+```
+   Readout.covering(c)                 a dispersion forecast
+   the step's shape, measured          scales[0..ahead-1]
+   then anchored in the tail           per-step multiples of the spread
+            |                                    |
+            v                                    v
+   inverse CDF, tabulated once in log-odds   paced steps
+            |                                    |
+            +-----------------+------------------+
+                              |
+                              v
+              4,000 paths x up to 40 bars, driftless
+                              |
+              +---------------+---------------+
+              |               |               |
+              v               v               v
+          fan(c)         touches(level)   barrier(up, down)
+       the band at       P(reach it)      which came first
+       every step        when(level, q)   up / down / neither
+```
+
+**Three things make it a measurement rather than a simulation.**
+
+*The step's shape is the measured one.* It samples `Readout.covering`, so the
+one-step distribution is the member's own residual quantiles in the body and
+the anchored Student-t in the tail - the composition `band-coverage.md`
+measured holding its coverage at 1.02 to 1.10 where a Gaussian of the same
+nominal width degrades to 14.80. The sampling identity is exact: `covering(c)`
+is the central interval of coverage `c`, so its edges **are** the
+`(1 +/- c) / 2` quantiles, and the measured asymmetry comes along for free.
+
+*It reproduces the barrier identity.* A driftless race at reward-to-risk `r`
+must pay `1 / (1 + r)`. At `r = 1` the problem is symmetric and it reads
+**0.4933, 0.5012, 0.5130, 0.5062** as the barriers move from 2 to 25 step
+scales away - flat, as symmetry requires. At `r = 2` and `r = 3` it converges
+from above to **0.3311** and **0.2331** against 0.3333 and 0.2500. The residual
+gap at tight barriers is **overshoot**, not error: a fat-tailed step jumps
+through a stop rather than stopping on it, which is what real stops do.
+
+*Finding that identity cost two corrections, both kept in the module.* The
+first version answered "which barrier came first" by comparing the steps at
+which each path's running high and low were **last extended**, which is a
+different question - it paid 0.3790 where geometry required 0.2500 and put the
+median time to touch a two-sigma level at 260 bars. Running extremes are
+monotone in the step, so a first crossing is a binary search on them, and that
+is exact. The second was subtler: the step is drawn from a measured grid whose
+sampling noise leaves its mean a little off its median, **+0.0127 of a step**
+on a 4,000-residual Gaussian grid - and a path compounds it, which pushed a
+symmetric race to 0.757. `centred` removes the step's own mean so that
+`drift = 0` means what it says, and leaves the skew and the tails untouched.
+
+**Two limits a caller has to know.** A close-only path cannot touch what it
+passed through intrabar, so every touch probability is a **lower bound** until
+`reach` is set from measured bar geometry; and `basis` is `close` or `ohlc3`
+because the typical price's one-step dispersion is smaller than
+close-to-close's, so a scale measured on one must not be used on the other.
+
 ### The sign convention is fixed
 
 **The output is -1 to +1 with 0 as neutral: closer to +1 is more strongly
@@ -259,6 +322,7 @@ either, so a consumer never has to ask which it was handed.
 | **the entry point** | `facade.py` | `Desk.read` and `Readout` - the only path a caller touches |
 | **on that path** | `behaving.py`, `bounding.py`, `pacing.py`, `pooling.py`, `tails.py` | reached by every `read`; `tails.py` is consumed by `Readout.covering` since 2026-10-17 |
 | **the output layer** | `signalling.py` | composes a `Readout` into a `Signal`. No consumer yet |
+| **the price layer** | `projecting.py` | turns a dispersion forecast into a distribution over forward paths. The only thing here that emits a price |
 | **the subject** | `subjects.py` | names the quantity being modelled before any filter touches it |
 | **the members** | `reverting.py`, `linear.py`, `robust.py`, `diagonal.py`, `hmm.py`, `selective.py`, `swarm.py`, `landau.py`, `adapting.py`, and the rest | alternatives on the bench, scored in `research/docs/statespace-measured.md` |
 | **the instruments** | `diagnostics.py`, `nulls.py`, `symmetry.py`, `spanning.py`, `dispersion.py` | how a member is shown to be wrong |
