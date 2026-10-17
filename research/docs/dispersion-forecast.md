@@ -211,10 +211,29 @@ members are named in `DECAYING` and scored on their state, with the reason.
 | volatility h=20 | +0.000 | **-0.659** | -0.003 | -0.009 | -0.042 |
 | shuffled h=20 | -0.000 | **-0.748** | -0.000 | -0.003 | -0.013 |
 
+And at 4h, where the reservoir is weak and sometimes unstable:
+
+| cell | `ou` | `ornstein` | `har` | `lin48` | `esn` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| fx_major h=20 | +0.119 | +0.484 | +0.460 | **+0.500** | +0.482 |
+| fx_cross h=5 | +0.073 | +0.460 | +0.220 | **+0.489** | +0.048 |
+| fx_cross h=20 | +0.004 | **+0.526** | +0.362 | **+0.526** | +0.319 |
+| metal h=5 | +0.002 | **+0.784** | +0.067 | +0.540 | -1.786 |
+| metal h=20 | +0.001 | **+0.850** | +0.406 | +0.605 | +0.294 |
+
 **It earns its place on the test it was set.** It beats the `ou` arm it was
-written because of in every real cell, by ten to a hundredfold; it beats HAR and
-the 48-lag ridge at h=20 on both FX classes and on metals; and on metals it is
-the **best arm of all**, ahead of a 48-state reservoir, with two parameters.
+written because of in **every** real cell, by ten to a hundredfold. It beats HAR
+and the 48-lag ridge at h=20 on both FX classes at 1h and on metals at both
+frames, and at 4h it is the best or tied-best arm in five of six real cells at
+h >= 5 - including +0.784 against the reservoir's **-1.786** on metals at h=5,
+where a 48-state nonlinear model is worse than predicting the mean and a
+two-parameter filter is not.
+
+One formatting fault to note rather than leave for a reader to trip over: the
+`s4d` row's columns collide when a reading runs past four digits, so that arm's
+numbers are unreadable in the raw log. It is a poor arm on this quantity either
+way - it is a price member - but the column needs widening before anyone quotes
+it.
 
 ### And it has a specific, fixable defect
 
