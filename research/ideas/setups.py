@@ -66,7 +66,6 @@ from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
 from till_infinity.structures.statespace.pivoting import pivots  # noqa: E402
 from till_infinity.structures.drawing.displacement import displacements  # noqa: E402
-from till_infinity.structures.drawing.gaps import imbalances  # noqa: E402
 from till_infinity.structures.vol.volatility import Volatility  # noqa: E402
 from till_infinity.trading.candles import Bar, engulfing  # noqa: E402
 
@@ -200,8 +199,11 @@ REJECTED = 3
 #: * **location** - where price sits in the higher timeframe's range (`range 4h`)
 #: * **gap** - the sign of the last bar-to-bar gap (`gap 4h`)
 #: * **imbalance** - a band price left behind rather than a shape it drew: a
-#:   fair value gap (`fvg 4h`), a volume imbalance (`imbalance 4h`) or a void
-#:   (`void 4h`), all from `drawing.gaps.imbalances`
+#:   fair value gap (`fvg 4h`), as a **causal** three-bar condition. The void
+#:   and volume-imbalance kinds are absent because neither has a causal
+#:   definition - both are defined by what later price did - and the production
+#:   detector that emits all three filters on the gap still being unfilled,
+#:   which is the future. See `_imbalances`.
 #:
 #: Dispersion is deliberately **not** in this list. It is the one forecastable
 #: quantity here and the others are not, but it says how **far** and not which
@@ -218,7 +220,14 @@ BIASES = (
     "gap 4h",
     "fvg 4h",
     "void 4h",
-    "imbalance 4h",
+    "ma200 4h",
+    "wick 4h",
+    "streak 4h",
+    "skew 4h",
+    "slope 1d",
+    # Kept as a **known null**: the intraday pattern is in volatility, not
+    # direction, so this has to read nothing or the harness is broken.
+    "session",
 )
 
 #: Higher-timeframe bars a slope is fitted over, and the share of its range
@@ -257,37 +266,162 @@ def _pushes(bars: dict[str, np.ndarray], run: int = 2) -> list[tuple[float, int]
 
 
 def _imbalances(bars: dict[str, np.ndarray], kind: str) -> list[tuple[float, int]]:
-    """`(time, side)` for one kind of untraded band, from production's own code.
+    """`(time, side)` for a three-bar gap, computed **causally**.
 
-    `drawing.gaps.imbalances` rather than a definition of mine: it already
-    distinguishes six kinds - a fair value gap, a volume imbalance, an opening
-    gap, a void, an inverted gap and a balanced range - and `Imbalance.up`
-    carries the sense, *left by a move up, so it sits below and reads as
-    support*. Writing a seventh definition here would be measuring my own
-    arithmetic rather than the desk's.
+    **This does not call `drawing.gaps.imbalances`, and the reason is the most
+    expensive thing found in this harness.** That function ends with
 
-    **Stamped one bar after the index**, which is the conservative reading. A
-    fair value gap is a three-bar pattern whose third bar is `index + 1`, so
-    the band is not knowable at `index`; using the stamping bar's own time
-    would be the same leak the pivot confirmation times exist to prevent, and
-    one bar of caution costs nothing.
+        top, bottom = _remaining(highs, lows, i + 2, low, high, open_share)
+        if top - bottom < (high - low) * open_share:
+            continue
+
+    - it scans **forward** from the gap and emits it only if it is still
+    unfilled. That is exactly right for its own job, which is drawing the gaps
+    that are open *now*; inside a loop over history, "now" is the end of the
+    series, so the rule is handed *a strong move happened **and price never
+    came back to fill it***. The second half is the future, and a gap that
+    stays unfilled is one where price kept going - which is the direction.
+
+    Measured, before the leak was found: `fvg 4h` read a win gap of **+0.31**
+    and **+0.50R a trade** against a -0.13R baseline, in both halves and every
+    class. Nothing else in the panel was within 0.3R of it, which is what
+    prompted the check rather than the celebration.
+
+    So the causal version is the bare three-bar condition - bar `i+1`'s low
+    above bar `i-1`'s high, or the mirror - knowable at `i + 1` and filtered on
+    nothing that comes after. `kind` is kept in the signature so the caller
+    reads the same, but only the fair-value-gap shape survives a causal
+    definition: a void and a volume imbalance are both defined by what later
+    price did or did not do.
+    """
+    if kind != "fvg":
+        return []
+    highs = np.asarray(bars["high"], dtype=float)
+    lows = np.asarray(bars["low"], dtype=float)
+    times = bars["time"]
+    unit = _unit(np.asarray(bars["close"], dtype=float))
+    out: list[tuple[float, int]] = []
+    for i in range(1, len(highs) - 1):
+        if lows[i + 1] > highs[i - 1]:
+            size, side = float(lows[i + 1] - highs[i - 1]), 1
+        elif lows[i - 1] > highs[i + 1]:
+            size, side = float(lows[i - 1] - highs[i + 1]), -1
+        else:
+            continue
+        # A size floor, in the series' own units, so a one-tick gap is not a
+        # structural claim. No forward reference.
+        if unit <= 0 or size < 0.5 * unit:
+            continue
+        out.append((float(times[i + 1]), side))
+    return out
+
+
+def _averages(bars: dict[str, np.ndarray], span: int = 200) -> list[tuple[float, int]]:
+    """`(time, side)` for price above or below its own long average.
+
+    **The most widely used bias in retail trading, and untested here as one.**
+    `magnets.md` measured the 200-period average as a *magnet* - does price get
+    drawn back to it - and found it indistinguishable from the previous bar's
+    high. That is a different claim from *above it means up*, which is what
+    everyone actually uses it for, and a null on the first says nothing about
+    the second.
     """
     closes = np.asarray(bars["close"], dtype=float)
-    live = Volatility()
-    for one in closes:
-        live.update(float(one))
-    found = imbalances(
-        [float(v) for v in bars["open"]],
-        [float(v) for v in bars["high"]],
-        [float(v) for v in bars["low"]],
-        [float(v) for v in closes],
-        live,
-        kinds=(kind,),
-    )
     times = bars["time"]
-    out = [(float(times[min(one.index + 1, len(times) - 1)]), 1 if one.up else -1) for one in found]
-    out.sort()
+    out = []
+    total = 0.0
+    for i, one in enumerate(closes):
+        total += float(one)
+        if i < span:
+            continue
+        total -= float(closes[i - span])
+        mean = total / span
+        out.append((float(times[i]), 1 if float(one) > mean else -1))
     return out
+
+
+def _wicks(bars: dict[str, np.ndarray]) -> list[tuple[float, int]]:
+    """`(time, side)` for where a bar closed inside its own range.
+
+    A close in the top third reads up, the bottom third down - the rejection
+    reading. A different kind of candle claim from an engulfing: that one is
+    about **two** bars' bodies, this is about **one** bar's close against its
+    own extremes, and the two can disagree.
+    """
+    highs = np.asarray(bars["high"], dtype=float)
+    lows = np.asarray(bars["low"], dtype=float)
+    closes = np.asarray(bars["close"], dtype=float)
+    times = bars["time"]
+    out = []
+    for i in range(len(closes)):
+        span = float(highs[i]) - float(lows[i])
+        if span <= 0:
+            out.append((float(times[i]), 0))
+            continue
+        share = (float(closes[i]) - float(lows[i])) / span
+        out.append(
+            (float(times[i]), 1 if share >= 1.0 - EDGE_SHARE else -1 if share <= EDGE_SHARE else 0)
+        )
+    return out
+
+
+def _streaks(bars: dict[str, np.ndarray], least: int = 3) -> list[tuple[float, int]]:
+    """`(time, side)` after `least` consecutive bars closing the same way.
+
+    Run length rather than slope: a slope fits a line through twenty bars and
+    is indifferent to their order, while a streak is **only** about order. The
+    two are different readings of momentum and a null on one does not carry.
+    """
+    closes = np.asarray(bars["close"], dtype=float)
+    times = bars["time"]
+    out = []
+    run = 0
+    for i in range(1, len(closes)):
+        step = 1 if closes[i] > closes[i - 1] else -1 if closes[i] < closes[i - 1] else 0
+        run = run + step if step and (run == 0 or (run > 0) == (step > 0)) else step
+        out.append((float(times[i]), (1 if run > 0 else -1) if abs(run) >= least else 0))
+    return out
+
+
+def _skews(bars: dict[str, np.ndarray], span: int = 40) -> list[tuple[float, int]]:
+    """`(time, side)` for whether recent up-moves or down-moves were larger.
+
+    The **shape** of the return distribution rather than its location, which
+    makes it a different kind of information from everything above: slope,
+    streak and location are all about where price went, this is about how it
+    travelled. `one-bar-band.md` found skew null for *density scoring*, which
+    is a statement about fitting a shape and not about direction.
+    """
+    closes = np.log(np.maximum(np.asarray(bars["close"], dtype=float), 1e-300))
+    times = bars["time"]
+    steps = np.diff(closes)
+    out = []
+    for i in range(span, len(steps)):
+        window = steps[i - span : i]
+        ups = window[window > 0]
+        downs = -window[window < 0]
+        if len(ups) < 3 or len(downs) < 3:
+            out.append((float(times[i + 1]), 0))
+            continue
+        out.append((float(times[i + 1]), 1 if float(ups.mean()) > float(downs.mean()) else -1))
+    return out
+
+
+def _sessions(bars: dict[str, np.ndarray]) -> list[tuple[float, int]]:
+    """`(time, side)` by hour of day - **a calibration arm, expected null.**
+
+    `seasonality-belongs-on-q` is explicit: the intraday pattern is in
+    **volatility**, and it drives `Q` rather than `R`. So an hour-of-day
+    *direction* bias should read nothing, and it is here to confirm the harness
+    can still say so after ten other rules have been added to it. A panel with
+    no known-null arm cannot tell a dead detector from a dead effect.
+
+    The split is London-and-after against Asia, which is the crudest version
+    and the point: if a crude clock bias reads something, the harness is wrong.
+    """
+    times = np.asarray(bars["time"], dtype=float)
+    hours = (times / 3600.0) % 24.0
+    return [(float(t), 1 if 7.0 <= h < 19.0 else -1) for t, h in zip(times, hours, strict=True)]
 
 
 def _slopes(bars: dict[str, np.ndarray]) -> list[tuple[float, int]]:
@@ -468,8 +602,17 @@ def run(bars: dict[str, np.ndarray], higher: dict[str, np.ndarray], rng) -> dict
     # Three more kinds of bias, each a band price left behind rather than a
     # shape it drew: a fair value gap, a volume imbalance and a void.
     fvgs = _imbalances(higher, "fvg")
-    voids = _imbalances(higher, "void")
-    vis = _imbalances(higher, "vi")
+    # Six more kinds, and one of them is a known null kept on purpose.
+    averaged = _averages(higher)
+    wicked = _wicks(higher)
+    streaked = _streaks(higher)
+    skewed = _skews(higher)
+    sessioned = _sessions(bars)
+    # The next scale up, built by the same resampler. Not a new kind of
+    # information but a new **scale**, and whether bias strength grows with the
+    # timeframe is a question nothing here has asked.
+    daily = _resample(bars, 24 * 3600.0)
+    sloped_1d = _slopes(daily)
     window = 8 * 4 * 3600.0
     middle = float(bars["time"][len(bars["time"]) // 2])
 
@@ -548,9 +691,13 @@ def run(bars: dict[str, np.ndarray], higher: dict[str, np.ndarray], rng) -> dict
                 "slope 4h": _latest(sloped, when, window) == side,
                 "range 4h": _latest(located, when, window) == side,
                 "gap 4h": _latest(gapped, when, window) == side,
+                "ma200 4h": _latest(averaged, when, window) == side,
+                "wick 4h": _latest(wicked, when, window) == side,
+                "streak 4h": _latest(streaked, when, window) == side,
+                "skew 4h": _latest(skewed, when, window) == side,
+                "session": _latest(sessioned, when, 3600.0) == side,
+                "slope 1d": _latest(sloped_1d, when, 6 * 24 * 3600.0) == side,
                 "fvg 4h": _latest(fvgs, when, window) == side,
-                "void 4h": _latest(voids, when, window) == side,
-                "imbalance 4h": _latest(vis, when, window) == side,
                 "fvg 4h+loud": _latest(fvgs, when, window) == side and noisy,
                 "displace 4h+loud": _latest(pushed_by, when, window) == side and noisy,
                 "slope+displace 4h": _latest(sloped, when, window) == side
