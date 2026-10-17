@@ -298,9 +298,12 @@ DISPERSION = Subject(
         "cheap**: HAR-Parkinson is a linear regression on three realised "
         "variances and it already captures 79%, so a state space here has a "
         "high bar and a working incumbent to beat, which is the right shape "
-        "for this package"
+        "for this package. The member named is `ornstein`, the value-reverting "
+        "one written on 2026-10-17: `reverting` reverts the *rate* and leaves "
+        "the value integrated, which is a random walk in log-variance and "
+        "loses to its own running mean"
     ),
-    member="reverting",
+    member="ornstein",
     tracks="dispersion",
 )
 
@@ -335,7 +338,7 @@ RELATION_DISPERSION = Subject(
         "adaptation does not manufacture variance the way it manufactures "
         "stationarity"
     ),
-    member="reverting",
+    member="ornstein",
     tracks="dispersion",
 )
 
@@ -365,13 +368,15 @@ TURN_DEPTH = Subject(
         "running mean. Both parameters are placeholders. `noise` is 0.25 and "
         "is **not** measurement error: a swing's size is an exact distance "
         "between two confirmed extremes, so it stands for the part of the "
-        "next depth no state can carry. The member named here is the honest "
-        "one and not the right one - depth reverts in **level** and "
-        "`reverting` reverts the *rate*, leaving the value integrated, so the "
-        "family still has no value-reverting member and `depths.AR1` is the "
-        "arm that stands in for it"
+        "next depth no state can carry. **The member named here was `reverting` "
+        "until 2026-10-17, and that was the honest-but-wrong choice**: depth "
+        "reverts in *level* and `reverting` reverts the *rate*, leaving the "
+        "value integrated, so it modelled a random walk in depth. "
+        "`ornstein.Ornstein` was written to close that gap and is named here "
+        "now; `depths.AR1` stays as the two-parameter arm any member has to "
+        "beat"
     ),
-    member="reverting",
+    member="ornstein",
     tracks="dispersion",
 )
 

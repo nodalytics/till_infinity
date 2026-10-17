@@ -170,3 +170,161 @@ dispersion forecast is the Monte Carlo in `statespace/projecting.py`, which
 turns it into a distribution over paths - a stop at a stated breach rate, a
 target's touch probability, a time to arrive - and for nothing that needs to
 know which way price goes.
+
+## The value-reverting member, and the parameter it still needs
+
+**2026-10-17, later. `statespace/ornstein.py`.**
+
+The `ou` arm above exists because the family had no member that reverts a
+**value** to a level - `reverting` reverts the *rate* and leaves the value
+integrated, which is a random walk in log-variance. `ornstein.Ornstein` closes
+that gap: one state, `d(value) = theta (level - value) dt + sigma dW`,
+discretised exactly, with the level as an **anchored slow mean** rather than a
+free state (a free centre collapses onto the data -
+`definitions-cannot-be-states`).
+
+### Two corrections to this harness came first, and both mattered
+
+**Every filter arm had been under-scored.** `_statespace` compared a member's
+*current* state against a target that is the mean log-variance over the next
+`h` bars. The fitted arms learn that shrinkage from the data; a filter never
+sees the target, so its one-step state was being scored against an h-step mean
+and the penalty grew with `h` - visible as `pool` reading +0.241 at h=1 and
+-1.893 at h=20. Each member is now asked for its own h-step forecast through
+`at_time`, averaged over the horizon because the target is a mean.
+
+**But `at_time` is not meaningful for every member.** Applied uniformly it made
+`s4d` read **-153** at h=1 and **-2616** at h=20, because a selective map's
+states all decay toward zero and its extrapolation returns about zero against a
+quantity sitting at -18. That is the README's trade-off 2 appearing as a
+number, and it is what `swarm`'s non-decaying anchor exists to fix. Those two
+members are named in `DECAYING` and scored on their state, with the reason.
+
+### Measured, 1h, median out-of-sample R2
+
+| cell | `ou` | `ornstein` | `har` | `lin48` | `esn` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| fx_major h=1 | +0.011 | **+0.172** | +0.031 | +0.092 | +0.392 |
+| fx_major h=20 | +0.004 | **+0.405** | +0.103 | +0.178 | +0.540 |
+| fx_cross h=20 | +0.004 | **+0.550** | +0.110 | +0.198 | +0.572 |
+| metal h=20 | +0.169 | **+0.834** | +0.791 | +0.826 | +0.769 |
+| volatility h=20 | +0.000 | **-0.659** | -0.003 | -0.009 | -0.042 |
+| shuffled h=20 | -0.000 | **-0.748** | -0.000 | -0.003 | -0.013 |
+
+And at 4h, where the reservoir is weak and sometimes unstable:
+
+| cell | `ou` | `ornstein` | `har` | `lin48` | `esn` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| fx_major h=20 | +0.119 | +0.484 | +0.460 | **+0.500** | +0.482 |
+| fx_cross h=5 | +0.073 | +0.460 | +0.220 | **+0.489** | +0.048 |
+| fx_cross h=20 | +0.004 | **+0.526** | +0.362 | **+0.526** | +0.319 |
+| metal h=5 | +0.002 | **+0.784** | +0.067 | +0.540 | -1.786 |
+| metal h=20 | +0.001 | **+0.850** | +0.406 | +0.605 | +0.294 |
+
+**It earns its place on the test it was set.** It beats the `ou` arm it was
+written because of in **every** real cell, by ten to a hundredfold. It beats HAR
+and the 48-lag ridge at h=20 on both FX classes at 1h and on metals at both
+frames, and at 4h it is the best or tied-best arm in five of six real cells at
+h >= 5 - including +0.784 against the reservoir's **-1.786** on metals at h=5,
+where a 48-state nonlinear model is worse than predicting the mean and a
+two-parameter filter is not.
+
+One formatting fault to note rather than leave for a reader to trip over: the
+`s4d` row's columns collide when a reading runs past four digits, so that arm's
+numbers are unreadable in the raw log. It is a poor arm on this quantity either
+way - it is a price member - but the column needs widening before anyone quotes
+it.
+
+### And it has a specific, fixable defect
+
+**On the nulls it is not neutral, it is negative** - and the shuffled rows and
+the constant-sigma rows read the *same* magnitudes, about -0.06, -0.27 and
+-0.73 at h = 1, 5 and 20, where every fitted arm reads about zero.
+
+That is not noise and it is not a bug. **`theta` is a placeholder.**
+`subjects.DISPERSION` sets a 24-hour half-life and says it is unfitted, so at
+h = 20 the member carries `exp(-theta * 20h) = 0.56` of the current deviation
+into its forecast. Where the quantity reverts at about that rate, carrying 56%
+is right and it wins. Where the quantity does not revert at all - a shuffled
+series, or a generator that fixes sigma - carrying 56% of pure noise is a loss
+of exactly the size observed. The `ou` arm reads 0.000 on those same rows
+because it **estimates** its coefficient online and finds zero.
+
+So the claim is narrower than the table: *`Ornstein` with a fitted `theta` is
+the right model for this quantity and wins decisively; with a placeholder
+`theta` it loses wherever the quantity does not revert at the assumed rate.*
+Its own nested null is the fit - `theta = 0` is a one-state random walk, so
+comparing a fitted `theta` against zero on held-out likelihood is one
+parameter at a boundary - and nothing should use this member on a new subject
+without running it.
+
+What the member buys over the `ou` arm, once `theta` is fitted, is everything a
+filter has and a regression on a fixed grid does not: a posterior, smoothing,
+irregular sampling, gap handling, and a band that converges to a stationary
+width instead of growing without bound.
+
+### Fitting `theta`, which closes the defect and opens a smaller one
+
+**2026-10-17, later still.** The defect above was `theta` being a placeholder,
+so it is fitted: a **streaming likelihood grid** of thirteen candidate
+half-lives, each carrying an exponentially weighted sum of
+`(d_t - exp(-theta * dt) * d_{t-1})**2` over the deviation `d = value - level`,
+with the minimiser taken once sixty readings are in. Three properties earn it:
+
+* **irregular time is exact.** Every candidate is evaluated at each step's own
+  gap, because `exp(-theta * dt)` is the quantity being fitted and a nominal
+  bar length would be a wrong `theta`.
+* **both ends of the grid are in it.** Half-life `inf` is `theta = 0`, a random
+  walk; half-life `0` is instant reversion, where the forecast *is* the level
+  and nothing is carried. **A fixed `theta` can reach neither**, which is
+  exactly why it paid -0.73 where nothing reverts.
+* **the anchor survives.** The learnt `theta` is floored so the reversion stays
+  at least `SEPARATION` times faster than the level. Without the floor a random
+  walk fits `theta -> 0`, the level becomes infinitely faster than the
+  reversion, and the member collapses into the walk it replaces.
+
+| cell | fixed `theta` | fitted `theta` | change |
+| --- | ---: | ---: | ---: |
+| volatility 1h h=20 | -0.659 | **-0.042** | **+0.617** |
+| volatility 4h h=20 | -0.725 | **-0.046** | **+0.679** |
+| shuffled, every class | about -0.73 | **-0.040 to -0.048** | — |
+| fx_major 1h h=5 | +0.130 | **+0.230** | +0.100 |
+| fx_major 1h h=20 | +0.405 | **+0.526** | +0.121 |
+| fx_cross 1h h=20 | +0.550 | +0.551 | +0.001 |
+| metal 1h h=20 | +0.834 | +0.838 | +0.004 |
+| fx_major 4h h=20 | +0.484 | +0.443 | -0.041 |
+| fx_cross 4h h=20 | +0.526 | **+0.402** | **-0.124** |
+| metal 4h h=20 | +0.850 | +0.779 | -0.071 |
+
+**The defect is closed.** The null bias falls from -0.66 and -0.73 to -0.04,
+which puts the member level with the reservoir's -0.04 on the same rows. And at
+1h it is better where it matters: **+0.526 at h=20 against the reservoir's
++0.540**, a dead heat between two parameters and forty-eight reservoir states.
+
+### The smaller one it opens, and why it is not a bug
+
+**At 4h the fitted `theta` is worse than the placeholder** - by 0.04 on
+fx_major, 0.07 on metals and 0.12 on fx_cross.
+
+The cause is a mismatch of criteria rather than a fault in the fit. The grid
+minimises **one-step** deviation residuals, because that is what a filter's
+dynamics are; the score is an **h-step** forecast, and at 4h bars with h = 20
+that is eighty hours ahead. Where the model is exactly right the two agree -
+the one-step dynamics imply the h-step forecast. Where it is misspecified, and
+it is (the level is a slow exponential mean, not the truth), the
+one-step-optimal pull is not the h-step-optimal one, and the gap grows with how
+many hours an h-step forecast spans.
+
+So the honest reading is that the fit is right by default - it removes a -0.73
+bias and wins at 1h - and that a caller forecasting many hours ahead on a slow
+frame should know the pull was chosen on a one-step criterion. Fitting it on
+the horizon's own residual would need the member to know the caller's horizon,
+which is a different contract and not obviously the right one.
+
+**One residual that is structural rather than fixable.** Even fitted, the
+member reads about **-0.04** on shuffled series where `har` reads -0.001. That
+is not carried noise from a wrong pull: forecasting a *mean over a horizon*
+with a reverting model necessarily carries a little of the current deviation
+through the first few steps, and a regression fitted directly on the target
+removes that by construction. It is the price of being a filter rather than a
+fit, and it is the same size as the reservoir's.
