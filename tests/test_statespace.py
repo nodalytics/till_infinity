@@ -8580,6 +8580,191 @@ class TestForwardPaths:
             with pytest.raises(ValueError, match="basis"):
                 project(self._readout(), basis=bad)
 
+    def test_a_plan_carries_three_prices_and_what_it_would_need(self):
+        """`sl, entry, tp` - and the edge the geometry requires to break even."""
+        from till_infinity.structures.statespace.projecting import plan, project
+
+        # **The stop's width is the binding constraint, not the horizon.** With
+        # the default grid starting at 1:2 and the target required to be
+        # delivered, a stop placed at a 40% path-breach rate leaves no
+        # deliverable multiple - at forty bars or at four hundred, because
+        # solving the stop for a breach rate rescales the whole geometry with
+        # the horizon. A tighter stop is what buys a reachable target, and the
+        # refusal is pinned below.
+        got = project(self._readout(), ahead=40, paths=1000, seed=3)
+        made = plan(got, side=1, breach=0.60, cost=0.05)
+        assert made is not None
+        # Long: the stop is below the entry and the target above, and the
+        # reward is the ratio of the two distances.
+        assert made.stop < made.entry < made.target
+        assert made.reward == pytest.approx(
+            (made.target - made.entry) / (made.entry - made.stop), rel=1e-9
+        )
+        # The stop was **solved on the paths** for the breach rate asked for,
+        # not taken from a Gaussian label.
+        assert made.stopped == pytest.approx(0.60, abs=0.05)
+        # And it reports a requirement rather than a recommendation: the
+        # expectancy is negative after cost on a driftless projection, and the
+        # edge is what would have to arrive from somewhere else.
+        assert made.net < 0.0
+        assert made.edge > 0.0
+
+    def test_a_short_is_the_mirror_and_a_neutral_signal_is_no_trade(self):
+        from till_infinity.structures.statespace.projecting import plan, project
+
+        got = project(self._readout(), ahead=40, paths=1000, seed=3)
+        long = plan(got, side=1, breach=0.60, cost=0.05)
+        short = plan(got, side=-1, breach=0.60, cost=0.05)
+        assert long is not None
+        assert short is not None
+        assert short.stop > short.entry > short.target
+        # The same symmetric step distribution, so the two require about the
+        # same edge - an asymmetry here would be a bug in one of the paths.
+        assert short.edge == pytest.approx(long.edge, abs=0.02)
+
+        # A neutral signal is no trade, which is the correct output rather than
+        # a coin flip dressed as one.
+        assert plan(got, side=0) is None
+        with pytest.raises(ValueError, match="side"):
+            plan(got, side=2)
+
+    def test_the_required_edge_is_what_cost_does_to_the_geometry(self):
+        """Linear in cost, and non-zero even at zero cost."""
+        from till_infinity.structures.statespace.projecting import plan, project
+
+        got = project(self._readout(), ahead=40, paths=1000, seed=3)
+        free = plan(got, side=1, breach=0.60, cost=0.0)
+        dear = plan(got, side=1, breach=0.60, cost=0.10)
+        assert free is not None
+        assert dear is not None
+        assert dear.edge > free.edge
+        # Even free, the geometry needs an edge: losses are settled at the
+        # excursion the path reached rather than at the stop, so overshoot is
+        # charged against the trade.
+        assert free.edge > 0.0
+        # And the step from one cost to the other is the cost difference over
+        # `1 + reward`, which is the arithmetic the field is defined by.
+        if free.reward == dear.reward:
+            assert dear.edge - free.edge == pytest.approx(0.10 / (1.0 + free.reward), rel=1e-6)
+
+    def test_an_unreachable_target_is_refused_rather_than_preferred(self):
+        """The criterion is gameable without `settle`, and this is the guard."""
+        from till_infinity.structures.statespace.projecting import plan, project
+
+        got = project(self._readout(), ahead=40, paths=1000, seed=3)
+        # With no reachability requirement the widest multiple wins every time,
+        # because `edge` divides by `1 + reward` while paths that never resolve
+        # contribute almost nothing - a target reached by nobody looks cheapest.
+        gamed = plan(got, side=1, breach=0.60, cost=0.05, settle=0.0001, delivers=0.0001)
+        guarded = plan(got, side=1, breach=0.60, cost=0.05)
+        assert gamed is not None
+        assert guarded is not None
+        assert gamed.reward > guarded.reward
+        assert gamed.undecided > guarded.undecided
+        assert 1.0 - guarded.undecided >= 0.50
+        # And `delivers` is the half that resolution alone cannot give: a 60%
+        # breach resolves 60% of the time by **stopping out**, so a criterion
+        # asking only for resolution chose a target nothing reached. The
+        # guarded plan has to deliver a real share of its own barrier rate.
+        assert guarded.hit >= 0.5 / (1.0 + guarded.reward)
+        assert gamed.hit < guarded.hit
+
+        # A stop so wide that no multiple can be delivered has no plan, and
+        # saying so is better than inventing one. At a 40% path-breach rate
+        # nothing in 1:2..1:56 delivers, **at any horizon**, because solving the
+        # stop for a breach rate rescales the geometry as the hold grows.
+        assert plan(got, side=1, breach=0.40, cost=0.05) is None
+        assert (
+            plan(
+                project(self._readout(), ahead=400, paths=800, seed=3),
+                side=1,
+                breach=0.40,
+                cost=0.05,
+            )
+            is None
+        )
+        for bad in (0.0, 1.5):
+            with pytest.raises(ValueError, match="delivers"):
+                plan(got, side=1, breach=0.60, delivers=bad)
+        for bad in (0.0, 1.5):
+            with pytest.raises(ValueError, match="breach"):
+                plan(got, side=1, breach=bad)
+        with pytest.raises(ValueError, match="settle"):
+            plan(got, side=1, settle=0.0)
+
+    def test_shifting_the_entry_raises_the_ratio_and_lowers_the_expectancy(self):
+        """The ratio is arithmetic; the degradation is the selection that buys it.
+
+        Measured on a **driftless** projection, so this is not a market fact
+        that might change with the regime - it is geometry, and it holds
+        always. Moving a long's entry down turns `risk` into `risk - offset`
+        and the reward into `reward + offset`, so the ratio rises with nothing
+        predicted. What pays for it is that the paths which fill the order are
+        the paths that **fell first**, and they meet a stop that is now closer.
+        """
+        from till_infinity.structures.statespace.projecting import project, resting
+
+        got = project(self._readout(), ahead=200, paths=2000, seed=3)
+        rows = [
+            resting(got, side=1, offset=off, risk=5.0, reward=2.0, cost=0.0)
+            for off in (0.0, 1.0, 2.0, 3.0, 4.0)
+        ]
+
+        # At no offset this is the ordinary market order, and on a driftless
+        # projection it is the martingale - which calibrates everything below.
+        assert rows[0].filled == pytest.approx(1.0)
+        assert abs(rows[0].expectancy) < 3.0 * rows[0].error
+
+        ratios = [r.reward for r in rows]
+        expectancies = [r.expectancy for r in rows]
+        fills = [r.filled for r in rows]
+        losses = [r.lost for r in rows]
+
+        # The ratio rises, monotonically, by arithmetic.
+        assert ratios == sorted(ratios)
+        assert ratios[-1] > 5.0 * ratios[0]
+        # And the expectancy falls, monotonically, which is the point.
+        assert expectancies == sorted(expectancies, reverse=True)
+        assert expectancies[-1] < expectancies[0] - 0.3
+        # Both charges are visible: fewer fills, and - the larger one - a
+        # conditional loss rate that climbs because the fill selects the paths
+        # already moving against the trade.
+        assert fills == sorted(fills, reverse=True)
+        assert losses == sorted(losses)
+        assert losses[-1] > 0.85
+
+        # The unconditional number is the one a desk can spend, and it is
+        # flattered by the unfilled paths contributing zero - so it is always
+        # above the conditional one once the offset bites.
+        assert rows[-1].expectancy > rows[-1].conditional
+
+    def test_a_resting_entry_refuses_an_offset_outside_its_own_risk(self):
+        from till_infinity.structures.statespace.projecting import project, resting
+
+        got = project(self._readout(), ahead=40, paths=400, seed=3)
+        for bad in (5.0, 6.0, -1.0):
+            with pytest.raises(ValueError, match="offset"):
+                resting(got, side=1, offset=bad, risk=5.0, reward=2.0)
+        with pytest.raises(ValueError, match="side"):
+            resting(got, side=0, offset=1.0, risk=5.0, reward=2.0)
+        with pytest.raises(ValueError, match="risk and reward"):
+            resting(got, side=1, offset=0.0, risk=0.0, reward=2.0)
+        with pytest.raises(ValueError, match="within"):
+            resting(got, side=1, offset=1.0, risk=5.0, reward=2.0, within=0)
+
+    def test_a_geometry_carries_the_standard_error_of_its_own_expectancy(self):
+        """Without it a driftless projection reads as paying, and it did."""
+        from till_infinity.structures.statespace.projecting import project
+
+        got = project(self._readout(), ahead=600, paths=2000, seed=3)
+        # A stop far out relative to the paths' dispersion divides a
+        # price-scale error by a large number, so the error is large - and
+        # every reading here has to be inside a couple of them.
+        for reward in (2.0, 5.0, 20.0):
+            priced = got.geometry(stop=20.0, reward=reward, cost=0.0)
+            assert priced.error > 0.0
+            assert abs(priced.separated) < 3.0, (reward, priced.expectancy, priced.error)
+
     def test_bad_asks_are_refused(self):
         from till_infinity.structures.statespace.projecting import project
 
