@@ -68,7 +68,7 @@ from level_signatures import (  # noqa: E402
     load,
     shuffle_blocks,
 )
-from till_infinity.structures.statespace.dispersion import differ  # noqa: E402
+from till_infinity.statespace.dispersion import differ  # noqa: E402
 
 HORIZON = int(os.environ.get("HORIZON", "400"))
 PER_FEED = int(os.environ.get("PER_FEED", "250"))

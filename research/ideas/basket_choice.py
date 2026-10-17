@@ -39,7 +39,7 @@ import random
 import statistics
 from pathlib import Path
 
-from till_infinity.structures.statespace.relating import Relating
+from till_infinity.statespace.relating import Relating
 
 SYMBOLS = (
     ("eurusd", "EURUSD"),

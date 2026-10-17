@@ -60,7 +60,7 @@ HERE = Path(__file__).resolve().parent
 if str(HERE) not in sys.path:
     sys.path.insert(0, str(HERE))
 
-from till_infinity.structures.statespace.behaving import classify  # noqa: E402
+from till_infinity.statespace.behaving import classify  # noqa: E402
 
 CACHE = Path.home() / "till_infinity/data/seqlab"
 FRAMES = ("1h", "4h")

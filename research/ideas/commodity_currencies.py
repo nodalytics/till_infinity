@@ -337,7 +337,7 @@ def arrangements(codes, size):
 def main() -> None:
     import numpy as np
 
-    from till_infinity.structures.statespace.nulls import rotated
+    from till_infinity.statespace.nulls import rotated
 
     print(
         "the claim predicts a sign, fixed before measuring; cointegration is\n"

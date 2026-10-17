@@ -74,7 +74,7 @@ for q in (HERE, HERE.parent, HERE.parents[1]):
 from dispersion_ml import SIZE, _apply, _ridge, parkinson  # noqa: E402
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
-from till_infinity.structures.statespace.pivoting import pivots  # noqa: E402
+from till_infinity.statespace.pivoting import pivots  # noqa: E402
 from till_infinity.structures.drawing.displacement import displacements  # noqa: E402
 from till_infinity.structures.vol.volatility import Volatility  # noqa: E402
 from till_infinity.trading.candles import Bar, engulfing  # noqa: E402

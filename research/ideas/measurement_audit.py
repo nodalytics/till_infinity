@@ -208,7 +208,7 @@ def turkey_arm(names, series) -> None:
             continue
         # A HAR fitted on the first half, scored on the second, against the
         # same model refitted on the second - the degradation a turkey suffers.
-        from till_infinity.structures.statespace.nulls import har
+        from till_infinity.statespace.nulls import har
 
         span = 100
         logs = []

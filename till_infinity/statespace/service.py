@@ -1,0 +1,191 @@
+"""The always-on loop: bars in, dispersion out.
+
+    prices ──▶ statespace ──▶ statespace.dispersion ──▶ trading, structures
+
+One topic out, and it carries no side. The payload says how wide the next bars
+are and how sure of that it is, because that is the half this desk has measured
+forecastable - and a consumer that wants a direction has to get it somewhere
+else, which is the point rather than a limitation.
+
+## It is plugged in by subscribing, not by being imported
+
+Nothing in production imported this package before it became a service, and
+nothing imports it now. A service that other services reach into is the shape
+`shared/` exists to end - `structures/codec.py` records `trading` having
+imported its persistence layer - so the seam here is the bus: this reads
+`prices.bars` and publishes `statespace.dispersion`, and a consumer subscribes.
+That is what makes it pluggable: it can be run, not run, or run on its own box,
+and the only thing that changes for anyone else is whether the topic has
+traffic.
+
+## The bus arrives as an argument, and the topics are named here
+
+`TestVendoredCusum` asserts that this package imports nothing from outside
+itself but `shared`, because "isolation is the point: this package is meant to
+lift out in one move". `from ..bus import Bus` would break that, and the first
+version of this file did.
+
+So `Carrier` is a protocol rather than an import: anything with `publish` and
+`subscribe` drives this loop, which is what lets the package be tested without
+a bus and run under a different one. The topic names are duplicated here as
+constants rather than imported, and the duplication is checked - a test outside
+the package asserts `TOPIC == bus.DISPERSION` and `CONSUMES == bus.BARS`, so a
+rename in either place fails loudly instead of leaving a service subscribed to
+a topic nobody publishes.
+
+## Warm by replay, which is why `armed` lags `tracking`
+
+`Engine.restore` reads counters, not members, so a freshly started service
+reports `tracking=0` with a restored bar count. It publishes nothing for a
+feed until `warm_bars` bars have arrived, because `Desk._quantiles` returns an
+empty band below `facade.LEAST` residuals and a readout whose interval is
+missing is worse than no readout. `armed=0` right after a deploy is the normal
+reading here for the same reason it is in `structures`.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import logging
+import time
+from dataclasses import dataclass, field
+from typing import Any, Protocol, runtime_checkable
+
+from .config import Settings
+from .engine import Engine
+from .facade import Readout
+
+log = logging.getLogger(__name__)
+
+__all__ = ["CONSUMES", "TOPIC", "Carrier", "Watcher", "payload_for", "watch"]
+
+#: The topic this service reads. Must equal `bus.BARS`; a test asserts it.
+CONSUMES = "prices.bars"
+
+#: The topic it publishes. Must equal `bus.DISPERSION`; a test asserts it.
+TOPIC = "statespace.dispersion"
+
+
+@runtime_checkable
+class Carrier(Protocol):
+    """What this loop needs of a bus, and nothing more."""
+
+    async def publish(self, topic: str, payload: dict[str, Any], *, source: str = "") -> int: ...
+
+    def subscribe(self, topic: str, group: str = ...) -> Any: ...
+
+
+#: Seconds between the log line that says what the service is doing. Quiet by
+#: default: one line every ten minutes names the bars folded and the feeds
+#: armed, which is enough to tell a stalled service from an idle bus.
+REPORT_SECONDS = 600.0
+
+
+def payload_for(readout: Readout) -> dict[str, object]:
+    """What goes on the bus. JSON-safe, and deliberately without a direction.
+
+    `band` is the interval the readout is prepared to state at its measured
+    coverage, which is the t-anchored one where it has the residuals for it
+    and the assumed one otherwise - `Readout.covering` chooses and says which
+    in `source`, so a consumer can refuse an assumed band without having to
+    know how the choice is made.
+    """
+    interval = readout.covering(0.90)
+    out: dict[str, object] = {
+        "feed": readout.feed,
+        "interval": readout.interval,
+        "time": float(readout.at),
+        # Log variance, which is the space the members were fitted in.
+        "log_variance": float(readout.value),
+        "spread": float(readout.spread),
+        "surprise": float(readout.surprise),
+        "family": readout.family,
+        "paced": bool(readout.paced),
+        "pace_factor": float(readout.pace_factor),
+        "seen": int(readout.seen),
+    }
+    if interval is not None:
+        out["band"] = {
+            "low": float(interval.low),
+            "high": float(interval.high),
+            "coverage": float(interval.coverage),
+            "source": str(interval.source),
+        }
+    return out
+
+
+@dataclass(slots=True)
+class Watcher:
+    """One bus message in, zero or one publish out."""
+
+    engine: Engine
+    published: int = 0
+    _last_report: float = field(default=0.0, repr=False)
+
+    async def handle(self, message: Any, bus: Carrier) -> Readout | None:
+        """Fold a bar and publish what came back.
+
+        `message` is anything with `topic` and `payload`, for the reason
+        `Carrier` is a protocol: the package does not import our bus.
+        """
+        if getattr(message, "topic", "") != CONSUMES:
+            return None
+        readout = self.engine.observe_bar(message.payload)
+        if readout is None:
+            return None
+        if self.engine.settings.publish:
+            await bus.publish(TOPIC, payload_for(readout), source="statespace")
+            self.published += 1
+        return readout
+
+    def report(self, *, at: float | None = None) -> str:
+        """A line, at most every `REPORT_SECONDS`. Empty when it is too soon."""
+        now = time.time() if at is None else float(at)
+        if now - self._last_report < REPORT_SECONDS:
+            return ""
+        self._last_report = now
+        return (
+            f"statespace: {self.engine.progress.folded} bars folded, "
+            f"{self.engine.tracking} tracking, {self.engine.armed} armed, "
+            f"{self.published} published"
+        )
+
+
+async def watch(
+    bus: Carrier, settings: Settings | None = None, *, engine: Engine | None = None
+) -> None:
+    """Consume `prices.bars` until cancelled, saving progress as it goes.
+
+    Cancellation saves. A service that is stopped cleanly and comes back having
+    forgotten the last five minutes is a service whose counters cannot be
+    trusted to say whether it was running.
+    """
+    settings = Settings.from_env() if settings is None else settings
+    engine = Engine(settings=settings) if engine is None else engine
+    engine.restore()
+    watcher = Watcher(engine=engine)
+    subscription = bus.subscribe(CONSUMES, group="statespace")
+    log.info(
+        "statespace: watching %s for %s on %s",
+        CONSUMES,
+        ", ".join(settings.intervals),
+        ", ".join(settings.feeds) if settings.feeds else "every feed",
+    )
+    try:
+        async for message in subscription:
+            await watcher.handle(message, bus)
+            engine.save()
+            line = watcher.report()
+            if line:
+                log.info("%s", line)
+    except asyncio.CancelledError:
+        raise
+    finally:
+        with contextlib.suppress(Exception):
+            engine.save(force=True)
+        log.info(
+            "statespace: stopped after %d bars, %d published",
+            engine.progress.folded,
+            watcher.published,
+        )

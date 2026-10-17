@@ -11,7 +11,7 @@ from pathlib import Path
 
 import numpy as np
 
-from till_infinity.structures.statespace.pacing import extent
+from till_infinity.statespace.pacing import extent
 
 CACHE = Path.home() / "till_infinity/data/seqlab"
 

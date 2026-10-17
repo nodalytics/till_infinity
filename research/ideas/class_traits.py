@@ -52,8 +52,8 @@ for extra in (str(ROOT), str(Path(__file__).resolve().parent)):
 
 import orderflow_from_bars as flow  # noqa: E402
 
-from till_infinity.structures.statespace.behaving import classify  # noqa: E402
-from till_infinity.structures.statespace.pacing import extent  # noqa: E402
+from till_infinity.statespace.behaving import classify  # noqa: E402
+from till_infinity.statespace.pacing import extent  # noqa: E402
 
 CACHE = Path(os.environ.get("SEQLAB_CACHE", str(Path.home() / "till_infinity/data/seqlab")))
 FRAME = os.environ.get("FRAME", "1h")

@@ -60,7 +60,7 @@ import random
 import statistics
 from pathlib import Path
 
-from till_infinity.structures.statespace.inputs import bar_hours, coverage
+from till_infinity.statespace.inputs import bar_hours, coverage
 
 HOUR = 3600.0
 

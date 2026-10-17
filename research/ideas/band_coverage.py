@@ -62,7 +62,7 @@ for q in (HERE, HERE.parent, HERE.parents[1]):
 
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
-from till_infinity.structures.statespace.facade import Desk  # noqa: E402
+from till_infinity.statespace.facade import Desk  # noqa: E402
 
 #: The frames the cache holds and `tails.DOF` has a measured index for.
 FRAMES = ("1h", "4h")

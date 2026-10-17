@@ -290,7 +290,7 @@ def turns_of(series, threshold: float = THRESHOLD):
     """
     import numpy as np
 
-    from till_infinity.structures.statespace.accruing import OneSided
+    from till_infinity.statespace.accruing import OneSided
 
     # **The level's deviation from a trailing mean, not the increment.** A
     # volatility turn is a shift in the *level* of log-volatility; its

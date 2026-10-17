@@ -83,7 +83,7 @@ from level_signatures import (  # noqa: E402
     load,
     shuffle_blocks,
 )
-from till_infinity.structures.statespace.dispersion import differ  # noqa: E402
+from till_infinity.statespace.dispersion import differ  # noqa: E402
 
 #: Grid the density is evaluated on. Prominence is stable in this; the levels it
 #: finds are not supposed to move when it changes, and `GRID=1024` is the check.

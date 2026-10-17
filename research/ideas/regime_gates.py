@@ -215,7 +215,7 @@ def laminarity(values, tolerance: float = 0.5) -> float:
 
 def wasserstein_drift(earlier, later) -> float:
     """How far this window's distribution moved from the previous one's."""
-    from till_infinity.structures.statespace.distance import wasserstein
+    from till_infinity.statespace.distance import wasserstein
 
     if len(earlier) < 16 or len(later) < 16:
         return float("nan")

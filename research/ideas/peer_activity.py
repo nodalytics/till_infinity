@@ -53,9 +53,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from till_infinity.structures.statespace.driven import Driven  # noqa: E402
-from till_infinity.structures.statespace.pacing import Pace  # noqa: E402
-from till_infinity.structures.statespace.seasonal import Seasonal  # noqa: E402
+from till_infinity.statespace.driven import Driven  # noqa: E402
+from till_infinity.statespace.pacing import Pace  # noqa: E402
+from till_infinity.statespace.seasonal import Seasonal  # noqa: E402
 
 HOUR = 3600.0
 CACHE = Path(os.environ.get("SEQLAB_CACHE", str(Path.home() / "till_infinity/data/seqlab")))

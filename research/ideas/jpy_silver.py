@@ -360,7 +360,7 @@ def pairable(times: list[float], left: list[float], right: list[float], hours: f
     The placebo has to come back near zero in both for either to mean
     anything.
     """
-    from till_infinity.structures.statespace.relating import Relating
+    from till_infinity.statespace.relating import Relating
 
     logs_left = [math.log(v) for v in left]
     logs_right = [math.log(v) for v in right]

@@ -203,7 +203,7 @@ def fit_base(bars: list[dict], *, build, variance: float) -> float:
 
 
 def main() -> None:
-    from till_infinity.structures.statespace.nulls import Walk
+    from till_infinity.statespace.nulls import Walk
 
     print(
         f"intervals {INTERVALS}s  least ticks {LEAST_TICKS}\n"

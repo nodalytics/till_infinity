@@ -23,12 +23,12 @@ import math
 import os
 from pathlib import Path
 
-from till_infinity.structures.statespace import members
-from till_infinity.structures.statespace.facts import measure, rollout, verdict
-from till_infinity.structures.statespace.inputs import bar_hours
-from till_infinity.structures.statespace.nulls import Walk
-from till_infinity.structures.statespace.paired import Paired
-from till_infinity.structures.statespace.yielding import Yielding
+from till_infinity.statespace import members
+from till_infinity.statespace.facts import measure, rollout, verdict
+from till_infinity.statespace.inputs import bar_hours
+from till_infinity.statespace.nulls import Walk
+from till_infinity.statespace.paired import Paired
+from till_infinity.statespace.yielding import Yielding
 
 SYMBOLS = (
     ("eurusd", "EURUSD"),

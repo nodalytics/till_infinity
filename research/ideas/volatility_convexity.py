@@ -221,7 +221,7 @@ def forecasts(values, at_list, span: int = SPAN):
     """A HAR forecast of the next period's log-volatility, one per entry."""
     import numpy as np
 
-    from till_infinity.structures.statespace.nulls import har
+    from till_infinity.statespace.nulls import har
 
     moves = np.diff(values)
     # Realised log-volatility on the same trailing span the trades use.

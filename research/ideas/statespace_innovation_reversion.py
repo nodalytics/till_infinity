@@ -46,7 +46,7 @@ import os
 import statistics
 from pathlib import Path
 
-from till_infinity.structures.statespace.selective import Selective
+from till_infinity.statespace.selective import Selective
 
 #: `(label, seqlab stem)`. The fast timeframes are where the effect lives, so
 #: this does not bother with the slow end that showed nothing.

@@ -60,7 +60,7 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from screen import load  # noqa: E402
-from till_infinity.structures.statespace.spanning import garman_klass, parkinson  # noqa: E402
+from till_infinity.statespace.spanning import garman_klass, parkinson  # noqa: E402
 
 FRAMES = tuple(os.environ.get("FRAMES", "15m,1h,4h").split(","))
 HALF_LIFE = float(os.environ.get("HALF_LIFE", "40"))

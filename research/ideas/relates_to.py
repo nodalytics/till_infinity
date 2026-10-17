@@ -126,8 +126,8 @@ def split_t(left, right) -> tuple[float, float]:
 def main() -> None:
     import numpy as np
 
-    from till_infinity.structures.statespace.nulls import rotated
-    from till_infinity.structures.statespace.relating import is_identity
+    from till_infinity.statespace.nulls import rotated
+    from till_infinity.statespace.relating import is_identity
 
     print(
         f"target {TARGET}; volatility over {SPAN}-bar spans, cointegration on a\n"
