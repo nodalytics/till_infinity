@@ -85,6 +85,66 @@ LEAST = 200
 EXPONENT = 1.0
 
 
+#: The widest central coverage the published quantiles can serve, for the grid
+#: `_quantiles` publishes. It is not a tuning knob: the grid runs 0.05 to 0.95,
+#: so the outermost central interval it holds is 0.90, and `Interval` reads the
+#: limit off whatever grid it is handed rather than trusting this number.
+#:
+#: Past it the quantiles have nothing to say. `WINDOW` is 500 and the 0.05 edge
+#: therefore has about 25 observations beyond it; a 0.999 band wants the
+#: 1-in-1000 residual, which no window of this size contains.
+MEASURED = 0.90
+
+
+@dataclass(frozen=True, slots=True)
+class Interval:
+    """A band asked for by coverage, and which arm answered.
+
+    Three arms, and the field that names them is the point: a caller acting on
+    a far-tail band should be able to see that the shape was assumed rather
+    than counted.
+
+    * **`measured`** - straight off the published quantiles, which are the
+      member's own standardised residuals and score CRPS 0.9899 against a
+      Gaussian's 1.0000. Asymmetric, because they are actual quantiles.
+    * **`anchored`** - past the grid's reach, each side's measured edge grown by
+      the **ratio** of the fitted t's reach at the asked-for coverage to its
+      reach at the edge. The counted part sets the scale and the assumed part
+      only sets the shape, which is the division `one-bar-band.md` argues for:
+      the defect it found was the **family**, after a tracked sigma, so the
+      scale is the half that was already right.
+    * **`assumed`** - no quantiles yet, so the fitted t over `spread` alone.
+      This is `band_covering`, and it is the weakest of the three.
+    """
+
+    low: float
+    high: float
+    coverage: float
+    #: `measured`, `anchored`, or `assumed`.
+    source: str
+    #: The centre the band was built around: the measured median where there is
+    #: one, and the filter's own `value` on `assumed`, where a symmetric t puts
+    #: it at the midpoint anyway.
+    centre: float
+    #: The tail index used, or `nan` where no t was involved.
+    dof: float = float("nan")
+
+    @property
+    def half(self) -> float:
+        """Half the width, for a caller that wants one number."""
+        return 0.5 * (self.high - self.low)
+
+    @property
+    def skew(self) -> float:
+        """How much further the band reaches up than down, in price units.
+
+        Exactly zero on `assumed`, because a t is symmetric by construction.
+        On `measured` and `anchored` it is whatever the residuals did, read
+        against their own median rather than against the filter's mean.
+        """
+        return (self.high - self.centre) - (self.centre - self.low)
+
+
 @dataclass(frozen=True, slots=True)
 class Readout:
     """Everything statespace can say about one bar, and nothing about how.
@@ -184,6 +244,88 @@ class Readout:
         five times as often as that label promises.
         """
         return _coverage(sigmas, dof_for(self.interval))
+
+    @property
+    def widest(self) -> float:
+        """The widest central coverage `quantiles` can serve, off the grid itself.
+
+        Zero while warming. For the grid `_quantiles` publishes this is
+        `MEASURED`, but it is derived rather than assumed so that a caller who
+        builds a `Readout` with a coarser or finer grid gets the right limit.
+        """
+        if not self.quantiles:
+            return 0.0
+        levels = [level for level, _ in self.quantiles]
+        inner = max(levels[0], 1.0 - levels[-1])
+        # Rounded because the levels are floats: a grid at 0.05 steps gives
+        # 0.8999999999999999 here, and asking for 0.90 would then fall to the
+        # anchored arm for no reason a caller could see.
+        return max(0.0, round(1.0 - 2.0 * inner, 9))
+
+    def _at(self, level: float) -> float:
+        """The published quantile at `level`, linear between the grid's points."""
+        points = self.quantiles
+        if level <= points[0][0]:
+            return points[0][1]
+        if level >= points[-1][0]:
+            return points[-1][1]
+        for i in range(1, len(points)):
+            if level <= points[i][0]:
+                (lo, left), (hi, right) = points[i - 1], points[i]
+                share = (level - lo) / (hi - lo) if hi > lo else 0.0
+                return left + share * (right - left)
+        return points[-1][1]
+
+    def covering(self, coverage: float = 0.95) -> Interval:
+        """A band asked for by coverage, from the best arm that can reach it.
+
+        **This is the accessor to use.** `quantiles` and `band_covering` are
+        both here and neither is right everywhere: the quantiles are measured
+        but stop at their grid, and the t reaches anywhere but assumes its
+        shape. Leaving a caller to pick meant a caller had to know that a
+        2-sigma band is about right and a 4-sigma band is breached eighty-eight
+        times more often than its Gaussian label claims. That is not a choice
+        worth delegating, so it is made here once.
+
+        The seam is at `widest`, read off the grid. Below it the answer is
+        measured; above it the measured edge is grown by the t's own ratio, so
+        the two agree exactly at the seam and there is no step.
+        """
+        if not 0.0 < coverage < 1.0:
+            raise ValueError("coverage must lie strictly inside (0, 1)")
+        dof = dof_for(self.interval)
+        if not self.quantiles:
+            low, high = self.band_covering(coverage)
+            return Interval(low, high, coverage, "assumed", self.value, dof)
+        if coverage <= self.widest:
+            return Interval(
+                self._at(0.5 * (1.0 - coverage)),
+                self._at(0.5 * (1.0 + coverage)),
+                coverage,
+                "measured",
+                self._at(0.5),
+                float("nan"),
+            )
+        edge = self.widest
+        grew = _reach(coverage, dof) / _reach(edge, dof)
+        # Anchored on the measured **median** rather than on `value`. Both are
+        # estimates of the same centre and the median is the one the band is
+        # made of, so using it means the two sides cannot invert - the grid
+        # ascends and 0.5 sits inside it - and the measured asymmetry survives
+        # into the tail. Growing about the midpoint would have destroyed that
+        # asymmetry by definition, and growing about `value` would impose the
+        # filter's centre on quantiles that already carry their own.
+        centre = self._at(0.5)
+        down = centre - self._at(0.5 * (1.0 - edge))
+        up = self._at(0.5 * (1.0 + edge)) - centre
+        return Interval(
+            centre - down * grew,
+            centre + up * grew,
+            coverage,
+            "anchored",
+            centre,
+            dof,
+        )
 
     def barrier(self, probability: float, horizon: float) -> dict[str, float] | None:
         """The barrier geometry for this feed, or `None` if it is infeasible.

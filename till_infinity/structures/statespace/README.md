@@ -165,6 +165,69 @@ innovation is **+21.16**, attenuated about 1.7x. See
                       package publishes, by the rule above.
 ```
 
+**What each ring is allowed to emit.** The rule was set on 2026-10-17 and it is
+the architecture rather than a preference:
+
+| ring | emits |
+| --- | --- |
+| every member, every component | **dispersion** - a variance, a spread, a band |
+| `signalling.py`, this layer | a **bounded signal**, not a price: `-1` to `+1` with 0 neutral by the convention fixed on 2026-10-16, or the same signal on `0` to `1` through `as_logistic` |
+| the Monte Carlo | **price**, and it is the only thing here that emits one - as a distribution over paths rather than as a point |
+
+The two outputs are meant to be **paired, not merged**. The Monte Carlo says
+where price can get to and with what probability; the signal says which way and
+how strongly. A consumer holds both: the signal chooses the side and the
+conviction, the path distribution supplies the geometry - where a stop sits at a
+stated breach rate, what a target's touch probability is, how long a return
+takes. Keeping them separate is what stops a dispersion forecast from being
+read as a direction, which is the one mistake this package has measured most
+often.
+
+The reason is on record in this file: price is a near-martingale, it diffuses at
+1.00 to 1.07 times `sqrt(h)`, direction is a coin in every test, and the random
+walk wins the point forecast at every horizon on 17 to 21 of 39 series - while
+log-variance is persistent and forecastable. A member that emits a price is
+claiming the half of the problem that has already been measured closed. A
+member that emits a dispersion is claiming the half that is open.
+
+### Asking for a band by coverage
+
+`Readout.covering(coverage)` is the accessor a caller should use, and it is the
+only consumer `tails.py` has.
+
+```
+     Readout.quantiles                        tails.reach(c, dof)
+     the measured grid, 0.05 to 0.95          the fitted t, any c
+     CRPS 0.9899 vs a Gaussian's 1.0000       shape assumed, not counted
+            |                                         |
+            +--------------------+--------------------+
+                                 |
+                                 v
+                     Readout.covering(c) -> Interval
+                                 |
+       c <= widest  ----->  measured   straight off the grid, asymmetric
+       c >  widest  ----->  anchored   the measured edge grown by the t's
+                                       own ratio: counted scale, assumed shape
+       no grid yet  ----->  assumed    band_covering, the weakest arm
+```
+
+`widest` is read off the grid rather than set as a constant - the published
+levels run 0.05 to 0.95, so the widest central interval they hold is 0.90 - and
+the anchored arm grows each side about the **measured median**, so the two
+arms meet exactly at the seam and the measured asymmetry survives into the
+tail.
+
+**Measured, `research/docs/band-coverage.md`.** Realised breach over wanted, one
+step ahead, out of sample, where 1.00 is calibrated: on fx_major 1h `covering`
+reads **1.02 to 1.10** across 0.95 to 0.999 while the Gaussian band degrades
+1.28 to **14.80**, and on fx_cross **1.08 to 1.91** against **3.58 to 103.75**.
+The two failures are different - the Gaussian's error grows with coverage,
+which is the shape, and the pure t's grows with `R`, which is the scale - and
+the accessor fixes one with the t and the other with the anchor. The limit is
+one-directional and stated there: too **wide** an `R` it survives, too narrow
+it does not, because the grid is then built from moves the filter has already
+absorbed.
+
 ### The sign convention is fixed
 
 **The output is -1 to +1 with 0 as neutral: closer to +1 is more strongly
@@ -194,10 +257,10 @@ either, so a consumer never has to ask which it was handed.
 | --- | --- | --- |
 | **the contract** | `__init__.py` | what may be claimed, and the rule that nothing publishes |
 | **the entry point** | `facade.py` | `Desk.read` and `Readout` - the only path a caller touches |
-| **on that path** | `behaving.py`, `bounding.py`, `pacing.py`, `pooling.py`, `tails.py` | reached by every `read` |
+| **on that path** | `behaving.py`, `bounding.py`, `pacing.py`, `pooling.py`, `tails.py` | reached by every `read`; `tails.py` is consumed by `Readout.covering` since 2026-10-17 |
 | **the output layer** | `signalling.py` | composes a `Readout` into a `Signal`. No consumer yet |
 | **the subject** | `subjects.py` | names the quantity being modelled before any filter touches it |
-| **the members** | `reverting.py`, `linear.py`, `robust.py`, `hmm.py`, `selective.py`, `swarm.py`, `landau.py`, `adapting.py`, and the rest | alternatives on the bench, scored in `research/docs/statespace-measured.md` |
+| **the members** | `reverting.py`, `linear.py`, `robust.py`, `diagonal.py`, `hmm.py`, `selective.py`, `swarm.py`, `landau.py`, `adapting.py`, and the rest | alternatives on the bench, scored in `research/docs/statespace-measured.md` |
 | **the instruments** | `diagnostics.py`, `nulls.py`, `symmetry.py`, `spanning.py`, `dispersion.py` | how a member is shown to be wrong |
 
 Only the third ring runs on a `read`. The members are reachable from tests and

@@ -432,7 +432,7 @@ from .dispersion import (
     tau_squared,
     tau_squared_of_means,
 )
-from .facade import Desk, Readout
+from .facade import Desk, Interval, Readout
 from .family import MISSING, PENDING, Filter, members
 from .interacting import Attention, Depth, Interactions, Rate
 from .landau import Landau
@@ -465,6 +465,7 @@ __all__ = [
     "Filter",
     "Gaussian",
     "Interactions",
+    "Interval",
     "Landau",
     "Layer",
     "Path",

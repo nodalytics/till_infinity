@@ -100,7 +100,20 @@ FLOOR = 1e-12
 #: to `jerk`, which `reverting` does not have - it calls the same quantity
 #: `sigma2` - so a pool that adapted every member through one name would raise
 #: on the second one.
-LEVERS = {"kalman": "jerk", "robust": "jerk", "reverting": "sigma2", "landau": "sigma2"}
+#: `s4d` names `noise`, which is the only thing that sets a deterministic map's
+#: predictive spread - there is no `Q` in it to inflate. **It is a standard
+#: deviation where every other lever here is a variance**, and that is stated
+#: rather than hidden: a multiplicative step of `f` on an sd is `f**2` on the
+#: variance, so the loop's damping is doubled. The *fixed point* is unchanged -
+#: `matching` solves `E[z**2] = 1` either way - so this changes how fast the
+#: lever converges and not where it converges to.
+LEVERS = {
+    "kalman": "jerk",
+    "robust": "jerk",
+    "reverting": "sigma2",
+    "landau": "sigma2",
+    "s4d": "noise",
+}
 
 #: Whether each member learns its own process noise from its own standardised
 #: innovation, through `adapting.Adapting` in `matching` mode.
