@@ -7579,36 +7579,27 @@ class TestDispersion:
         assert borrow_weight(self._pool([0.5] * 3), 0.5, fallback=7.0) == 7.0
 
     def test_statespace_still_imports_no_sibling(self):
-        """The reason this module exists at all, now asked of every module.
+        """The reason this module exists at all.
 
         `conditional_holds.py` had to import `shrinkage.tau_squared` from a
         sibling package to ask this question. A harness may reach across; the
-        library may not, and `TestFacade` asserts it. This keeps that true.
+        library may not.
 
-        **Widened when the package moved out of `structures`.** It used to read
-        one file for one import. The package is now a peer of `structures`
-        rather than a child, so "no sibling" is a property of the whole package
-        and is what makes it servable on its own: 51 modules and not one of
-        them reaches into `structures`, which is why the move needed no new
-        seam. An upward relative import cannot resolve from here either, so
-        both forms are checked - a `..` that used to mean `structures` now
-        means `till_infinity`, and would fail quietly differently.
+        **Narrow on purpose.** This checks the one import that caused the
+        module to be written. The package-wide rule - nothing from outside
+        itself but `shared` - belongs to
+        `TestVendoredCusum.test_the_package_imports_nothing_from_outside_itself`
+        and is asserted there with the exemption spelled out; a second copy
+        here drifted from it the first time the package gained a service, by
+        rejecting the `..shared` imports that rule allows.
         """
         import pathlib
 
-        package = pathlib.Path("till_infinity/statespace")
-        assert package.is_dir(), "the package moved again; this guard moves with it"
-        offenders = []
-        for module in sorted(package.glob("*.py")):
-            for line in module.read_text().splitlines():
-                stripped = line.strip()
-                if not stripped.startswith(("import ", "from ")):
-                    continue
-                if "till_infinity.structures" in stripped or stripped.startswith("from .."):
-                    offenders.append(f"{module.name}: {stripped}")
-        assert not offenders, "statespace reached outside itself: " + "; ".join(offenders)
-        # And the guard has to be able to fail: the thing it forbids is a real
-        # import that exists one package over.
+        text = pathlib.Path("till_infinity/statespace/dispersion.py").read_text()
+        assert "from ..shrinkage" not in text
+        assert "structures.shrinkage" not in text
+        # And the thing it must not reach for is still one package over, so the
+        # guard can still fail.
         assert pathlib.Path("till_infinity/structures/shrinkage.py").is_file()
 
 
@@ -9584,3 +9575,259 @@ class TestReadoutTerms:
         cool = hot.scaled(0.02)
         assert cool(bigger).value < cool(big).value < 0.0
         assert cool(big).value - cool(bigger).value > 0.05
+
+
+class TestService:
+    """The service wrapper: config, engine, store, bus payload.
+
+    The numeric core is `Desk` and is tested above. What is tested here is the
+    five things that make it a service rather than a library - what it folds
+    from a bar, what it withholds, what survives a restart, what it refuses to
+    read back, and what it puts on the bus.
+    """
+
+    @staticmethod
+    def _bars(n, *, sd=0.003, wick=0.0015, seed=3, feed="FX:EURUSD", interval="1m"):
+        """Bars from a walk, as `prices.bars` payloads."""
+        import math
+        import random
+
+        rng = random.Random(seed)
+        price = 1.0
+        out = []
+        for i in range(n):
+            opened = price
+            close = price * math.exp(rng.gauss(0.0, sd))
+            high = max(opened, close) * (1.0 + abs(rng.gauss(0.0, wick)))
+            low = min(opened, close) * (1.0 - abs(rng.gauss(0.0, wick)))
+            price = close
+            out.append(
+                {
+                    "feed": feed,
+                    "interval": interval,
+                    "time": 1000.0 + 60.0 * i,
+                    "open": opened,
+                    "high": high,
+                    "low": low,
+                    "close": close,
+                    "volume": 100.0,
+                }
+            )
+        return out
+
+    def test_a_bar_contributes_its_log_variance_not_its_close(self):
+        """The observation is dispersion, which is the half that forecasts.
+
+        Direction is measured closed on this desk; dispersion reads median
+        out-of-sample R2 of +0.54 to +0.83 at 1h h=20 on FX and metals. So the
+        number folded is a range estimator's log variance, and the estimator is
+        Garman-Klass rather than Rogers-Satchell because on the same bars the
+        drift-robust one reads -0.090 against +0.575.
+        """
+        import math
+
+        from till_infinity.statespace.engine import dispersion
+
+        got = dispersion(1.0, 1.01, 0.99, 1.0)
+        assert got is not None
+        # A 2% range is a variance near 1e-4, so a log variance near -9.
+        assert -11.0 < got < -8.0
+        # It is a log of a variance, so halving it and exponentiating gives a
+        # standard deviation of the order of the bar's range.
+        assert 0.002 < math.exp(got / 2.0) < 0.02
+        # Rogers-Satchell is a different number, which is the whole point of
+        # naming the estimator rather than taking whatever is default.
+        assert dispersion(1.0, 1.01, 0.99, 1.0, "rogers_satchell") != got
+
+    def test_a_bar_that_cannot_produce_a_variance_is_dropped(self):
+        """`log(0)` is not a number a filter can take."""
+        from till_infinity.statespace.engine import dispersion
+
+        assert dispersion(1.0, 1.0, 1.0, 1.0) is None  # a feed that did not trade
+        assert dispersion(1.0, 0.99, 1.01, 1.0) is None  # inverted range
+        assert dispersion(0.0, 0.0, 0.0, 0.0) is None
+
+    def test_nothing_is_published_until_the_band_can_be_stated(self):
+        """A readout with no interval is worse than no readout.
+
+        `Desk._quantiles` returns an empty band below `facade.LEAST` residuals,
+        so publishing on bar one ships a point estimate dressed as a forecast.
+        """
+        import tempfile
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            engine = Engine(settings=Settings(state_dir=directory, warm_bars=10))
+            published = [engine.observe_bar(bar) for bar in self._bars(30)]
+            assert published[:9] == [None] * 9
+            assert all(got is not None for got in published[9:])
+            assert engine.progress.folded == 30
+            assert engine.armed == 1
+            assert engine.tracking == 1
+
+    def test_only_the_intervals_asked_for_are_folded(self):
+        import tempfile
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Settings(state_dir=directory, intervals=("1m",), feeds=("FX:EURUSD",))
+            engine = Engine(settings=settings)
+            assert engine.observe_bar(self._bars(1, interval="1h")[0]) is None
+            assert engine.observe_bar(self._bars(1, feed="FX:GBPUSD")[0]) is None
+            assert engine.progress.folded == 0
+            assert settings.wants("FX:EURUSD", "1m")
+            assert not settings.wants("FX:EURUSD", "1h")
+            assert not settings.wants("FX:GBPUSD", "1m")
+
+    def test_a_restart_keeps_the_counters_and_rewarms_the_members(self):
+        """Replay rather than restore, and the reading that proves which.
+
+        The package declares `CODEC_UNPERSISTED = True` so that it stays
+        deletable, which means the member graph is not written down. A restored
+        service therefore reports its bar count and `tracking == 0`, and a
+        reader who expects otherwise is reading the wrong thing.
+        """
+        import tempfile
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Settings(state_dir=directory, warm_bars=10)
+            first = Engine(settings=settings)
+            for bar in self._bars(40):
+                first.observe_bar(bar)
+            assert first.save(force=True) > 0
+
+            second = Engine(settings=Settings(state_dir=directory, warm_bars=10))
+            second.restore()
+            assert second.progress.folded == 40
+            assert second.progress.of("FX:EURUSD", "1m").bars == 40
+            assert second.armed == 1
+            # The members are not restored, by design.
+            assert second.tracking == 0
+
+    def test_a_progress_file_from_another_format_is_not_read(self):
+        """One warmup is cheaper than numbers whose meaning changed."""
+        import tempfile
+        from pathlib import Path
+
+        import msgpack
+
+        from till_infinity.statespace import store
+
+        with tempfile.TemporaryDirectory() as directory:
+            assert store.load(directory).folded == 0  # missing file
+            target = store.path_for(Path(directory))
+            target.write_bytes(msgpack.packb({"format": store.FORMAT + 1, "state": {"folded": 99}}))
+            assert store.load(directory).folded == 0
+            target.write_bytes(b"not msgpack at all")
+            assert store.load(directory).folded == 0
+
+    def test_a_restored_window_keeps_its_bound(self):
+        """The measured trap: a capped deque came back unbounded.
+
+        `shared.state.restore_deque` fixes a direct field, and `Desk._residuals`
+        is a dict *of* deques, which it does not reach. So the bound is applied
+        where the window is rebuilt, and asserted on the object rather than read
+        off the declaration.
+        """
+        from till_infinity.statespace.state import window
+
+        got = window([float(i) for i in range(50)], maxlen=10)
+        assert got.maxlen == 10
+        assert len(got) == 10
+        got.extend([0.0] * 50)
+        assert len(got) == 10
+        # Junk in, empty window out, still bounded.
+        assert window("not a list", maxlen=5).maxlen == 5
+        assert window([1.0, "two", None, 3.0], maxlen=5)[-1] == 3.0
+
+    def test_what_goes_on_the_bus_carries_no_direction(self):
+        """The topic is a dispersion topic, and there is no side to read.
+
+        A consumer sizes, places a stop, or declines on this. If a direction
+        appeared in the payload something would trade on it, and the desk has
+        measured that half closed twice.
+        """
+        import asyncio
+        import json
+        import tempfile
+
+        from till_infinity.bus import BARS, DISPERSION, TOPICS, Message
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+        from till_infinity.statespace.service import Watcher
+
+        assert DISPERSION in TOPICS
+
+        class Recording:
+            def __init__(self):
+                self.sent = []
+
+            async def publish(self, topic, payload, *, source=""):
+                self.sent.append((topic, payload, source))
+                return 1
+
+        async def run():
+            with tempfile.TemporaryDirectory() as directory:
+                engine = Engine(settings=Settings(state_dir=directory, warm_bars=10))
+                watcher, bus = Watcher(engine=engine), Recording()
+                for bar in self._bars(60):
+                    await watcher.handle(Message(topic=BARS, payload=bar), bus)
+                # A topic this service does not consume is ignored, not folded.
+                assert await watcher.handle(Message(topic="prices.quotes", payload={}), bus) is None
+                return watcher, bus
+
+        watcher, bus = asyncio.run(run())
+        assert watcher.published == 51
+        topic, payload, source = bus.sent[-1]
+        assert topic == DISPERSION
+        assert source == "statespace"
+        assert not [
+            key for key in payload if key.lower() in {"side", "direction", "up", "signal", "bias"}
+        ]
+        assert payload["feed"] == "FX:EURUSD"
+        assert payload["log_variance"] < 0.0
+        assert payload["band"]["low"] < payload["log_variance"] < payload["band"]["high"]
+        assert payload["band"]["coverage"] == 0.90
+        assert payload["band"]["source"] in {"measured", "anchored", "assumed"}
+        # It goes on a bus, so it has to survive the wire.
+        assert json.loads(json.dumps(payload)) == payload
+
+    def test_the_duplicated_topic_names_match_the_bus(self):
+        """The package names its topics rather than importing them.
+
+        It cannot import `..bus` - `TestVendoredCusum` asserts the package
+        imports nothing from outside itself but `shared`, because it is meant
+        to lift out in one move. So the names are duplicated, and a duplicate
+        that is not checked is a service subscribed to a topic nobody
+        publishes. This is the check.
+        """
+        from till_infinity.bus import BARS, DISPERSION
+        from till_infinity.statespace.service import CONSUMES, TOPIC
+
+        assert CONSUMES == BARS
+        assert TOPIC == DISPERSION
+
+    def test_the_service_names_its_one_unmeasured_constant(self):
+        """`noise` is assumed, and the file says so rather than hiding it.
+
+        Two standard derivations of the sampling variance of a log range
+        estimator disagree by 4.6x, and the band is the thing that disagreement
+        moves. `band_coverage.py` is the harness that settles it - the same one
+        that took a 93.5% breach at a nominal 95% down to 1.02-1.10 by refusing
+        a guessed noise.
+        """
+        import pathlib
+
+        from till_infinity.statespace.config import DEFAULT_NOISE
+
+        assert 0.1 < DEFAULT_NOISE < 5.0
+        text = pathlib.Path("till_infinity/statespace/config.py").read_text()
+        assert "band_coverage.py" in text
+        assert "unmeasured" in text

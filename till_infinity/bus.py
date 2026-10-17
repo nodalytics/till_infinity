@@ -51,6 +51,15 @@ SIGNALS = "structures.signals"
 #: right. A strategy blind to its own outcomes cannot improve, and neither can
 #: a threshold that ought to move with them.
 RESOLUTIONS = "structures.resolutions"
+#: What the statespace service forecasts: how wide the next bars are, per feed
+#: and interval, with the band it is prepared to state.
+#:
+#: Separate from `SIGNALS` because it is a different kind of claim. A signal
+#: says something is worth looking at; this says how much movement to expect
+#: and says nothing at all about direction - the half this desk has measured
+#: closed. A consumer sizes, places a stop or declines to trade on it; nothing
+#: should read a side out of it, and there is none in the payload to read.
+DISPERSION = "statespace.dispersion"
 #: What agents ask for. Notifications is the consumer.
 ALERTS = "alerts"
 #: Decisions and their reasoning, on their way to the journal. Any service can
@@ -65,6 +74,7 @@ TOPICS: tuple[str, ...] = (
     MACRO,
     SIGNALS,
     RESOLUTIONS,
+    DISPERSION,
     ALERTS,
     JOURNAL,
 )
