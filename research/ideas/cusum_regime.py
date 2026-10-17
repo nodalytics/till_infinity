@@ -55,6 +55,7 @@ fixes sigma so there is nothing to find.
 from __future__ import annotations
 
 import math
+import os
 import sys
 from dataclasses import dataclass
 from pathlib import Path
@@ -65,7 +66,7 @@ HERE = Path(__file__).resolve().parent
 for q in (HERE, HERE.parent, HERE.parents[1]):
     sys.path.insert(0, str(q))
 
-from dispersion_ml import LAGS, RIDGES, _apply, _design, _r2, _ridge, parkinson  # noqa: E402
+from dispersion_ml import LAGS, LIMIT, RIDGES, _apply, _design, _r2, _ridge, parkinson  # noqa: E402
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
 from till_infinity.statespace.changepoint import Changepoint  # noqa: E402
@@ -391,8 +392,33 @@ def part_a(ready: Prepared, lookback, slack, threshold, rng) -> dict:
     return out
 
 
+#: The ridge `dispersion_ml` fits its own `har` arm with: fixed, and small
+#: enough to be least squares in all but name. Reproduced exactly so one column
+#: of this table can be checked against a number already on the shelf.
+REFERENCE_RIDGE = 1e-8
+
+
+def _plain(x: np.ndarray, y: np.ndarray, cut: int, base: float) -> float:
+    """`dispersion_ml`'s own procedure: one fixed ridge, no selection."""
+    coef, _ = _ridge(x[:cut], y[:cut], REFERENCE_RIDGE)
+    return _r2(y[cut:], _apply(coef, x[cut:]), base)
+
+
 def _fit(x: np.ndarray, y: np.ndarray, cut: int, base: float) -> float:
-    """HAR-style ridge, lambda chosen on an inner split of the training half."""
+    """Ridge with lambda chosen on an inner split of the training half.
+
+    **Why both this and `_plain` are here.** The first version of this harness
+    used only this, and HAR read +0.0364 where `dispersion-forecast.md` has
+    +0.110 for the same cell - so every increment was measured against a
+    baseline three times weaker than the one on the shelf. That is the mistake
+    that once let an ESN read +0.565 against a ridge pinned at 1e-8.
+
+    Two causes, and the fix is to report both procedures rather than to pick
+    one. Selection on an inner half-sample can choose a lambda that
+    over-shrinks three HAR features, which is why `_plain` exists; and every
+    arm has to share whichever procedure the increments are taken against,
+    which is why this one is still used for all of them.
+    """
     best, pick = -math.inf, RIDGES[0]
     inner = max(cut // 2, 1)
     for lam in RIDGES:
@@ -432,7 +458,14 @@ def _bocpd(series: np.ndarray, frame: str) -> np.ndarray:
 
 
 def part_b(bars, horizon: int, lookback, slack, threshold, frame: str) -> dict:
-    """The location: what each detector adds on top of HAR."""
+    """The location: what each detector adds on top of HAR.
+
+    The series is cut to the **last** `LIMIT` bars, which is what
+    `dispersion_ml` does before scoring. Taking everything `load` returns - up
+    to 40,000 bars - puts the training half in a much older period and is the
+    second reason the baseline did not reproduce.
+    """
+    bars = {k: v[-LIMIT:] for k, v in bars.items()}
     logvar = parkinson(bars["high"], bars["low"])
     x, y, start = _design(logvar, horizon)
     if len(y) < 600:
@@ -454,6 +487,8 @@ def part_b(bars, horizon: int, lookback, slack, threshold, frame: str) -> dict:
         "har+bocpd": np.hstack([x, bo[rows]]),
     }
     got = {name: _fit(design, y, cut, base) for name, design in arms.items()}
+    # The reference column, fitted the way the shelf number was fitted.
+    got["har.reference"] = _plain(x, y, cut, base)
     shuffled = y.copy()
     np.random.default_rng(SEED).shuffle(shuffled)
     got["har.shuffled"] = _fit(x, shuffled, cut, float(shuffled[:cut].mean()))
@@ -478,117 +513,127 @@ def main() -> None:
 
     wanted = {k: v[:PER_CLASS] for k, v in groups.items() if k in TRADED + CONTROLS}
 
-    print("\n=== Part A: the side, at the published defaults")
-    lookback, slack, threshold = int(PUBLISHED[0]), float(PUBLISHED[1]), float(PUBLISHED[2])
-    for frame in FRAMES:
-        for klass, names in sorted(wanted.items()):
-            pooled: dict[str, list[float]] = {}
-            races: dict[str, list[int]] = {}
-            spans: list[float] = []
-            fires = 0
-            for name in names:
-                bars = load(name, frame)
-                if bars is None:
-                    continue
-                got = part_a(prepare(bars, rng), lookback, slack, threshold, rng)
-                if not got:
-                    continue
-                fires += got["fires"]
-                # **Trades pooled, not per-instrument means averaged.** A mean
-                # of means weights a feed with thirty fires like one with three
-                # hundred; and an events guard applied per feed rather than to
-                # the pool once dropped 141 of 146 feeds and turned 0.9 sigma
-                # into 4.8.
-                for hold in (*HOLDS, "regime"):
-                    for arm in ("signal", "flip", "placebo", "shuffled"):
-                        pooled.setdefault(f"{arm}.{hold}", []).extend(
-                            got.get(f"{arm}.{hold}") or []
-                        )
-                spans.extend(got.get("spans") or [])
-                for reward in REWARDS:
-                    for arm in ("signal", "flip", "placebo", "shuffled"):
-                        wins, losses = got.get(f"race.{arm}.{reward}", (0, 0))
-                        cell = races.setdefault(f"{arm}.{reward}", [0, 0])
-                        cell[0] += wins
-                        cell[1] += losses
-            if not pooled:
-                continue
-            print(f"\n--- {klass}, {frame}: {fires} fires over {len(names)} instruments")
-            print(
-                f"{'hold':>6}  {'signal':>17} {'flip':>17} {'placebo':>17} {'shuffled':>17}"
-                "   mean +/- 1se, dispersion units"
-            )
-            for hold in (*HOLDS, "regime"):
-                cells = []
-                for arm in ("signal", "flip", "placebo", "shuffled"):
-                    vals = pooled.get(f"{arm}.{hold}") or []
-                    if len(vals) < LEAST_TRADES:
-                        cells.append(f"{'-':>17}")
-                        continue
-                    arr = np.asarray(vals)
-                    se = float(arr.std(ddof=1)) / math.sqrt(len(arr))
-                    cells.append(f"{float(arr.mean()):+9.4f}+/-{se:<6.4f}")
-                print(f"{str(hold):>6}  " + " ".join(cells))
-            if spans:
-                print(
-                    f"       regime length: median {np.median(spans):.0f} bars, "
-                    f"mean {np.mean(spans):.0f}, n={len(spans)}"
-                )
-            print(
-                f"{'reward':>6}  {'signal':>12} {'flip':>12} {'placebo':>12} "
-                f"{'shuffled':>12}  needed"
-            )
-            for reward in REWARDS:
-                cells = []
-                for arm in ("signal", "flip", "placebo", "shuffled"):
-                    wins, losses = races.get(f"{arm}.{reward}", (0, 0))
-                    total = wins + losses
-                    cells.append(
-                        f"{wins / total:.4f}({total:>5})" if total >= LEAST_TRADES else f"{'-':>12}"
-                    )
-                print(f"{reward:>6}  " + " ".join(cells) + f"  {1.0 / (1.0 + reward):.4f}")
-
-    print("\n=== Part A: swept, mean forward R at hold 40, signal minus flip")
-    print(
-        f"{'L':>5} {'k':>5} {'h':>5}  {'signal':>9} {'flip':>9} {'edge':>9} {'se':>9} {'fires':>7}"
-    )
-    # Prepared once, swept twenty-seven times. The block-shuffled twin and the
-    # dispersion units do not depend on `(L, k, h)`.
-    ready = []
-    for klass, names in sorted(wanted.items()):
-        if klass in CONTROLS:
-            continue
-        for name in names:
-            bars = load(name, "1h")
-            if bars is not None:
-                ready.append(prepare(bars, rng))
-    print(f"(prepared {len(ready)} instruments)", flush=True)
-    for lb in LOOKBACKS:
-        for sl in SLACKS:
-            for th in THRESHOLDS:
-                sig: list[float] = []
-                flp: list[float] = []
+    only = os.environ.get("PART", "").upper()
+    if only == "B":
+        print("(PART=B: Part A skipped - its answer is in research/docs)\n", flush=True)
+    if only != "B":
+        print("\n=== Part A: the side, at the published defaults")
+        lookback, slack, threshold = int(PUBLISHED[0]), float(PUBLISHED[1]), float(PUBLISHED[2])
+        for frame in FRAMES:
+            for klass, names in sorted(wanted.items()):
+                pooled: dict[str, list[float]] = {}
+                races: dict[str, list[int]] = {}
+                spans: list[float] = []
                 fires = 0
-                for one in ready:
-                    s_vals, f_vals, count = swept(one, lb, sl, th, 40)
-                    fires += count
-                    sig.extend(s_vals)
-                    flp.extend(f_vals)
-                if len(sig) < LEAST_TRADES:
+                for name in names:
+                    bars = load(name, frame)
+                    if bars is None:
+                        continue
+                    got = part_a(prepare(bars, rng), lookback, slack, threshold, rng)
+                    if not got:
+                        continue
+                    fires += got["fires"]
+                    # **Trades pooled, not per-instrument means averaged.** A mean
+                    # of means weights a feed with thirty fires like one with three
+                    # hundred; and an events guard applied per feed rather than to
+                    # the pool once dropped 141 of 146 feeds and turned 0.9 sigma
+                    # into 4.8.
+                    for hold in (*HOLDS, "regime"):
+                        for arm in ("signal", "flip", "placebo", "shuffled"):
+                            pooled.setdefault(f"{arm}.{hold}", []).extend(
+                                got.get(f"{arm}.{hold}") or []
+                            )
+                    spans.extend(got.get("spans") or [])
+                    for reward in REWARDS:
+                        for arm in ("signal", "flip", "placebo", "shuffled"):
+                            wins, losses = got.get(f"race.{arm}.{reward}", (0, 0))
+                            cell = races.setdefault(f"{arm}.{reward}", [0, 0])
+                            cell[0] += wins
+                            cell[1] += losses
+                if not pooled:
                     continue
-                arr = np.asarray(sig)
-                s_bar, f_bar = float(arr.mean()), float(np.mean(flp))
-                se = float(arr.std(ddof=1)) / math.sqrt(len(arr))
+                print(f"\n--- {klass}, {frame}: {fires} fires over {len(names)} instruments")
                 print(
-                    f"{lb:>5} {sl:>5} {th:>5}  {s_bar:+9.4f} {f_bar:+9.4f} "
-                    f"{s_bar - f_bar:+9.4f} {se:9.4f} {fires:>7}",
-                    flush=True,
+                    f"{'hold':>6}  {'signal':>17} {'flip':>17} {'placebo':>17} {'shuffled':>17}"
+                    "   mean +/- 1se, dispersion units"
                 )
+                for hold in (*HOLDS, "regime"):
+                    cells = []
+                    for arm in ("signal", "flip", "placebo", "shuffled"):
+                        vals = pooled.get(f"{arm}.{hold}") or []
+                        if len(vals) < LEAST_TRADES:
+                            cells.append(f"{'-':>17}")
+                            continue
+                        arr = np.asarray(vals)
+                        se = float(arr.std(ddof=1)) / math.sqrt(len(arr))
+                        cells.append(f"{float(arr.mean()):+9.4f}+/-{se:<6.4f}")
+                    print(f"{str(hold):>6}  " + " ".join(cells))
+                if spans:
+                    print(
+                        f"       regime length: median {np.median(spans):.0f} bars, "
+                        f"mean {np.mean(spans):.0f}, n={len(spans)}"
+                    )
+                print(
+                    f"{'reward':>6}  {'signal':>12} {'flip':>12} {'placebo':>12} "
+                    f"{'shuffled':>12}  needed"
+                )
+                for reward in REWARDS:
+                    cells = []
+                    for arm in ("signal", "flip", "placebo", "shuffled"):
+                        wins, losses = races.get(f"{arm}.{reward}", (0, 0))
+                        total = wins + losses
+                        cells.append(
+                            f"{wins / total:.4f}({total:>5})"
+                            if total >= LEAST_TRADES
+                            else f"{'-':>12}"
+                        )
+                    print(f"{reward:>6}  " + " ".join(cells) + f"  {1.0 / (1.0 + reward):.4f}")
+
+        print("\n=== Part A: swept, mean forward R at hold 40, signal minus flip")
+        print(
+            f"{'L':>5} {'k':>5} {'h':>5}  {'signal':>9} {'flip':>9} {'edge':>9} {'se':>9} {'fires':>7}"
+        )
+        # Prepared once, swept twenty-seven times. The block-shuffled twin and the
+        # dispersion units do not depend on `(L, k, h)`.
+        ready = []
+        for klass, names in sorted(wanted.items()):
+            if klass in CONTROLS:
+                continue
+            for name in names:
+                bars = load(name, "1h")
+                if bars is not None:
+                    ready.append(prepare(bars, rng))
+        print(f"(prepared {len(ready)} instruments)", flush=True)
+        for lb in LOOKBACKS:
+            for sl in SLACKS:
+                for th in THRESHOLDS:
+                    sig: list[float] = []
+                    flp: list[float] = []
+                    fires = 0
+                    for one in ready:
+                        s_vals, f_vals, count = swept(one, lb, sl, th, 40)
+                        fires += count
+                        sig.extend(s_vals)
+                        flp.extend(f_vals)
+                    if len(sig) < LEAST_TRADES:
+                        continue
+                    arr = np.asarray(sig)
+                    s_bar, f_bar = float(arr.mean()), float(np.mean(flp))
+                    se = float(arr.std(ddof=1)) / math.sqrt(len(arr))
+                    print(
+                        f"{lb:>5} {sl:>5} {th:>5}  {s_bar:+9.4f} {f_bar:+9.4f} "
+                        f"{s_bar - f_bar:+9.4f} {se:9.4f} {fires:>7}",
+                        flush=True,
+                    )
 
     print("\n=== Part B: increment over HAR on forward log dispersion")
     print(
-        f"{'cell':>22} {'har':>8} {'+cusum_r':>9} {'+cusum_d':>9} {'+bocpd':>8} "
-        f"{'shuffled':>9} {'agree':>6}"
+        f"{'cell':>22} {'har@ref':>8} {'har':>8} {'+cusum_r':>9} {'+cusum_d':>9} "
+        f"{'+bocpd':>8} {'shuffled':>9} {'agree':>6}"
+    )
+    print(
+        "  har@ref is dispersion_ml's own procedure (fixed 1e-8, last 12000 bars);\n"
+        "  har is the tuned baseline every increment is taken against.\n"
     )
     for frame in FRAMES:
         for horizon in HORIZONS:
@@ -609,6 +654,7 @@ def main() -> None:
                     key: float(np.median([r[key] for r in rows]))
                     for key in (
                         "har",
+                        "har.reference",
                         "har+cusum_ret",
                         "har+cusum_disp",
                         "har+bocpd",
@@ -622,14 +668,16 @@ def main() -> None:
                 # is not reproducing those is an increment over a broken
                 # opponent, which is how an ESN once read +0.565 against a
                 # ridge crippled at a fixed 1e-8.
-                if klass in TRADED and horizon == 20 and med["har"] < 0.05:
+                if klass in TRADED and horizon == 20 and med["har.reference"] < 0.05:
                     print(
-                        f"  WARN {klass} {frame} h=20: HAR reads {med['har']:+.4f}, "
-                        "below the +0.10 this cell is known to give. The increments "
-                        "below are against a baseline that is not reproducing."
+                        f"  WARN {klass} {frame} h=20: har@ref reads "
+                        f"{med['har.reference']:+.4f}, below the +0.10 this cell is "
+                        "known to give. The increments below are against a baseline "
+                        "that is not reproducing."
                     )
                 print(
                     f"{klass + ' ' + frame + ' h=' + str(horizon):>22} "
+                    f"{med['har.reference']:+8.4f} "
                     f"{med['har']:+8.4f} "
                     f"{med['har+cusum_ret'] - med['har']:+9.4f} "
                     f"{med['har+cusum_disp'] - med['har']:+9.4f} "
