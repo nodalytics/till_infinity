@@ -170,3 +170,76 @@ dispersion forecast is the Monte Carlo in `statespace/projecting.py`, which
 turns it into a distribution over paths - a stop at a stated breach rate, a
 target's touch probability, a time to arrive - and for nothing that needs to
 know which way price goes.
+
+## The value-reverting member, and the parameter it still needs
+
+**2026-10-17, later. `statespace/ornstein.py`.**
+
+The `ou` arm above exists because the family had no member that reverts a
+**value** to a level - `reverting` reverts the *rate* and leaves the value
+integrated, which is a random walk in log-variance. `ornstein.Ornstein` closes
+that gap: one state, `d(value) = theta (level - value) dt + sigma dW`,
+discretised exactly, with the level as an **anchored slow mean** rather than a
+free state (a free centre collapses onto the data -
+`definitions-cannot-be-states`).
+
+### Two corrections to this harness came first, and both mattered
+
+**Every filter arm had been under-scored.** `_statespace` compared a member's
+*current* state against a target that is the mean log-variance over the next
+`h` bars. The fitted arms learn that shrinkage from the data; a filter never
+sees the target, so its one-step state was being scored against an h-step mean
+and the penalty grew with `h` - visible as `pool` reading +0.241 at h=1 and
+-1.893 at h=20. Each member is now asked for its own h-step forecast through
+`at_time`, averaged over the horizon because the target is a mean.
+
+**But `at_time` is not meaningful for every member.** Applied uniformly it made
+`s4d` read **-153** at h=1 and **-2616** at h=20, because a selective map's
+states all decay toward zero and its extrapolation returns about zero against a
+quantity sitting at -18. That is the README's trade-off 2 appearing as a
+number, and it is what `swarm`'s non-decaying anchor exists to fix. Those two
+members are named in `DECAYING` and scored on their state, with the reason.
+
+### Measured, 1h, median out-of-sample R2
+
+| cell | `ou` | `ornstein` | `har` | `lin48` | `esn` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| fx_major h=1 | +0.011 | **+0.172** | +0.031 | +0.092 | +0.392 |
+| fx_major h=20 | +0.004 | **+0.405** | +0.103 | +0.178 | +0.540 |
+| fx_cross h=20 | +0.004 | **+0.550** | +0.110 | +0.198 | +0.572 |
+| metal h=20 | +0.169 | **+0.834** | +0.791 | +0.826 | +0.769 |
+| volatility h=20 | +0.000 | **-0.659** | -0.003 | -0.009 | -0.042 |
+| shuffled h=20 | -0.000 | **-0.748** | -0.000 | -0.003 | -0.013 |
+
+**It earns its place on the test it was set.** It beats the `ou` arm it was
+written because of in every real cell, by ten to a hundredfold; it beats HAR and
+the 48-lag ridge at h=20 on both FX classes and on metals; and on metals it is
+the **best arm of all**, ahead of a 48-state reservoir, with two parameters.
+
+### And it has a specific, fixable defect
+
+**On the nulls it is not neutral, it is negative** - and the shuffled rows and
+the constant-sigma rows read the *same* magnitudes, about -0.06, -0.27 and
+-0.73 at h = 1, 5 and 20, where every fitted arm reads about zero.
+
+That is not noise and it is not a bug. **`theta` is a placeholder.**
+`subjects.DISPERSION` sets a 24-hour half-life and says it is unfitted, so at
+h = 20 the member carries `exp(-theta * 20h) = 0.56` of the current deviation
+into its forecast. Where the quantity reverts at about that rate, carrying 56%
+is right and it wins. Where the quantity does not revert at all - a shuffled
+series, or a generator that fixes sigma - carrying 56% of pure noise is a loss
+of exactly the size observed. The `ou` arm reads 0.000 on those same rows
+because it **estimates** its coefficient online and finds zero.
+
+So the claim is narrower than the table: *`Ornstein` with a fitted `theta` is
+the right model for this quantity and wins decisively; with a placeholder
+`theta` it loses wherever the quantity does not revert at the assumed rate.*
+Its own nested null is the fit - `theta = 0` is a one-state random walk, so
+comparing a fitted `theta` against zero on held-out likelihood is one
+parameter at a boundary - and nothing should use this member on a new subject
+without running it.
+
+What the member buys over the `ou` arm, once `theta` is fitted, is everything a
+filter has and a regression on a fixed grid does not: a posterior, smoothing,
+irregular sampling, gap handling, and a band that converges to a stationary
+width instead of growing without bound.

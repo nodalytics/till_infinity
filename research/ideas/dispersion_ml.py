@@ -43,6 +43,11 @@ is only whether it beats the regression:
 * `har` - **the null.** Three realised variances, one OLS fit.
 * `s4d` - `diagonal.Diagonal`, the multi-timescale basis promoted the same day.
   Its reason to work here is exactly HAR's: several decay rates in one state.
+* `ornstein` - the **value**-reverting member, written because of this file's
+  `ou` arm and configured by `subjects.DISPERSION` itself. The `ou` arm stays
+  beside it on purpose: a member that cannot beat a two-parameter online AR(1)
+  on the quantity it was built for has not earned its place, and dropping the
+  arm would hide that.
 * `pool` - the production pool through `Desk.read`, reading log-variance as its
   subject. This is "point the other guys at dispersion" as a number.
 * `lin48` - ridge on the last 48 raw lags. **The control that says what any
@@ -86,6 +91,7 @@ from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
 from till_infinity.structures.statespace.diagonal import Diagonal  # noqa: E402
 from till_infinity.structures.statespace.facade import Desk  # noqa: E402
+from till_infinity.structures.statespace.subjects import DISPERSION  # noqa: E402
 
 FRAMES = ("1h", "4h")
 #: Real classes, then the generated one that fixes its own sigma - the control
@@ -237,7 +243,7 @@ def _r2(truth: np.ndarray, guess: np.ndarray, base: float) -> float:
 
 
 def _statespace(
-    logvar: np.ndarray, start: int, rows: int, feed: str, frame: str, member
+    logvar: np.ndarray, start: int, rows: int, feed: str, frame: str, member, horizon: int = 1
 ) -> np.ndarray:
     """One-step predictive means from a member reading log-variance.
 
@@ -249,15 +255,35 @@ def _statespace(
     out = []
     noise = 0.30  # the dispersion subject's `noise`, a placeholder that says so
     desk = _DESKS.get((feed, frame))
+    # **The forecast is asked for at the horizon, not read off the state.**
+    #
+    # The first version scored `member.value` - the *current* filtered state -
+    # against a target that is the mean log-variance over the next `horizon`
+    # bars. The fitted arms learn that shrinkage from the data; a filter is not
+    # fitted to the target at all, so scoring its one-step state against an
+    # h-step mean understates every filter arm and the gap grows with `h`.
+    # It showed as `pool` going +0.241 at h=1 to -1.893 at h=20, and as the
+    # value-reverting member reading **-1.220** on a constant-sigma generator
+    # where every fitted arm read about zero.
+    #
+    # `at_time` is what a member is for. Averaged over the horizon rather than
+    # taken at its end, because the target is a mean and not an endpoint.
+    span = 3600.0
+
+    def ahead(engine, now: float) -> float:
+        if not hasattr(engine, "at_time") or getattr(engine, "at", None) is None:
+            return float(getattr(engine, "value", 0.0))
+        return float(np.mean([engine.at_time(now + k * span) for k in range(1, horizon + 1)]))
+
     for i in range(start, start + rows):
-        # The guess for bar i+1 is the state **before** bar i+1 is folded in,
-        # which is what makes this predictive rather than fitted.
+        now = float(i) * span
         if member is None:
-            got = desk.read(feed, frame, float(i) * 3600.0, float(logvar[i]), noise)
-            out.append(float(got.value))
+            got = desk.read(feed, frame, now, float(logvar[i]), noise)
+            engine = desk._members.get((feed, frame))
+            out.append(ahead(engine, now) if engine is not None else float(got.value))
         else:
-            out.append(float(member.value) if member.seen else float(logvar[i]))
-            member.update(float(logvar[i]), noise, float(i) * 3600.0)
+            out.append(ahead(member, now) if member.seen else float(logvar[i]))
+            member.update(float(logvar[i]), noise, now)
     return np.asarray(out, dtype=float)
 
 
@@ -344,10 +370,18 @@ def score(
     out["esn"] = (_r2(y[cut:], _apply(coef, wide[cut:]), base), dof)
 
     _DESKS[(feed, frame)] = Desk()
-    pooled = _statespace(logvar, start, len(y), feed, frame, None)
+    pooled = _statespace(logvar, start, len(y), feed, frame, None, horizon)
     out["pool"] = (_r2(y[cut:], pooled[cut:], base), 0.0)
-    alone = _statespace(logvar, start, len(y), feed, frame, Diagonal())
+    alone = _statespace(logvar, start, len(y), feed, frame, Diagonal(), horizon)
     out["s4d"] = (_r2(y[cut:], alone[cut:], base), 0.0)
+
+    # **The member this file's `ou` arm was written because of.** The arm stays:
+    # if `ornstein` cannot beat a two-parameter online AR(1) on the quantity it
+    # was built for, that is the finding, and removing the arm would hide it.
+    # `DISPERSION.filter()` is used rather than a hand-built instance, so this
+    # measures the subject's own declared configuration.
+    settling = _statespace(logvar, start, len(y), feed, frame, DISPERSION.filter(), horizon)
+    out["ornstein"] = (_r2(y[cut:], settling[cut:], base), 0.0)
     return out
 
 
@@ -367,7 +401,7 @@ def main() -> None:
         groups.setdefault(classify(name), []).append(name)
     print("classes in the cache:", ", ".join(sorted(groups)))
 
-    arms = ("constant", "last", "ou", "har", "lin48", "s4d", "pool", "esn")
+    arms = ("constant", "last", "ou", "ornstein", "har", "lin48", "s4d", "pool", "esn")
     for frame in FRAMES:
         for label in ("onescale", *TRADED, *CONTROLS):
             if label != "onescale" and label not in groups:
