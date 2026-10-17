@@ -120,7 +120,7 @@ def generator_shape(n: int, seed: int, seeds: int = 8) -> list[tuple[float, floa
     reporting is the generator's own shape against the market's, not a power
     curve on a base that does not resemble one.
     """
-    from till_infinity.structures.statespace.paths import simulate
+    from till_infinity.statespace.paths import simulate
 
     times = [i * HOUR for i in range(n + 1)]
     out = []

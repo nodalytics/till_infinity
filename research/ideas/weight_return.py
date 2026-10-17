@@ -55,7 +55,7 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from till_infinity.structures.statespace.interacting import Attention  # noqa: E402
+from till_infinity.statespace.interacting import Attention  # noqa: E402
 
 CACHE = Path.home() / "till_infinity/data/seqlab"
 FRAMES = ("1h", "4h")

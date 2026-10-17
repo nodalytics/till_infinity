@@ -64,7 +64,7 @@ import os
 import statistics
 from pathlib import Path
 
-from till_infinity.structures.statespace.inputs import WEEK, bar_hours, coverage, ema
+from till_infinity.statespace.inputs import WEEK, bar_hours, coverage, ema
 
 SYMBOLS = (
     ("eurusd", "EURUSD"),

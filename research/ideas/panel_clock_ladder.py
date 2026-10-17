@@ -115,8 +115,8 @@ def blended(matrix, index: int, half: int, weight: float, picked):
 
 def ladder_nats(series, half: int):
     """`ladder_against_one`'s two members, on a given log-volatility series."""
-    from till_infinity.structures.statespace.fractional import Fractional
-    from till_infinity.structures.statespace.reverting import Reverting
+    from till_infinity.statespace.fractional import Fractional
+    from till_infinity.statespace.reverting import Reverting
 
     # The declared measurement variance is the same for every arm, so a
     # denoised series is not allowed to claim the tighter variance it earns.
@@ -171,8 +171,8 @@ def clock_nats(times, values, factor_at, half_index: int, *, profile=None):
     `+33` and a reversed one costs `-1298`, so a small positive is a real
     reading and a large negative means the clock is actively misleading.
     """
-    from till_infinity.structures.statespace.driven import Driven
-    from till_infinity.structures.statespace.seasonal import Seasonal
+    from till_infinity.statespace.driven import Driven
+    from till_infinity.statespace.seasonal import Seasonal
 
     steps = [abs(values[i] - values[i - 1]) for i in range(1, len(values))]
     noise = statistics.pstdev(steps) or 1e-9
@@ -284,7 +284,7 @@ def run_universe(label: str, names, series, *, rotate_with=None) -> None:
         values = list(bars[1][: len(spans) * SPAN])
         if len(times) < 400:
             continue
-        from till_infinity.structures.statespace.seasonal import Profile
+        from till_infinity.statespace.seasonal import Profile
 
         middle = len(times) // 2
         profile = Profile.fit(times[:middle], values[:middle])

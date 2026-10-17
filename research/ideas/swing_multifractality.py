@@ -60,8 +60,8 @@ import random
 import statistics
 from pathlib import Path
 
-from till_infinity.structures.statespace.displacements import sequence
-from till_infinity.structures.statespace.nulls import garch
+from till_infinity.statespace.displacements import sequence
+from till_infinity.statespace.nulls import garch
 
 HOUR = 3600.0
 

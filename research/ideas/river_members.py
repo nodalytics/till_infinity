@@ -58,9 +58,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from till_infinity.structures.statespace.diagnostics import crps, pit_flatness  # noqa: E402
-from till_infinity.structures.statespace.distance import _normal_quantile  # noqa: E402
-from till_infinity.structures.statespace.pooling import Pooled  # noqa: E402
+from till_infinity.statespace.diagnostics import crps, pit_flatness  # noqa: E402
+from till_infinity.statespace.distance import _normal_quantile  # noqa: E402
+from till_infinity.statespace.pooling import Pooled  # noqa: E402
 
 CACHE = Path(os.environ.get("SEQLAB_CACHE", str(Path.home() / "till_infinity/data/seqlab")))
 FRAME = os.environ.get("FRAME", "1h")
@@ -263,8 +263,8 @@ def adapting_pool() -> Pooled:
     something the members' form cannot represent, and that is worth knowing
     precisely.
     """
-    from till_infinity.structures.statespace.adapting import Adapting
-    from till_infinity.structures.statespace.family import members
+    from till_infinity.statespace.adapting import Adapting
+    from till_infinity.statespace.family import members
 
     built = members()
     pool = Pooled()

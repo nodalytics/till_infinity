@@ -264,7 +264,7 @@ def garch_returns(n: int, sigma: float, seed: int) -> list[float]:
     to `1e110` and 98.8% of returns sat on the clamp. A near-constant series
     is worse than no control, because it still produces a number.
     """
-    from till_infinity.structures.statespace.nulls import garch
+    from till_infinity.statespace.nulls import garch
 
     return garch(n, seed=seed, sigma=sigma)
 
@@ -284,8 +284,8 @@ def ladder_against_one(series: list[float], *, seed: int) -> dict[str, float]:
     `1/(2 * WINDOW)`, which is a quantity this harness knows rather than
     guesses.
     """
-    from till_infinity.structures.statespace.fractional import Fractional
-    from till_infinity.structures.statespace.reverting import Reverting
+    from till_infinity.statespace.fractional import Fractional
+    from till_infinity.statespace.reverting import Reverting
 
     if len(series) < 400:
         return {}
@@ -528,8 +528,8 @@ def band_arm(moves: list[float], *, label: str) -> list[dict]:
     per-bar standard deviation is theirs unchanged: realised volatility is
     already a per-bar quantity by construction of `log_volatility`.
     """
-    from till_infinity.structures.statespace.fractional import Fractional
-    from till_infinity.structures.statespace.reverting import Reverting
+    from till_infinity.statespace.fractional import Fractional
+    from till_infinity.statespace.reverting import Reverting
 
     series = log_volatility(moves, WINDOW)
     if len(series) < 400:

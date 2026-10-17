@@ -69,8 +69,8 @@ import os
 import random
 from pathlib import Path
 
-from till_infinity.structures.statespace.landau import Landau
-from till_infinity.structures.statespace.reverting import Reverting
+from till_infinity.statespace.landau import Landau
+from till_infinity.statespace.reverting import Reverting
 
 HOUR = 3600.0
 SEED = 20261012
@@ -404,7 +404,7 @@ def planted(n: int = 4000):
     dt = 1.0
     rate, value = 0.1, 0.0
     times, values = [], []
-    from till_infinity.structures.statespace.landau import _flow, _travel
+    from till_infinity.statespace.landau import _flow, _travel
 
     for i in range(n):
         value += _travel(rate, dt, theta, kappa)

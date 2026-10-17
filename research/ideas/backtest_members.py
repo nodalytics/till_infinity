@@ -62,10 +62,10 @@ import random
 import statistics
 from pathlib import Path
 
-from till_infinity.structures.statespace.linear import Gaussian
-from till_infinity.structures.statespace.nulls import Walk
-from till_infinity.structures.statespace.reverting import Reverting
-from till_infinity.structures.statespace.switching import Switching
+from till_infinity.statespace.linear import Gaussian
+from till_infinity.statespace.nulls import Walk
+from till_infinity.statespace.reverting import Reverting
+from till_infinity.statespace.switching import Switching
 
 HOUR = 3600.0
 
@@ -252,8 +252,8 @@ def pnl(times, values, *, build, base, variance, bar_hours, cost, seed):
 
 
 def main() -> None:
-    from till_infinity.structures.statespace.driven import Driven
-    from till_infinity.structures.statespace.seasonal import Profile
+    from till_infinity.statespace.driven import Driven
+    from till_infinity.statespace.seasonal import Profile
 
     print(
         f"frames {FRAMES}  hold {HOLD_HOURS}h  cost {COST_SPREADS} spreads\n"

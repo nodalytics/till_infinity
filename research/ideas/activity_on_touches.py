@@ -55,10 +55,10 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from till_infinity.structures.levels import Kalman  # noqa: E402
-from till_infinity.structures.statespace.behaving import drives_q  # noqa: E402
-from till_infinity.structures.statespace.diagnostics import crps  # noqa: E402
-from till_infinity.structures.statespace.distance import _normal_quantile  # noqa: E402
-from till_infinity.structures.statespace.pacing import Pace  # noqa: E402
+from till_infinity.statespace.behaving import drives_q  # noqa: E402
+from till_infinity.statespace.diagnostics import crps  # noqa: E402
+from till_infinity.statespace.distance import _normal_quantile  # noqa: E402
+from till_infinity.statespace.pacing import Pace  # noqa: E402
 
 CACHE = Path(os.environ.get("SEQLAB_CACHE", str(Path.home() / "till_infinity/data/seqlab")))
 FRAME = os.environ.get("FRAME", "1h")

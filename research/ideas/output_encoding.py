@@ -77,8 +77,8 @@ from signal_layer import (  # noqa: E402
     gather,
 )
 
-from till_infinity.structures.statespace import Layer, squash  # noqa: E402
-from till_infinity.structures.statespace.signalling import LIMIT  # noqa: E402
+from till_infinity.statespace import Layer, squash  # noqa: E402
+from till_infinity.statespace.signalling import LIMIT  # noqa: E402
 
 FRAMES = ("15m", "1h")
 HORIZON = 12

@@ -228,7 +228,7 @@ def pair_arm(data: dict, rungs) -> list[dict]:
 
 
 def main() -> None:
-    from till_infinity.structures.statespace.inputs import resolvable
+    from till_infinity.statespace.inputs import resolvable
 
     print(
         f"bars built at {BAR_SECONDS}s from ticks  cost {COST_SPREADS} spreads\n"

@@ -154,7 +154,7 @@ def fit_and_score(logs: list[float], stamps: list[float]) -> dict:
     the first half, which is the comparison `statespace-clock-levers.md`
     records three instances of getting wrong.
     """
-    from till_infinity.structures.statespace.reverting import Reverting
+    from till_infinity.statespace.reverting import Reverting
 
     half = len(logs) // 2
     spread = statistics.pstdev([b - a for a, b in itertools.pairwise(logs)]) or 1e-9

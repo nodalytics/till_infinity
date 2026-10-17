@@ -77,9 +77,9 @@ if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
 from till_infinity.structures.levels import Kalman  # noqa: E402
-from till_infinity.structures.statespace.diagnostics import crps, pit_flatness  # noqa: E402
-from till_infinity.structures.statespace.distance import _normal_quantile  # noqa: E402
-from till_infinity.structures.statespace.pooling import Pooled  # noqa: E402
+from till_infinity.statespace.diagnostics import crps, pit_flatness  # noqa: E402
+from till_infinity.statespace.distance import _normal_quantile  # noqa: E402
+from till_infinity.statespace.pooling import Pooled  # noqa: E402
 
 CACHE = Path(os.environ.get("SEQLAB_CACHE", str(Path.home() / "till_infinity/data/seqlab")))
 FRAME = os.environ.get("FRAME", "1h")

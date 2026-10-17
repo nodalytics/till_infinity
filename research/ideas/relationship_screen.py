@@ -151,7 +151,7 @@ import statistics
 from itertools import combinations
 from pathlib import Path
 
-from till_infinity.structures.statespace.relating import Relating
+from till_infinity.statespace.relating import Relating
 
 HOUR = 3600.0
 SEED = 20261013

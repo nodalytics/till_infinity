@@ -58,9 +58,9 @@ if str(HERE) not in sys.path:
 
 from signal_layer import auc, load  # noqa: E402
 
-from till_infinity.structures.statespace import terms_from  # noqa: E402
-from till_infinity.structures.statespace.behaving import drives_q  # noqa: E402
-from till_infinity.structures.statespace.facade import Desk  # noqa: E402
+from till_infinity.statespace import terms_from  # noqa: E402
+from till_infinity.statespace.behaving import drives_q  # noqa: E402
+from till_infinity.statespace.facade import Desk  # noqa: E402
 
 FRAME = "1h"
 #: Measurement standard deviation as a multiple of a quarter of the bar's own

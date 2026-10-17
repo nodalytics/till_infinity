@@ -129,7 +129,7 @@ def slopes(times, values, window: int = WINDOW):
     their data, so their estimator errors are correlated and the `2R` term in
     the identity would not be `2R`.
     """
-    from till_infinity.structures.statespace.rates import slope_per_hour
+    from till_infinity.statespace.rates import slope_per_hour
 
     out = []
     for start in range(0, len(values) - window, window):

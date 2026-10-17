@@ -285,7 +285,7 @@ def real_rate(name: str, frame: str, thresholds=THRESHOLDS) -> dict | None:
     import numpy as np
 
     from till_infinity.structures.learning.focus import Focus
-    from till_infinity.structures.statespace.nulls import Walk
+    from till_infinity.statespace.nulls import Walk
 
     for base in (
         Path.home() / "till_infinity" / "data" / "seqlab",

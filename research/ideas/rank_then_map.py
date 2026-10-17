@@ -43,8 +43,8 @@ import os
 import statistics
 from pathlib import Path
 
-from till_infinity.structures.statespace.inputs import bar_hours, coverage
-from till_infinity.structures.statespace.ranking import Ranker, RankThenMap
+from till_infinity.statespace.inputs import bar_hours, coverage
+from till_infinity.statespace.ranking import Ranker, RankThenMap
 
 HOUR = 3600.0
 

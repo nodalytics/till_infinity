@@ -79,15 +79,15 @@ for q in (HERE, HERE.parent, HERE.parents[1]):
 
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
-from till_infinity.structures.statespace.depths import (  # noqa: E402
+from till_infinity.statespace.depths import (  # noqa: E402
     Turn,
     depths,
     from_pivots,
     score,
 )
-from till_infinity.structures.statespace.displacements import sequence  # noqa: E402
-from till_infinity.structures.statespace.pivoting import pivots  # noqa: E402
-from till_infinity.structures.statespace.reverting import Reverting  # noqa: E402
+from till_infinity.statespace.displacements import sequence  # noqa: E402
+from till_infinity.statespace.pivoting import pivots  # noqa: E402
+from till_infinity.statespace.reverting import Reverting  # noqa: E402
 
 FRAMES = ("1h", "4h")
 TRADED = ("fx_major", "fx_cross", "metal")

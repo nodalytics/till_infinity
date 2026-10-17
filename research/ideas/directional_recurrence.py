@@ -187,7 +187,7 @@ def rotated_like(matrix, picker):
     """Each instrument rotated in time: marginals exact, alignment destroyed."""
     import numpy as np
 
-    from till_infinity.structures.statespace.nulls import rotated
+    from till_infinity.statespace.nulls import rotated
 
     out = np.empty_like(matrix)
     for i in range(matrix.shape[0]):

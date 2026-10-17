@@ -65,7 +65,7 @@ import random
 import statistics
 from pathlib import Path
 
-from till_infinity.structures.statespace.displacements import PEAK, TROUGH, nodes
+from till_infinity.statespace.displacements import PEAK, TROUGH, nodes
 
 HOUR = 3600.0
 SEED = 20261012
