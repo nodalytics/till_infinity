@@ -90,6 +90,12 @@ HOLDS = (10, 40, 120)
 REWARDS = (1.0, 2.0, 3.0)
 #: Bars of trailing dispersion the unit is measured over. Causal by slicing.
 UNIT_BARS = 100
+#: Log variance below which a bar is treated as not having traded. `parkinson`
+#: floors a non-positive range at `log(1e-300)`; anything near that is a dead
+#: bar, and -200 is far below any real bar's log variance (a 1e-43 range).
+DEAD_BAR = -200.0
+#: Live bars a window needs before it will state a unit.
+UNIT_LEAST = 50
 #: Block length for the shuffled arm, in bars. Long enough to keep volatility
 #: clustering, short enough to destroy the ordering a CUSUM reads.
 BLOCK = 24
@@ -138,20 +144,37 @@ def cusum(returns: np.ndarray, lookback: int, slack: float, threshold: float):
 
 
 def _units(logvar: np.ndarray) -> np.ndarray:
-    """A causal dispersion unit per bar: sd implied by trailing log variance.
+    """The trailing **relative** dispersion unit: a log-return standard deviation.
 
-    A cumulative sum rather than a loop. The window ends at `i - 1`, so the
-    unit a trade is sized by never contains the bar that fired.
+    Relative, not a price. Everything downstream therefore measures moves in
+    log space, and that is not a stylistic choice - the first version of this
+    harness divided a *price difference* by this number and used it as a
+    *price offset* for the stop. On a synthetic starting at 1.0 the two
+    coincide and it looked right; on gold at 2600 it is wrong by six orders of
+    magnitude, which is what the first lab run printed: mean forward reads of
+    10^27 units.
+
+    **Dead bars are dropped rather than floored.** `parkinson` floors a
+    non-positive range at `log(1e-300)`, which is about -690, and one such bar
+    in the window drags a mean of a hundred by -6.9 - so `exp(mean/2)` collapses
+    and every move divided by it explodes. Metals and the synthetics both carry
+    bars whose high equals their low. So the window averages only the bars that
+    traded, and returns nothing where too few did.
     """
     out = np.full(len(logvar), np.nan)
     if len(logvar) <= UNIT_BARS:
         return out
-    clean = np.where(np.isfinite(logvar), logvar, 0.0)
-    total = np.concatenate([[0.0], np.cumsum(clean)])
+    alive = np.isfinite(logvar) & (logvar > DEAD_BAR)
+    values = np.where(alive, logvar, 0.0)
+    totals = np.concatenate([[0.0], np.cumsum(values)])
+    counts = np.concatenate([[0.0], np.cumsum(alive.astype(float))])
     idx = np.arange(UNIT_BARS, len(logvar))
-    means = (total[idx] - total[idx - UNIT_BARS]) / UNIT_BARS
+    n = counts[idx] - counts[idx - UNIT_BARS]
+    total = totals[idx] - totals[idx - UNIT_BARS]
+    enough = n >= UNIT_LEAST
+    means = np.where(enough, total / np.maximum(n, 1.0), np.nan)
     out[idx] = np.exp(means / 2.0)
-    return np.where(np.isfinite(out), out, np.nan)
+    return np.where(np.isfinite(out) & (out > 0), out, np.nan)
 
 
 def _forward(bars, fires, unit, hold: int, flip: bool = False):
@@ -163,7 +186,9 @@ def _forward(bars, fires, unit, hold: int, flip: bool = False):
         exit_i = entry_i + hold
         if exit_i >= len(closes) or not math.isfinite(unit[i]) or unit[i] <= 0:
             continue
-        move = (closes[exit_i] - opens[entry_i]) / unit[i]
+        if opens[entry_i] <= 0 or closes[exit_i] <= 0:
+            continue
+        move = math.log(closes[exit_i] / opens[entry_i]) / unit[i]
         got.append(float((-side if flip else side) * move))
     return got
 
@@ -189,7 +214,9 @@ def _regime(bars, fires, unit, flip: bool = False):
         entry_i = i + 1
         if entry_i >= j or j >= len(closes) or not math.isfinite(unit[i]) or unit[i] <= 0:
             continue
-        move = (closes[j] - opens[entry_i]) / unit[i]
+        if opens[entry_i] <= 0 or closes[j] <= 0:
+            continue
+        move = math.log(closes[j] / opens[entry_i]) / unit[i]
         got.append(float((-side if flip else side) * move))
     return got
 
@@ -209,8 +236,12 @@ def _race(bars, fires, unit, hold: int, reward: float, flip: bool = False):
             continue
         side = -side if flip else side
         entry = opens[entry_i]
-        stop = entry - side * unit[i]
-        target = entry + side * reward * unit[i]
+        if entry <= 0:
+            continue
+        # One unit of **log** distance, turned into a price level once. A
+        # subtraction here is the dimensional error that produced 10^27.
+        stop = entry * math.exp(-side * unit[i])
+        target = entry * math.exp(side * reward * unit[i])
         for j in range(entry_i, entry_i + hold):
             hit_stop = lows[j] <= stop if side > 0 else highs[j] >= stop
             hit_target = highs[j] >= target if side > 0 else lows[j] <= target
@@ -227,28 +258,48 @@ def closes_of(bars):
     return bars["close"]
 
 
-def _blocks(returns: np.ndarray, rng) -> np.ndarray:
-    """Block-shuffled returns: marginals and clustering kept, order destroyed."""
-    n = len(returns)
-    cuts = [returns[i : i + BLOCK] for i in range(0, n, BLOCK)]
+def _blocks(n: int, rng) -> np.ndarray:
+    """Block-shuffled bar **indices**: clustering kept, ordering destroyed."""
+    cuts = [np.arange(i, min(i + BLOCK, n)) for i in range(0, n, BLOCK)]
     rng.shuffle(cuts)
     return np.concatenate(cuts)[:n]
 
 
-def _rebuilt(bars, returns: np.ndarray):
-    """A bar series from a return path, keeping each bar's shape.
+def _rebuilt(bars, order: np.ndarray):
+    """A bar series in a shuffled order, each bar still self-consistent.
 
-    The wick geometry travels with the bar rather than being regenerated, so
-    the shuffled arm faces the same bar shapes - which is what makes it a
-    control on the ordering rather than on the candles.
+    **Whole bars move, not returns.** The first version chained block-shuffled
+    returns while leaving each bar's original high and low in place, which
+    produced bars whose range no longer contained their own open and close - a
+    5% close-to-close move inside a 0.1% range. That is not a control on
+    ordering, it is a different and impossible market, and it showed up as a
+    standard error of 5.55 units on the shuffled arm where the other three read
+    0.35.
+
+    So each bar keeps its internal geometry exactly - the log offsets of its
+    high, low and close from its own open - and is re-chained onto the running
+    price in the shuffled order. The marginal distribution of every bar
+    statistic is therefore identical to the real series, bar by bar, and only
+    the sequence differs.
     """
-    closes = bars["close"][0] * np.exp(np.cumsum(returns))
-    scale = closes / np.maximum(bars["close"][: len(closes)], 1e-300)
+    opens, highs, lows, closes = bars["open"], bars["high"], bars["low"], bars["close"]
+    safe = np.maximum(opens, 1e-300)
+    to_close = np.log(np.maximum(closes, 1e-300) / safe)
+    to_high = np.log(np.maximum(highs, 1e-300) / safe)
+    to_low = np.log(np.maximum(lows, 1e-300) / safe)
+    n = len(order)
+    out_open = np.empty(n)
+    out_close = np.empty(n)
+    price = float(closes[0])
+    for position, source in enumerate(order):
+        out_open[position] = price
+        price = price * math.exp(to_close[source])
+        out_close[position] = price
     return {
-        "open": bars["open"][: len(closes)] * scale,
-        "high": bars["high"][: len(closes)] * scale,
-        "low": bars["low"][: len(closes)] * scale,
-        "close": closes,
+        "open": out_open,
+        "high": out_open * np.exp(to_high[order]),
+        "low": out_open * np.exp(to_low[order]),
+        "close": out_close,
     }
 
 
@@ -274,8 +325,9 @@ def prepare(bars, rng) -> Prepared:
     closes = bars["close"]
     returns = np.diff(np.log(np.maximum(closes, 1e-300)), prepend=0.0)
     unit = _units(parkinson(bars["high"], bars["low"]))
-    shuffled_returns = _blocks(returns, rng)
-    shuffled_bars = _rebuilt(bars, shuffled_returns)
+    order = _blocks(len(closes), rng)
+    shuffled_bars = _rebuilt(bars, order)
+    shuffled_returns = np.diff(np.log(np.maximum(shuffled_bars["close"], 1e-300)), prepend=0.0)
     shuffled_unit = _units(parkinson(shuffled_bars["high"], shuffled_bars["low"]))
     return Prepared(
         bars=bars,
