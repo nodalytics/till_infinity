@@ -40,9 +40,14 @@ convenience is how a weak result gets blamed on the model.
 * the **other estimators** as extra features, window ones included, which asks
   whether the robust measures see something Parkinson misses rather than merely
   restating it.
-* `tda` - Vietoris-Rips H0 and H1 of a delay embedding of returns, reduced to
-  persistence-landscape norms, appended to HAR. Scored as the **increment**
-  over HAR, because that is the only number that can mean anything here.
+* `tda` - Vietoris-Rips H0 and H1 of a delay embedding of returns, appended to
+  HAR and scored as the **increment** over it, because that is the only number
+  that can mean anything here. Two reductions of the same diagrams together:
+  three persistence summaries per degree, and the **Betti curves** - how many
+  components and how many loops are alive at each of six radii. The curves were
+  added on request after the summaries read null, and they are the stronger
+  feature: a summary keeps the longest lifetime, a Betti curve keeps the whole
+  count at every scale.
 
 ## Controls
 
@@ -184,6 +189,44 @@ def _logs(bars: dict[str, np.ndarray]) -> dict[str, np.ndarray]:
 # ----------------------------------------------------------- the topology
 
 
+#: Filtration radii the Betti curves are read at. The cloud is standardised to
+#: unit spread before any of this, so these are comparable across instruments
+#: and across time rather than being a scale in disguise.
+RADII = (0.15, 0.3, 0.5, 0.75, 1.0, 1.5)
+
+
+def _betti(diagrams: list[np.ndarray]) -> tuple[float, ...]:
+    """Betti curves: how many H0 and H1 features are alive at each radius.
+
+    Asked for on 2026-10-17 - "add betti numbers and see if it improves the
+    forecast" - and it is a fair request, because the three persistence
+    summaries beside this are a lossy reduction of the same diagrams. A Betti
+    curve is the standard TDA feature vector and strictly richer: `beta_k(e)`
+    counts the features born at or before `e` and still alive after it, so the
+    pair of curves says *how many components and how many loops the trajectory
+    has at every scale* rather than only how long the longest one lasted.
+
+    For an H0 diagram from a Rips filtration every birth is zero, so
+    `beta_0(e)` is the number of deaths beyond `e` - how many clusters are
+    still separate at that radius. For H1 both ends matter, because a loop has
+    to have opened and not yet filled in.
+    """
+    out: list[float] = []
+    for degree, diagram in enumerate(diagrams):
+        if len(diagram) == 0:
+            out.extend(0.0 for _ in RADII)
+            continue
+        birth, death = diagram[:, 0], diagram[:, 1]
+        keep = np.isfinite(death)
+        birth, death = birth[keep], death[keep]
+        for radius in RADII:
+            if degree == 0:
+                out.append(float(np.sum(death > radius)))
+            else:
+                out.append(float(np.sum((birth <= radius) & (death > radius))))
+    return tuple(out)
+
+
 def _landscape(cloud: np.ndarray) -> tuple[float, ...]:
     """Persistence-landscape style summaries of H0 and H1, as six numbers.
 
@@ -223,7 +266,7 @@ def _landscape(cloud: np.ndarray) -> tuple[float, ...]:
                 float(np.sum(lives > np.median(lives))),
             )
         )
-    return tuple(out)
+    return tuple(out) + _betti(diagrams)
 
 
 def _spatial(cloud: np.ndarray) -> tuple[float, ...]:

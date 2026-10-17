@@ -67,6 +67,7 @@ A depth is a distance, not a destination. Turning one into a price is
 
 from __future__ import annotations
 
+import itertools
 import math
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
@@ -127,6 +128,39 @@ def depths(moves: Iterable[Displacement], *, logged: bool = True) -> list[Turn]:
                 value=math.log(move.size) if logged else float(move.size),
                 span=math.log(move.hours) if logged else float(move.hours),
                 direction=int(move.direction),
+            )
+        )
+    return out
+
+
+def from_pivots(found: Iterable[object], *, unit: float, logged: bool = True) -> list[Turn]:
+    """Depths straight from `pivoting.Pivot`s, bypassing `displacements`.
+
+    `depths(sequence(...))` goes through the fixed-span fractal detector, which
+    is the one `pivoting.py` was written to improve on - scale-blind,
+    magnitude-blind, fixed confirmation lag and no alternation. This takes the
+    directional-change pivots instead, so a harness can ask which detector
+    produces the more forecastable depth series rather than assuming.
+
+    The size is the leg between consecutive extremes in volatility units, which
+    is the same quantity `Displacement.size` carries, and `when` is again the
+    **confirmation** time of the closing pivot.
+    """
+    if unit <= 0:
+        return []
+    pivots = list(found)
+    out: list[Turn] = []
+    for a, b in itertools.pairwise(pivots):
+        size = abs(float(b.level) - float(a.level)) / unit
+        hours = (float(b.at) - float(a.at)) / 3600.0
+        if size <= 0.0 or hours <= 0.0:
+            continue
+        out.append(
+            Turn(
+                when=float(b.confirmed),
+                value=math.log(size) if logged else size,
+                span=math.log(hours) if logged else hours,
+                direction=1 if float(b.level) > float(a.level) else -1,
             )
         )
     return out

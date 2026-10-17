@@ -7854,6 +7854,141 @@ class TestTails:
         assert got.band_covering(middle)[1] == pytest.approx(got.band(2.0)[1], rel=1e-6)
 
 
+class TestPivotsByDirectionalChange:
+    """`pivoting` - the detector, and the laws that say whether it works.
+
+    The point of this detector over a fixed span is that it can be **checked
+    against a prediction it did not fit**: directional-change events scale as
+    `threshold ** -E` with `E` near one, and the overshoot past a confirmation
+    averages about one threshold. Those come from Glattfelder, Dupuis and Olsen
+    (2011) and neither is used to choose a parameter here.
+    """
+
+    @staticmethod
+    def _walk(n=12000, seed=7, step=0.001):
+        import random
+
+        rng = random.Random(seed)
+        closes = [100.0]
+        for _ in range(n):
+            closes.append(closes[-1] * math.exp(rng.gauss(0.0, step)))
+        closes = closes[1:]
+        wick = [abs(rng.gauss(0.0, step)) for _ in range(n)]
+        return (
+            [i * 3600.0 for i in range(n)],
+            [c * math.exp(w) for c, w in zip(closes, wick, strict=True)],
+            [c * math.exp(-w) for c, w in zip(closes, wick, strict=True)],
+            closes,
+        )
+
+    @staticmethod
+    def _unit(closes):
+        steps = [abs(b - a) for a, b in itertools.pairwise(closes)]
+        return sum(steps) / len(steps)
+
+    def test_peaks_and_troughs_alternate_by_construction(self):
+        """The thing a fixed span cannot promise, and this one cannot break."""
+        from till_infinity.structures.statespace.pivoting import fractal, pivots
+
+        times, highs, lows, closes = self._walk()
+        unit = self._unit(closes)
+        found = pivots(times, highs, lows, unit=unit, threshold=2.0)
+        assert len(found) > 50
+        assert all(a.kind != b.kind for a, b in itertools.pairwise(found))
+
+        # The fixed-span detector does not, and that is recorded rather than
+        # hidden: it is the reason a caller building swings from it has to
+        # impose alternation itself.
+        plain = fractal(times, highs, lows, span=5)
+        assert not all(a.kind != b.kind for a, b in itertools.pairwise(plain))
+
+    def test_the_confirmation_lag_adapts(self):
+        """A sharp reversal confirms sooner than a hesitant one."""
+        from till_infinity.structures.statespace.pivoting import fractal, pivots
+
+        times, highs, lows, closes = self._walk()
+        unit = self._unit(closes)
+        found = pivots(times, highs, lows, unit=unit, threshold=2.0)
+        lags = sorted(p.lag for p in found)
+        assert lags[0] < lags[-1]
+
+        # The fixed span is exactly itself, always, by construction.
+        plain = fractal(times, highs, lows, span=5)
+        assert {p.lag for p in plain} == {5}
+
+    def test_a_pivot_is_knowable_only_when_it_is_confirmed(self):
+        """The leak both detectors exist to avoid."""
+        from till_infinity.structures.statespace.pivoting import pivots
+
+        times, highs, lows, closes = self._walk()
+        found = pivots(times, highs, lows, unit=self._unit(closes), threshold=2.0)
+        for one in found:
+            assert one.confirmed >= one.at
+            assert one.confirmed_index >= one.index
+            assert one.lag == one.confirmed_index - one.index
+
+    def test_a_higher_threshold_finds_fewer_turns(self):
+        """Monotone, and the exponent is the law's own prediction."""
+        from till_infinity.structures.statespace.pivoting import scaling
+
+        times, highs, lows, closes = self._walk()
+        got = scaling(times, highs, lows, unit=self._unit(closes), thresholds=(2.0, 4.0, 8.0, 16.0))
+        counts = got["counts"]
+        assert counts == sorted(counts, reverse=True)
+        assert counts[-1] > 0
+        # `N ~ threshold ** -E`. One is the law; the band is wide because bar
+        # data truncates the small-threshold end, where a bar's own range
+        # exceeds the threshold and no detector can resolve an event.
+        assert 0.5 < got["exponent"] < 3.0
+
+    def test_the_overshoot_is_measured_from_the_trigger(self):
+        """It averages about one threshold - and the first version did not."""
+        from till_infinity.structures.statespace.pivoting import overshoots, pivots
+
+        times, highs, lows, closes = self._walk()
+        unit = self._unit(closes)
+        found = pivots(times, highs, lows, unit=unit, threshold=8.0)
+        got = overshoots(found, unit=unit, threshold=8.0)
+        assert len(got) > 20
+        mean = sum(got) / len(got)
+        # Measured from the trigger price it is about one. Measured from the
+        # previous extreme - which is what the first version did - it would be
+        # about two, because that leg is the retracement plus the overshoot.
+        assert 0.4 < mean < 1.8
+        whole = [abs(b.level - a.level) / unit / 8.0 for a, b in itertools.pairwise(found)]
+        assert sum(whole) / len(whole) > mean
+
+    def test_the_unit_may_track_the_regime(self):
+        """A per-bar unit is the point of measuring a swing in volatility units."""
+        from till_infinity.structures.statespace.pivoting import pivots
+
+        times, highs, lows, closes = self._walk()
+        flat = self._unit(closes)
+        # A unit that doubles halfway through should find fewer turns in the
+        # second half than a constant one does, because the threshold grows.
+        varying = [flat if i < len(closes) // 2 else flat * 4.0 for i in range(len(closes))]
+        fewer = pivots(times, highs, lows, unit=varying, threshold=2.0)
+        same = pivots(times, highs, lows, unit=flat, threshold=2.0)
+        assert len(fewer) < len(same)
+
+        for bad in ([flat] * 3, [0.0] * len(closes), [-1.0] * len(closes)):
+            with pytest.raises(ValueError, match="unit"):
+                pivots(times, highs, lows, unit=bad, threshold=2.0)
+
+    def test_bad_asks_are_refused(self):
+        from till_infinity.structures.statespace.pivoting import pivots
+
+        times, highs, lows, _ = self._walk(n=50)
+        with pytest.raises(ValueError, match="threshold"):
+            pivots(times, highs, lows, unit=1.0, threshold=0.0)
+        with pytest.raises(ValueError, match="unit"):
+            pivots(times, highs, lows, unit=0.0)
+        with pytest.raises(ValueError, match="same length"):
+            pivots(times[:-1], highs, lows, unit=1.0)
+        # A flat series has no swings, whatever the threshold.
+        assert pivots([0.0, 1.0, 2.0], [5.0] * 3, [5.0] * 3, unit=1.0) == []
+
+
 class TestTurnDepthPorted:
     """`depths` - v1's one measured turn result, as a dispersion quantity.
 

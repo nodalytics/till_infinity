@@ -75,6 +75,7 @@ from till_infinity.structures.drawing import (  # noqa: E402
     runs,
     vwap,
 )
+from till_infinity.structures.vol.volatility import Volatility  # noqa: E402
 
 FRAME = "1h"
 TRADED = ("fx_major", "fx_cross", "metal")
@@ -125,24 +126,49 @@ def _gate(logvar: np.ndarray) -> tuple[np.ndarray, float]:
     return guess, mark
 
 
-def _pools(window: dict[str, np.ndarray], price: float, unit: float) -> tuple[float, float] | None:
+def _emit(window: dict[str, np.ndarray], live: Volatility) -> list[float]:
+    """Every shipped level in the window, in price.
+
+    **The calling convention is production's, taken from `magnet_levels.py`.**
+    The first version of this called the emitter *modules* as if they were
+    functions, inside a bare `except Exception: continue` - so every one failed
+    and the harness printed a header with no rows. Two faults, and the second
+    is the worse one: an exception handler wide enough to hide a typo will hide
+    a wrong answer just as happily. The calls are explicit now and the handler
+    is gone.
+    """
+    # **Lists, not arrays.** `rounds.points` guards with `if not prices`,
+    # which raises on a numpy array rather than testing it - so the emitters
+    # are handed plain lists at this boundary and the conversion is done once.
+    w = {k: [float(x) for x in v] for k, v in window.items()}
+    clock = [int(x) for x in window["time"]]
+    made = {
+        "origin": lambda: origin_points.points(w["time"], w["close"], live),
+        "equal": lambda: equals.points(w["time"], w["close"], live),
+        "profile": lambda: profile.points(w["time"], w["close"], live),
+        "round": lambda: rounds.points(w["time"], w["close"], live),
+        "run": lambda: runs.points(clock, w["close"], live),
+        "vwap": lambda: vwap.points(w["time"], w["high"], w["low"], w["close"], w["volume"], live),
+    }
+    found: list[float] = []
+    for build in made.values():
+        for item in build() or ():
+            level = float(getattr(item, "price", float("nan")))
+            if math.isfinite(level):
+                found.append(level)
+    return found
+
+
+def _pools(
+    window: dict[str, np.ndarray], price: float, unit: float, live: Volatility
+) -> tuple[float, float] | None:
     """The nearest shipped level above and below, in price.
 
     The emitters are production's own, which is the point: this asks whether
     the desk's existing liquidity reading picks a side, not whether some new
     level definition does.
     """
-    found: list[float] = []
-    for emit in (runs, equals, profile, rounds, origin_points, vwap):
-        try:
-            got = emit(window)
-        except Exception:
-            continue
-        for item in got or ():
-            level = getattr(item, "price", item if isinstance(item, int | float) else None)
-            if level is None or not math.isfinite(float(level)):
-                continue
-            found.append(float(level))
+    found = _emit(window, live)
     above = [v for v in found if v > price]
     below = [v for v in found if v < price]
     if not above or not below:
@@ -181,12 +207,15 @@ def score(bars: dict[str, np.ndarray], rng) -> dict:
         return {}
 
     out: dict[str, list[float]] = {}
+    live = Volatility()
+    for i in range(len(closes)):
+        live.update(float(closes[i]))
     for at in range(WINDOW, len(closes) - HORIZON - 1, STRIDE):
         if not math.isfinite(guess[at]):
             continue
         window = {k: np.asarray(bars[k], dtype=float)[at - WINDOW + 1 : at + 1] for k in bars}
         price = float(closes[at])
-        pools = _pools(window, price, unit)
+        pools = _pools(window, price, unit, live)
         if pools is None:
             continue
         up, down = pools

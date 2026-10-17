@@ -79,8 +79,14 @@ for q in (HERE, HERE.parent, HERE.parents[1]):
 
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
-from till_infinity.structures.statespace.depths import Turn, depths, score  # noqa: E402
+from till_infinity.structures.statespace.depths import (  # noqa: E402
+    Turn,
+    depths,
+    from_pivots,
+    score,
+)
 from till_infinity.structures.statespace.displacements import sequence  # noqa: E402
+from till_infinity.structures.statespace.pivoting import pivots  # noqa: E402
 from till_infinity.structures.statespace.reverting import Reverting  # noqa: E402
 
 FRAMES = ("1h", "4h")
@@ -88,9 +94,13 @@ TRADED = ("fx_major", "fx_cross", "metal")
 CONTROLS = ("volatility",)
 PER_CLASS = 8
 LIMIT = 12000
-#: The pivot's confirmation reach, in bars. Swept because it *is* the
-#: definition of a turn.
+#: The fractal detector's confirmation reach, in bars. Swept because it *is*
+#: the definition of a turn for that detector.
 SPANS = (3, 5, 10)
+#: The directional-change detector's threshold, in volatility units. Swept for
+#: the same reason, and 2.0 is v1's `TURN_SIGMAS` - so one of these cells is
+#: the v1 turn detector exactly.
+EDGES = (1.0, 2.0, 4.0)
 SEED = 20261017
 
 
@@ -113,6 +123,33 @@ def _walk(n: int, rng: random.Random, step: float = 0.001) -> dict[str, np.ndarr
         "low": price * np.exp(-wick),
         "close": price,
     }
+
+
+def _change(bars: dict[str, np.ndarray], edge: float, logged: bool) -> list[Turn]:
+    """Depths from the directional-change detector, on log prices.
+
+    Same log-price treatment as the fractal arm, so the two differ only in how
+    a turn is defined and the comparison is about the detector.
+    """
+    closes = np.asarray(bars["close"], dtype=float)
+    if np.any(closes <= 0):
+        return []
+    logs = {
+        k: np.log(np.maximum(np.asarray(bars[k], dtype=float), 1e-300))
+        for k in ("close", "high", "low")
+    }
+    steps = np.abs(np.diff(logs["close"]))
+    unit = float(np.mean(steps[steps > 0])) if np.any(steps > 0) else 0.0
+    if unit <= 0:
+        return []
+    found = pivots(
+        [float(v) for v in bars["time"]],
+        [float(v) for v in logs["high"]],
+        [float(v) for v in logs["low"]],
+        unit=unit,
+        threshold=edge,
+    )
+    return from_pivots(found, unit=unit, logged=logged)
 
 
 def _series(bars: dict[str, np.ndarray], span: int, logged: bool) -> list[Turn]:
@@ -170,8 +207,10 @@ def main() -> None:
         groups.setdefault(classify(name), []).append(name)
 
     arms = ("depth ar1", "depth walk", "depth member", "span ar1")
+    detectors: list[tuple[str, float]] = [("fractal", float(s)) for s in SPANS]
+    detectors += [("change", e) for e in EDGES]
     for frame in FRAMES:
-        for pivot in SPANS:
+        for kind, setting in detectors:
             for label in ("walk", *TRADED, *CONTROLS):
                 if label != "walk" and label not in groups:
                     continue
@@ -196,7 +235,11 @@ def main() -> None:
                             if bars is None:
                                 continue
                             cut = {k: v[-LIMIT:] for k, v in bars.items()}
-                            series = _series(cut, pivot, logged)
+                            series = (
+                                _series(cut, int(setting), logged)
+                                if kind == "fractal"
+                                else _change(cut, setting, logged)
+                            )
                             if shuffle:
                                 series = _shuffled(series, rng)
                             if len(series) < 60:
@@ -209,8 +252,9 @@ def main() -> None:
                                     pooled.setdefault(arm, []).append(value)
                         if not pooled:
                             continue
-                        tag = f"{label}, {frame}, pivot={pivot}, {'log' if logged else 'raw'}" + (
-                            "  [SHUFFLED]" if shuffle else ""
+                        tag = (
+                            f"{label}, {frame}, {kind}={setting:g}, {'log' if logged else 'raw'}"
+                            + ("  [SHUFFLED]" if shuffle else "")
                         )
                         rows = next(iter(pooled.values()))
                         print(

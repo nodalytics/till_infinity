@@ -439,6 +439,7 @@ from .interacting import Attention, Depth, Interactions, Rate
 from .landau import Landau
 from .linear import Gaussian
 from .paths import Path, hourly, simulate, with_gaps
+from .pivoting import Pivot, fractal, overshoots, scaling
 from .projecting import Projection, basis_price, project
 from .rates import Slope, slope_per_bar, slope_per_hour
 from .reverting import Reverting
@@ -472,6 +473,7 @@ __all__ = [
     "Landau",
     "Layer",
     "Path",
+    "Pivot",
     "Projection",
     "Rate",
     "Readout",
@@ -497,15 +499,18 @@ __all__ = [
     "dof_for",
     "feasible",
     "fit_jerk",
+    "fractal",
     "garman_klass",
     "hourly",
     "least_horizon",
     "members",
+    "overshoots",
     "parkinson",
     "project",
     "reach",
     "residuals",
     "rogers_satchell",
+    "scaling",
     "score",
     "simulate",
     "slack",
