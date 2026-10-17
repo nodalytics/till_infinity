@@ -113,6 +113,9 @@ LEVERS = {
     "reverting": "sigma2",
     "landau": "sigma2",
     "s4d": "noise",
+    # `sigma2` is the process variance per hour, so this is a variance lever
+    # like `kalman`'s and `reverting`'s - no units caveat needed.
+    "ornstein": "sigma2",
 }
 
 #: Whether each member learns its own process noise from its own standardised

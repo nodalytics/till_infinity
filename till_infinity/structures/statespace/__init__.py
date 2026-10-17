@@ -438,6 +438,7 @@ from .family import MISSING, PENDING, Filter, members
 from .interacting import Attention, Depth, Interactions, Rate
 from .landau import Landau
 from .linear import Gaussian
+from .ornstein import Ornstein
 from .paths import Path, hourly, simulate, with_gaps
 from .pivoting import Pivot, fractal, overshoots, scaling
 from .projecting import Projection, basis_price, project
@@ -472,6 +473,7 @@ __all__ = [
     "Interval",
     "Landau",
     "Layer",
+    "Ornstein",
     "Path",
     "Pivot",
     "Projection",

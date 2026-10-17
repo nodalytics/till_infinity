@@ -323,6 +323,7 @@ def members() -> dict[str, type]:
     from .diagonal import Diagonal
     from .landau import Landau
     from .linear import Gaussian
+    from .ornstein import Ornstein
     from .reverting import Reverting
     from .robust import Robust
     from .selective import Selective
@@ -332,6 +333,11 @@ def members() -> dict[str, type]:
         "kalman": Gaussian,
         "s4d": Diagonal,
         "reverting": Reverting,
+        # The **value**-reverting member, added 2026-10-17. `reverting` reverts
+        # the rate and leaves the value integrated, which is right for a price
+        # and wrong for a magnitude - and two dispersion harnesses had to write
+        # their own AR(1) around its absence on the same day.
+        "ornstein": Ornstein,
         "landau": Landau,
         "robust": Robust,
         "selective": Selective,
