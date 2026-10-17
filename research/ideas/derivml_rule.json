@@ -1,0 +1,146 @@
+{
+ "frozen": "2026-10-06",
+ "study": "deriv-ml",
+ "question": "Are Deriv synthetic candles easier to predict, or to make calibrated inference on, with machine learning and adaptive conformal inference, without direction (risk: range, realised volatility, band touches, which band first, the spike hazard) and with direction (next-bar and next-k sign, P(+N R before -1R) with a structural stop)? The Deriv twin of fx-metals-ml (fxml_rule.json, including both of its amended_before_run entries): the same targets, feature families, models, conformal methods and reporting. Deriv synthetics are a real market for the desk, never a control; the nulls are generators we build.",
+ "prior": "generators.md / deriving.md / deriv-variants.md: the Volatility indices are GBM at the named sigma (realised / named 0.99-1.01), Step is a fair fixed step, Boom/Crash spike at a constant memoryless hazard, Jump indices realise 1.32x their name, no volatility clustering anywhere; the published law beats the empirical envelope. boomcrash-trend.md: the spike hazard ignores every trend reading (1.0006 [0.995, 1.006]). range-break-100.md: Range Break is a martingale; bar fills made +3.7R, tick fills -0.2R. walks-and-edge.md: report models in three parts (skill on the null, real minus null = behavioural skill, the after-cost trade).",
+ "groups": {
+  "why": "Each group has its own generator and its own null; every result is reported per group (and per class inside a group). Models are trained pooled within a group, timeframe and source, with class flags as features.",
+  "DIFF": {
+   "what": "the Volatility indices (GBM by publication), reported apart by tick rate; DIFF pooled is secondary",
+   "classes": {
+    "VOL2": "the standard 2-second-tick indices: Volatility 5, 10, 15, 25, 30, 50, 75, 90, 100 Index",
+    "VOL1": "the 1-second indices: Volatility 5, 10, 15, 25, 30, 50, 75, 90, 100, 150, 250 (1s) Index",
+    "VOLHF": "High Frequency Vol 10, 25, 50, 75, 100 Index (a third tick rate, measured)"
+   },
+   "nominal_sigma": "the number in the name, annualised over 365 x 86400 s (calendar time, 24/7)",
+   "excluded": "VolSwitch, Vol over Boom/Crash, Volatility Boom/Crash, Spot Up - Volatility Up/Down, Ladder Volatility: published as switching or jump generators, not GBM; no fitted null exists for them"
+  },
+  "STEP": {
+   "what": "the Step family, a fourth group reported apart (coordinator note, before any run)",
+   "classes": {
+    "STEP": "Step Index, Step Index 200, 300, 400, 500",
+    "MSTEP": "Multi Step 2, 3, 4 Index",
+    "SKEW": "Skew Step Index 4 Up, 4 Down, 5 Up, 5 Down"
+   }
+  },
+  "JUMPY": {
+   "classes": {
+    "BC": "Boom 300, 500, 1000 and Crash 300, 500, 1000 Index",
+    "JUMP": "Jump 10, 25, 50, 75, 100 Index"
+   }
+  },
+  "RB": {
+   "classes": {
+    "RB": "Range Break 100 and 200 Index"
+   }
+  },
+  "not_tested": "DEX, Drift Switch, Trek, Exponential Growth, Crash Boom Flip and Boom/Crash 50-900 variants: no fitted generator here; the new Boom/Crash variants are outside boomcrash-trend's fitted simulators"
+ },
+ "data": {
+  "bars": "1h, 4h, 1d. VOL/STEP/JUMP: the bridge's bars, fetched read-only by derivml_fetch.py into the lab's derivml/data/bars.db (H1/H4/D1 from 2019). BC: the boomcrash study's bridge store (boomcrash/data/bars.db), read-only. RB: the rb100 study's bridge store (rb100/data/rb_bars.db), read-only. MT5BT_DB (lab data/mt5bt.db) and lrc_bars.db hold shorter copies of some of these (same broker); used only as a cross-check of the bridge bars over their overlap (closes and highs agree within one point on >= 95% of bars, else the series is flagged)",
+  "ticks": "bridge ticks exist from 2025-01-01. Fetched read-only: Step family every 7th day, Volatility family every 28th day, Jump family every day (derivml_fetch.py); BC and RB every day from the boomcrash and rb100 stores, read-only. Ticks serve (i) the generator measurement and the null fits, (ii) the spread, (iii) tick fills on the jump instruments",
+  "inclusion": "a series enters a timeframe if it has >= 600 bars there (as fxml); a series with a feed reset (a bar-to-bar move > 20x the median absolute log move of its discovery bars, e.g. RB's 2022-11-24 reset) keeps its bars, and the reset bar's row and the rows whose label spans it are dropped",
+  "split": "per series and timeframe: discovery = labels resolved before 2024-01-01 and confirmation = bar t at or after 2024-01-01, if the series' first bar at that timeframe is before 2023-01-01; otherwise the split is the UTC day at the midpoint of its history (the brief: 'or the midpoint where history is shorter'). Rows straddling the split are dropped (purge)",
+  "fit_calibration": "as fxml: offline models fitted on the first 80% (by time, pooled over the group) of discovery rows, purged by the label horizon; the last 20% of discovery is the split-conformal calibration set and the start of every online conformal state",
+  "atr": "ATR(14) Wilder of the true range including bar t; every feature and target in units of ATR at t (as fxml)",
+  "costs": "spread = the median (ask - bid) over the series' fetched tick days that fall in its discovery period, else over all its fetched tick days; else the median positive bar spread x point. Series with a median spread above 0.5 ATR at a timeframe are dropped there (as fxml). Swap: the bridge's symbol info; swap_mode 5 = annual percent of the current price, charged per 00:00 UTC rollover held at rate/365 on longs and shorts (as boomcrash-trend); swap_mode 1 (RB) = 30 points x 0.1 = 3.0 price units a night (as range-break-100). No commission (none on these symbols). Bar-fill stops pay 0.05 ATR slippage (as fxml)"
+ },
+ "generator_measurement": {
+  "when": "before any model, from ticks of the discovery period where they exist (else the first half of the fetched ticks), each group's generator is measured and the null fitted; written to derivml/out/gen_params.json and committed before any model run",
+  "VOL": "tick interval (median ms between ticks, and its share at the mode), realised sigma per year from 1h log close changes against the name (ratio, day-bootstrap 90%), kurtosis of 1h returns, the Parkinson / close-to-close ratio",
+  "STEP": "from ticks: the distribution of bid increments (support and frequencies), step size, up share with a 90% binomial interval (and against 0.5), mean increment (drift) with interval, the tick interval, run lengths of same-sign steps against the geometric law of the measured up share, the variance ratio of the tick path at 1, 10, 60, 600, 3600 ticks; from bars: the 1h range in step units by year (stability)",
+  "BC": "boomcrash-trend's spike detector and fitted null (constant hazard p per tick, spike sizes and grind steps resampled from its discovery ticks 2025-01-01..2025-11-17, log price), re-fitted with its own code on its own tick store; tick interval measured",
+  "JUMP": "from ticks: tick interval; a jump is a tick log move above 6 x the robust per-tick sd (1.4826 x MAD); per-tick diffusion sd from the other moves; jump probability per tick; the jump size distribution (signed); realised / named sigma; fitted on the first half of the fetched Jump ticks (2025-01-01 to 2025-11-17)",
+  "RB": "range-break-100's fitted parameters (rb_sim_params.json: p, range widths, jump sizes, fitted on discovery ticks to 2025-09-30), unchanged",
+  "note_on_dates": "the bridge serves ticks only from 2025-01-01, after the 2024-01-01 bar split of the long series, so the tick-fitted generator parameters (STEP, BC, JUMP, RB) come from 2025 ticks. They are constants of a published generator (boomcrash-trend: rates within 2% across halves; range-break-100: flat by year 2020-2026), the null twin is only a reference for what the chart shows, and no model, threshold or configuration is selected on them; the bar-level checks of stability by year are reported"
+ },
+ "nulls": {
+  "principle": "every model is trained and scored identically on null paths built on the real bar timestamps of each series, one path per series (seed crc32 of series, source and 'derivml'); real and null rows share calendar days, so the day bootstrap resamples the same days for both (as fxml)",
+  "DIFF": {
+   "iid": "the desk's matched iid walk (synth.walk, 256 sub-steps a bar), log price, sigma = sd of the real log close changes, real timestamps, scaled to the real first close (exactly fxml's make_walk)",
+   "garch": "the same with synth.garch (alpha 0.08, beta 0.9)",
+   "gen": "the published generator at the instrument's own tick rate: GBM in log price at the sigma measured on the series' discovery 1h close changes (the coordinator's 'match each null to its own tick rate and its measured volatility'), one Gaussian step per measured tick interval, bars built from the ticks (open = first tick, high/low = extremes, close = last tick) on a continuous calendar, keeping the bars at the real timestamps"
+  },
+  "STEP": {
+   "gen": "the fitted discrete step walk: iid increments drawn from the measured tick-increment distribution (for Step Index, Step 200-500: a +/-step Bernoulli at the measured up share), one per measured tick interval, additive price, bars from ticks as above. No Gaussian walk for this group (coordinator note)"
+  },
+  "JUMPY": {
+   "gen": "BC: boomcrash-trend's constant-hazard compound-jump tick simulator (fitted as above), multiplicative, at the measured tick rate. JUMP: the fitted jump-diffusion tick simulator (Gaussian diffusion + Bernoulli jumps resampled from the discovery jumps), log price, at the measured tick rate"
+  },
+  "RB": {
+   "gen": "range-break-100's rbsim at one tick a second with its fitted parameters, additive price"
+  },
+  "plain_walks": "not used for STEP, JUMPY or RB (the brief and range-break-100: the wrong null there)",
+  "reporting": "three parts for every model (walks-and-edge.md): (1) skill on the null = what the chart shows; (2) real minus null = behavioural skill, whether the served feed differs from its published generator in a way a model can read; (3) the trade after real Deriv costs"
+ },
+ "features": {
+  "same_as": "fxml_data.py features() and ohlc_block() exactly (B0, S, P, C, Q, O, and E in the linear ablations), copied into derivml_data.py, with these substitutions only",
+  "class_flags": "is_metal is replaced by one-hot class flags of the group (VOL1/VOL2/VOLHF; STEP/MSTEP/SKEW; BC/JUMP and the spike side s = +1 Boom, -1 Crash, 0 Jump) and log nominal sigma (DIFF) / log step size over price (STEP)",
+  "sessions": "the UTC hour, day-of-week and session flags are kept as in fxml (the synthetics run 24/7; they are calendar controls here)",
+  "rollover": "no FX rollover trimming (Deriv bars are untrimmed); the rollover flag is 0",
+  "pca": "cross-sectional PCA (close returns and log range shocks) on the panel of the group's instruments of the same source, windows and refits as fxml; slope-block PCA on the group's discovery fit rows",
+  "J_spikes": "JUMPY only: the spike-side excursion e_t = (H - O) for Boom, (O - L) for Crash, max(H - O, O - L) for Jump, over ATR; a 'spike bar' is e_t at or above the series' discovery 90th percentile of e/ATR. Features: bars since the last spike bar, spike bars in the last 20 and 100 bars, the last spike bar's e/ATR, e_t/ATR. A group 'J' in the ablations"
+ },
+ "targets": {
+  "k_by_tf": {
+   "1h": 24,
+   "4h": 6,
+   "1d": 5
+  },
+  "same_as": "fxml targets(): range1, absret1, rvk, tup05, tdn05, tup10, tdn10, first, sign1, signk, nr2L, nr2S (with mfeL/mfeS for P(N R))",
+  "spk": "JUMPY only, the spike hazard: 1 if the next bar's spike-side excursion e_{t+1}/ATR_t is at or above the series' discovery 90th percentile (base about 0.10). Brier, log loss, AUC against the constant hazard (the discovery base rate) and the null"
+ },
+ "models": {
+  "same_as": "fxml_models.py: ridge (alpha 1) / logistic (C 0.1) on standardised features; HistGradientBoosting (fxml default config; gamma loss for range1 and rvk, squared loss for absret1, log loss for classes); an MLP (64, 32) for the P1 and P2 targets; walk-forward HGB refitted every 6 months of confirmation; the online AdaGrad SGD learner updated as labels resolve",
+  "risk_baselines": "fxml's EWMA (0.94), GARCH(1,1) per series, log-HAR-RV pooled per group and timeframe, the empirical envelope, each scaled QLIKE-optimally on the fit rows; plus 'const' = the series' discovery-mean of the target in the generator's own units (log units for VOL/BC/JUMP, price units for STEP/RB), converted to ATR units by the ATR at t; plus 'gen' for rvk = the generator's constant volatility: VOL k x sigma_name^2 x dt (published), STEP k x (measured increment variance x ticks per bar), JUMP/BC/RB k x the fitted null's per-bar variance in its own units; both unscaled ('gen') and scaled on the fit rows ('gen_s')",
+  "tuning": "P1 and P2 targets only, fxml's frozen search (12 configurations, seed 20261006, purged walk-forward CV on discovery fit rows: 4 time blocks, 3 expanding folds, purge and embargo of the label horizon); the identical search on each null gives the overfitting allowance (best CV minus median CV, real against null)",
+  "p2_model_choice": "the best of {logistic, tuned HGB, MLP} by purged CV AUC on discovery; each null twin runs the same choice on its own path"
+ },
+ "conformal": {
+  "same_as": "fxml: split conformal; ACI (Gibbs and Candes, gamma 0.005 frozen, threshold from the last 1000 resolved scores of the series, feedback when the label resolves); AgACI for regression (12 gammas 0.0005-0.1, BOA); CQR at 0.05 / 0.95 on log y for rvk and range1 (HGB quantiles; HAR, GARCH, EWMA, const and gen with their fit-row residual quantiles; the envelope's own); conformal sets for every binary target (score 1 - p(y), alpha 0.10)",
+  "report": "coverage overall, by month, by volatility tercile (ATR5/ATR50); width; the Winkler score; singleton rate and singleton accuracy for sets; whether ML + ACI is narrower than the baselines + ACI at the same coverage"
+ },
+ "registered": {
+  "P1": {
+   "what": "risk: DIFF, 1h rvk (k = 24) QLIKE on confirmation: the tuned HGB against log-HAR-RV, and both against the generator's constant volatility (gen, the published sigma)",
+   "cells": "VOL2 and VOL1, each a co-primary cell (the coordinator: report the tick rates apart); DIFF pooled is secondary",
+   "pass": "in a cell: (a) the relative QLIKE change ML / HAR - 1 has its day-bootstrap interval below 0, AND (b) ML / gen - 1 has its interval below 0 (the served feed's risk is more predictable than its published constant). Intervals at 95% (Bonferroni over the two cells; 90% reported alongside). (a) alone is reported as 'beats HAR'",
+   "method_check": "ML cannot beat a constant-volatility generator: on the gen and iid nulls, ML / gen - 1 must not have its 90% interval below 0 (else the pipeline leaks and every result is withheld until found). On real data a pass of (b) is read first as a bug or a change in the feed, then checked per instrument and per year before any other reading",
+   "per_instrument": "ML / gen - 1 and realised / named sigma per instrument, the coordinator's constant-volatility check; STEP the same against its fitted constant (secondary)"
+  },
+  "P2": {
+   "what": "direction: DIFF, 4h sign1 AUC on confirmation of the frozen best model against its null-trained twins",
+   "cells": "VOL2 and VOL1 co-primary (Bonferroni, 95% intervals; 90% reported); DIFF pooled secondary",
+   "pass": "in a cell: AUC_real >= 0.510 AND the real-minus-twin (behavioural) AUC has its interval above 0 against each of the iid, garch and gen twins"
+  },
+  "secondary": "every other target x timeframe x group x class x model comparison (model vs HAR and vs gen for risk; AUC > 0.5 and real minus null for classes; the spike hazard against the constant; the ablations; ML+ACI vs baseline+ACI width at matched coverage), the STEP group's cells included; one-sided day-bootstrap p-values, Benjamini-Hochberg at q = 0.10 over the whole family",
+  "bootstrap": "whole UTC days, 1000 draws for P1/P2, 300 for secondaries",
+  "per": "results per group, per class within a group, per timeframe"
+ },
+ "ablation": {
+  "same_as": "fxml amendments Q, E and O: HGB on B0, B0+S, B0+P, B0+C, all, all+Q (and all+J on JUMPY); the linear models on base, base+Q, base+E, base+Eint, base+Q+E; close-only (CO) against OHLC (OH) for HGB and the linear model; for rvk, range1, tup10, sign1, signk, nr2L; real and null; the real-minus-null gain per block with day-bootstrap 90% intervals; in the BH family",
+  "importance": "permutation importance on confirmation for HGB on all + Q + O and the linear model on base + Q + E + O, groups and single features, real and null, for rvk, tup10, sign1, nr2L"
+ },
+ "trade_translation": {
+  "when": "the verdict only if P2 passes in a cell; otherwise computed and labelled a diagnostic, for every group",
+  "rule": "fxml's: on the group's sign1 best model's ACI set at alpha 0.10, long at the next open when the set is {up}, short when {down}; the 3-bar structural stop (0.1 ATR pad, 0.25 ATR minimum risk); exits at +N R for N in 1, 2, 4, 10 and the market-decided trailing structural stop (never loosened, 500-bar cap)",
+  "fills": "DIFF and STEP on bars (fxml's simulate: no jumps; a gap through the stop fills at the open). BC, JUMP and RB on ticks, never bars: confirmation trades from 2025-01-01 (the tick store), entry at the first tick after the signal bar's close (long at the ask, short at the bid), a stop or target filled at the first tick at or through it at that tick's price, the trailing level set at each bar close and checked on the next bar's ticks; their null trades on the null's own ticks for the same days, regenerated from the seeded path, with the real spread carried in ATR units",
+  "costs": "spread on every trade (in the tick fills, paid by the bid/ask), swap per rollover held, 0.05 ATR slippage on bar-fill stop exits",
+  "report": "net mean R with day-bootstrap 90% interval; P(N R) for N = 1, 2, 4, 10 with P(>=4R) and P(>=10R); against 1/(N+1) for DIFF and STEP, and against the fitted null (never 1/(N+1)) for BC, JUMP and RB; per group, class and timeframe",
+  "pnr_diagnostic": "fxml's: P(N R) of the nr2L/nr2S models' top decile against the null (and 1/(N+1) where it applies)"
+ },
+ "later_15m": "only if P1 or P2 passes in a cell: the passing comparison re-run at 15m on the same instruments",
+ "plots": "reliability diagrams; ACI coverage over time; interval widths; AUC real vs null; behavioural skill per group, class and timeframe; P(N R); the feature ablations (close-only vs OHLC, polynomial); the generator measurement (Step up share and run lengths, realised / named sigma per Volatility index, per tick rate); the constant-volatility check per instrument",
+ "inventory": {
+  "as_of": "2026-10-06, bar counts only (no feature, target or model computed); the full table is derivml/out/inventory.json on the lab",
+  "split_2024_01_01": "Volatility 10/25/50/75/100 (2s, from 2019-01-01), Volatility 10/100 (1s, from 2019-09-24), 25/50/75 (1s, from 2020-06-03), Volatility 150/250 (1s) at 4h/1d (from 2022-12-21), Step Index (2019-05-28), Boom/Crash 500 and 1000 (2019), Boom/Crash 300 (2021-07-30), Jump 10-100 (2021-03-08), Range Break 100/200 (2020-04-09)",
+  "split_midpoint": "Volatility 150/250 (1s) at 1h (bars from 2023-07-25, split 2025-03-01); Volatility 15/30/90 (1s) and Multi Step 3 (from 2025-01-31, split 2025-12-04); Volatility 5/15/30/90 (2s), Volatility 5 (1s) and High Frequency Vol 10-100 (from 2025-12-26 / 2026-02-13 / 2026-03-19, splits 2026-05 to 2026-06); Step 200/500 (2024-04-04, split 2025-07-06); Step 300/400 (2024-11-07, split 2025-10-22); Multi Step 2/4 (2024-06-03, split 2025-08-05); Skew Step 4/5 Up/Down (2024-08-30, split 2025-09-18)",
+  "excluded_cells": "1d of Volatility 5/15/30/90 (2s), Volatility 5 (1s) and High Frequency Vol 10-100: fewer than 600 daily bars",
+  "short_history_note": "the series listed under split_midpoint at 1h/4h join the pooled models with few rows; the classes VOLHF and the new 2s indices (5/15/30/90) are reported but their confirmation spans only 4-5 months"
+ },
+ "amended_before_run": {
+  "date": "2026-10-06",
+  "state_when_amended": "the BC and RB generators had been fitted (derivml_gen.py) and a first dataset build had run for BC and RB as a pipeline test; no model had been fitted, tuned or scored on any data",
+  "reset_detection": "data.inclusion's feed-reset rule, as first written, was applied per timeframe; on Range Break at 1h it flagged ordinary multi-break hours (11 on RB100, 1,443 on RB200, where the median hourly move is tiny). Amended: resets are found on the 4h bars only (a 4h log move above 20x the median absolute 4h move of discovery), which finds exactly one event per series, Range Break 100 and 200 at 2022-11-24 (none on any other series at any timeframe), and are applied by time to every timeframe: bars within 4h of the reset bar are reset bars, and the rows within 120 bars after one, or whose label spans one, are dropped (nr labels within 500 bars before one set missing)"
+ }
+}

@@ -1,0 +1,185 @@
+{
+ "frozen": "2026-10-06",
+ "study": "fx-metals-ml",
+ "question": "Are FX and metals candles easier to predict, or to make calibrated inference on, with machine learning and adaptive conformal inference, without direction (risk: range, realised volatility, band touches, which band first) and with direction (next-bar and next-k sign, P(+N R before -1R) with a structural stop)? Risk is judged against the desk's baselines (EWMA, GARCH(1,1), HAR-RV, the empirical envelope); direction against a logistic, a coin, and the same models trained and scored on matched iid and GARCH walks.",
+ "prior": "findings.md: the desk forecasts risk, not direction. conformal.md / envelope.md / gbm-envelope.md: AgACI holds coverage; boosted quantiles beat the empirical envelope but most of the gain repeats on walks (a noisy volatility unit corrected). bandrace.md: touch is forecastable, which band first is not (FX 15m lean inside the spread). fuzzy-logic.md: learned rules AUC 0.508 vs logistic 0.504, walks 0.499.",
+ "data": {
+  "source": "the broker's MT5 bars, MT5BT_DB (lab data/mt5bt.db), timestamps UTC",
+  "timeframes": [
+   "1h",
+   "4h",
+   "1d"
+  ],
+  "fx": [
+   "EURUSD",
+   "GBPUSD",
+   "USDJPY",
+   "AUDUSD",
+   "USDCAD",
+   "USDCHF",
+   "NZDUSD",
+   "EURJPY",
+   "GBPJPY",
+   "EURGBP",
+   "AUDJPY",
+   "USDCNH"
+  ],
+  "fx_note": "MT5BT_DB holds no FX pair beyond the 12 of lrc-retest; every FX pair in the DB is used",
+  "metals": [
+   "XAUUSD",
+   "XAGUSD",
+   "XPTUSD",
+   "XPDUSD",
+   "XCUUSD"
+  ],
+  "holdout": {
+   "pairs": [
+    "EURCHF",
+    "CHFJPY",
+    "EURAUD"
+   ],
+   "source": "the lab's broker bars in data/seqlab/<SYM>.<tf>.npz (the same broker; read with mt5bt.load_bars source seqlab)",
+   "why": "FX pairs outside MT5BT_DB and outside every direction study of the 12-pair set (lrc-retest, fuzzy-logic, tv-indicators, mean-reversion, pca-residuals). They appeared only in earlier risk / time-of-day studies (envelope, carry, fxtod).",
+   "use": "never looked at during development; scored once, at the end, with the models frozen on the main universe's discovery data; rows from 2024-01-01; cross-sectional PCA features by projection on the main panel's factors",
+   "cost": "median of the positive per-bar spreads in the npz, times the point (0.001 for JPY quotes, 0.00001 otherwise)"
+  },
+  "split": "discovery: label resolved before 2024-01-01; confirmation: bar t at or after 2024-01-01; rows whose label straddles the split are dropped (purge)",
+  "fit_calibration": "the offline models are fitted on the first 80% (by time) of discovery rows, purged at the boundary by the label horizon; the last 20% of discovery is the split-conformal calibration set and the start of every online conformal state",
+  "fx_rollover": "1h FX bars that open at 17:00 New York (21:00 UTC summer, 22:00 winter) have their wicks cut to the body (rollover.md: bars longer than two hours are left alone). Metals untrimmed.",
+  "costs": "R.spread_floor (median tick spread, else the broker's quoted spread); where that is 0, the median bar spread (as lrc_retest._mt5); series with median cost above 0.5 ATR dropped. Stops pay 0.05 ATR slippage.",
+  "atr": "ATR(14), Wilder (EWM alpha 1/14) of the true range, including bar t; every feature and target is in units of ATR at t"
+ },
+ "nulls": {
+  "walks": "per real series, an iid walk (synth.walk) and a GARCH(1,1) walk (synth.garch, alpha 0.08, beta 0.9), 256 sub-steps a bar, generated in log price with sigma = sd of the real log close changes, placed on the real timestamps, scaled to the real first close; the real cost in ATR units carried bar by bar",
+  "walk_pipeline": "identical: the same features (cross-sectional PCA on the panel of walks of the same kind), the same targets, the same model search and fits on walk discovery, scored on walk confirmation. Real and walk rows share calendar days, so the day bootstrap resamples the same days for both",
+  "coin": "AUC 0.5 / Brier of the discovery base rate",
+  "reporting": "every direction result in three parts (desk framing note): (1) what the model reads = its skill on walks, the shape information any chart carries; (2) real-minus-walk (behavioural) skill = real minus the walk twin, with day-bootstrap 90% intervals per class and timeframe, the only place people trading those shapes could show; (3) whether it pays, after costs"
+ },
+ "features": {
+  "causality": "all from bars closed at t; higher timeframes only from completed bars; PCA fitted on past rows only",
+  "B0_returns_vol_time": "r1, r5, r20 (close change / ATR), |r1|, range/ATR, log ATR5/ATR50, log(ATR/close) minus its rolling 500-bar median, Parkinson(20) and Garman-Klass(20) vol over ATR/close, past realised variance over 1, k and 5k bars over (ATR/close)^2 (the HAR inputs), UTC hour (raw, sin, cos), day of week, session flags (Asia 0-7, London 7-12, overlap 12-16, New York 16-21 UTC), the rollover-hour flag, is_metal",
+  "S_slopes": {
+   "series": "LRC(L) slope for L in 10, 20, 50, 100 (lrc_retest.lrc); close slope (c_t - c_{t-L}) / L for L in 10, 20, 50, 100; EMA(20) and EMA(50) one-bar slope",
+   "per_series": "slope / ATR; sign (+1/-1/0); dslope = s_t - s_{t-1}; s_t - s_{t-N} and s_{t-M} - s_{t-N} for (M, N) in (1, 3), (1, 5), (3, 10), (5, 20); curvature = dslope_t - dslope_{t-1}",
+   "pearson": "Pearson R of the LRC window for L in 10, 20, 50, 100",
+   "mtf": "1h: LRC(50) slope / ATR and sign of the last completed 4h and 1d bar (resampled from the series itself, UTC grid), and the agreement sum of the three signs; 4h: the last completed 1d bar's, and the agreement of the two; 1d: the agreement sum of the LRC(10/20/50/100) signs"
+  },
+  "P_pca": {
+   "cross_sectional": "per timeframe and source, the panel of the 17 main instruments' vol-standardised returns z = dlog c / (ATR_{t-1}/c_{t-1}) on the union grid. Every R bars (1h 24, 4h 6, 1d 5) a PCA (top 3) is fitted on the past W bars (1h 720, 4h 360, 1d 250) over instruments with >= 90% coverage of the window (missing as 0); every instrument (panel or holdout) gets OLS loadings on the 3 factor series over the same window. Features until the next refit: the 3 loadings, the residual z - beta.f at t, the residual summed over the last 5 and 20 bars, PC1 and top-3 explained-variance shares",
+   "slope_pca": "the top 6 principal components of the standardised slope block, fitted on the discovery fit rows of the same timeframe and source"
+  },
+  "C_context": "distance of the close to the prior completed UTC day's high and low and the prior completed ISO week's high and low, in ATR; body/range, upper and lower wick/range, close location in the bar",
+  "mcfl_words": "not used (the candle-shape block carries the same bar geometry; not cheap to replay on walks of every series)",
+  "positioning": "not used: no retail FX/metals positioning history exists in the repo (prices/positioning.py is crypto open interest; CFTC COT is weekly, fetched for 2025-2026 only, and crowding.md found it predicts nothing)",
+  "ablation_groups": [
+   "B0",
+   "B0+S",
+   "B0+P",
+   "B0+C",
+   "B0+S+P+C (all)"
+  ]
+ },
+ "targets": {
+  "k_by_tf": {
+   "1h": 24,
+   "4h": 6,
+   "1d": 5
+  },
+  "risk": {
+   "range1": "(H_{t+1} - L_{t+1}) / ATR_t. Scored by QLIKE on the squared value and MSE",
+   "absret1": "|C_{t+1} - C_t| / ATR_t. MSE (secondary)",
+   "rvk": "sum over j = 1..k of (dlog C_{t+j})^2 / (ATR_t / C_t)^2. QLIKE (y/f - log(y/f) - 1) and MSE",
+   "touch": "tup05, tdn05, tup10, tdn10: the next bar's high reaches C_t + x ATR (low reaches C_t - x ATR), x in 0.5, 1.0. Brier, log-loss, reliability",
+   "first": "which of C_t +/- 1 ATR is touched first within the next 10 bars (1 = upper); a bar touching both and 'neither' excluded. AUC, Brier"
+  },
+  "direction": {
+   "sign1": "C_{t+1} > C_t (equal excluded)",
+   "signk": "C_{t+5} > C_t (equal excluded), every timeframe",
+   "nr": "a long entered at O_{t+1}, stop at min(L_{t-2..t}) - 0.1 ATR (a 3-bar structural stop), risk floored at 0.25 ATR by moving the stop out; the short mirrored with the 3-bar high. MFE in R before the stop, within 500 bars; entry-bar path O-L-H-C on up bars, O-H-L-C on down bars; a stop at or beyond the entry (gap) excluded. Binary model targets nr2L, nr2S = MFE >= 2R; P(N R) reported for N = 1, 2, 4, 10 against 1/(N+1)"
+  }
+ },
+ "models": {
+  "risk_baselines": {
+   "ewma": "RiskMetrics lambda 0.94 on squared vol-standardised returns, forecast k x sigma^2 (range1 and absret1 by a scale fitted on discovery fit rows)",
+   "garch": "GARCH(1,1) Gaussian QMLE per series on discovery returns, k-step variance sum",
+   "har": "log-HAR-RV, OLS of log y on log past RV over 1, k, 5k bars plus is_metal, pooled per timeframe on discovery fit rows, smearing-corrected",
+   "envelope": "the empirical envelope: quantiles of the last 1000 resolved targets of the same series (production's envelope applied to this target); point = its median (mean for QLIKE)",
+   "touch_baseline": "reflection principle on the EWMA next-bar sigma, 2(1 - Phi(x / sigma)), Platt-recalibrated on discovery fit rows",
+   "first_baseline": "0.5"
+  },
+  "ml_offline": "ridge (alpha 1) / logistic (C 0.1) on all standardised features; sklearn HistGradientBoosting (LightGBM is not installed on the lab), regression on rvk and range1 with gamma loss on y (QLIKE-consistent), squared loss on log absret1; classifiers with log loss; an MLP (64, 32, early stopping) for the P1 and P2 targets only",
+  "hgb_default": {
+   "learning_rate": 0.05,
+   "max_iter": 300,
+   "max_leaf_nodes": 31,
+   "min_samples_leaf": 200,
+   "l2_regularization": 1.0
+  },
+  "tuning": "P1 and P2 targets only: 12 configurations drawn with seed 20261006 from learning_rate {0.02, 0.05, 0.1} x max_leaf_nodes {7, 15, 31, 63} x min_samples_leaf {50, 200, 1000} x l2 {0, 1, 10} x max_iter {100, 300, 600} x max_features {0.5, 1.0}; selected by purged walk-forward CV on discovery fit rows (4 time blocks, 3 expanding folds, purge and embargo of the label horizon). The same search on each walk gives the overfitting allowance (best CV minus median CV, real against walks)",
+  "p2_model_choice": "the best of {logistic, tuned HGB, MLP} by purged CV AUC on discovery; the walk twin runs the same choice on its own walk",
+  "online": {
+   "walk_forward": "HGB (default, or tuned for P1/P2) refitted every 6 months of confirmation on every row whose label resolved before the refit",
+   "sgd": "a linear learner (squared loss on log y for risk, log loss for classes), AdaGrad step 0.05, L2 1e-4, on features standardised by the discovery fit rows, updated timestamp by timestamp from the first bar: at each bar time it predicts, then learns every row whose label has resolved by then"
+  }
+ },
+ "conformal": {
+  "levels": "regression intervals 90% (CQR at 0.05 / 0.95); classification sets alpha 0.10",
+  "split": "conformity quantile at ceil((n+1)(1-alpha))/n on the calibration rows",
+  "aci": "Gibbs and Candes 2021, per series: alpha_t <- alpha_t + gamma (alpha - err_t), gamma 0.005 frozen, the threshold read from the last 1000 resolved conformity scores of the series (seeded with its calibration scores); feedback arrives when the label resolves",
+  "agaci": "regression only: 12 gammas geomspace(0.0005, 0.1), lower and upper bounds aggregated with BOA on the pinball loss at 0.05 / 0.95 (conformal.py's BOA)",
+  "cqr_models": "ML: HGB quantile loss at 0.05 and 0.95 on log y. Baselines: HAR, GARCH, EWMA point in log plus the empirical 0.05/0.95 quantiles of their log residuals on the fit rows; the envelope's own 0.05/0.95",
+  "class_sets": "score 1 - p(y). Reported: coverage, set size, singleton rate (an informative call), singleton accuracy, empty-set rate, against walks",
+  "report": "coverage overall, by month, by volatility tercile (ATR5/ATR50), by session; width; the interval (Winkler) score at 90%"
+ },
+ "registered": {
+  "P1": {
+   "what": "1h rvk (k = 24, next-day realised variance) QLIKE, confirmation, pooled FX + metals: the tuned HGB against log-HAR-RV",
+   "pass": "(a) the relative QLIKE change (ML / HAR - 1) has its day-bootstrap 90% interval below 0, AND (b) it beats the same comparison on the GARCH walk: (real change) - (GARCH-walk change) has its 90% interval below 0. (a) alone is reported as 'beats HAR'; (b) is what separates market structure from the mechanical correction of a noisy unit (gbm-envelope.md)"
+  },
+  "P2": {
+   "what": "4h sign1 AUC on confirmation, pooled FX + metals, of the frozen best model, against its walk-trained twin",
+   "pass": "AUC_real >= 0.510 AND the real-minus-walk (behavioural) AUC has its day-bootstrap 90% interval above 0 against BOTH the iid and the GARCH twin"
+  },
+  "secondary": "every other target x timeframe x class x model-vs-baseline comparison, the ablations and the conformal comparisons; one-sided day-bootstrap p-values, Benjamini-Hochberg at q = 0.10",
+  "bootstrap": "whole UTC days, 1000 draws for P1/P2, 300 for secondaries; 90% intervals",
+  "per": "results per class (FX, METAL) and per timeframe; the holdout pairs apart"
+ },
+ "trade_translation": {
+  "when": "run as the verdict only if P2 passes; otherwise computed and labelled a diagnostic",
+  "rule": "on the P2 model's ACI set for sign1 at alpha 0.10: long at O_{t+1} when the set is {up}, short when it is {down}; the nr target's 3-bar structural stop (0.1 ATR pad, 0.25 ATR minimum risk)",
+  "exits": "fixed +N R for N in 1, 2, 4, 10; and a market-decided exit: the stop trails to the 3-bar low (high) - 0.1 ATR, never loosened, 500-bar cap",
+  "costs": "spread floor / risk on every trade, plus 0.05 ATR / risk on stop exits",
+  "report": "net mean R with day-bootstrap 90% interval, P(N R) N = 1, 2, 4, 10 with P(>=4R) and P(>=10R), against 1/(N+1) and the same rule on the walks; per class and timeframe",
+  "pnr_diagnostic": "for every timeframe: P(N R) of the nr2L/nr2S models' top decile (threshold from discovery predictions) against 1/(N+1) and the walk twins"
+ },
+ "later_15m": "only if P1 or P2 passes: the passing comparison re-run at 15m, where MT5 bars start 2024-07: discovery 2024-07-01 to 2025-06-30, confirmation from 2025-07-01",
+ "amended_before_run": {
+  "date": "2026-10-06",
+  "by": "the desk (coordinator note), after the rule commit c6e4872",
+  "state_when_amended": "the dataset build had run (features and targets computed for real and walk bars, and summary means of the targets printed as a sanity check: range1, rvk, sign1, tup10, first and the walks' P(N R)); no model had been fitted, tuned or scored on any data",
+  "Q_polyfit": "a frozen feature block of polynomial fits of price: on the last L closes, L in 20, 50, 100, least-squares polynomials of degree 2 and 3 in time x = -(L-1)..0 (bar t at x = 0). Per (L, degree): slope at t = b1 / ATR, curvature = 2 b2 / ATR, jerk = 6 b3 / ATR (degree 3), the residual (c_t - fit(0)) / ATR, the one-bar extrapolation (fit(1) - c_t) / ATR, and the fit's R^2. The fitted level is carried by the residual (level minus close in ATR). Named pf<L>_<deg>_*",
+  "E_expansion": "degree-2 polynomial expansion (sklearn PolynomialFeatures, include_bias False) of a frozen core, standardised first on the fit rows: lrc10/20/50/100 signs, lrc10/20/50/100 one-bar slope changes (d1), atr_ratio, lvol_z, park20, pc_f1, pc_res, pc_res5, pc_evr1 (15 inputs, 135 terms); variant interaction_only (120 terms). Used only with the linear models (ridge on log v, logistic), L2 as frozen (ridge alpha 1, logistic C 0.1); trees get interactions natively",
+  "main_models": "unchanged: the registered models and P1/P2 use the feature set as first frozen (without Q and E)",
+  "ablation": "for the ablation targets (rvk, range1, tup10, sign1, signk, nr2L), every timeframe and source: linear models on base (= all first-frozen features), base+Q, base+E, base+E(interaction only), base+Q+E; HGB on B0, B0+S, B0+P, B0+C, all, all+Q. Gains on confirmation for real and for the walk-trained twins; the real-minus-walk (behavioural) gain per block with day-bootstrap 90% intervals, per class and timeframe",
+  "importance": "permutation importance on confirmation for HGB on all+Q (groups B0, S, P, C, Q and every single feature) and for the logistic / ridge on base+Q+E (groups B0, S, P, C, Q, E)",
+  "bh": "the Q and E ablation gains (real, and real minus walk) join the secondary Benjamini-Hochberg family"
+ },
+ "amended_before_run_2": {
+  "date": "2026-10-06",
+  "by": "the desk (coordinator note): features from open, high and low as well as closes",
+  "state_when_amended": "the dataset had been rebuilt with amendment Q; still no model fitted, tuned or scored on any data",
+  "O_ohlc": {
+   "names": "every column of this block starts with o_ and is stored apart (ds_<tf>_<source>_O.pkl)",
+   "slopes": "LRC(L) for L in 10, 20, 50, 100 on each of open, high, low, typical price (H+L+C)/3 and median price (H+L)/2, with the frozen derived terms (slope / ATR, sign, dslope, s_t - s_{t-N} and s_{t-M} - s_{t-N} for (M, N) in (1,3), (1,5), (3,10), (5,20), curvature) and the window's Pearson R",
+   "polyfits": "amendment Q's degree-2 and degree-3 fits (L in 20, 50, 100) on each of the same five series",
+   "spreads": "per L: high-slope minus low-slope (the channel widening or narrowing) and close-slope minus open-slope, each with its one-bar change",
+   "candle": "body / range, upper and lower wick / range, close location (C-L)/(H-L) at lags 1-5; the gap (O_t - C_{t-1}) / ATR and the overlap with the previous bar (shared range / range) at lags 0-5; rolling means over 5 and 20 bars and the LRC(10) slope of each of those six series; inside-bar and outside-bar flags and their counts over the last 5 bars",
+   "range_estimators": "Rogers-Satchell(20) over ATR/close added (Parkinson and Garman-Klass are in B0)",
+   "pca": "a cross-sectional PCA of the panel of log range shocks, log((H-L)/ATR_{t-1}), with the same windows, refits and outputs as the close-return PCA (o_pr_*); and the top 6 components of the OHLC slope block fitted on the discovery fit rows (o_spca*)"
+  },
+  "walks": "unchanged and already full OHLC: synth.walk / synth.garch build every bar from 256 sub-steps (open = the first, high / low = the extremes, close = the last)",
+  "ablation": "close-only vs OHLC, for HGB and the linear model, real and both walks. close-only = r1, r5, r20, |r1|, past RV (1, k, 5k), the time and class flags, the close slopes (S), the close-return PCA and slope PCA (P) and the close polyfits (Q). OHLC = close-only plus range, ATR ratio, lvol_z, Parkinson, Garman-Klass, the context block (C) and the O block. Reported with the real-minus-walk (behavioural) gain and day-bootstrap 90% intervals; joins the BH family",
+  "importance": "the permutation-importance models gain the O block (HGB on all + Q + O; linear on base + Q + E + O), with O as a group",
+  "main_models": "unchanged (first-frozen features)"
+ }
+}
