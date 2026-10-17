@@ -264,3 +264,70 @@ rarity rather than a sampling choice, and loosening its tolerance would be
 measuring a different rule. It needs roughly ten times the instruments, and
 its median-time differences are scattered (−4.0, −1.0, −2.5, +14.5 bars) with
 no sign to them.
+
+## The conditional version, which had not been tried
+
+**2026-10-17. `research/ideas/liquidity_direction.py`.**
+
+Everything above is unconditional. Asked the same day: *"if we know that a
+volatile move is about to happen, how does sweep aware or liquidity aware find
+areas of liquidity, we can use it to estimate the likely direction"* - and that
+is a different question from the one this document answered, because **none of
+the twenty-one rows above conditioned on volatility state.** Every one used
+volatility as the *unit* - distances in volatility units - and never as a
+regime filter. If liquidity only matters when a move is actually coming, an
+unconditional panel averages the moments that matter with the many that do not,
+and dilutes a real conditional effect to nothing. That is exactly how a
+conditional effect hides.
+
+It was also newly askable. `dispersion-forecast.md` and `dispersion_class.py`
+identify those moments at **AUC 0.906, 0.897 within strata, lift 6.7x**, where
+the incumbent reading collapses from 0.755 to 0.596 - so "a volatile move is
+about to happen" is now a statement this desk can make, which it could not when
+the panel above ran.
+
+### The null, which is the whole difficulty
+
+The nearer pool is reached first more often **by geometry alone**: for a
+driftless walk the chance of touching the upper of two barriers first is
+`d_down / (d_up + d_down)`. A harness comparing "price went to the pool"
+against a coin would report an effect on a random walk. So the arm that decides
+it is the **matched control** - the same two distances with no story attached -
+and the comparison is pool against control, not pool against a half.
+
+### Measured: the same answer, conditional or not
+
+The gate takes the top 25% of predicted 40-bar dispersion as `loud`, the rest
+as `quiet`, with the threshold fitted on each series' training half. `excess`
+is the realised share where the upper level was touched first, less the
+geometric expectation at those exact distances.
+
+| cell | pool | control | pool - control |
+| --- | ---: | ---: | ---: |
+| fx_major, loud | -0.2002 | -0.1855 | -0.015 |
+| fx_cross, loud | -0.2261 | -0.2138 | -0.012 |
+| metal, loud | -0.1618 | -0.1558 | -0.006 |
+| fx_major, quiet | -0.1522 | -0.1496 | -0.003 |
+| fx_cross, quiet | -0.1542 | -0.1640 | **+0.010** |
+| metal, quiet | -0.1051 | -0.0922 | -0.013 |
+
+**Pool minus control runs -0.015 to +0.010 across six cells and changes sign**,
+which is the same reading the unconditional panel gave: production's own
+liquidity levels are indistinguishable from an arbitrary price the same
+distance away. The effect is not hiding in the volatile moments.
+
+### One column that is not usable, and why
+
+Both arms sit far **below** the geometric expectation - `excess` of -0.09 to
+-0.23 - and that is this harness's tie rule rather than a finding. A bar that
+reaches both levels cannot be ordered from bar data, and it is charged to the
+losing side on purpose, because assuming the favourable order is how a
+backtest invents edge. With 1h bars and levels a few volatility units apart,
+many bars straddle both, so `down` wins disproportionately and every absolute
+excess is pulled negative. It is also why the `loud` rows are more negative
+than the `quiet` ones: bigger bars straddle more often.
+
+That bias is identical for the pool and for the control, so **pool minus
+control is unaffected** and is the column to read. The geometric column is kept
+because deleting a number that turned out to be unusable is worse than
+printing it with the reason.
