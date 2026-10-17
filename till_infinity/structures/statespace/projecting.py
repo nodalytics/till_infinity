@@ -80,6 +80,59 @@ import math
 import random
 from dataclasses import dataclass
 
+#: Seconds in each human period a horizon can be stated in. **Time here is a
+#: duration and not a count of bars**, which is the same discipline `rates.py`
+#: states for a rate - *per hour and not per bar* - and for the same reason: a
+#: forty-step horizon means forty minutes on one feed and forty hours on
+#: another, and a desk reasons in the second kind.
+#:
+#: `project` therefore takes `step` in seconds and `Projection` keeps it, so a
+#: horizon can be asked for as `for_duration(days=2)` and read back as one.
+PERIODS: dict[str, float] = {
+    "seconds": 1.0,
+    "minutes": 60.0,
+    "hours": 3_600.0,
+    "days": 86_400.0,
+    "weeks": 604_800.0,
+}
+
+#: One bar of the interval a readout came from, in seconds, for the intervals
+#: this desk trades. A projection needs the step's **duration**, and an
+#: interval name is how every other part of the package says it.
+STEPS: dict[str, float] = {
+    "1m": 60.0,
+    "5m": 300.0,
+    "15m": 900.0,
+    "30m": 1_800.0,
+    "1h": 3_600.0,
+    "4h": 14_400.0,
+    "1d": 86_400.0,
+}
+
+
+def seconds(**periods: float) -> float:
+    """A duration in seconds from human periods: `seconds(hours=6, minutes=30)`."""
+    total = 0.0
+    for name, count in periods.items():
+        if name not in PERIODS:
+            raise ValueError(f"unknown period {name!r}, expected one of {sorted(PERIODS)}")
+        total += float(count) * PERIODS[name]
+    if total <= 0.0:
+        raise ValueError("a duration has to be positive")
+    return total
+
+
+def steps_for(step: float, **periods: float) -> int:
+    """How many steps of `step` seconds cover a duration given in human periods.
+
+    Rounded up, because a horizon that stops just short of the period asked for
+    is a horizon that answers a different question.
+    """
+    if step <= 0.0:
+        raise ValueError("a step has to be a positive number of seconds")
+    return max(1, math.ceil(seconds(**periods) / step))
+
+
 #: Bars forward. Forty because that is what was asked for, and because it is
 #: about where a one-bar shape stops being the dominant term and clustering
 #: starts to be - which is the thing the `scales` arm exists to carry.
@@ -89,6 +142,40 @@ AHEAD = 40
 #: at about 0.0016, which is fine enough for a barrier question and cheap enough
 #: to run per bar in pure Python.
 PATHS = 4000
+
+#: Reward-to-risk multiples a plan considers, asked for on 2026-10-17 as
+#: "1:2RR, 1:3RR, to 1:20RR", then "to even 1:56RR". Integers to ten, then
+#: widening steps, because the spacing that matters is multiplicative and 19
+#: against 20 is not a different trade.
+#:
+#: **Most of this grid is unreachable at most horizons, and that is the useful
+#: part.** A 1:56 target is fifty-six stop-distances away, and a driftless walk
+#: covers a distance `d` in time about `d**2` - so reaching 56 takes roughly
+#: **784 times** as long as reaching 2. That is a statement about the horizon
+#: rather than the geometry, and `plan`'s `settle` guard answers it by refusing
+#: the multiples that do not resolve. A grid pruned to the reachable ones would
+#: hide the constraint that matters.
+REWARDS: tuple[float, ...] = (
+    2.0,
+    3.0,
+    4.0,
+    5.0,
+    6.0,
+    7.0,
+    8.0,
+    9.0,
+    10.0,
+    12.0,
+    14.0,
+    16.0,
+    20.0,
+    24.0,
+    28.0,
+    32.0,
+    40.0,
+    48.0,
+    56.0,
+)
 
 #: The price bases a path can be drawn in. `ohlc3` is the typical price; its
 #: one-step dispersion is smaller than `close`'s, so the two are not
@@ -146,10 +233,25 @@ class Projection:
     #: it, and that is exact rather than approximate.
     rising: tuple[tuple[float, ...], ...]
     falling: tuple[tuple[float, ...], ...]
+    #: Seconds in one step - the **duration** of a bar, not a count. Kept so a
+    #: horizon can be read back in human periods rather than in bars, which is
+    #: the discipline `rates.py` already states: per hour, never per bar.
+    step: float = 3_600.0
 
     @property
     def paths(self) -> int:
         return len(self.walks[0]) if self.walks else 0
+
+    @property
+    def spans(self) -> float:
+        """The horizon as a duration in seconds."""
+        return self.ahead * self.step
+
+    def over(self, period: str = "hours") -> float:
+        """The horizon in a human period: `got.over("days")`."""
+        if period not in PERIODS:
+            raise ValueError(f"unknown period {period!r}, expected one of {sorted(PERIODS)}")
+        return self.spans / PERIODS[period]
 
     def _first_up(self, path: int, level: float) -> int:
         """First step whose running high reaches `level`, or -1. Binary search."""
@@ -239,6 +341,35 @@ class Projection:
             return None
         return float(steps[min(int(coverage * len(steps)), len(steps) - 1)])
 
+    def worth(self, cost: float, multiple: float = 3.0) -> tuple[bool, float]:
+        """**The dispersion gate**: is there enough movement coming to clear cost?
+
+        The one entry condition this desk has measurement behind. Direction is
+        a coin in every test, so nothing about *which way* can gate a trade -
+        but how far price can travel is forecastable, R2 up to 0.85 and a
+        high-dispersion classifier at AUC 0.90 surviving strata. And cost is
+        not small: `exotic-spreads-are-a-whole-bar-range` measured round trips
+        of **0.40 to 0.97 of a bar's range**, which ends most ideas on its own.
+
+        So the gate compares the expected absolute excursion over the horizon
+        against `cost`, both in price, and asks for `multiple` times cover.
+        Returns the verdict and the ratio, because a bare boolean hides how
+        close the call was.
+
+        It cannot make a trade profitable. It can stop one whose entire
+        forecast movement is smaller than the spread, which is a different and
+        achievable thing.
+        """
+        if cost < 0.0:
+            raise ValueError("cost cannot be negative")
+        reach = 0.0
+        for high, low in zip(self.rising[-1], self.falling[-1], strict=True):
+            reach += max(high - self.start, self.start - low)
+        expected = reach / self.paths
+        if cost <= 0.0:
+            return True, float("inf")
+        return expected >= multiple * cost, expected / cost
+
     def geometry(self, *, stop: float, reward: float, cost: float = 0.0) -> Geometry:
         """Price one stop-and-target pair, long, in units of the stop.
 
@@ -275,18 +406,24 @@ class Projection:
         # exactly the target, taking no favourable overshoot. The errors now
         # both point the same way, and that way is against the trade.
         final = self.walks[-1]
-        total = 0.0
+        payoffs: list[float] = []
         for path in range(self.paths):
             at_up = self._first_up(path, up)
             at_down = self._first_down(path, down)
             if at_up >= 0 and (at_down < 0 or at_up < at_down):
-                total += reward
+                payoffs.append(reward)
             elif at_down >= 0:
                 reached = self.falling[at_down - 1][path]
-                total -= max(1.0, (self.start - reached) / stop)
+                payoffs.append(-max(1.0, (self.start - reached) / stop))
             else:
-                total += (final[path] - self.start) / stop
-        expectancy = total / self.paths
+                payoffs.append((final[path] - self.start) / stop)
+        expectancy = sum(payoffs) / len(payoffs)
+        spread = (
+            sum((v - expectancy) ** 2 for v in payoffs) / (len(payoffs) - 1)
+            if len(payoffs) > 1
+            else 0.0
+        )
+        error = math.sqrt(spread / len(payoffs)) if payoffs else float("inf")
         return Geometry(
             stop=stop,
             target=reward * stop,
@@ -295,6 +432,7 @@ class Projection:
             loses=race["down"],
             undecided=race["neither"],
             expectancy=expectancy,
+            error=error,
             cost=float(cost),
             # Moving `d` of mass from the stop side to the target side changes
             # the expectancy by `d * (reward + 1)`, so the requirement is the
@@ -382,6 +520,15 @@ class Geometry:
     #: marked out at their terminal price. On a martingale this is ~0 before
     #: cost, and that is the assertion rather than the hope.
     expectancy: float
+    #: **The standard error of `expectancy`**, from the spread of the per-path
+    #: payoffs. Carried because without it the expectancy is unreadable: at a
+    #: stop far out relative to the paths' own dispersion, `E[R]` divides a
+    #: price-scale error by a large number, and 4,000 paths over 1,200 bars put
+    #: this at about **0.02**. A driftless projection was read as paying
+    #: **+0.05** before this field existed, which is 2.5 of these - noise, and
+    #: it looked like edge. Anything inside a couple of standard errors of zero
+    #: is the martingale and nothing else.
+    error: float
     #: Cost charged, in units of the stop.
     cost: float
     #: Probability mass that would have to move from the stop side to the
@@ -394,6 +541,530 @@ class Geometry:
     def net(self) -> float:
         """Expectancy after cost, in units of the stop."""
         return self.expectancy - self.cost
+
+    @property
+    def separated(self) -> float:
+        """How many standard errors the gross expectancy is from zero.
+
+        Below about two, the projection has not distinguished this geometry
+        from a driftless walk, which is the **expected** answer rather than a
+        disappointing one.
+        """
+        return self.expectancy / self.error if self.error > 0 else float("nan")
+
+
+@dataclass(frozen=True, slots=True)
+class Plan:
+    """A trade with its three prices, and what it would need to pay.
+
+    Asked for on 2026-10-17 - "our statespace trade should have sl, entry, tp".
+    This is where that composes, and the emission rule says why it is here:
+    `signalling` supplies the **side** as a bounded signal, this module supplies
+    the **prices**, and they are paired rather than merged.
+
+    **It does not claim the trade is good, and it cannot.** The barrier identity
+    is the martingale theorem: at reward-to-risk `r` a driftless race pays
+    `1 / (1 + r)`, so every geometry has expectancy zero before cost and
+    negative after. What this reports is `edge` - the directional advantage the
+    geometry would need to break even - which is a number a caller can hold
+    against the direction edge this desk has actually measured, and that is
+    about zero. A plan is a priced requirement, not a recommendation.
+    """
+
+    #: `+1` long, `-1` short. Taken from the signal, never decided here.
+    side: int
+    entry: float
+    stop: float
+    target: float
+    #: Target distance over stop distance.
+    reward: float
+    #: The share of simulated paths that reach the stop inside the horizon -
+    #: **measured on the paths**, not a Gaussian label. `band-coverage.md`
+    #: measured the difference: a nominal 0.999 Gaussian band is breached
+    #: 14.80 times more often than it claims, where the accessor these paths
+    #: are drawn from holds 1.02 to 1.10.
+    stopped: float
+    #: The share that reach the target first, and the share that resolve neither
+    #: way inside the horizon.
+    hit: float
+    undecided: float
+    #: Expected result in units of the stop, and the edge needed to break even.
+    expectancy: float
+    #: The standard error of `expectancy`. See `Geometry.error` - a geometry
+    #: inside a couple of these of zero is the martingale, which is what every
+    #: geometry on a driftless projection should be.
+    error: float
+    edge: float
+    cost: float
+    #: How the step's shape was drawn: `measured`, `anchored` or `assumed`.
+    source: str
+
+    @property
+    def risk(self) -> float:
+        """Stop distance in price. Always positive."""
+        return abs(self.entry - self.stop)
+
+    @property
+    def net(self) -> float:
+        return self.expectancy - self.cost
+
+
+def _solve_stop(got: Projection, side: int, breach: float) -> float:
+    """The stop distance whose **simulated** breach rate is `breach`.
+
+    Solved on the drawn paths rather than taken from a one-step band, and the
+    difference is the whole point: a trade lasts many bars, so what matters is
+    how often the *path* reaches the stop over the hold, not how often one bar
+    would. Bisection over the distance, which is cheap because `touches` is a
+    scan of running extremes that are already computed.
+    """
+    span = max(abs(got.rising[-1][0] - got.start), abs(got.start - got.falling[-1][0]), 1e-12)
+    low, high = 1e-9, 8.0 * span + 1e-9
+    for _ in range(40):
+        middle = 0.5 * (low + high)
+        level = got.start - side * middle
+        if got.touches(level) > breach:
+            low = middle
+        else:
+            high = middle
+    return 0.5 * (low + high)
+
+
+def plan(
+    got: Projection,
+    *,
+    side: int,
+    breach: float = 0.25,
+    rewards: tuple[float, ...] = REWARDS,
+    cost: float = 0.0,
+    settle: float = 0.50,
+    delivers: float = 0.50,
+) -> Plan | None:
+    """Choose a stop and a target from a drawn projection, and price them.
+
+    `side` comes from the signal - `Signal.side`, or `Layer.settled` - and a
+    side of zero returns `None`, because no trade is the correct output of a
+    neutral signal rather than a coin flip dressed as one.
+
+    `breach` is the share of paths allowed to reach the stop inside the
+    horizon, and the stop is **solved** for it on the paths. `rewards` is the
+    grid of target multiples considered, and the one chosen is the one needing
+    the **least edge** - not the one with the best expectancy, because every
+    expectancy here is zero before cost and the ranking by required edge is the
+    only ranking that means anything.
+
+    **`breach` and `settle` are coupled, and the ceiling is not obvious.** With
+    the stop solved for a breach rate `b`, the share of paths that resolve
+    cannot exceed about `b + 1 / (1 + reward)`: the losers are `b` by
+    construction and the winners are bounded by the barrier identity. So at
+    `breach = 0.40` and `reward = 2` the most that can ever resolve is about
+    0.73, and measured it is **0.507** - and crucially that does **not improve
+    with the horizon**, because solving the stop for a breach rate at a longer
+    horizon moves the stop out as `sqrt(t)` and rescales the whole geometry.
+    A longer hold buys nothing here; a **tighter stop** does. The first default
+    pair asked for 0.70 at `breach = 0.40` and was therefore infeasible, which
+    read as "no reachable target" at every horizon tried.
+
+    `settle` is the share of paths that must **resolve** - reach the stop or the
+    target inside the horizon - and it exists because required edge alone is
+    gameable. `edge` is `(cost - expectancy) / (1 + reward)`, so a wider target
+    shrinks the denominator while paths that never resolve contribute almost
+    nothing to the numerator: ranking by edge alone picked the widest multiple
+    on the grid every time, with a target reached by **0.0%** of paths and 75 to
+    90% expiring undecided. A target the hold cannot deliver is not a trade, and
+    a criterion that prefers one is measuring the horizon rather than the
+    geometry. Nothing is returned when no multiple resolves often enough, which
+    is the honest answer: at that stop distance, over that horizon, there is no
+    reachable target.
+    """
+    if side not in (1, -1):
+        if side == 0:
+            return None
+        raise ValueError(f"side has to be +1, -1 or 0, not {side}")
+    if not 0.0 < breach < 1.0:
+        raise ValueError("breach has to lie strictly inside (0, 1)")
+    if not rewards:
+        raise ValueError("there has to be at least one reward multiple")
+    if not 0.0 < settle <= 1.0:
+        raise ValueError("settle has to lie inside (0, 1]")
+    if not 0.0 < delivers <= 1.0:
+        raise ValueError("delivers has to lie inside (0, 1]")
+
+    risk = _solve_stop(got, side, breach)
+    if risk <= 0.0:
+        return None
+
+    best: tuple[float, Geometry] | None = None
+    for reward in rewards:
+        # `geometry` is written long-only, so a short is priced on the mirrored
+        # distances rather than by a second code path that could disagree.
+        priced = got.geometry(stop=risk, reward=reward, cost=cost)
+        if 1.0 - priced.undecided < settle:
+            continue
+        # **And the target has to be delivered, not merely resolved.** A
+        # resolution requirement alone is satisfied by *losses*: at a 60%
+        # breach the race resolves 60% of the time with the target never
+        # reached, so the grid picked 1:56 with a win rate of **0.000**. The
+        # barrier identity says a reward of `r` should win `1 / (1 + r)` of
+        # resolved races, so this asks the horizon to deliver at least
+        # `delivers` of that - which is a statement about the hold being long
+        # enough for the target, and the only version of reachability that
+        # cannot be met by stopping out.
+        if priced.wins < delivers / (1.0 + reward):
+            continue
+        if best is None or priced.edge < best[1].edge:
+            best = (reward, priced)
+    if best is None:
+        return None
+    reward, priced = best
+
+    stop = got.start - side * risk
+    target = got.start + side * reward * risk
+    stopped = got.touches(stop)
+    return Plan(
+        side=side,
+        entry=got.start,
+        stop=stop,
+        target=target,
+        reward=reward,
+        stopped=stopped,
+        hit=priced.wins,
+        undecided=priced.undecided,
+        expectancy=priced.expectancy,
+        error=priced.error,
+        edge=priced.edge,
+        cost=float(cost),
+        source=got.source,
+    )
+
+
+@dataclass(frozen=True, slots=True)
+class Resting:
+    """A limit entry: what it does to the reward, and what it costs to wait.
+
+    Asked for on 2026-10-17 - *"if you shift the entry the RR increases, so
+    test it too"* - and the first half of that is arithmetic rather than a
+    claim: move the entry `e` toward the stop and the risk becomes `risk - e`
+    while the reward becomes `reward + e`, so the ratio rises without anything
+    being predicted. At half the original risk the ratio doubles.
+
+    **The second half is where it is paid for, and there are two charges.**
+
+    *The fill.* A limit that is never reached is a trade that never happens, so
+    the unconditional expectancy carries `1 - filled` paths at exactly zero. A
+    better price bought by not trading is not a better price.
+
+    *The selection.* The paths that fill a long are the paths that **fell
+    first**. Conditioning on the fill therefore conditions on having moved
+    against the trade, and the race that follows starts from a population that
+    is not the one the unconditional geometry was priced on. This is the same
+    shape as `a-return-rate-is-geometry`: the arrival is the selection.
+
+    Both are measured here rather than argued, and `expectancy` is the
+    **unconditional** one - over every path, filled or not - because that is
+    the only number a desk can spend.
+    """
+
+    #: Distances from the original price, in price.
+    offset: float
+    entry: float
+    stop: float
+    target: float
+    #: The ratio **as placed**, which is `(reward + offset) / (risk - offset)`.
+    reward: float
+    #: Share of paths that reached the entry inside `within` steps.
+    filled: float
+    #: Of the filled paths, the share that reached the target first and the stop
+    #: first. These are conditional on the fill, which is the point.
+    hit: float
+    lost: float
+    #: Expectancy over **all** paths, unfilled ones contributing zero, in units
+    #: of the placed risk - and its standard error.
+    expectancy: float
+    error: float
+    #: The same for the filled paths only, so the selection effect is visible as
+    #: the difference between the two.
+    conditional: float
+    cost: float
+
+    @property
+    def net(self) -> float:
+        return self.expectancy - self.cost * self.filled
+
+    @property
+    def edge(self) -> float:
+        """Probability mass that would have to move to break even, net of cost."""
+        return (self.cost * self.filled - self.expectancy) / (1.0 + self.reward)
+
+
+def resting(
+    got: Projection,
+    *,
+    side: int,
+    offset: float,
+    risk: float,
+    reward: float,
+    within: int | None = None,
+    cost: float = 0.0,
+) -> Resting:
+    """Price a limit entry `offset` better than the current price.
+
+    `risk` and `reward` describe the geometry **from the original price**; the
+    placed stop stays where it was and the placed target too, so shifting the
+    entry moves it between them and the ratio rises. `within` is how many steps
+    the order rests before it is abandoned, defaulting to a quarter of the
+    horizon.
+
+    The race is run **from the fill step**, path by path, because a race from
+    the start would be the wrong population: it would price a trade that was
+    entered at a price it had not reached yet.
+    """
+    if side not in (1, -1):
+        raise ValueError(f"side has to be +1 or -1, not {side}")
+    if risk <= 0.0 or reward <= 0.0:
+        raise ValueError("risk and reward both have to be positive")
+    if not 0.0 <= offset < risk:
+        raise ValueError(f"offset {offset} has to sit inside the risk {risk}")
+    wait = got.ahead // 4 if within is None else int(within)
+    if wait < 1:
+        raise ValueError("within has to be at least one step")
+
+    entry = got.start - side * offset
+    stop = got.start - side * risk
+    target = got.start + side * reward * risk
+    placed = risk - offset
+    ratio = (reward * risk + offset) / placed
+
+    payoffs: list[float] = []
+    hit = lost = filled = 0
+    for path in range(got.paths):
+        at = -1
+        for step in range(got.ahead):
+            reach = got.falling[step][path] if side > 0 else got.rising[step][path]
+            if (reach <= entry) if side > 0 else (reach >= entry):
+                at = step
+                break
+        if at < 0 or at >= wait:
+            payoffs.append(0.0)
+            continue
+        filled += 1
+        # Race from the fill, scanning forward - the running extremes are
+        # measured from step zero and cannot answer a question that starts
+        # part-way along.
+        done = 0.0
+        for step in range(at + 1, got.ahead):
+            here = got.walks[step][path]
+            if (here >= target) if side > 0 else (here <= target):
+                done = ratio
+                hit += 1
+                break
+            if (here <= stop) if side > 0 else (here >= stop):
+                # Charged at the price reached, which is at or beyond the stop.
+                done = -max(1.0, abs(here - entry) / placed)
+                lost += 1
+                break
+        else:
+            done = side * (got.walks[-1][path] - entry) / placed
+        payoffs.append(done)
+
+    mean = sum(payoffs) / len(payoffs) if payoffs else 0.0
+    spread = sum((v - mean) ** 2 for v in payoffs) / (len(payoffs) - 1) if len(payoffs) > 1 else 0.0
+    inner = [v for v in payoffs if v != 0.0]
+    return Resting(
+        offset=offset,
+        entry=entry,
+        stop=stop,
+        target=target,
+        reward=ratio,
+        filled=filled / got.paths,
+        hit=hit / filled if filled else 0.0,
+        lost=lost / filled if filled else 0.0,
+        expectancy=mean,
+        error=math.sqrt(spread / len(payoffs)) if payoffs else float("inf"),
+        conditional=sum(inner) / len(inner) if inner else 0.0,
+        cost=float(cost),
+    )
+
+
+#: Two-sided 95% normal deviate, for the sample-size arithmetic below.
+_Z = 1.959964
+
+
+def _trials(rate: float, edge: float) -> float:
+    """Trades needed to tell `rate + edge` from `rate` at 95%, two-sided.
+
+    `z**2 p (1 - p) / edge**2`, the ordinary binomial sample size. It is here
+    rather than left to a caller because the reward-to-risk choice is usually
+    argued without it: the edge a geometry **requires** falls as the reward
+    rises, and the sample needed to **establish** it is rarely small, so a
+    comparison that quotes one and not the other is half an answer.
+    """
+    if edge <= 0.0 or not 0.0 < rate < 1.0:
+        return float("inf")
+    return _Z * _Z * rate * (1.0 - rate) / (edge * edge)
+
+
+@dataclass(frozen=True, slots=True)
+class Trade:
+    """Everything needed to place a trade, and everything needed to refuse it.
+
+    Asked for on 2026-10-17: *"bring everything together under one output so we
+    can use it to trade and test trades"*, with success defined as **a high win
+    rate at a high reward-to-risk**.
+
+    **Those two are not independent, and the field that says so is `geometric`.**
+    On a driftless market the chance of reaching the target first is exactly
+    `1 / (1 + reward)`: 33% at 1:2, 25% at 1:3, 9% at 1:10, 4.8% at 1:20. So a
+    high win rate *at* a high reward is not a setup to be searched for among
+    entry rules - it is **directional edge**, by a different name, and the
+    search for one is the search for the other.
+
+    This object therefore prints `win_rate` and `geometric` side by side. Their
+    difference is the only quantity that can be an edge, and `edge_needed` is
+    how much of it the geometry requires to cover cost. A setup is interesting
+    exactly when `win_rate - geometric` exceeds `edge_needed`, measured out of
+    sample, and never because the reward is large.
+    """
+
+    side: int
+    entry: float
+    stop: float
+    target: float
+    reward: float
+    #: Wins as a share of **resolved** trades, which is what a trader means by
+    #: a win rate - and the only version comparable to `geometric`.
+    #:
+    #: The unconditional share is a different number and reading the two
+    #: against each other is an error this field exists to prevent: with half
+    #: the paths unresolved, an unconditional 0.085 sat beside a geometric
+    #: 0.250 and looked like a catastrophic edge when it was a mismatch of
+    #: denominators.
+    win_rate: float
+    #: `1 / (1 + reward)`, what a driftless market owes **among resolved
+    #: trades**. `win_rate` sits near it by construction; a *realised* rate
+    #: above it is the only edge there is.
+    geometric: float
+    #: Share of paths that reached neither barrier inside the horizon. A win
+    #: rate conditional on resolution is only as meaningful as this is small.
+    undecided: float
+    #: Probability mass the geometry needs, net of cost, to break even.
+    edge_needed: float
+    #: Expected movement over the horizon divided by cost. Below the gate's
+    #: multiple there is no trade whatever the signal says.
+    cover: float
+    #: **Trades needed to tell this setup's win rate from the geometric one**,
+    #: at the edge it requires, two-sided at 95%.
+    #:
+    #: This is the answer to *"one setup has good reward and a poor win rate,
+    #: another the reverse - so which?"*. They are the same trade: both sit on
+    #: the zero-expectancy curve, and only `win_rate - geometric` moves off it.
+    #: Cost breaks the tie in favour of **high reward**, because the spread is
+    #: a fixed charge per trade while the edge required broadly falls as the
+    #: reward rises - 0.0419 at 1:2 against 0.0148 at 1:48, measured.
+    #:
+    #: **A tidier claim than that does not survive measurement.** The arithmetic
+    #: suggests the sample should grow as `(1 + r)`, since `edge ~ c / (1 + r)`
+    #: makes `n ~ z**2 (1 + r) / c**2`. Measured, it does not: 486, 812, 431 and
+    #: 349 trades at 1:2, 1:3, 1:7 and 1:48. The required edge is not exactly
+    #: `c / (1 + r)` because the undecided paths and the conservative loss
+    #: settlement both enter it, so the two effects do not cancel cleanly.
+    #:
+    #: What the numbers do say is more useful than the theory: **every geometry
+    #: here needs several hundred trades** - 350 to 800 - before its win rate
+    #: can be told from the geometric one. That constraint is indifferent to
+    #: the reward chosen, and it is the one that usually binds.
+    trials: float
+    #: Signal strength that produced the side, in 0..1.
+    strength: float
+    taken: bool
+    #: Why it was refused, or `taken`. A gate that cannot say why it refused is
+    #: a gate nobody can debug.
+    why: str
+
+    @property
+    def risk(self) -> float:
+        return abs(self.entry - self.stop)
+
+
+def trade(
+    got: Projection,
+    *,
+    side: int,
+    strength: float = 1.0,
+    cost: float = 0.0,
+    breach: float = 0.40,
+    cover: float = 3.0,
+    deadband: float = 0.0,
+    **plans,
+) -> Trade:
+    """Compose a signal, the dispersion gate and the geometry into one answer.
+
+    The three rings of the architecture meeting at one call: `signalling`
+    supplies `side` and `strength`, `worth` is the dispersion gate, and `plan`
+    prices the three prices and the edge they demand.
+
+    Always returns a `Trade`. A refusal is an answer with `taken=False` and a
+    `why`, not a `None` a caller can forget to check.
+    """
+    passed, ratio = got.worth(cost, cover)
+    blank = {
+        "entry": got.start,
+        "stop": got.start,
+        "target": got.start,
+        "reward": 0.0,
+        "win_rate": 0.0,
+        "geometric": 0.0,
+        "undecided": 1.0,
+        "edge_needed": float("inf"),
+        "cover": ratio,
+        "trials": float("inf"),
+        "strength": float(strength),
+        "taken": False,
+    }
+    if side not in (1, -1) or abs(float(strength)) <= deadband:
+        return Trade(side=0, why="no signal", **blank)
+    if not passed:
+        return Trade(side=side, why="dispersion below cost", **blank)
+
+    made = plan(got, side=side, breach=breach, cost=cost, **plans)
+    if made is None:
+        # Say what the best achievable resolution was, because "no reachable
+        # target" on its own is not debuggable - the caller cannot tell whether
+        # to loosen `settle`, tighten the stop or lengthen the hold, and the
+        # answer is usually the stop.
+        risk = _solve_stop(got, side, breach)
+        best, where = 0.0, 0.0
+        for reward in plans.get("rewards", REWARDS):
+            priced = got.geometry(stop=risk, reward=reward, cost=cost)
+            # Report the best **delivery** - wins as a share of what the
+            # barrier identity owes - because that is the constraint that
+            # usually binds, and a resolution figure would point at the stop.
+            share = priced.wins * (1.0 + reward)
+            if share > best:
+                best, where = share, reward
+        return Trade(
+            side=side,
+            why=f"target undeliverable (best {best:.0%} of 1:{where:g}'s own rate)",
+            **blank,
+        )
+
+    lost = 1.0 - made.hit - made.undecided
+    return Trade(
+        side=side,
+        entry=made.entry,
+        stop=made.stop,
+        target=made.target,
+        reward=made.reward,
+        win_rate=made.hit / (made.hit + lost) if (made.hit + lost) > 0 else 0.0,
+        geometric=1.0 / (1.0 + made.reward),
+        undecided=made.undecided,
+        edge_needed=made.edge,
+        cover=ratio,
+        trials=_trials(1.0 / (1.0 + made.reward), made.edge),
+        strength=float(strength),
+        taken=True,
+        why="taken",
+    )
 
 
 def _table(readout, basis_scale: float) -> tuple[tuple[float, ...], str]:
@@ -494,6 +1165,7 @@ def project(
     seed: int = 0,
     basis_scale: float = 1.0,
     centred: bool = True,
+    step: float | None = None,
 ) -> Projection:
     """Draw `paths` forward paths of `ahead` bars from one readout.
 
@@ -522,6 +1194,15 @@ def project(
     if reach < 0.0:
         raise ValueError("reach cannot be negative")
 
+    # The step's duration, taken from the readout's own interval when the
+    # caller does not name one - because an interval is how the rest of the
+    # package says how long a bar is, and guessing an hour was how a 1m
+    # projection would silently have spanned forty hours.
+    span = float(
+        STEPS.get(getattr(readout, "interval", ""), PERIODS["hours"]) if step is None else step
+    )
+    if span <= 0.0:
+        raise ValueError("step has to be a positive number of seconds")
     begin = float(readout.value if start is None else start)
     draw, source = _sampler(readout, basis_scale, centred)
     rng = random.Random(seed)
@@ -533,25 +1214,26 @@ def project(
     for p in range(paths):
         here = begin
         low = high = begin
-        for step in range(ahead):
+        for k in range(ahead):
             move = draw(rng)
             if scales is not None:
-                move *= float(scales[step])
+                move *= float(scales[k])
             here += move + drift
             # The bar's excursion either side of its close, so a touch can be
             # registered on a bar that closed away from the level.
-            span = reach * abs(move) if reach else 0.0
-            high = max(high, here + span)
-            low = min(low, here - span)
-            walks[step][p] = here
-            rising[step][p] = high
-            falling[step][p] = low
+            edge = reach * abs(move) if reach else 0.0
+            high = max(high, here + edge)
+            low = min(low, here - edge)
+            walks[k][p] = here
+            rising[k][p] = high
+            falling[k][p] = low
 
     return Projection(
         start=begin,
         ahead=ahead,
         basis=basis,
         source=source,
+        step=span,
         paced=scales is not None,
         walks=tuple(tuple(row) for row in walks),
         rising=tuple(tuple(row) for row in rising),

@@ -328,3 +328,43 @@ with a reverting model necessarily carries a little of the current deviation
 through the first few steps, and a regression fitted directly on the target
 removes that by construction. It is the price of being a filter rather than a
 fit, and it is the same size as the reservoir's.
+
+### Should the dispersion subjects pool? No - and it bounds the pooling result
+
+`pooling.py`'s headline is that **the value is in switching rather than in model
+choice**: `argmax` beats a member chosen at random each step by 4.7-fold and one
+good member held throughout by 5.3-fold. So the obvious question, once a member
+that fits this quantity exists, is whether a pool containing it beats it.
+
+It does not, anywhere:
+
+| cell | `ornstein` | `pool` | `pool+orn` | `pool_rev` | `pool_pair` |
+| --- | ---: | ---: | ---: | ---: | ---: |
+| fx_cross 1h h=20 | **+0.506** | -0.598 | -0.531 | -0.480 | -0.438 |
+| fx_major 1h h=20 | **+0.304** | -1.893 | -1.733 | -1.483 | -1.572 |
+| metal 1h h=20 | **+0.827** | +0.329 | +0.371 | +0.387 | +0.414 |
+| volatility 1h h=20 | **-0.043** | -4.591 | -0.554 | -0.284 | -0.347 |
+
+`pool` is `DEFAULT` - kalman, reverting, robust, all price members. `pool+orn`
+adds the value-reverting one to it; `pool_rev` is the two reverting members and
+`pool_pair` is ornstein with the Kalman.
+
+**Adding the right member to a pool of wrong members does not rescue the pool.
+It drags the right member down.** `pool+orn` reads -0.531 where `pool` reads
+-0.598 and `ornstein` alone reads +0.506, so the one correct member bought the
+pool 0.07 and lost 1.04 of its own.
+
+The mechanism is in `pooling.py`'s own text. `rule = "shrinking"` forms the
+pooled spread as `1 / sum(precision)`, which "sits *below* every member's own
+spread and is strictly correct only if the members are independent - they are
+not". Members are then weighted by precision, so a member that is **confidently
+wrong** gets a large weight: three price filters tracking log-variance as an
+integrated process report small spreads and dominate the combined mean.
+
+**So this bounds the pooling finding rather than contradicting it.** That study
+pooled members that were all plausible for its subject, and there switching
+between them was worth 4.7-fold. Here one member is right and three are wrong by
+construction, and precision weighting has no way to notice: it rewards
+confidence, and a misspecified filter is confident. The dispersion subjects
+therefore name a single member, and `Subject.member` is the right place for that
+to be written down.

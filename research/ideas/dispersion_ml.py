@@ -91,6 +91,7 @@ from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
 from till_infinity.structures.statespace.diagonal import Diagonal  # noqa: E402
 from till_infinity.structures.statespace.facade import Desk  # noqa: E402
+from till_infinity.structures.statespace.pooling import Pooled  # noqa: E402
 from till_infinity.structures.statespace.subjects import DISPERSION  # noqa: E402
 
 FRAMES = ("1h", "4h")
@@ -111,6 +112,25 @@ LAGS = (1, 5, 22)
 #: horizon is also what a caller actually needs: the Monte Carlo prices a path
 #: 40 bars out, not one bar out.
 HORIZONS = (1, 5, 20)
+
+#: Members whose `at_time` decays toward zero rather than toward anything the
+#: data sits near, so their **current state** is the better forecast. Both are
+#: deterministic selective maps and the README names this as its trade-off 2;
+#: `swarm` fixes it with a non-decaying anchor and is not here.
+DECAYING = frozenset({"Diagonal", "Selective"})
+
+#: Pool compositions, to answer whether the dispersion subjects should pool at
+#: all. `pooling.DEFAULT` is three price members and reads negative here; these
+#: ask whether the value-reverting member rescues that pool, whether the two
+#: reverting members together beat either alone, and whether the one member
+#: alone is simply the answer. `pooling.py`'s own finding is that the gain is in
+#: **switching** rather than in model choice, so a pool containing the right
+#: member might beat it.
+POOLS: dict[str, tuple[str, ...]] = {
+    "pool+orn": ("kalman", "reverting", "robust", "ornstein"),
+    "pool_rev": ("ornstein", "reverting"),
+    "pool_pair": ("ornstein", "kalman"),
+}
 #: Reservoir size. Small on purpose: the readout is `SIZE + len(LAGS) + 1` wide
 #: against thousands of rows, so the effective dof stays far below the sample
 #: and the fit is a statement about the data rather than the capacity.
@@ -271,7 +291,17 @@ def _statespace(
     span = 3600.0
 
     def ahead(engine, now: float) -> float:
-        if not hasattr(engine, "at_time") or getattr(engine, "at", None) is None:
+        # **Not every member's extrapolation is meaningful, and the README says
+        # which.** `selective` and `s4d` are deterministic maps whose states all
+        # decay toward zero, so `at_time` far ahead returns about zero - the
+        # README's trade-off 2, "extrapolation decaying to zero". On a quantity
+        # sitting at -18 that is not a forecast: scoring it as one read **-153**
+        # at h=1 and **-2616** at h=20. For those two the current state is the
+        # better reading, and saying so beats averaging a number the member
+        # never claimed.
+        if type(engine).__name__ in DECAYING or not hasattr(engine, "at_time"):
+            return float(getattr(engine, "value", 0.0))
+        if getattr(engine, "at", None) is None:
             return float(getattr(engine, "value", 0.0))
         return float(np.mean([engine.at_time(now + k * span) for k in range(1, horizon + 1)]))
 
@@ -382,6 +412,10 @@ def score(
     # measures the subject's own declared configuration.
     settling = _statespace(logvar, start, len(y), feed, frame, DISPERSION.filter(), horizon)
     out["ornstein"] = (_r2(y[cut:], settling[cut:], base), 0.0)
+
+    for name, names in POOLS.items():
+        got = _statespace(logvar, start, len(y), feed, frame, Pooled(names=names), horizon)
+        out[name] = (_r2(y[cut:], got[cut:], base), 0.0)
     return out
 
 
@@ -401,7 +435,18 @@ def main() -> None:
         groups.setdefault(classify(name), []).append(name)
     print("classes in the cache:", ", ".join(sorted(groups)))
 
-    arms = ("constant", "last", "ou", "ornstein", "har", "lin48", "s4d", "pool", "esn")
+    arms = (
+        "constant",
+        "last",
+        "ou",
+        "ornstein",
+        "har",
+        "lin48",
+        "s4d",
+        "pool",
+        *POOLS,
+        "esn",
+    )
     for frame in FRAMES:
         for label in ("onescale", *TRADED, *CONTROLS):
             if label != "onescale" and label not in groups:

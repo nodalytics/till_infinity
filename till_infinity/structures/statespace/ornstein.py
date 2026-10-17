@@ -210,12 +210,25 @@ class Ornstein:
     #: about zero. `False` keeps whatever `theta` was constructed with, which
     #: is what a harness wants when it is measuring the fit itself.
     learn: bool = True
-    #: Exponentially weighted residual sums, one per candidate in `PULLS`.
-    errors: tuple[float, ...] = ()
+    #: Exponentially weighted **log predictive density**, one per candidate in
+    #: `PULLS`, and the shadow state each candidate needs to produce one.
+    #:
+    #: A density and not a residual sum, and that distinction is the fix for
+    #: the one thing a residual sum got wrong. `(d_t - phi d_{t-1})**2` is a
+    #: method-of-moments fit on the **filtered** deviations - which the Kalman
+    #: gain has already shrunk toward the level - so the implied `phi` is
+    #: attenuated and `theta` comes out too slow. It read a 32-hour half-life
+    #: on a series whose true one was 9.6. Scoring each candidate by the
+    #: density it actually assigns the next reading is the ordinary maximum
+    #: likelihood, it accounts for the measurement noise and the posterior
+    #: variance that the residual form ignores, and it is the same likelihood
+    #: grid every other parameter in this package is fitted on.
+    scores: tuple[float, ...] = ()
+    _shadow_value: tuple[float, ...] = ()
+    _shadow_p00: tuple[float, ...] = ()
     #: Readings the fit has seen. Separate from `seen` because the fit needs a
     #: *pair* of readings and so starts one later.
     learned: int = 0
-    _last_dev: float = 0.0
 
     #: Unix seconds of the last **reading**, which is not `at`: `predict` moves
     #: `at` without one. The level's half-life is in hours, so it needs the
@@ -324,53 +337,90 @@ class Ornstein:
         if self.read_at is not None and self.at is not None:
             hours = max((self.at - self.read_at) / HOUR, 0.0)
         self._settle(measured, hours)
-        # **After the level has settled**, so the deviation is measured against
+        # **After the level has settled**, so each shadow filter reverts toward
         # the level that was in force, and before `read_at` moves, so the fit
         # sees the gap it is fitting over.
-        self._fit(hours)
+        self._fit(measured, noise, hours)
         self.read_at = self.at
         return innovation
 
-    def _fit(self, hours: float) -> None:
-        """Accumulate one residual per candidate `theta`, and take the minimiser.
+    def _fit(self, measured: float, noise: float, hours: float) -> None:
+        """Score every candidate `theta` by the density it gave this reading.
+
+        **Maximum likelihood, not a residual sum.** Each candidate runs its own
+        one-state shadow filter - a predict to this reading's time at that
+        candidate's pull, a log density for the reading, then an update - and
+        the running sum of those densities is what the grid is ranked on. That
+        is the ordinary MLE for this model and it is the same likelihood grid
+        every other parameter in this package is fitted on.
+
+        The residual form it replaces was a method-of-moments fit on the
+        **filtered** deviations, which the Kalman gain has already pulled
+        toward the level, so the implied decay was attenuated and the half-life
+        came out slow - 32 hours where the truth was 9.6. A density also sees
+        the measurement noise and the posterior variance, which a residual
+        cannot.
 
         The grid is evaluated at **this step's own gap**, so irregular sampling
-        is handled exactly rather than approximated by a nominal bar length -
-        which matters because `exp(-theta * dt)` is the whole quantity being
-        fitted and a wrong `dt` is a wrong `theta`.
+        is exact rather than approximated by a nominal bar length, and the two
+        ends of the grid are what let it say *no reversion* and *instant
+        reversion* - neither of which a fixed `theta` can reach.
 
-        The deviation is `value - level`, and a deviation that reverts has
-        `d_t = exp(-theta * dt) * d_{t-1}` plus noise. So the candidate whose
-        running residual sum is smallest is the fitted pull - and the two ends
-        of the grid are what make it able to say *no reversion at all* and
-        *instant reversion*, neither of which a fixed `theta` can reach.
+        One `theta`, and **no horizon in the signature**. If the model is right
+        its one-step dynamics determine every horizon, so an h-step forecast
+        needs no separate fit; where an h-step score disagrees the model is
+        misspecified, and `research/docs/dispersion-forecast.md` measures which
+        parameter is actually responsible - the level, not the pull.
         """
-        deviation = self.value - self.level
-        if hours > 0.0 and self.learned >= 1:
-            if not self.errors:
-                self.errors = (0.0,) * len(PULLS)
-            fresh = []
-            for theta, carried in zip(PULLS, self.errors, strict=True):
-                guess = _decay(theta, hours) * self._last_dev
-                residual = deviation - guess
-                fresh.append(FORGET * carried + residual * residual)
-            self.errors = tuple(fresh)
-            if self.learn and self.learned >= LEARN_LEAST:
-                best = min(range(len(PULLS)), key=lambda i: self.errors[i])
-                # Floored so the anchor survives: the reversion has to stay at
-                # least `SEPARATION` times faster than the level, or the level
-                # is the value again and the member collapses.
-                floor = SEPARATION * math.log(2.0) / self.level_half_life
-                self.theta = max(PULLS[best], floor)
-        self._last_dev = deviation
+        if not self.scores:
+            self.scores = (0.0,) * len(PULLS)
+            self._shadow_value = (float(measured),) * len(PULLS)
+            self._shadow_p00 = (max(float(noise), SMALL),) * len(PULLS)
+            self.learned += 1
+            return
+
+        fresh, values, spreads = [], [], []
+        for theta, carried, value, p00 in zip(
+            PULLS, self.scores, self._shadow_value, self._shadow_p00, strict=True
+        ):
+            decay = _decay(theta, hours) if hours > 0.0 else 1.0
+            moved = self.level + decay * (value - self.level)
+            if math.isinf(theta):
+                grown = 0.0
+            else:
+                step = theta * hours
+                if step > SMALL:
+                    grown = -math.expm1(-2.0 * step) * max(self.sigma2, 0.0) / (2.0 * theta)
+                else:
+                    grown = max(self.sigma2, 0.0) * hours
+            prior = decay * decay * p00 + grown
+            s = prior + max(float(noise), 0.0)
+            if s <= 0.0:
+                s = SMALL
+            err = float(measured) - moved
+            fresh.append(FORGET * carried - 0.5 * (math.log(2.0 * math.pi * s) + err * err / s))
+            gain = prior / s
+            values.append(moved + gain * err)
+            spreads.append(prior - gain * prior)
+
+        self.scores = tuple(fresh)
+        self._shadow_value = tuple(values)
+        self._shadow_p00 = tuple(spreads)
+        if self.learn and self.learned >= LEARN_LEAST:
+            best = max(range(len(PULLS)), key=lambda i: self.scores[i])
+            # Floored so the anchor survives: the reversion has to stay at
+            # least `SEPARATION` times faster than the level, or the level is
+            # the value again and the member collapses.
+            floor = SEPARATION * math.log(2.0) / self.level_half_life
+            self.theta = max(PULLS[best], floor)
         self.learned += 1
 
     @property
     def fitted_half_life(self) -> float:
         """The half-life the fit currently prefers, or `nan` before it is warm."""
-        if not self.errors or self.learned < LEARN_LEAST:
+        if not self.scores or self.learned < LEARN_LEAST:
             return float("nan")
-        best = min(range(len(PULLS)), key=lambda i: self.errors[i])
+        best = max(range(len(PULLS)), key=lambda i: self.scores[i])
         return HALF_LIVES[best]
 
     def _settle(self, measured: float, hours: float) -> None:
