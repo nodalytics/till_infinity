@@ -107,12 +107,70 @@ LEVEL_HALF_LIFE = 168.0
 #: a day against a week - and is a floor rather than a target.
 SEPARATION = 3.0
 
+#: The grid `theta` is fitted over, as half-lives in hours, plus the two ends
+#: that matter. **This is the same likelihood grid everything else in this
+#: package fits on, made streaming**: a running residual sum is kept per
+#: candidate and the minimiser is taken, which handles irregular sampling
+#: exactly because each candidate is evaluated at each step's own `dt`.
+#:
+#: The ends are the point. `inf` is `theta = 0`, a random walk - the member's
+#: own nested null. `0.0` is instant reversion, `theta -> inf`, where the
+#: forecast *is* the level and nothing of the current deviation is carried. A
+#: quantity with no persistence wants that end, and a fixed `theta` cannot
+#: reach it: `dispersion-forecast.md` measured the cost at **-0.73** on
+#: shuffled and constant-sigma series where every fitted arm read about zero.
+HALF_LIVES: tuple[float, ...] = (
+    0.0,
+    0.5,
+    1.0,
+    2.0,
+    4.0,
+    8.0,
+    16.0,
+    32.0,
+    64.0,
+    128.0,
+    256.0,
+    512.0,
+    float("inf"),
+)
+
+#: Readings before a fitted `theta` is used. Below this the residual sums are a
+#: handful of numbers and the minimiser is noise with a half-life printed on it.
+LEARN_LEAST = 60
+
+#: How fast the fit forgets, per reading. The residual sums are exponentially
+#: weighted so `theta` can move when the quantity's own persistence does -
+#: which is the whole reason to fit it online rather than once.
+FORGET = 0.999
+
 
 def _theta_for(half_life: float) -> float:
-    """`ln 2 / half_life`, the pull per hour that gives that half-life."""
-    if half_life <= 0.0:
-        raise ValueError("a half-life has to be positive")
+    """`ln 2 / half_life`, the pull per hour that gives that half-life.
+
+    Zero gives infinite pull - the forecast is the level - and infinity gives
+    no pull at all, a random walk. Both ends are in `HALF_LIVES` on purpose.
+    """
+    if half_life < 0.0:
+        raise ValueError("a half-life cannot be negative")
+    if half_life == 0.0:
+        return math.inf
+    if math.isinf(half_life):
+        return 0.0
     return math.log(2.0) / half_life
+
+
+#: The grid as pulls per hour, built once.
+PULLS: tuple[float, ...] = tuple(_theta_for(h) for h in HALF_LIVES)
+
+
+def _decay(theta: float, dt: float) -> float:
+    """`exp(-theta * dt)`, with both ends of the grid handled exactly."""
+    if theta <= 0.0:
+        return 1.0
+    if math.isinf(theta):
+        return 0.0
+    return math.exp(-theta * dt)
 
 
 @dataclass(slots=True)
@@ -144,6 +202,21 @@ class Ornstein:
     #: One, not three: there is one state and it is observed directly, so only
     #: the reading that initialises it is excluded from the score.
     burn: int = 1
+    #: Whether `theta` is fitted from the readings. **On by default**, because
+    #: a fixed `theta` is the member's one measured defect: it carries a share
+    #: of the current deviation into every forecast whether the quantity
+    #: reverts at that rate or not, and on shuffled and constant-sigma series
+    #: that cost **-0.73** of R2 at twenty bars where every fitted arm read
+    #: about zero. `False` keeps whatever `theta` was constructed with, which
+    #: is what a harness wants when it is measuring the fit itself.
+    learn: bool = True
+    #: Exponentially weighted residual sums, one per candidate in `PULLS`.
+    errors: tuple[float, ...] = ()
+    #: Readings the fit has seen. Separate from `seen` because the fit needs a
+    #: *pair* of readings and so starts one later.
+    learned: int = 0
+    _last_dev: float = 0.0
+
     #: Unix seconds of the last **reading**, which is not `at`: `predict` moves
     #: `at` without one. The level's half-life is in hours, so it needs the
     #: elapsed time between readings and not a count of them - the same
@@ -153,13 +226,13 @@ class Ornstein:
     read_at: float | None = None
 
     def __post_init__(self) -> None:
-        if self.theta < 0.0:
+        if math.isnan(self.theta) or self.theta < 0.0:
             raise ValueError("theta cannot be negative")
         if self.sigma2 < 0.0:
             raise ValueError("sigma2 cannot be negative")
         if self.level_half_life <= 0.0:
             raise ValueError("the level's half-life has to be positive")
-        if self.theta > 0.0:
+        if self.theta > 0.0 and not math.isinf(self.theta):
             reversion = math.log(2.0) / self.theta
             if self.level_half_life < SEPARATION * reversion:
                 raise ValueError(
@@ -184,10 +257,15 @@ class Ornstein:
 
         theta = max(self.theta, 0.0)
         step = theta * dt
-        decay = math.exp(-step) if theta > 0.0 else 1.0
+        decay = _decay(theta, dt)
         self.value = self.level + decay * (self.value - self.level)
 
-        if step > SMALL:
+        if math.isinf(theta):
+            # Instant reversion: the value *is* the level, so there is no
+            # carried uncertainty and nothing accumulates either - `decay` is
+            # zero, so the line below leaves `p00` at zero.
+            grown = 0.0
+        elif step > SMALL:
             # sigma2 / (2 theta) * (1 - e^{-2 theta dt}), with expm1 for the
             # small end of the range this branch still covers.
             grown = -math.expm1(-2.0 * step) * max(self.sigma2, 0.0) / (2.0 * theta)
@@ -246,8 +324,54 @@ class Ornstein:
         if self.read_at is not None and self.at is not None:
             hours = max((self.at - self.read_at) / HOUR, 0.0)
         self._settle(measured, hours)
+        # **After the level has settled**, so the deviation is measured against
+        # the level that was in force, and before `read_at` moves, so the fit
+        # sees the gap it is fitting over.
+        self._fit(hours)
         self.read_at = self.at
         return innovation
+
+    def _fit(self, hours: float) -> None:
+        """Accumulate one residual per candidate `theta`, and take the minimiser.
+
+        The grid is evaluated at **this step's own gap**, so irregular sampling
+        is handled exactly rather than approximated by a nominal bar length -
+        which matters because `exp(-theta * dt)` is the whole quantity being
+        fitted and a wrong `dt` is a wrong `theta`.
+
+        The deviation is `value - level`, and a deviation that reverts has
+        `d_t = exp(-theta * dt) * d_{t-1}` plus noise. So the candidate whose
+        running residual sum is smallest is the fitted pull - and the two ends
+        of the grid are what make it able to say *no reversion at all* and
+        *instant reversion*, neither of which a fixed `theta` can reach.
+        """
+        deviation = self.value - self.level
+        if hours > 0.0 and self.learned >= 1:
+            if not self.errors:
+                self.errors = (0.0,) * len(PULLS)
+            fresh = []
+            for theta, carried in zip(PULLS, self.errors, strict=True):
+                guess = _decay(theta, hours) * self._last_dev
+                residual = deviation - guess
+                fresh.append(FORGET * carried + residual * residual)
+            self.errors = tuple(fresh)
+            if self.learn and self.learned >= LEARN_LEAST:
+                best = min(range(len(PULLS)), key=lambda i: self.errors[i])
+                # Floored so the anchor survives: the reversion has to stay at
+                # least `SEPARATION` times faster than the level, or the level
+                # is the value again and the member collapses.
+                floor = SEPARATION * math.log(2.0) / self.level_half_life
+                self.theta = max(PULLS[best], floor)
+        self._last_dev = deviation
+        self.learned += 1
+
+    @property
+    def fitted_half_life(self) -> float:
+        """The half-life the fit currently prefers, or `nan` before it is warm."""
+        if not self.errors or self.learned < LEARN_LEAST:
+            return float("nan")
+        best = min(range(len(PULLS)), key=lambda i: self.errors[i])
+        return HALF_LIVES[best]
 
     def _settle(self, measured: float, hours: float) -> None:
         """Move the level toward the reading, on its own half-life in hours.
@@ -294,6 +418,8 @@ class Ornstein:
         """
         if self.theta <= 0.0:
             return float("inf")
+        if math.isinf(self.theta):
+            return 0.0
         return math.sqrt(max(self.sigma2, 0.0) / (2.0 * self.theta))
 
     def at_time(self, when: float) -> float:
@@ -303,7 +429,7 @@ class Ornstein:
         dt = (float(when) - self.at) / HOUR
         if dt <= 0.0 or self.theta <= 0.0:
             return self.value
-        return self.level + math.exp(-self.theta * dt) * (self.value - self.level)
+        return self.level + _decay(self.theta, dt) * (self.value - self.level)
 
     def band(self, when: float, sigmas: float = 2.0) -> tuple[float, float]:
         """A band at a future time, which **stops widening**.
@@ -315,8 +441,10 @@ class Ornstein:
         dt = 0.0 if self.at is None else max((float(when) - self.at) / HOUR, 0.0)
         theta = max(self.theta, 0.0)
         step = theta * dt
-        decay = math.exp(-step) if theta > 0.0 else 1.0
-        if step > SMALL:
+        decay = _decay(theta, dt)
+        if math.isinf(theta):
+            grown = 0.0
+        elif step > SMALL:
             grown = -math.expm1(-2.0 * step) * max(self.sigma2, 0.0) / (2.0 * theta)
         else:
             grown = max(self.sigma2, 0.0) * dt
@@ -360,4 +488,4 @@ class Ornstein:
         here that is visible from one number.
         """
         theta = max(self.theta, 0.0)
-        return ((math.exp(-theta * max(float(dt), 0.0)),),)
+        return ((_decay(theta, max(float(dt), 0.0)),),)

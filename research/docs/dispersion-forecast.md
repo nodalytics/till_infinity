@@ -262,3 +262,69 @@ What the member buys over the `ou` arm, once `theta` is fitted, is everything a
 filter has and a regression on a fixed grid does not: a posterior, smoothing,
 irregular sampling, gap handling, and a band that converges to a stationary
 width instead of growing without bound.
+
+### Fitting `theta`, which closes the defect and opens a smaller one
+
+**2026-10-17, later still.** The defect above was `theta` being a placeholder,
+so it is fitted: a **streaming likelihood grid** of thirteen candidate
+half-lives, each carrying an exponentially weighted sum of
+`(d_t - exp(-theta * dt) * d_{t-1})**2` over the deviation `d = value - level`,
+with the minimiser taken once sixty readings are in. Three properties earn it:
+
+* **irregular time is exact.** Every candidate is evaluated at each step's own
+  gap, because `exp(-theta * dt)` is the quantity being fitted and a nominal
+  bar length would be a wrong `theta`.
+* **both ends of the grid are in it.** Half-life `inf` is `theta = 0`, a random
+  walk; half-life `0` is instant reversion, where the forecast *is* the level
+  and nothing is carried. **A fixed `theta` can reach neither**, which is
+  exactly why it paid -0.73 where nothing reverts.
+* **the anchor survives.** The learnt `theta` is floored so the reversion stays
+  at least `SEPARATION` times faster than the level. Without the floor a random
+  walk fits `theta -> 0`, the level becomes infinitely faster than the
+  reversion, and the member collapses into the walk it replaces.
+
+| cell | fixed `theta` | fitted `theta` | change |
+| --- | ---: | ---: | ---: |
+| volatility 1h h=20 | -0.659 | **-0.042** | **+0.617** |
+| volatility 4h h=20 | -0.725 | **-0.046** | **+0.679** |
+| shuffled, every class | about -0.73 | **-0.040 to -0.048** | — |
+| fx_major 1h h=5 | +0.130 | **+0.230** | +0.100 |
+| fx_major 1h h=20 | +0.405 | **+0.526** | +0.121 |
+| fx_cross 1h h=20 | +0.550 | +0.551 | +0.001 |
+| metal 1h h=20 | +0.834 | +0.838 | +0.004 |
+| fx_major 4h h=20 | +0.484 | +0.443 | -0.041 |
+| fx_cross 4h h=20 | +0.526 | **+0.402** | **-0.124** |
+| metal 4h h=20 | +0.850 | +0.779 | -0.071 |
+
+**The defect is closed.** The null bias falls from -0.66 and -0.73 to -0.04,
+which puts the member level with the reservoir's -0.04 on the same rows. And at
+1h it is better where it matters: **+0.526 at h=20 against the reservoir's
++0.540**, a dead heat between two parameters and forty-eight reservoir states.
+
+### The smaller one it opens, and why it is not a bug
+
+**At 4h the fitted `theta` is worse than the placeholder** - by 0.04 on
+fx_major, 0.07 on metals and 0.12 on fx_cross.
+
+The cause is a mismatch of criteria rather than a fault in the fit. The grid
+minimises **one-step** deviation residuals, because that is what a filter's
+dynamics are; the score is an **h-step** forecast, and at 4h bars with h = 20
+that is eighty hours ahead. Where the model is exactly right the two agree -
+the one-step dynamics imply the h-step forecast. Where it is misspecified, and
+it is (the level is a slow exponential mean, not the truth), the
+one-step-optimal pull is not the h-step-optimal one, and the gap grows with how
+many hours an h-step forecast spans.
+
+So the honest reading is that the fit is right by default - it removes a -0.73
+bias and wins at 1h - and that a caller forecasting many hours ahead on a slow
+frame should know the pull was chosen on a one-step criterion. Fitting it on
+the horizon's own residual would need the member to know the caller's horizon,
+which is a different contract and not obviously the right one.
+
+**One residual that is structural rather than fixable.** Even fitted, the
+member reads about **-0.04** on shuffled series where `har` reads -0.001. That
+is not carried noise from a wrong pull: forecasting a *mean over a horizon*
+with a reverting model necessarily carries a little of the current deviation
+through the first few steps, and a regression fitted directly on the target
+removes that by construction. It is the price of being a filter rather than a
+fit, and it is the same size as the reservoir's.

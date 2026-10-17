@@ -7965,7 +7965,11 @@ class TestTheValueRevertingMember:
         """`theta = 0` is a one-state random walk, which is this member's own null."""
         from till_infinity.structures.statespace.ornstein import Ornstein
 
-        walk = Ornstein(theta=0.0, sigma2=0.12, level_half_life=168.0)
+        # `learn=False` throughout, because this test is about what a **fixed**
+        # theta of zero means. With the fit on, a reverting series moves theta
+        # off the boundary within sixty readings - which is the point of the
+        # fit and is tested in `test_the_fit_finds_the_timescale...`.
+        walk = Ornstein(theta=0.0, sigma2=0.12, level_half_life=168.0, learn=False)
         self._drive(walk, self._series())
         assert math.isinf(walk.half_life_hours)
         assert math.isinf(walk.stationary_sd)
@@ -7974,9 +7978,88 @@ class TestTheValueRevertingMember:
         assert walk.at_time(walk.at + 1000 * 3600.0) == walk.value
         assert walk.transition(5.0)[0][0] == pytest.approx(1.0)
         # And the pull being real is what buys the likelihood.
-        pulled = Ornstein(theta=math.log(2.0) / 10.0, sigma2=0.12, level_half_life=168.0)
+        pulled = Ornstein(
+            theta=math.log(2.0) / 10.0, sigma2=0.12, level_half_life=168.0, learn=False
+        )
         self._drive(pulled, self._series())
         assert pulled.loglike > walk.loglike
+
+    def test_the_fit_finds_the_timescale_and_switches_off_where_there_is_none(self):
+        """The fix for the member's one measured defect.
+
+        A fixed `theta` carries `exp(-theta * h)` of the current deviation into
+        every forecast whether the quantity reverts at that rate or not, which
+        cost **-0.73** of R2 at twenty bars on shuffled and constant-sigma
+        series where every fitted arm read about zero. The fit is a streaming
+        likelihood grid, and the two ends of that grid are what let it say *no
+        reversion* and *instant reversion*.
+        """
+        import random
+
+        from till_infinity.structures.statespace.ornstein import Ornstein, _theta_for
+
+        def run(xs, learn):
+            member = Ornstein(
+                theta=_theta_for(24.0), sigma2=0.12, level_half_life=168.0, learn=learn
+            )
+            guesses = []
+            for i, x in enumerate(xs):
+                guesses.append(
+                    member.at_time(member.at + 20 * 3600.0)
+                    if member.seen and member.at is not None
+                    else x
+                )
+                member.update(x, 0.09, i * 3600.0)
+            return member, guesses
+
+        def score(xs, guesses):
+            half = len(xs) // 2
+            base = statistics.fmean(xs[:half])
+            err = sum((a - b) ** 2 for a, b in zip(xs[half:], guesses[half:], strict=True))
+            floor = sum((a - base) ** 2 for a in xs[half:])
+            return 1.0 - err / floor
+
+        # A quantity that reverts: the fit lands on a finite half-life and
+        # beats the placeholder.
+        reverting = self._series(phi=0.93)
+        fitted, got = run(reverting, True)
+        _, fixed = run(reverting, False)
+        assert math.isfinite(fitted.fitted_half_life)
+        assert fitted.fitted_half_life > 0.0
+        assert score(reverting, got) > score(reverting, fixed)
+
+        # A quantity with no persistence at all: the fit goes to the fast end,
+        # so at a twenty-bar horizon the forecast *is* the level and the member
+        # reads about zero instead of paying for carried noise.
+        noise = self._series(phi=0.0)
+        fitted, got = run(noise, True)
+        _, fixed = run(noise, False)
+        assert score(noise, got) == pytest.approx(0.0, abs=0.02)
+        assert score(noise, got) > score(noise, fixed) + 0.05
+
+        # And shuffling a reverting series destroys exactly what the fit reads.
+        shuffled = list(reverting)
+        random.Random(1).shuffle(shuffled)
+        fitted, got = run(shuffled, True)
+        assert score(shuffled, got) == pytest.approx(0.0, abs=0.02)
+
+    def test_the_fitted_pull_keeps_the_anchor(self):
+        """A fit cannot break the separation the level depends on."""
+        from till_infinity.structures.statespace.ornstein import SEPARATION, Ornstein, _theta_for
+
+        member = Ornstein(theta=_theta_for(24.0), sigma2=0.12, level_half_life=168.0)
+        # A pure random walk wants theta = 0, which would make the level
+        # infinitely faster than the reversion. The floor refuses it.
+        walk, here = [], 0.0
+        rng = __import__("random").Random(3)
+        for _ in range(1500):
+            here += rng.gauss(0.0, 0.3)
+            walk.append(here)
+        for i, x in enumerate(walk):
+            member.update(x, 0.09, i * 3600.0)
+        floor = SEPARATION * math.log(2.0) / member.level_half_life
+        assert member.theta >= floor
+        assert member.half_life_hours <= member.level_half_life / SEPARATION + 1e-9
 
     def test_the_level_is_not_a_state_and_the_separation_is_enforced(self):
         """The failure `definitions-cannot-be-states` is already on record for."""
