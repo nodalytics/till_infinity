@@ -165,6 +165,132 @@ innovation is **+21.16**, attenuated about 1.7x. See
                       package publishes, by the rule above.
 ```
 
+**What each ring is allowed to emit.** The rule was set on 2026-10-17 and it is
+the architecture rather than a preference:
+
+| ring | emits |
+| --- | --- |
+| every member, every component | **dispersion** - a variance, a spread, a band |
+| `signalling.py`, this layer | a **bounded signal**, not a price: `-1` to `+1` with 0 neutral by the convention fixed on 2026-10-16, or the same signal on `0` to `1` through `as_logistic` |
+| the Monte Carlo | **price**, and it is the only thing here that emits one - as a distribution over paths rather than as a point |
+
+The two outputs are meant to be **paired, not merged**. The Monte Carlo says
+where price can get to and with what probability; the signal says which way and
+how strongly. A consumer holds both: the signal chooses the side and the
+conviction, the path distribution supplies the geometry - where a stop sits at a
+stated breach rate, what a target's touch probability is, how long a return
+takes. Keeping them separate is what stops a dispersion forecast from being
+read as a direction, which is the one mistake this package has measured most
+often.
+
+The reason is on record in this file: price is a near-martingale, it diffuses at
+1.00 to 1.07 times `sqrt(h)`, direction is a coin in every test, and the random
+walk wins the point forecast at every horizon on 17 to 21 of 39 series - while
+log-variance is persistent and forecastable. A member that emits a price is
+claiming the half of the problem that has already been measured closed. A
+member that emits a dispersion is claiming the half that is open.
+
+### Asking for a band by coverage
+
+`Readout.covering(coverage)` is the accessor a caller should use, and it is the
+only consumer `tails.py` has.
+
+```
+     Readout.quantiles                        tails.reach(c, dof)
+     the measured grid, 0.05 to 0.95          the fitted t, any c
+     CRPS 0.9899 vs a Gaussian's 1.0000       shape assumed, not counted
+            |                                         |
+            +--------------------+--------------------+
+                                 |
+                                 v
+                     Readout.covering(c) -> Interval
+                                 |
+       c <= widest  ----->  measured   straight off the grid, asymmetric
+       c >  widest  ----->  anchored   the measured edge grown by the t's
+                                       own ratio: counted scale, assumed shape
+       no grid yet  ----->  assumed    band_covering, the weakest arm
+```
+
+`widest` is read off the grid rather than set as a constant - the published
+levels run 0.05 to 0.95, so the widest central interval they hold is 0.90 - and
+the anchored arm grows each side about the **measured median**, so the two
+arms meet exactly at the seam and the measured asymmetry survives into the
+tail.
+
+**Measured, `research/docs/band-coverage.md`.** Realised breach over wanted, one
+step ahead, out of sample, where 1.00 is calibrated: on fx_major 1h `covering`
+reads **1.02 to 1.10** across 0.95 to 0.999 while the Gaussian band degrades
+1.28 to **14.80**, and on fx_cross **1.08 to 1.91** against **3.58 to 103.75**.
+The two failures are different - the Gaussian's error grows with coverage,
+which is the shape, and the pure t's grows with `R`, which is the scale - and
+the accessor fixes one with the t and the other with the anchor. The limit is
+one-directional and stated there: too **wide** an `R` it survives, too narrow
+it does not, because the grid is then built from moves the filter has already
+absorbed.
+
+### Forward paths: dispersion turned into price
+
+`projecting.project` is the price layer, asked for on 2026-10-17 and bounded by
+the emission rule above. Dispersion goes in, a distribution over paths comes
+out, and nothing in it claims a direction.
+
+```
+   Readout.covering(c)                 a dispersion forecast
+   the step's shape, measured          scales[0..ahead-1]
+   then anchored in the tail           per-step multiples of the spread
+            |                                    |
+            v                                    v
+   inverse CDF, tabulated once in log-odds   paced steps
+            |                                    |
+            +-----------------+------------------+
+                              |
+                              v
+              4,000 paths x up to 40 bars, driftless
+                              |
+              +---------------+---------------+
+              |               |               |
+              v               v               v
+          fan(c)         touches(level)   barrier(up, down)
+       the band at       P(reach it)      which came first
+       every step        when(level, q)   up / down / neither
+```
+
+**Three things make it a measurement rather than a simulation.**
+
+*The step's shape is the measured one.* It samples `Readout.covering`, so the
+one-step distribution is the member's own residual quantiles in the body and
+the anchored Student-t in the tail - the composition `band-coverage.md`
+measured holding its coverage at 1.02 to 1.10 where a Gaussian of the same
+nominal width degrades to 14.80. The sampling identity is exact: `covering(c)`
+is the central interval of coverage `c`, so its edges **are** the
+`(1 +/- c) / 2` quantiles, and the measured asymmetry comes along for free.
+
+*It reproduces the barrier identity.* A driftless race at reward-to-risk `r`
+must pay `1 / (1 + r)`. At `r = 1` the problem is symmetric and it reads
+**0.4933, 0.5012, 0.5130, 0.5062** as the barriers move from 2 to 25 step
+scales away - flat, as symmetry requires. At `r = 2` and `r = 3` it converges
+from above to **0.3311** and **0.2331** against 0.3333 and 0.2500. The residual
+gap at tight barriers is **overshoot**, not error: a fat-tailed step jumps
+through a stop rather than stopping on it, which is what real stops do.
+
+*Finding that identity cost two corrections, both kept in the module.* The
+first version answered "which barrier came first" by comparing the steps at
+which each path's running high and low were **last extended**, which is a
+different question - it paid 0.3790 where geometry required 0.2500 and put the
+median time to touch a two-sigma level at 260 bars. Running extremes are
+monotone in the step, so a first crossing is a binary search on them, and that
+is exact. The second was subtler: the step is drawn from a measured grid whose
+sampling noise leaves its mean a little off its median, **+0.0127 of a step**
+on a 4,000-residual Gaussian grid - and a path compounds it, which pushed a
+symmetric race to 0.757. `centred` removes the step's own mean so that
+`drift = 0` means what it says, and leaves the skew and the tails untouched.
+
+**Two limits a caller has to know.** A close-only path cannot touch what it
+passed through intrabar, so every touch probability is a **lower bound** until
+`reach` is set from measured bar geometry; and `basis` is `close` or `ohlc3`
+because the typical price's one-step dispersion is smaller than
+close-to-close's, so a scale measured on one must not be used on the other.
+
 ### The sign convention is fixed
 
 **The output is -1 to +1 with 0 as neutral: closer to +1 is more strongly
@@ -194,10 +320,11 @@ either, so a consumer never has to ask which it was handed.
 | --- | --- | --- |
 | **the contract** | `__init__.py` | what may be claimed, and the rule that nothing publishes |
 | **the entry point** | `facade.py` | `Desk.read` and `Readout` - the only path a caller touches |
-| **on that path** | `behaving.py`, `bounding.py`, `pacing.py`, `pooling.py`, `tails.py` | reached by every `read` |
+| **on that path** | `behaving.py`, `bounding.py`, `pacing.py`, `pooling.py`, `tails.py` | reached by every `read`; `tails.py` is consumed by `Readout.covering` since 2026-10-17 |
 | **the output layer** | `signalling.py` | composes a `Readout` into a `Signal`. No consumer yet |
+| **the price layer** | `projecting.py` | turns a dispersion forecast into a distribution over forward paths. The only thing here that emits a price |
 | **the subject** | `subjects.py` | names the quantity being modelled before any filter touches it |
-| **the members** | `reverting.py`, `linear.py`, `robust.py`, `hmm.py`, `selective.py`, `swarm.py`, `landau.py`, `adapting.py`, and the rest | alternatives on the bench, scored in `research/docs/statespace-measured.md` |
+| **the members** | `reverting.py`, `linear.py`, `robust.py`, `diagonal.py`, `hmm.py`, `selective.py`, `swarm.py`, `landau.py`, `adapting.py`, and the rest | alternatives on the bench, scored in `research/docs/statespace-measured.md` |
 | **the instruments** | `diagnostics.py`, `nulls.py`, `symmetry.py`, `spanning.py`, `dispersion.py` | how a member is shown to be wrong |
 
 Only the third ring runs on a `read`. The members are reachable from tests and

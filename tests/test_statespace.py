@@ -284,13 +284,29 @@ class TestSubjects:
         number moves with the composition of the flow. A cost that is
         forecast is a different gate from a cost that is averaged.
         """
-        assert len(SUBJECTS) == 4
+        assert len(SUBJECTS) == 7
         assert {s.name for s in SUBJECTS} == {
             "level",
             "instrument",
             "relation",
             "spread",
+            # The two that claim the open half of the problem, added
+            # 2026-10-17 with the emission rule: every member forecasts
+            # dispersion, and a subject now says which half it tracks.
+            "dispersion",
+            "relation dispersion",
+            # v1's one measured turn result, ported 2026-10-17. Depth is a
+            # magnitude, so it belongs in the dispersion half.
+            "turn depth",
         }
+        from till_infinity.structures.statespace.subjects import DISPERSIONS
+
+        assert {s.name for s in DISPERSIONS} == {
+            "dispersion",
+            "relation dispersion",
+            "turn depth",
+        }
+        assert all(s.tracks in ("level", "dispersion") for s in SUBJECTS)
         for s in SUBJECTS:
             assert s.quantity, s.name
             assert s.measurement, s.name
@@ -475,6 +491,9 @@ class TestFamily:
             "landau",
             "robust",
             "selective",
+            # S4D-Real, promoted 2026-10-17 from `selective`'s nested null so
+            # that the member which won 3m, 15m and 30m can be pooled at all.
+            "s4d",
             "swarm",
             "changepoint",
         }
@@ -2261,7 +2280,11 @@ class TestTheFourQuantities:
         from till_infinity.structures.statespace.family import members
 
         without = {n for n, c in members().items() if not hasattr(c(), "covariance")}
-        assert without == {"selective"}
+        # `s4d` is `selective` with the selection pinned off, so it is the same
+        # deterministic map and has no posterior either. That is inherited
+        # rather than overlooked, and it is why `smoothing.smooth` returns None
+        # for both of them instead of half-smoothing one.
+        assert without == {"selective", "s4d"}
 
     def test_existence_decays_on_time_alone_and_never_exceeds_one(self):
         """The one genuine probability here. An absence of evidence is caused by
@@ -7829,6 +7852,675 @@ class TestTails:
         assert got.covers(2.0) == pytest.approx(tails.coverage(2.0, tails.dof_for("1h")))
         middle = got.covers(2.0)
         assert got.band_covering(middle)[1] == pytest.approx(got.band(2.0)[1], rel=1e-6)
+
+
+class TestPivotsByDirectionalChange:
+    """`pivoting` - the detector, and the laws that say whether it works.
+
+    The point of this detector over a fixed span is that it can be **checked
+    against a prediction it did not fit**: directional-change events scale as
+    `threshold ** -E` with `E` near one, and the overshoot past a confirmation
+    averages about one threshold. Those come from Glattfelder, Dupuis and Olsen
+    (2011) and neither is used to choose a parameter here.
+    """
+
+    @staticmethod
+    def _walk(n=12000, seed=7, step=0.001):
+        import random
+
+        rng = random.Random(seed)
+        closes = [100.0]
+        for _ in range(n):
+            closes.append(closes[-1] * math.exp(rng.gauss(0.0, step)))
+        closes = closes[1:]
+        wick = [abs(rng.gauss(0.0, step)) for _ in range(n)]
+        return (
+            [i * 3600.0 for i in range(n)],
+            [c * math.exp(w) for c, w in zip(closes, wick, strict=True)],
+            [c * math.exp(-w) for c, w in zip(closes, wick, strict=True)],
+            closes,
+        )
+
+    @staticmethod
+    def _unit(closes):
+        steps = [abs(b - a) for a, b in itertools.pairwise(closes)]
+        return sum(steps) / len(steps)
+
+    def test_peaks_and_troughs_alternate_by_construction(self):
+        """The thing a fixed span cannot promise, and this one cannot break."""
+        from till_infinity.structures.statespace.pivoting import fractal, pivots
+
+        times, highs, lows, closes = self._walk()
+        unit = self._unit(closes)
+        found = pivots(times, highs, lows, unit=unit, threshold=2.0)
+        assert len(found) > 50
+        assert all(a.kind != b.kind for a, b in itertools.pairwise(found))
+
+        # The fixed-span detector does not, and that is recorded rather than
+        # hidden: it is the reason a caller building swings from it has to
+        # impose alternation itself.
+        plain = fractal(times, highs, lows, span=5)
+        assert not all(a.kind != b.kind for a, b in itertools.pairwise(plain))
+
+    def test_the_confirmation_lag_adapts(self):
+        """A sharp reversal confirms sooner than a hesitant one."""
+        from till_infinity.structures.statespace.pivoting import fractal, pivots
+
+        times, highs, lows, closes = self._walk()
+        unit = self._unit(closes)
+        found = pivots(times, highs, lows, unit=unit, threshold=2.0)
+        lags = sorted(p.lag for p in found)
+        assert lags[0] < lags[-1]
+
+        # The fixed span is exactly itself, always, by construction.
+        plain = fractal(times, highs, lows, span=5)
+        assert {p.lag for p in plain} == {5}
+
+    def test_a_pivot_is_knowable_only_when_it_is_confirmed(self):
+        """The leak both detectors exist to avoid."""
+        from till_infinity.structures.statespace.pivoting import pivots
+
+        times, highs, lows, closes = self._walk()
+        found = pivots(times, highs, lows, unit=self._unit(closes), threshold=2.0)
+        for one in found:
+            assert one.confirmed >= one.at
+            assert one.confirmed_index >= one.index
+            assert one.lag == one.confirmed_index - one.index
+
+    def test_a_higher_threshold_finds_fewer_turns(self):
+        """Monotone, and the exponent is the law's own prediction."""
+        from till_infinity.structures.statespace.pivoting import scaling
+
+        times, highs, lows, closes = self._walk()
+        got = scaling(times, highs, lows, unit=self._unit(closes), thresholds=(2.0, 4.0, 8.0, 16.0))
+        counts = got["counts"]
+        assert counts == sorted(counts, reverse=True)
+        assert counts[-1] > 0
+        # `N ~ threshold ** -E`. One is the law; the band is wide because bar
+        # data truncates the small-threshold end, where a bar's own range
+        # exceeds the threshold and no detector can resolve an event.
+        assert 0.5 < got["exponent"] < 3.0
+
+    def test_the_overshoot_is_measured_from_the_trigger(self):
+        """It averages about one threshold - and the first version did not."""
+        from till_infinity.structures.statespace.pivoting import overshoots, pivots
+
+        times, highs, lows, closes = self._walk()
+        unit = self._unit(closes)
+        found = pivots(times, highs, lows, unit=unit, threshold=8.0)
+        got = overshoots(found, unit=unit, threshold=8.0)
+        assert len(got) > 20
+        mean = sum(got) / len(got)
+        # Measured from the trigger price it is about one. Measured from the
+        # previous extreme - which is what the first version did - it would be
+        # about two, because that leg is the retracement plus the overshoot.
+        assert 0.4 < mean < 1.8
+        whole = [abs(b.level - a.level) / unit / 8.0 for a, b in itertools.pairwise(found)]
+        assert sum(whole) / len(whole) > mean
+
+    def test_the_unit_may_track_the_regime(self):
+        """A per-bar unit is the point of measuring a swing in volatility units."""
+        from till_infinity.structures.statespace.pivoting import pivots
+
+        times, highs, lows, closes = self._walk()
+        flat = self._unit(closes)
+        # A unit that doubles halfway through should find fewer turns in the
+        # second half than a constant one does, because the threshold grows.
+        varying = [flat if i < len(closes) // 2 else flat * 4.0 for i in range(len(closes))]
+        fewer = pivots(times, highs, lows, unit=varying, threshold=2.0)
+        same = pivots(times, highs, lows, unit=flat, threshold=2.0)
+        assert len(fewer) < len(same)
+
+        for bad in ([flat] * 3, [0.0] * len(closes), [-1.0] * len(closes)):
+            with pytest.raises(ValueError, match="unit"):
+                pivots(times, highs, lows, unit=bad, threshold=2.0)
+
+    def test_bad_asks_are_refused(self):
+        from till_infinity.structures.statespace.pivoting import pivots
+
+        times, highs, lows, _ = self._walk(n=50)
+        with pytest.raises(ValueError, match="threshold"):
+            pivots(times, highs, lows, unit=1.0, threshold=0.0)
+        with pytest.raises(ValueError, match="unit"):
+            pivots(times, highs, lows, unit=0.0)
+        with pytest.raises(ValueError, match="same length"):
+            pivots(times[:-1], highs, lows, unit=1.0)
+        # A flat series has no swings, whatever the threshold.
+        assert pivots([0.0, 1.0, 2.0], [5.0] * 3, [5.0] * 3, unit=1.0) == []
+
+
+class TestTurnDepthPorted:
+    """`depths` - v1's one measured turn result, as a dispersion quantity.
+
+    `structures/cycles.py` found turn **depth** predictable where the process
+    reverts (8 of 8 constructed spreads, +0.03 to +0.19) and turn **timing**
+    not (its `when` head scored positive on the nulls too). These tests pin
+    the statistic that claim is made with, because a skill quoted against one
+    baseline and computed against another is how the finding gets lost while
+    appearing to be kept.
+    """
+
+    @staticmethod
+    def _series(phi, n=600, seed=4, kick=0.4, level=1.0):
+        """Depths with a known persistence, so skill has a right answer."""
+        import random
+
+        from till_infinity.structures.statespace.depths import Turn
+
+        rng = random.Random(seed)
+        out, last = [], level
+        for i in range(n):
+            last = level + phi * (last - level) + rng.gauss(0.0, kick)
+            out.append(Turn(when=i * 3600.0, value=last, span=rng.gauss(0.0, kick), direction=1))
+        return out
+
+    def test_the_skill_finds_persistence_and_reads_zero_without_it(self):
+        """Power first, then the null - the order `show-power-before-reporting-a-null` asks for."""
+        from till_infinity.structures.statespace.depths import score
+
+        flat = score(self._series(0.0))
+        some = score(self._series(0.6))
+        lots = score(self._series(0.9))
+
+        # Nothing to predict means no skill, not a small positive one.
+        assert flat["depth ar1"] == pytest.approx(0.0, abs=0.03)
+        # And it rises monotonically with the persistence that is really there.
+        assert some["depth ar1"] > 0.1
+        assert lots["depth ar1"] > some["depth ar1"]
+
+    def test_the_timing_arm_is_carried_because_it_failed(self):
+        """v1's `when` read positive on nulls, so the arm has to exist to catch that."""
+        from till_infinity.structures.statespace.depths import score
+
+        # The span here is i.i.d. by construction, so its skill must be zero
+        # at every depth persistence - a port that dropped this arm could not
+        # reproduce v1's finding that timing skill is a metric artefact.
+        for phi in (0.0, 0.6, 0.9):
+            got = score(self._series(phi))
+            assert got["span ar1"] == pytest.approx(0.0, abs=0.03)
+
+    def test_the_baseline_is_causal_and_kept_inside_the_statistic(self):
+        """Neither arm may see the observation it is being scored on."""
+        from till_infinity.structures.statespace.depths import Skill
+
+        got = Skill()
+        # The first observation cannot be scored: there is no prior mean to be
+        # a baseline, and scoring it against itself would read skill 0 on a
+        # sample of one.
+        got.observe(5.0, 10.0)
+        assert got.settled == 0
+        got.observe(5.0, 10.0)
+        assert got.settled == 1
+        # The baseline guessed the mean of what came before (10.0) and was
+        # exactly right; the model guessed 5.0 and was not.
+        assert got.base == pytest.approx(0.0)
+        assert got.error == pytest.approx(5.0)
+        assert math.isnan(got.skill)  # still under LEAST
+
+    def test_a_skill_is_not_reported_on_too_few_turns(self):
+        from till_infinity.structures.statespace.depths import LEAST, score
+
+        thin = score(self._series(0.9, n=LEAST - 5))
+        assert math.isnan(thin["depth ar1"])
+        enough = score(self._series(0.9, n=LEAST + 200))
+        assert not math.isnan(enough["depth ar1"])
+
+    def test_the_ar1_arm_cannot_extrapolate(self):
+        """A fitted coefficient outside the stationary range is a unit root."""
+        from till_infinity.structures.statespace.depths import AR1
+
+        got = AR1()
+        # A perfectly trending series fits phi above one; clamping is what
+        # keeps `guess` a prediction rather than an extrapolation.
+        for value in range(1, 40):
+            got.observe(float(value) * 10.0)
+        assert abs(got.guess) < 1e6
+        assert got.seen == 39
+
+    def test_depths_are_read_on_the_confirmation_clock(self):
+        """The leak the two timestamps exist to prevent."""
+        from till_infinity.structures.statespace.depths import depths
+        from till_infinity.structures.statespace.displacements import Displacement
+
+        moves = [
+            Displacement(ended=100.0, confirmed=460.0, size=2.0, hours=3.0, direction=1),
+            Displacement(ended=800.0, confirmed=1160.0, size=0.0, hours=2.0, direction=-1),
+            Displacement(ended=900.0, confirmed=1260.0, size=4.0, hours=0.0, direction=1),
+            Displacement(ended=1000.0, confirmed=1360.0, size=8.0, hours=4.0, direction=-1),
+        ]
+        got = depths(moves)
+        # A zero size and a zero duration are both unusable, and are dropped
+        # rather than logged into an infinity.
+        assert len(got) == 2
+        assert [turn.when for turn in got] == [460.0, 1360.0]
+        assert got[0].value == pytest.approx(math.log(2.0))
+        assert got[1].span == pytest.approx(math.log(4.0))
+        # And the raw space is available, because v1 scored in it and the two
+        # numbers must not be presented as each other.
+        raw = depths(moves, logged=False)
+        assert raw[0].value == pytest.approx(2.0)
+
+    def test_a_family_member_can_be_scored_on_the_turn_clock(self):
+        """The port's point: the depth series is something the family can read."""
+        from till_infinity.structures.statespace.depths import Turns
+        from till_infinity.structures.statespace.reverting import Reverting
+        from till_infinity.structures.statespace.subjects import TURN_DEPTH
+
+        assert TURN_DEPTH.tracks == "dispersion"
+        turns = Turns(member=Reverting())
+        for turn in self._series(0.8, n=300):
+            turns.observe(turn)
+        got = turns.read()
+        assert "depth member" in got
+        assert not math.isnan(got["depth member"])
+        # `reverting` reverts the *rate* and leaves the value integrated, so on
+        # a mean-reverting magnitude it should not beat the AR(1) arm. Stated
+        # as the expectation rather than asserted as a result, because what the
+        # subject records is that the family has no value-reverting member.
+        assert got["depth ar1"] > got["depth member"]
+
+
+class TestForwardPaths:
+    """`projecting` - the one module here that emits a price.
+
+    Every claim it makes is about dispersion turned into price, so the tests
+    are the identities a path distribution has to satisfy. The barrier one is
+    the important one: a driftless race at reward-to-risk `r` must pay
+    `1 / (1 + r)`, and an arm that pays more than that on a martingale is a
+    bug, not an edge.
+    """
+
+    @staticmethod
+    def _readout(*, skew=0.0, warm=True, value=100.0, spread=1.0):
+        """A readout whose residual grid is a standard normal, exactly symmetric.
+
+        Built from the normal quantile rather than from a sample, because a
+        sampled grid carries its own asymmetry and the symmetry identities
+        below would then be testing the sample instead of the module.
+        """
+        from till_infinity.structures.statespace.facade import Readout
+
+        if not warm:
+            return Readout(feed="W", interval="1h", at=0.0, value=value, spread=spread)
+        normal = statistics.NormalDist()
+        grid = []
+        for i in range(1, 20):
+            level = i / 20.0
+            z = normal.inv_cdf(level)
+            grid.append((level, value + math.sqrt(spread) * (z + skew * z * abs(z))))
+        return Readout(
+            feed="W", interval="1h", at=0.0, value=value, spread=spread, quantiles=tuple(grid)
+        )
+
+    def test_a_driftless_race_pays_the_geometric_share(self):
+        """`1 / (1 + r)`, and it has to converge as the barriers leave the step."""
+        from till_infinity.structures.statespace.projecting import project
+
+        got = project(self._readout(), ahead=1200, paths=1500, seed=4)
+
+        # At r = 1 the problem is symmetric, so this must hold at *every*
+        # distance rather than converging to it - and it is what caught a mean
+        # of +0.0127 per step leaking in from a sampled grid.
+        for stop in (2.0, 10.0, 25.0):
+            out = got.barrier(up=100.0 + stop, down=100.0 - stop)
+            resolved = out["up"] + out["down"]
+            assert resolved > 0
+            assert out["up"] / resolved == pytest.approx(0.5, abs=0.06)
+
+        # At r = 2 it converges from above as the barriers move away from the
+        # step scale. Tight barriers are breached by overshoot - a fat-tailed
+        # step jumps *through* a stop rather than stopping on it, which is what
+        # real stops do, so the gap is a property and not an error.
+        near = got.barrier(up=100.0 + 2 * 2.0, down=100.0 - 2.0)
+        far = got.barrier(up=100.0 + 2 * 20.0, down=100.0 - 20.0)
+        near_share = near["up"] / (near["up"] + near["down"])
+        far_share = far["up"] / (far["up"] + far["down"])
+        assert near_share > far_share
+        assert far_share == pytest.approx(1.0 / 3.0, abs=0.06)
+
+    def test_the_step_is_driftless_unless_asked_otherwise(self):
+        """`centred` is why `drift=0` means what it says."""
+        import random
+
+        from till_infinity.structures.statespace.projecting import _sampler
+
+        skewed = self._readout(skew=0.35)
+        table_on, _ = _sampler(skewed, 1.0)
+        raw, _ = _sampler(skewed, 1.0, False)
+
+        rng = random.Random(2)
+        centred = [table_on(rng) for _ in range(40000)]
+        rng = random.Random(2)
+        uncentred = [raw(rng) for _ in range(40000)]
+
+        # The skewed grid has a real mean offset, and centring removes it.
+        assert abs(statistics.fmean(centred)) < abs(statistics.fmean(uncentred))
+        assert statistics.fmean(centred) == pytest.approx(0.0, abs=0.02)
+        # The shape is kept: the same draws, shifted, so the spread is identical.
+        assert statistics.pstdev(centred) == pytest.approx(statistics.pstdev(uncentred), rel=1e-9)
+        # The two differ by exactly one constant, which is what "the location
+        # is pinned and the shape is untouched" means.
+        shifts = {round(a - b, 12) for a, b in zip(uncentred, centred, strict=True)}
+        assert len(shifts) == 1
+
+    def test_an_iid_fan_grows_as_the_square_root(self):
+        """No dispersion forecast means a walk, and a walk is `sqrt(k)`."""
+        from till_infinity.structures.statespace.projecting import project
+
+        got = project(self._readout(), ahead=64, paths=3000, seed=7)
+        assert not got.paced
+        widths = {}
+        for step in (1, 4, 16, 64):
+            low, high = got.band(0.95, step=step)
+            widths[step] = 0.5 * (high - low) / math.sqrt(step)
+        # Flat once divided by sqrt(step), to the sampling error of 3000 paths.
+        assert max(widths.values()) / min(widths.values()) < 1.2
+        assert len(got.fan(0.95)) == got.ahead
+
+    def test_a_dispersion_forecast_is_what_paces_the_fan(self):
+        """`scales` is the arm the members are pointed at dispersion to feed."""
+        from till_infinity.structures.statespace.projecting import project
+
+        quiet = project(self._readout(), ahead=20, paths=1500, scales=(0.25,) * 20, seed=3)
+        loud = project(self._readout(), ahead=20, paths=1500, scales=(2.0,) * 20, seed=3)
+        assert quiet.paced
+        assert loud.paced
+        assert loud.band(0.95)[1] - loud.band(0.95)[0] > 4.0 * (
+            quiet.band(0.95)[1] - quiet.band(0.95)[0]
+        )
+        with pytest.raises(ValueError, match="scales"):
+            project(self._readout(), ahead=20, scales=(1.0, 1.0))
+
+    def test_a_touch_is_a_lower_bound_until_reach_is_set(self):
+        """A close-only path cannot touch what it passed through intrabar."""
+        from till_infinity.structures.statespace.projecting import project
+
+        plain = project(self._readout(), ahead=40, paths=2000, seed=9)
+        with_reach = project(self._readout(), ahead=40, paths=2000, reach=0.8, seed=9)
+        level = 100.0 + 6.0
+        assert with_reach.touches(level) > plain.touches(level)
+        # Monotone in the level, which a running extreme guarantees.
+        assert plain.touches(100.0 + 2.0) > plain.touches(100.0 + 8.0)
+        # And a touch is never less likely than ending beyond the same level.
+        assert plain.touches(level) >= plain.above(level)
+
+    def test_the_time_to_touch_is_conditional_and_says_when_it_cannot_answer(self):
+        from till_infinity.structures.statespace.projecting import project
+
+        got = project(self._readout(), ahead=40, paths=2000, seed=6)
+        near = got.when(100.0 + 1.0, 0.5)
+        far = got.when(100.0 + 1.0, 0.9)
+        assert near is not None
+        assert far is not None
+        assert 1 <= near <= far <= got.ahead
+        # Nothing reaches thirty standard deviations in forty bars, and the
+        # honest answer is None rather than the horizon.
+        assert got.when(100.0 + 300.0) is None
+
+    def test_a_cold_readout_still_projects_and_says_the_shape_was_assumed(self):
+        from till_infinity.structures.statespace.projecting import project
+
+        got = project(self._readout(warm=False), ahead=20, paths=500, seed=1)
+        assert got.source == "assumed"
+        assert got.paths == 500
+
+    def test_the_basis_is_named_and_not_inferred(self):
+        from till_infinity.structures.statespace.projecting import basis_price, project
+
+        assert basis_price(102.0, 99.0, 100.0, "close") == 100.0
+        assert basis_price(102.0, 99.0, 100.0, "ohlc3") == pytest.approx(
+            (102.0 + 99.0 + 100.0) / 3.0
+        )
+        for bad in ("hlc3", "typical", ""):
+            with pytest.raises(ValueError, match="basis"):
+                basis_price(1.0, 1.0, 1.0, bad)
+            with pytest.raises(ValueError, match="basis"):
+                project(self._readout(), basis=bad)
+
+    def test_bad_asks_are_refused(self):
+        from till_infinity.structures.statespace.projecting import project
+
+        got = project(self._readout(), ahead=10, paths=400, seed=2)
+        with pytest.raises(ValueError, match="step"):
+            got.band(0.95, step=99)
+        with pytest.raises(ValueError, match="coverage"):
+            got.band(1.5)
+        with pytest.raises(ValueError, match="level"):
+            got.quantile(0.0)
+        with pytest.raises(ValueError, match="straddle"):
+            got.barrier(up=99.0, down=98.0)
+        with pytest.raises(ValueError, match="reach"):
+            project(self._readout(), reach=-1.0)
+        with pytest.raises(ValueError, match="at least one"):
+            project(self._readout(), ahead=0)
+
+
+class TestS4DRealPromoted:
+    """`diagonal.Diagonal` - the member that existed only as another's null.
+
+    It won 3m, 15m and 30m outright while being unregistered, so it could be
+    neither pooled nor scored against the family. These tests pin the two
+    things promotion has to preserve: that it **is** the parent at its null, to
+    the last digit, and that its selection cannot be turned back on.
+    """
+
+    @staticmethod
+    def _drive(member, n=60, noise=0.01):
+        for i in range(n):
+            member.update(100.0 + math.sin(i / 5.0), noise, i * 3600.0)
+        return member
+
+    def test_it_is_its_parent_at_the_null_to_the_last_digit(self):
+        """A copy would drift from `selective`; a pinned parameter cannot."""
+        from till_infinity.structures.statespace.diagonal import Diagonal
+        from till_infinity.structures.statespace.selective import Selective
+
+        promoted = self._drive(Diagonal())
+        parent = self._drive(Selective())
+        assert promoted.value == parent.value
+        assert promoted.loglike == parent.loglike
+        assert promoted.sd == parent.sd
+        assert promoted.last_standardised == parent.last_standardised
+
+    def test_the_spectrum_is_the_references_s4d_real(self):
+        """`-(n+1)` per state, and reachable the same way on any member."""
+        from till_infinity.structures.statespace.diagonal import Diagonal
+        from till_infinity.structures.statespace.selective import SIZE
+
+        got = Diagonal().eigenvalues()
+        assert got == tuple(-(n + 1.0) for n in range(SIZE))
+        # Every eigenvalue strictly negative, so every state is drivable: the
+        # entry weight is `1 - exp(delta * A)` and a zero there is a state no
+        # reading can reach. That is why the anchored variant lives in `swarm`.
+        assert all(a < 0.0 for a in got)
+
+    def test_selection_is_refused_rather_than_ignored(self):
+        """A member that quietly dropped `scale` would misname its own score."""
+        from till_infinity.structures.statespace.diagonal import Diagonal
+
+        with pytest.raises(ValueError, match="time-invariant"):
+            Diagonal(scale=0.3)
+        # And the time-invariance is real, not just asserted: the retention is
+        # the same whatever innovation is put in front of it.
+        member = Diagonal()
+        assert member.retention(1.0, z=0.0) == member.retention(1.0, z=5.0)
+
+    def test_it_is_registered_so_it_can_be_pooled_and_scored(self):
+        """The whole point of promotion, and it needs an adaptation lever."""
+        from till_infinity.structures.statespace.family import members
+        from till_infinity.structures.statespace.pooling import DEFAULT, LEVERS, Pooled
+
+        assert members()["s4d"].__name__ == "Diagonal"
+        # `Adapting` refuses a lever that names no field, so the registry entry
+        # and the lever table have to agree or the pool raises.
+        assert LEVERS["s4d"] == "noise"
+        pool = Pooled(names=("kalman", "s4d", "reverting"))
+        assert len(pool.members) == 3
+        # Promotion makes it available and comparable. It does **not** change
+        # the measured production pool, which is a separate decision.
+        assert "s4d" not in DEFAULT
+
+
+class TestTheCoverageAccessor:
+    """`Readout.covering` - the consumer the t band did not have.
+
+    `quantiles` and `band_covering` were both offered with no rule saying which
+    to use, and the rule is not obvious: a 2-sigma band is about right and a
+    4-sigma band is breached 88 times more often than its Gaussian label
+    claims. This is that rule, written once.
+    """
+
+    DOF = 3.5
+
+    @staticmethod
+    def _t(rng, dof=4.0):
+        """One draw from a t with unit variance, so the scale is known exactly."""
+        chi = sum(rng.gauss(0.0, 1.0) ** 2 for _ in range(4))
+        return rng.gauss(0.0, 1.0) / math.sqrt(max(chi, 1e-9) / 4.0) * math.sqrt(0.5)
+
+    @classmethod
+    def _warm(cls, *, spread=1.0, seed=1, n=500, shift=0.0, draw=None):
+        """A readout carrying the grid `_quantiles` publishes, 0.05 to 0.95."""
+        import random
+
+        from till_infinity.structures.statespace.facade import Readout
+
+        rng = random.Random(seed)
+        pick = draw or (lambda: cls._t(rng))
+        kept = sorted(pick() for _ in range(n))
+        grid = tuple(
+            (i / 20.0, 100.0 + shift + kept[min(int(i / 20.0 * n), n - 1)]) for i in range(1, 20)
+        )
+        return Readout(
+            feed="EURUSD", interval="1h", at=0.0, value=100.0, spread=spread, quantiles=grid
+        )
+
+    def test_the_arm_is_chosen_by_what_can_reach(self):
+        """Measured inside the grid, anchored outside it, assumed with no grid."""
+        got = self._warm()
+
+        # The grid runs 0.05 to 0.95, so it serves a central 0.90 and no more.
+        assert got.widest == 0.90
+        assert got.covering(0.50).source == "measured"
+        assert got.covering(0.90).source == "measured"
+        assert got.covering(0.95).source == "anchored"
+        assert got.covering(0.999).source == "anchored"
+
+        # The limit is read off the grid rather than assumed, so a coarser grid
+        # hands over to the t sooner.
+        from till_infinity.structures.statespace.facade import Readout
+
+        coarse = Readout(
+            feed="EURUSD",
+            interval="1h",
+            at=0.0,
+            value=100.0,
+            spread=1.0,
+            quantiles=((0.25, 99.0), (0.5, 100.0), (0.75, 101.0)),
+        )
+        assert coarse.widest == 0.50
+        assert coarse.covering(0.50).source == "measured"
+        assert coarse.covering(0.60).source == "anchored"
+
+    def test_a_cold_readout_says_the_shape_was_assumed(self):
+        """With no residuals it is `band_covering`, and it admits as much."""
+        from till_infinity.structures.statespace.facade import Readout
+
+        cold = Readout(feed="EURUSD", interval="1h", at=0.0, value=100.0, spread=0.04)
+        assert cold.widest == 0.0
+        got = cold.covering(0.999)
+        assert got.source == "assumed"
+        assert (got.low, got.high) == cold.band_covering(0.999)
+        # A t is symmetric, so the assumed arm cannot carry skew.
+        assert got.skew == pytest.approx(0.0)
+        assert got.centre == pytest.approx(cold.value)
+
+    def test_the_seam_does_not_step(self):
+        """The anchored arm grows the measured edge, so the two meet exactly."""
+        got = self._warm()
+        inside = got.covering(got.widest)
+        outside = got.covering(got.widest + 1e-9)
+        assert inside.source == "measured"
+        assert outside.source == "anchored"
+        assert outside.low == pytest.approx(inside.low, abs=1e-6)
+        assert outside.high == pytest.approx(inside.high, abs=1e-6)
+
+    def test_the_anchor_is_the_measured_median_so_the_band_cannot_invert(self):
+        """Residuals that all agree are the pathological case, and it holds."""
+        got = self._warm(draw=lambda: 0.0, shift=-5.0)
+        # Every quantile is the same number, well away from the filter's value.
+        wide = got.covering(0.999)
+        assert wide.low <= wide.high
+        # Anchored on the grid's own median, not on `value`, so it does not
+        # drift back toward a centre the residuals disagree with.
+        assert wide.centre == pytest.approx(95.0)
+
+    def test_the_measured_asymmetry_survives_into_the_tail(self):
+        """A skewed grid stays skewed the same way once the t extends it."""
+        import random
+
+        rng = random.Random(5)
+        # Positive residuals twice the size of negative ones: a one-sided tail.
+        got = self._warm(draw=lambda: abs(rng.gauss(0.0, 1.0)) * rng.choice((2.0, -1.0)))
+        edge = got.covering(got.widest)
+        far = got.covering(0.999)
+        assert edge.skew > 0.0
+        assert far.skew > edge.skew
+        # And it is the same shape, grown - the ratio of the two sides holds.
+        assert (far.high - far.centre) / (far.centre - far.low) == pytest.approx(
+            (edge.high - edge.centre) / (edge.centre - edge.low), rel=1e-9
+        )
+
+    def test_the_anchor_is_what_makes_it_free_of_the_filter_scale(self):
+        """The claim, and the reason the anchored arm exists at all.
+
+        The pure t stands on `spread` being the right scale for the residuals,
+        and `statespace-river-against-members.md` measured that it is not: the
+        pool read a PIT flatness of **43.05**, which is a filter whose sd is
+        too small. The anchored arm reads the scale off the residuals instead,
+        so its error does not move when `spread` is wrong - and the pure t's
+        error is proportional to the mistake.
+        """
+        from till_infinity.structures.statespace import tails
+
+        truth = 100.0 + tails.reach(0.999, self.DOF)
+        anchored, pure = {}, {}
+        for off in (1.0, 0.5, 2.0):
+            got = self._warm(spread=off**2)
+            anchored[off] = abs(got.covering(0.999).high - truth)
+            pure[off] = abs(got.band_covering(0.999)[1] - truth)
+
+        # The anchored arm is unmoved by the scale error, to the last digit.
+        assert anchored[0.5] == pytest.approx(anchored[1.0], rel=1e-12)
+        assert anchored[2.0] == pytest.approx(anchored[1.0], rel=1e-12)
+        # The pure t inherits all of it, exactly: its error is the reach times
+        # the scale mistake, which is why a magnitude is not needed here.
+        reach = tails.reach(0.999, self.DOF)
+        assert pure[0.5] == pytest.approx(abs(0.5 - 1.0) * reach, rel=1e-9)
+        assert pure[2.0] == pytest.approx(abs(2.0 - 1.0) * reach, rel=1e-9)
+        # And it loses to the anchored arm at both wrong scales.
+        assert anchored[0.5] < pure[0.5]
+        assert anchored[2.0] < pure[2.0]
+        # Where the scale is right, the pure t is exact and anchoring costs a
+        # little sampling noise. That is the whole trade, stated rather than hidden.
+        assert pure[1.0] < anchored[1.0]
+        assert anchored[1.0] < 0.1 * reach
+
+    def test_the_far_tail_is_wider_than_the_gaussian_label(self):
+        """The reason any of this matters, in the units a caller reads."""
+        got = self._warm()
+        near = got.covering(0.95)
+        far = got.covering(0.999)
+        # Monotone in coverage, and the far tail is far wider than 1.96/3.29
+        # would suggest - the Gaussian ratio there is only 3.29/1.96 = 1.68.
+        assert far.half > near.half
+        assert far.half / near.half > 1.68
+
+    def test_a_coverage_outside_the_unit_interval_is_refused(self):
+        got = self._warm()
+        for bad in (0.0, 1.0, -0.5, 2.0):
+            with pytest.raises(ValueError, match="coverage"):
+                got.covering(bad)
 
 
 class TestDispersionOfMeans:

@@ -320,6 +320,7 @@ def members() -> dict[str, type]:
     """The family members that exist here. Imported lazily to keep this module
     importable while the rest of the package is still being written."""
     from .changepoint import Changepoint
+    from .diagonal import Diagonal
     from .landau import Landau
     from .linear import Gaussian
     from .reverting import Reverting
@@ -329,6 +330,7 @@ def members() -> dict[str, type]:
 
     return {
         "kalman": Gaussian,
+        "s4d": Diagonal,
         "reverting": Reverting,
         "landau": Landau,
         "robust": Robust,
