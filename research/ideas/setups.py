@@ -66,6 +66,7 @@ from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
 from till_infinity.structures.statespace.pivoting import pivots  # noqa: E402
 from till_infinity.structures.drawing.displacement import displacements  # noqa: E402
+from till_infinity.structures.drawing.gaps import imbalances  # noqa: E402
 from till_infinity.structures.vol.volatility import Volatility  # noqa: E402
 from till_infinity.trading.candles import Bar, engulfing  # noqa: E402
 
@@ -198,6 +199,9 @@ REJECTED = 3
 #: * **trend** - the sign of a fitted slope (`slope 4h`)
 #: * **location** - where price sits in the higher timeframe's range (`range 4h`)
 #: * **gap** - the sign of the last bar-to-bar gap (`gap 4h`)
+#: * **imbalance** - a band price left behind rather than a shape it drew: a
+#:   fair value gap (`fvg 4h`), a volume imbalance (`imbalance 4h`) or a void
+#:   (`void 4h`), all from `drawing.gaps.imbalances`
 #:
 #: Dispersion is deliberately **not** in this list. It is the one forecastable
 #: quantity here and the others are not, but it says how **far** and not which
@@ -212,6 +216,9 @@ BIASES = (
     "slope 4h",
     "range 4h",
     "gap 4h",
+    "fvg 4h",
+    "void 4h",
+    "imbalance 4h",
 )
 
 #: Higher-timeframe bars a slope is fitted over, and the share of its range
@@ -245,6 +252,40 @@ def _pushes(bars: dict[str, np.ndarray], run: int = 2) -> list[tuple[float, int]
     out = [
         (float(times[min(one.confirmed_at, len(times) - 1)]), 1 if one.up else -1) for one in found
     ]
+    out.sort()
+    return out
+
+
+def _imbalances(bars: dict[str, np.ndarray], kind: str) -> list[tuple[float, int]]:
+    """`(time, side)` for one kind of untraded band, from production's own code.
+
+    `drawing.gaps.imbalances` rather than a definition of mine: it already
+    distinguishes six kinds - a fair value gap, a volume imbalance, an opening
+    gap, a void, an inverted gap and a balanced range - and `Imbalance.up`
+    carries the sense, *left by a move up, so it sits below and reads as
+    support*. Writing a seventh definition here would be measuring my own
+    arithmetic rather than the desk's.
+
+    **Stamped one bar after the index**, which is the conservative reading. A
+    fair value gap is a three-bar pattern whose third bar is `index + 1`, so
+    the band is not knowable at `index`; using the stamping bar's own time
+    would be the same leak the pivot confirmation times exist to prevent, and
+    one bar of caution costs nothing.
+    """
+    closes = np.asarray(bars["close"], dtype=float)
+    live = Volatility()
+    for one in closes:
+        live.update(float(one))
+    found = imbalances(
+        [float(v) for v in bars["open"]],
+        [float(v) for v in bars["high"]],
+        [float(v) for v in bars["low"]],
+        [float(v) for v in closes],
+        live,
+        kinds=(kind,),
+    )
+    times = bars["time"]
+    out = [(float(times[min(one.index + 1, len(times) - 1)]), 1 if one.up else -1) for one in found]
     out.sort()
     return out
 
@@ -424,6 +465,11 @@ def run(bars: dict[str, np.ndarray], higher: dict[str, np.ndarray], rng) -> dict
     sloped = _slopes(higher)
     located = _locations(higher)
     gapped = _gaps(higher)
+    # Three more kinds of bias, each a band price left behind rather than a
+    # shape it drew: a fair value gap, a volume imbalance and a void.
+    fvgs = _imbalances(higher, "fvg")
+    voids = _imbalances(higher, "void")
+    vis = _imbalances(higher, "vi")
     window = 8 * 4 * 3600.0
     middle = float(bars["time"][len(bars["time"]) // 2])
 
@@ -502,6 +548,10 @@ def run(bars: dict[str, np.ndarray], higher: dict[str, np.ndarray], rng) -> dict
                 "slope 4h": _latest(sloped, when, window) == side,
                 "range 4h": _latest(located, when, window) == side,
                 "gap 4h": _latest(gapped, when, window) == side,
+                "fvg 4h": _latest(fvgs, when, window) == side,
+                "void 4h": _latest(voids, when, window) == side,
+                "imbalance 4h": _latest(vis, when, window) == side,
+                "fvg 4h+loud": _latest(fvgs, when, window) == side and noisy,
                 "displace 4h+loud": _latest(pushed_by, when, window) == side and noisy,
                 "slope+displace 4h": _latest(sloped, when, window) == side
                 and _latest(pushed_by, when, window) == side,
@@ -634,21 +684,27 @@ def main() -> None:
     rules = sorted({k[0] for k in got if not k[0].endswith("~flip")})
     classes = sorted({k[1] for k in got})
     print(
-        f"  {'rule':<19}{'half':>5}{'classes':>9}{'win gap':>9}{'+/-':>7}"
-        f"{'net R gap':>11}{'classes +':>11}"
+        f"  {'rule':<19}{'half':>5}{'cls':>5}{'win gap':>9}{'+/-':>7}"
+        f"{'R gap':>8}{'cls +':>7}{'R real':>9}{'R flip':>9}{'best net':>10}"
     )
     for rule in rules:
         for half in (0, 1):
-            gaps, monies, trades = [], [], 0
+            gaps, monies, reals, flips, trades = [], [], [], [], 0
             for label in classes:
                 real = _read(got, (rule, label, half))
                 flip = _read(got, (f"{rule}~flip", label, half))
                 if real is None or flip is None:
                     continue
                 gaps.append(real[1] - flip[1])
-                # Cost is charged on both arms, so it cancels in the gap - what
-                # is left is the directional content in units of risk.
+                # Cost cancels in the gap, so what is left is the directional
+                # content in units of risk - **but a gap is not money.** Both
+                # arms can be net negative while differing by 0.20R, so the
+                # absolute figures are carried too and `best net` is the better
+                # side after cost. A stable gap with both sides under water is
+                # a real finding about direction and not a tradeable one.
                 monies.append(real[2] - flip[2])
+                reals.append(real[2] - COST)
+                flips.append(flip[2] - COST)
                 trades += real[0]
             if not gaps:
                 continue
@@ -657,10 +713,13 @@ def main() -> None:
             spread = (
                 statistics.pstdev(gaps) / math.sqrt(len(gaps)) if len(gaps) > 1 else float("nan")
             )
+            best = max(statistics.median(reals), statistics.median(flips))
             print(
-                f"  {rule:<19}{half:>5}{len(gaps):>9}{statistics.median(gaps):>+9.4f}"
-                f"{spread:>7.4f}{statistics.median(monies):>+11.4f}"
-                f"{sum(1 for g in gaps if g > 0):>6}/{len(gaps):<4}"
+                f"  {rule:<19}{half:>5}{len(gaps):>5}{statistics.median(gaps):>+9.4f}"
+                f"{spread:>7.4f}{statistics.median(monies):>+8.3f}"
+                f"{sum(1 for g in gaps if g > 0):>4}/{len(gaps):<2}"
+                f"{statistics.median(reals):>+9.3f}{statistics.median(flips):>+9.3f}"
+                f"{best:>+10.3f}"
             )
 
 
