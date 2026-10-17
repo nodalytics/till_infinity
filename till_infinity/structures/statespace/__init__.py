@@ -421,6 +421,7 @@ from __future__ import annotations
 
 from .adapting import Adapting
 from .bounding import binding, feasible, least_horizon, slack, solve
+from .depths import AR1, Skill, Turn, Turns, depths, score
 from .diagnostics import Residuals, fit_jerk, residuals
 from .dispersion import (
     borrow_weight,
@@ -449,6 +450,7 @@ from .subjects import INSTRUMENT, LEVEL, RELATION, SUBJECTS, Subject
 from .tails import DOF, LEAST_DOF, coverage, dof_for, reach
 
 __all__ = [
+    "AR1",
     "BOUNDS",
     "DOF",
     "INSTRUMENT",
@@ -477,15 +479,19 @@ __all__ = [
     "Reverting",
     "Robust",
     "Signal",
+    "Skill",
     "Slope",
     "Smoothed",
     "Span",
     "Subject",
+    "Turn",
+    "Turns",
     "basis_price",
     "binding",
     "borrow_weight",
     "borrow_weight_of_means",
     "coverage",
+    "depths",
     "differ",
     "differ_means",
     "dof_for",
@@ -500,6 +506,7 @@ __all__ = [
     "reach",
     "residuals",
     "rogers_satchell",
+    "score",
     "simulate",
     "slack",
     "slope_per_bar",

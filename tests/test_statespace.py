@@ -284,7 +284,7 @@ class TestSubjects:
         number moves with the composition of the flow. A cost that is
         forecast is a different gate from a cost that is averaged.
         """
-        assert len(SUBJECTS) == 6
+        assert len(SUBJECTS) == 7
         assert {s.name for s in SUBJECTS} == {
             "level",
             "instrument",
@@ -295,10 +295,17 @@ class TestSubjects:
             # dispersion, and a subject now says which half it tracks.
             "dispersion",
             "relation dispersion",
+            # v1's one measured turn result, ported 2026-10-17. Depth is a
+            # magnitude, so it belongs in the dispersion half.
+            "turn depth",
         }
         from till_infinity.structures.statespace.subjects import DISPERSIONS
 
-        assert {s.name for s in DISPERSIONS} == {"dispersion", "relation dispersion"}
+        assert {s.name for s in DISPERSIONS} == {
+            "dispersion",
+            "relation dispersion",
+            "turn depth",
+        }
         assert all(s.tracks in ("level", "dispersion") for s in SUBJECTS)
         for s in SUBJECTS:
             assert s.quantity, s.name
@@ -7845,6 +7852,137 @@ class TestTails:
         assert got.covers(2.0) == pytest.approx(tails.coverage(2.0, tails.dof_for("1h")))
         middle = got.covers(2.0)
         assert got.band_covering(middle)[1] == pytest.approx(got.band(2.0)[1], rel=1e-6)
+
+
+class TestTurnDepthPorted:
+    """`depths` - v1's one measured turn result, as a dispersion quantity.
+
+    `structures/cycles.py` found turn **depth** predictable where the process
+    reverts (8 of 8 constructed spreads, +0.03 to +0.19) and turn **timing**
+    not (its `when` head scored positive on the nulls too). These tests pin
+    the statistic that claim is made with, because a skill quoted against one
+    baseline and computed against another is how the finding gets lost while
+    appearing to be kept.
+    """
+
+    @staticmethod
+    def _series(phi, n=600, seed=4, kick=0.4, level=1.0):
+        """Depths with a known persistence, so skill has a right answer."""
+        import random
+
+        from till_infinity.structures.statespace.depths import Turn
+
+        rng = random.Random(seed)
+        out, last = [], level
+        for i in range(n):
+            last = level + phi * (last - level) + rng.gauss(0.0, kick)
+            out.append(Turn(when=i * 3600.0, value=last, span=rng.gauss(0.0, kick), direction=1))
+        return out
+
+    def test_the_skill_finds_persistence_and_reads_zero_without_it(self):
+        """Power first, then the null - the order `show-power-before-reporting-a-null` asks for."""
+        from till_infinity.structures.statespace.depths import score
+
+        flat = score(self._series(0.0))
+        some = score(self._series(0.6))
+        lots = score(self._series(0.9))
+
+        # Nothing to predict means no skill, not a small positive one.
+        assert flat["depth ar1"] == pytest.approx(0.0, abs=0.03)
+        # And it rises monotonically with the persistence that is really there.
+        assert some["depth ar1"] > 0.1
+        assert lots["depth ar1"] > some["depth ar1"]
+
+    def test_the_timing_arm_is_carried_because_it_failed(self):
+        """v1's `when` read positive on nulls, so the arm has to exist to catch that."""
+        from till_infinity.structures.statespace.depths import score
+
+        # The span here is i.i.d. by construction, so its skill must be zero
+        # at every depth persistence - a port that dropped this arm could not
+        # reproduce v1's finding that timing skill is a metric artefact.
+        for phi in (0.0, 0.6, 0.9):
+            got = score(self._series(phi))
+            assert got["span ar1"] == pytest.approx(0.0, abs=0.03)
+
+    def test_the_baseline_is_causal_and_kept_inside_the_statistic(self):
+        """Neither arm may see the observation it is being scored on."""
+        from till_infinity.structures.statespace.depths import Skill
+
+        got = Skill()
+        # The first observation cannot be scored: there is no prior mean to be
+        # a baseline, and scoring it against itself would read skill 0 on a
+        # sample of one.
+        got.observe(5.0, 10.0)
+        assert got.settled == 0
+        got.observe(5.0, 10.0)
+        assert got.settled == 1
+        # The baseline guessed the mean of what came before (10.0) and was
+        # exactly right; the model guessed 5.0 and was not.
+        assert got.base == pytest.approx(0.0)
+        assert got.error == pytest.approx(5.0)
+        assert math.isnan(got.skill)  # still under LEAST
+
+    def test_a_skill_is_not_reported_on_too_few_turns(self):
+        from till_infinity.structures.statespace.depths import LEAST, score
+
+        thin = score(self._series(0.9, n=LEAST - 5))
+        assert math.isnan(thin["depth ar1"])
+        enough = score(self._series(0.9, n=LEAST + 200))
+        assert not math.isnan(enough["depth ar1"])
+
+    def test_the_ar1_arm_cannot_extrapolate(self):
+        """A fitted coefficient outside the stationary range is a unit root."""
+        from till_infinity.structures.statespace.depths import AR1
+
+        got = AR1()
+        # A perfectly trending series fits phi above one; clamping is what
+        # keeps `guess` a prediction rather than an extrapolation.
+        for value in range(1, 40):
+            got.observe(float(value) * 10.0)
+        assert abs(got.guess) < 1e6
+        assert got.seen == 39
+
+    def test_depths_are_read_on_the_confirmation_clock(self):
+        """The leak the two timestamps exist to prevent."""
+        from till_infinity.structures.statespace.depths import depths
+        from till_infinity.structures.statespace.displacements import Displacement
+
+        moves = [
+            Displacement(ended=100.0, confirmed=460.0, size=2.0, hours=3.0, direction=1),
+            Displacement(ended=800.0, confirmed=1160.0, size=0.0, hours=2.0, direction=-1),
+            Displacement(ended=900.0, confirmed=1260.0, size=4.0, hours=0.0, direction=1),
+            Displacement(ended=1000.0, confirmed=1360.0, size=8.0, hours=4.0, direction=-1),
+        ]
+        got = depths(moves)
+        # A zero size and a zero duration are both unusable, and are dropped
+        # rather than logged into an infinity.
+        assert len(got) == 2
+        assert [turn.when for turn in got] == [460.0, 1360.0]
+        assert got[0].value == pytest.approx(math.log(2.0))
+        assert got[1].span == pytest.approx(math.log(4.0))
+        # And the raw space is available, because v1 scored in it and the two
+        # numbers must not be presented as each other.
+        raw = depths(moves, logged=False)
+        assert raw[0].value == pytest.approx(2.0)
+
+    def test_a_family_member_can_be_scored_on_the_turn_clock(self):
+        """The port's point: the depth series is something the family can read."""
+        from till_infinity.structures.statespace.depths import Turns
+        from till_infinity.structures.statespace.reverting import Reverting
+        from till_infinity.structures.statespace.subjects import TURN_DEPTH
+
+        assert TURN_DEPTH.tracks == "dispersion"
+        turns = Turns(member=Reverting())
+        for turn in self._series(0.8, n=300):
+            turns.observe(turn)
+        got = turns.read()
+        assert "depth member" in got
+        assert not math.isnan(got["depth member"])
+        # `reverting` reverts the *rate* and leaves the value integrated, so on
+        # a mean-reverting magnitude it should not beat the AR(1) arm. Stated
+        # as the expectation rather than asserted as a result, because what the
+        # subject records is that the family has no value-reverting member.
+        assert got["depth ar1"] > got["depth member"]
 
 
 class TestForwardPaths:

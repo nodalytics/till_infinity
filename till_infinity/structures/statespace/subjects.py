@@ -11,6 +11,7 @@ three is only **what the three numbers mean and what a measurement is**:
 | `RELATION` | the fair spread of a set | the realised spread | the deviation's dispersion |
 | `DISPERSION` | how wide a bar is | its range-based variance, logged | the width's own spread |
 | `RELATION_DISPERSION` | how wide a deviation swings | its variance, logged | the width's spread |
+| `TURN_DEPTH` | how far the next swing runs | a swing's size, logged | the depth's spread |
 
 Statistical arbitrage is not a second system here. It is `RELATION`: level
 becomes relationship, distance becomes deviation, zone becomes deviation
@@ -339,6 +340,42 @@ RELATION_DISPERSION = Subject(
 )
 
 
+TURN_DEPTH = Subject(
+    name="turn depth",
+    quantity="log size of the next move between confirmed reversals",
+    measurement="the completed swing's size in volatility units, logged",
+    units="log volatility units",
+    jerk=1e-3,
+    noise=0.25,
+    provenance=(
+        "**ported from v1 on 2026-10-17, and one of the few measured-positive "
+        "results in `structures/cycles.py`.** That module's own docstring: "
+        "*the turn depth is predictable where the process reverts - skill "
+        "against the running mean is negative or zero on every simulated arm "
+        "and positive on 8 of 8 constructed spreads, +0.03 to +0.19*; and "
+        "*how long until the turn is not - `when` scores positive on the "
+        "nulls too, so its positive values are a property of the metric "
+        "rather than of the series*. Depth is a magnitude and timing is not, "
+        "which is the same split `dispersion-forecast.md` reached by different "
+        "machinery on different data, so this belongs in the dispersion half. "
+        "**The numbers do not transfer**: v1 marks a turn when price retraces "
+        "`TURN_SIGMAS = 2.0` of its leg, `statespace/depths.py` uses "
+        "`displacements.sequence` over confirmed pivots, and those are "
+        "different events - what transfers is whether a model beats a causal "
+        "running mean. Both parameters are placeholders. `noise` is 0.25 and "
+        "is **not** measurement error: a swing's size is an exact distance "
+        "between two confirmed extremes, so it stands for the part of the "
+        "next depth no state can carry. The member named here is the honest "
+        "one and not the right one - depth reverts in **level** and "
+        "`reverting` reverts the *rate*, leaving the value integrated, so the "
+        "family still has no value-reverting member and `depths.AR1` is the "
+        "arm that stands in for it"
+    ),
+    member="reverting",
+    tracks="dispersion",
+)
+
+
 #: Every subject, so a test can assert the invariants hold for all of them rather
 #: than for whichever one was added first.
 SUBJECTS: tuple[Subject, ...] = (
@@ -348,6 +385,7 @@ SUBJECTS: tuple[Subject, ...] = (
     SPREAD,
     DISPERSION,
     RELATION_DISPERSION,
+    TURN_DEPTH,
 )
 
 #: The subjects that claim the open half of the problem. A harness pointing the

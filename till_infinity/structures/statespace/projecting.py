@@ -239,6 +239,69 @@ class Projection:
             return None
         return float(steps[min(int(coverage * len(steps)), len(steps) - 1)])
 
+    def geometry(self, *, stop: float, reward: float, cost: float = 0.0) -> Geometry:
+        """Price one stop-and-target pair, long, in units of the stop.
+
+        `stop` and the target are distances from the starting price, `reward` is
+        the ratio between them, and `cost` is the round trip in the same units
+        as the stop - the number that decides everything, because the gross
+        expectancy is zero.
+
+        The undecided paths are marked out at their terminal price rather than
+        thrown away. Dropping them is the mistake that makes a long hold look
+        free: at a wide target most paths never resolve, and scoring only the
+        ones that did is conditioning on the outcome.
+        """
+        if stop <= 0.0:
+            raise ValueError("stop has to be a positive distance")
+        if reward <= 0.0:
+            raise ValueError("reward has to be positive")
+        up = self.start + reward * stop
+        down = self.start - stop
+        race = self.barrier(up=up, down=down)
+
+        # **Each outcome is settled on the pessimistic side of its barrier.**
+        #
+        # Crediting a win at exactly the target and charging a loss at exactly
+        # the stop understates the losses, because a fat-tailed step overshoots
+        # both barriers and the **nearer** one overshoots proportionally more.
+        # That bias is enough to invent edge: at `reward = 3` on a driftless
+        # projection the gross expectancy read **+0.0701**, and a positive
+        # expectancy on a martingale is a bug by this desk's own rule.
+        #
+        # So a loss is charged at the excursion the path actually reached on
+        # the bar that breached the stop, which is at least the stop and is the
+        # conservative read of where it would have filled; a win is credited at
+        # exactly the target, taking no favourable overshoot. The errors now
+        # both point the same way, and that way is against the trade.
+        final = self.walks[-1]
+        total = 0.0
+        for path in range(self.paths):
+            at_up = self._first_up(path, up)
+            at_down = self._first_down(path, down)
+            if at_up >= 0 and (at_down < 0 or at_up < at_down):
+                total += reward
+            elif at_down >= 0:
+                reached = self.falling[at_down - 1][path]
+                total -= max(1.0, (self.start - reached) / stop)
+            else:
+                total += (final[path] - self.start) / stop
+        expectancy = total / self.paths
+        return Geometry(
+            stop=stop,
+            target=reward * stop,
+            reward=reward,
+            wins=race["up"],
+            loses=race["down"],
+            undecided=race["neither"],
+            expectancy=expectancy,
+            cost=float(cost),
+            # Moving `d` of mass from the stop side to the target side changes
+            # the expectancy by `d * (reward + 1)`, so the requirement is the
+            # shortfall divided by that.
+            edge=(float(cost) - expectancy) / (1.0 + reward),
+        )
+
     def barrier(self, up: float, down: float) -> dict[str, float]:
         """Which of two levels is reached first, over the horizon.
 
@@ -287,6 +350,50 @@ TABLE = 2001
 #: Stated, because a clamp that is not stated is a silent truncation of exactly
 #: the thing a path distribution is asked about.
 EDGE = 5e-5
+
+
+@dataclass(frozen=True, slots=True)
+class Geometry:
+    """What one stop-and-target pair costs, and the edge it would need to pay.
+
+    The last field is the point. A dispersion forecast **cannot** make a
+    driftless market pay - the barrier identity *is* the martingale theorem, so
+    every geometry has expectancy zero before costs and negative after, and any
+    arm reporting otherwise on a walk has a bug rather than an edge. What a
+    measured dispersion can do is say **how much directional advantage a given
+    geometry would need**, and that number is checkable against the direction
+    edge this desk has actually measured, which is about zero.
+
+    So this is not a chooser that finds favourable geometry. It is a chooser
+    that prices the requirement, and lets a geometry be rejected for needing
+    more than anything available can supply.
+    """
+
+    #: Distances from the entry, in price.
+    stop: float
+    target: float
+    #: Reward to risk, `target / stop`.
+    reward: float
+    #: Where the race ended, from the simulation.
+    wins: float
+    loses: float
+    undecided: float
+    #: Expected result in units of the stop, including the undecided paths
+    #: marked out at their terminal price. On a martingale this is ~0 before
+    #: cost, and that is the assertion rather than the hope.
+    expectancy: float
+    #: Cost charged, in units of the stop.
+    cost: float
+    #: Probability mass that would have to move from the stop side to the
+    #: target side for `expectancy - cost` to reach zero. **The requirement.**
+    #: Negative means the geometry already pays, which on a driftless
+    #: projection means the cost was understated.
+    edge: float
+
+    @property
+    def net(self) -> float:
+        """Expectancy after cost, in units of the stop."""
+        return self.expectancy - self.cost
 
 
 def _table(readout, basis_scale: float) -> tuple[tuple[float, ...], str]:
