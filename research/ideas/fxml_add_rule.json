@@ -1,0 +1,75 @@
+{
+ "frozen": "2026-10-06",
+ "addendum_to": "fxml_rule.json (c6e4872; amended 4b7a325, a6ce025) and fxml_index_rule.json (b0469b0)",
+ "status": "frozen and committed before any of the runs below. P1 and P2 stay as frozen; everything here is secondary under Benjamini-Hochberg (q = 0.10), in its own family per section",
+ "why": "desk requests after the first results: (1) the rollover check on ticks, (2) price and return prediction with the standard regression metrics, (3) sequence models (LSTM, GRU, TCN), (4) escapes from the current price range, (5) the trend over the next 5-100 bars",
+
+ "common": {
+  "classes": "FX, METAL, HOLD (the holdout) from the main dataset; INDEX from the index dataset with its own split (2025-06-01)",
+  "timeframes": ["1h", "4h", "1d"],
+  "split_fit_cal": "as the main rule: discovery = labels resolved before the split; fit = the first 80% of discovery (purged at the boundary by the label horizon); calibration = the last 20%",
+  "features": "the registered models' first-frozen feature set (plus x_ and ix_ on INDEX); family-specific distance features are added where stated",
+  "models": "HistGradientBoosting (the main rule's default configuration, no tuning), ridge / logistic (as the main rule), and the walk-trained twins (the identical pipeline on the iid and GARCH walks)",
+  "rollover_headline": "the headline of every section excludes rows whose signal bar, or whose label's last bar, is a rollover-adjacent bar: 1h bars opening 19:00-22:00 UTC, 4h bars opening 16:00 and 20:00 UTC (FX, metals, holdout; for INDEX the same UTC bars, which hold the US cash close). All-bars numbers are reported next to it as the contrast",
+  "bootstrap": "whole UTC days, 300 draws, 90% intervals; real and walk rows share calendar days",
+  "behavioural": "every skill measure is reported for real, both walk twins and real minus walk"
+ },
+
+ "1_rollover_ticks": {
+  "bridge": "the lab's MT5 bridge needs the bridge's credentials, which this study does not read (no production env). So the check uses the ticks already stored on the lab, read-only: mt5bt.db ticks (EURUSD, XAUUSD, 2026-09-02 to 2026-10-02), research.db ticks (16 FX / metal feeds, 2026-09-09 to 09-10) and data/reopen_ticks.db (the 12 FX pairs' weekend reopen windows, 15 minutes before to 3 hours after, 2024-11 to 2026-09)",
+  "R1_spread": "median ask - bid by minute from 20:00 to 24:00 UTC on the daily rollover, against the spread floor charged, in pips and in 1h ATR",
+  "R2_mid_label": "on every confirmation rollover-adjacent 1h bar with ticks at both closes: the next-bar sign recomputed from the mid price (last tick before each bar's close) and from the bid, and the frozen 1h model's AUC on each; the same on the non-rollover bars of the same days as the control",
+  "R3_tick_trade": "the frozen conformal-set trade on rollover-adjacent 1h bars with ticks: entry at the first tick at or after the entry bar's open, at the ask (long) or bid (short); exits on ticks while ticks last (a long sells at the bid, a stop fills at the first bid at or below it, a target fills at the target when the bid reaches it; mirrored for shorts), then on bars with the spread floor; compared with the bar-priced R of the same trades",
+  "touch_check": "the tup05 / tdn05 / tup10 / tdn10 AUC split by rollover-adjacent bars against the rest, real and walks"
+ },
+
+ "2_returns_and_prices": {
+  "return_targets": "ret_h = (C_{t+h} - C_t) / ATR_t for h in 1, 3, 6, 12 bars at every timeframe (the training target; log returns are reported by the same metrics on log(C_{t+h} / C_t)); oc1 = (C_{t+1} - O_{t+1}) / ATR_t, the next bar's open-to-close",
+  "price_targets": "the next close, high and low and the close 12 bars ahead, trained on the ATR-scaled moves from the last close (hi1 = (H_{t+1} - C_t) / ATR_t, lo1 = (L_{t+1} - C_t) / ATR_t, ret1, ret12) and mapped back to price only for reporting",
+  "models": "HGB (squared loss), ridge, the online AdaGrad linear learner (main rule), the sequence models of section 3 for ret1, and the walk twins",
+  "naive": "close: the last close (a zero move). High / low: the last close +/- c x EWMA sigma, with c the mean of (H_{t+1} - C_t) / sigma (resp. (C_t - L_{t+1}) / sigma) on the fit rows. Historical mean: the fit rows' mean move per class",
+  "metrics": "R2_OS = 1 - SSE_model / SSE_naive against zero (and against the historical mean), with day-bootstrap 90% intervals: the headline; R2 against a zero-mean forecast; R2 on price levels for the model AND for the naive forecast side by side (both near 1, shown to be meaningless); RMSE, MAE; MAPE on levels; Theil's U = RMSE_model / RMSE_naive; directional accuracy of the predicted move; Pearson IC and Spearman IC pooled; the mean per-bar cross-sectional rank IC across instruments; Mincer-Zarnowitz (actual on predicted: intercept, slope); Diebold-Mariano against naive on squared error with day-clustered variance",
+  "midpoint_signal": "(predicted hi1 + predicted lo1) / 2 as a direction signal: AUC for the next bar's sign and for the sign of the next bar's midpoint",
+  "intervals": "90% intervals for ret1, hi1, lo1: HGB quantile 0.05 / 0.95 under ACI (gamma 0.005) against EWMA sigma x the fit rows' standardised-residual quantiles under ACI; coverage and width, mapped to price",
+  "volatility_metrics": "for range1 and rvk (main run): R2_OS of log realised volatility against HAR and against the historical mean, QLIKE, Mincer-Zarnowitz on logs",
+  "portfolio": "per bar time, across the class's cross-section (FX + metals + holdout; INDEX on its own): long the top tercile and short the bottom tercile of predicted ret1, equal weight, held one bar, in ATR units; cost = the spread in ATR on every change of membership; mean, Sharpe (per-bar mean / sd x sqrt(bars a year)) and day-bootstrap 90% interval, real against walks"
+ },
+
+ "3_sequence_models": {
+  "torch": "torch 2.14 CPU in the lab .venv; 2 threads per run",
+  "inputs": "per bar, from bars at or before t: gap (O - C_prev), high (H - C_prev), low (L - C_prev), close (C - C_prev) in ATR_{t-1}; log(range / ATR_{t-1}); body, upper and lower wick / range; sin and cos of the UTC hour; log ATR_t / ATR_{t-1}. Windows of 64 bars (primary); LSTM also at 32 and 128 at 4h",
+  "architectures": "LSTM (1 layer, 32 hidden), GRU (1 layer, 32 hidden), TCN (3 causal conv layers, 32 channels, kernel 3, dilations 1, 2, 4); the last hidden state into a shared linear layer of 32 and five heads",
+  "heads": "sign1 (BCE), tup05 and tdn05 (BCE), log rvk (MSE), ret1 (MSE, clipped at +/-5); loss = the sum with weights 1, 1, 1, 0.5, 0.5",
+  "training": "discovery fit rows only, pooled across series; the last 15% of fit rows by time is the early-stopping validation set, purged by the longest label horizon; Adam 1e-3, batch 512, an epoch = 100,000 random training windows, at most 15 epochs, patience 3; seeds 1, 2, 3; identical on both walks",
+  "order": "4h and 1d first; 1h with the same budget (the epoch definition caps its cost)",
+  "report": "per head: the sequence models against HGB and logistic on the same rows (AUC, QLIKE, R2_OS), real against walks, rollover excluded in the headline, seed spread; learning curves; the frozen conformal-set trade on the sign head"
+ },
+
+ "4_range_escape": {
+  "bands": "round-number bands: per instrument a power-of-ten width W chosen on the real discovery data as the one whose W / median daily ATR is closest to 3 (frozen per instrument, used unchanged on its walks). The band at t is [floor(C_t / W) W, + W]",
+  "band_targets": "within k bars: the high reaches the band's top (up), the low reaches its bottom (down), and which first (same-bar both and neither excluded); k = about 1, 5 and 20 days: 1h 24 / 120 / 480, 4h 6 / 30 / 120, 1d 1 / 5 / 20",
+  "range_targets": "the trading range = the high and low of the last L bars including t, L in 20, 50, 100. Within k bars: a close above the range high + 0.5 ATR (up), below the range low - 0.5 ATR (down), and which first. L = 50 at all three k; L = 20 and L = 100 at the 5-day k. For L = 50, 5-day k: the excursion after the break (the furthest close beyond the broken edge within the remaining window, in ATR)",
+  "mcfl_box": "not used (not cheap to replay on every walk)",
+  "features_added": "distance to each barrier in ATR and in EWMA-sigma x sqrt(k) units; position in the band / range",
+  "baseline": "first passage on a driftless Brownian motion: single barrier P = 2 (1 - Phi(d / (sigma sqrt k))), sigma = the EWMA one-bar sigma; which first = a simulated two-barrier first-passage table (Brownian, 256 steps, 20,000 paths per grid point, interpolated), conditioned on a touch; each Platt-recalibrated on discovery fit rows. Plus the walk twin",
+  "metrics": "AUC, Brier skill over first passage, log-loss, reliability; ACI sets (alpha 0.10) for which first; real minus walk",
+  "round_number_crowd_test": "touch-and-reject at the band edges: P(the bar's high reaches the top and the bar closes back below it by > 0.25 ATR | the high reaches the top) and the mirror at the bottom, against the same for an arbitrary level halfway between round numbers, real against walks",
+  "trade": "only if a target beats first passage AND the walks with intervals above 0: frozen rule written then"
+ },
+
+ "5_forward_trend": {
+  "horizons": [5, 10, 20, 50, 100],
+  "primary": "on HLC3 = (H + L + C) / 3 of bars t+1..t+H only: the forward LRC(H) slope / ATR_t (regression), its sign (class), its Pearson R (regression) and clean = |R| > 0.8 (class); a 3-class label: up if slope x H >= 0.5 sqrt(H) ATR_t and R >= 0.5, down if slope x H <= -0.5 sqrt(H) ATR_t and R <= -0.5, else range",
+  "secondary_ohlc": "one least-squares line through all four prices of every bar in t+1..t+H (4H points, x = the bar index): slope sign",
+  "secondary_volume": "HLC3 weighted by the bar's tick volume (MT5 volume field), slope sign; coverage per instrument reported, series without volume dropped (the holdout exports and INDEX CSVs carry volume; walks: each bar's volume resampled from the real series' volumes at the same UTC hour, seeded)",
+  "contrast": "the close-only forward LRC(H) slope sign",
+  "mcfl_state": "not used: the structure state at t+H depends on swings confirmed before t+1, so it cannot be computed on t+1..t+H alone without inventing a new definition",
+  "persistence_baseline": "the backward trend computed the same way on t-H+1..t (HLC3 slope and sign for the primary; the OHLC and volume versions for theirs); on a walk it scores AUC 0.5",
+  "models": "HGB on the features plus the backward HLC3 slope, R and OHLC slope at every H",
+  "metrics": "AUC, Brier, log-loss, reliability for the signs, clean and the 3 classes (one-vs-rest AUC, multi-class log-loss); R2_OS, IC and Mincer-Zarnowitz for the slope; conformal sets for the sign (binary ACI) and the 3 classes (split, score 1 - p(y)): singleton rate and accuracy; persistence and model against the walks",
+  "purge": "labels resolve at t+H; purged and embargoed by H",
+  "trade": "only if a sign target beats persistence AND the walks: hold in the predicted direction for H bars with the 3-bar structural stop, P(N R), P(>=4R), P(>=10R) net of costs (and swap on INDEX)"
+ },
+
+ "plots": "error ratio to naive over time; return / price interval coverage; R2_OS by model and timeframe, real against walk; sequence-model learning curves; predicted against first-passage probability, reliability, band examples; trend skill against H per timeframe, real against walk, and reliability"
+}
