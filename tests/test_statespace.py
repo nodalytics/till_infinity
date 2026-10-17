@@ -7984,16 +7984,53 @@ class TestTheValueRevertingMember:
         self._drive(pulled, self._series())
         assert pulled.loglike > walk.loglike
 
-    def test_the_fit_finds_the_timescale_and_switches_off_where_there_is_none(self):
-        """The fix for the member's one measured defect.
+    def test_the_fit_recovers_the_true_timescale(self):
+        """Maximum likelihood on the grid, graded on what it can identify.
 
-        A fixed `theta` carries `exp(-theta * h)` of the current deviation into
-        every forecast whether the quantity reverts at that rate or not, which
-        cost **-0.73** of R2 at twenty bars on shuffled and constant-sigma
-        series where every fitted arm read about zero. The fit is a streaming
-        likelihood grid, and the two ends of that grid are what let it say *no
-        reversion* and *instant reversion*.
+        **Not on an h-step score**, and that distinction was measured rather
+        than assumed. At twenty bars of a series whose half-life is ten, the
+        deviation has decayed to about 7% and the forecast is essentially the
+        **level** - so an h-step R2 grades the level estimator, not the pull.
+        The proof is that the ceiling, with the *true* level and the *true*
+        pull, scores **0.3605** there while a member with a lagging level and
+        the right pull scores **0.5263**: a lagging level tracks a finite
+        sample's local mean better than the true unconditional one does.
+
+        So the fit is graded on recovering the timescale, which is what a
+        one-step likelihood can identify, and on going quiet where there is
+        nothing to recover.
         """
+        from till_infinity.structures.statespace.ornstein import Ornstein, _theta_for
+
+        def fit(xs):
+            member = Ornstein(
+                theta=_theta_for(24.0), sigma2=0.12, level_half_life=168.0, learn=True
+            )
+            for i, x in enumerate(xs):
+                member.update(x, 0.09, i * 3600.0)
+            return member
+
+        # The true half-life of an AR(1) at `phi` on hourly steps is
+        # `ln 2 / -ln phi`. The grid is spaced by factors of two, so landing
+        # within one step of the truth is the most that can be asked.
+        for phi, truth in ((0.70, 1.9), (0.93, 9.6), (0.99, 69.0)):
+            got = fit(self._series(phi=phi)).fitted_half_life
+            assert math.isfinite(got)
+            assert 0.5 * truth <= got <= 2.0 * truth, (phi, truth, got)
+
+        # No persistence: the fit goes to the fast end of the grid, so the
+        # forecast collapses onto the level and carries no noise forward.
+        assert fit(self._series(phi=0.0)).fitted_half_life <= 1.0
+
+        # And the residual form this replaced was biased **slow**, because it
+        # fitted the *filtered* deviations - which the Kalman gain has already
+        # pulled toward the level. It read 32 hours where the truth is 9.6; a
+        # density reads 8 on four thousand points and 16 on three thousand, so
+        # the bound here is the residual form's own reading.
+        assert fit(self._series(phi=0.93)).fitted_half_life < 32.0
+
+    def test_the_fit_removes_the_cost_of_a_wrong_pull_on_a_null(self):
+        """The defect it was written for, where the pull is what matters."""
         import random
 
         from till_infinity.structures.statespace.ornstein import Ornstein, _theta_for
@@ -8010,7 +8047,7 @@ class TestTheValueRevertingMember:
                     else x
                 )
                 member.update(x, 0.09, i * 3600.0)
-            return member, guesses
+            return guesses
 
         def score(xs, guesses):
             half = len(xs) // 2
@@ -8019,29 +8056,15 @@ class TestTheValueRevertingMember:
             floor = sum((a - base) ** 2 for a in xs[half:])
             return 1.0 - err / floor
 
-        # A quantity that reverts: the fit lands on a finite half-life and
-        # beats the placeholder.
-        reverting = self._series(phi=0.93)
-        fitted, got = run(reverting, True)
-        _, fixed = run(reverting, False)
-        assert math.isfinite(fitted.fitted_half_life)
-        assert fitted.fitted_half_life > 0.0
-        assert score(reverting, got) > score(reverting, fixed)
-
-        # A quantity with no persistence at all: the fit goes to the fast end,
-        # so at a twenty-bar horizon the forecast *is* the level and the member
-        # reads about zero instead of paying for carried noise.
+        # On a series with nothing to revert to, a fixed pull carries a share
+        # of pure noise into every forecast and pays for it. The fit does not.
         noise = self._series(phi=0.0)
-        fitted, got = run(noise, True)
-        _, fixed = run(noise, False)
-        assert score(noise, got) == pytest.approx(0.0, abs=0.02)
-        assert score(noise, got) > score(noise, fixed) + 0.05
+        assert score(noise, run(noise, True)) == pytest.approx(0.0, abs=0.02)
+        assert score(noise, run(noise, True)) > score(noise, run(noise, False)) + 0.05
 
-        # And shuffling a reverting series destroys exactly what the fit reads.
-        shuffled = list(reverting)
+        shuffled = list(self._series(phi=0.93))
         random.Random(1).shuffle(shuffled)
-        fitted, got = run(shuffled, True)
-        assert score(shuffled, got) == pytest.approx(0.0, abs=0.02)
+        assert score(shuffled, run(shuffled, True)) == pytest.approx(0.0, abs=0.03)
 
     def test_the_fitted_pull_keeps_the_anchor(self):
         """A fit cannot break the separation the level depends on."""

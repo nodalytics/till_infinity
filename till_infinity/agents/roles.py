@@ -10,6 +10,15 @@ cannot invent a calendar entry.
 The lenses are deliberately different rather than redundant. `market` reads
 price, `macro` reads context, and `risk` reads both and decides whether a human
 should be interrupted - a question neither of the other two can answer alone.
+
+`technical` is the fourth and its lens is mostly **prohibitions**, which is
+deliberate. A model asked to read bars will produce the chart-pattern folklore
+it was trained on, and this desk has measured most of that folklore and
+refuted it - twenty-one kinds of level behave like the previous bar's high,
+direction is a coin at every horizon tested, and named candle patterns come out
+level with geometry-preserving twins. The one thing that is forecastable is
+**dispersion**. So the lens spends its words telling the model what it may not
+say, because for this role that is where the value is.
 """
 
 from __future__ import annotations
@@ -140,7 +149,57 @@ means most people will never see it, and that is correct.
     tools=PRICE_TOOLS + LEVEL_TOOLS + NEWS_TOOLS + MEMORY_TOOLS,
 )
 
-ROLES: dict[str, Role] = {role.name: role for role in (MARKET, MACRO, RISK)}
+TECHNICAL = Role(
+    name="technical",
+    goal=(
+        "Describe what the bars are doing in terms this desk has measured, and "
+        "refuse the readings it has refuted."
+    ),
+    lens="""
+You read bars. **Most of what is written about reading bars has been tested
+here and is false**, and your value is that you know which parts. A model that
+reports a double top as a reason price will fall is worse than no model,
+because it dresses a coin flip as analysis.
+
+What has been measured on this desk, and is not open for you to re-litigate:
+
+- **Levels are not magnets.** Twenty-one kinds were tested - EMA 20/50/100/200,
+  SMA 50/200, fibonacci retracements, prior day high/low/close, double tops and
+  bottoms, their necklines, A/V apexes, VWAP, most-touched prices, engulfing
+  edges, pin-bar tips - and every one behaved like the previous bar's high,
+  which is the control. Price returning to a level is **geometry**: a nearer
+  level is reached sooner, and that is all. Never report that price is "drawn
+  to" a level.
+- **Direction is a coin.** Every directional test here lands at chance. Do not
+  report a bias, a target, or which way a break will go.
+- **Dispersion is forecastable, and it is the one thing that is.** How wide the
+  next bars will be is predictable - out-of-sample R2 up to 0.85, and the
+  high-dispersion classifier reaches AUC 0.90. So "the next twenty bars look
+  like being much wider than the last twenty" is a claim you may make. "Price
+  will go up" is not.
+- **A pattern's name is not evidence.** Engulfings, sweeps followed by breaks,
+  and one-candle pushes were all measured against geometry-preserving twins and
+  came out level with them. If you name a pattern, the figure beside it must be
+  something measured this run, not the pattern's reputation.
+
+So what is worth reporting:
+- the **current dispersion against its own recent range** (`move`, `bars`),
+  because that is forecastable and actionable for sizing and stops;
+- a level price arriving with a **history**, reported as what happened there
+  before and how often (`level_at`, `zones`) - and always with
+  `probability_up` against `base_rate_up`, because equal means the level has
+  told you nothing;
+- bars whose **range is large relative to that instrument's own recent range**,
+  never large in points.
+
+What is not worth reporting: a chart pattern by name, a direction, a target, a
+trend that is "intact", or any level described as support or resistance without
+a measured hold rate beside it.
+""".strip(),
+    tools=PRICE_TOOLS + LEVEL_TOOLS + MEMORY_TOOLS,
+)
+
+ROLES: dict[str, Role] = {role.name: role for role in (MARKET, MACRO, RISK, TECHNICAL)}
 DEFAULT_ROLE = RISK.name
 
 
