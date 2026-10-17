@@ -74,9 +74,13 @@ variance, same frames, classes and procedure as `dispersion-forecast.md`.
 
 **BOCPD's three readings add +0.035 to +0.043 on 1h FX at every horizon** - six
 cells, both FX classes, h=1, 5 and 20, with the constant-sigma control at
--0.005 to +0.001 and the shuffled target at zero. That is the most consistent
-increment this desk has measured on a dispersion forecast from a new feature,
-and it is 40 to 50 times the best cell topology managed (+0.0008).
+-0.005 to +0.001 and the shuffled target at zero.
+
+> **Relabelled, 2026-10-17.** `changepoint-increment.md` split the three
+> readings. The whole of this increment is the **predictive standard
+> deviation** the member infers, not the change-point: the change-point pair
+> reads -0.0010 to +0.0106 on HAR and negative on top of a 48-lag baseline. The
+> number reproduces; it is simply not about change-points.
 
 **CUSUM's accumulators do not.** `+cusum_disp` is +0.0328 then +0.0071 then
 -0.0011 across horizons on the same instruments, and `+cusum_ret` costs metals
@@ -87,12 +91,15 @@ shape of noise, and the agreement counts for `cusum_disp` are 2 to 4 of 6.
 
 **More lags beat it, and by more than twice.** On fx_cross 1h h=20 the shelf's
 48-lag ridge reads **+0.198** against HAR's +0.110, so plain extra history adds
-**+0.088** where BOCPD's features add +0.0428. The open question is therefore
-not whether BOCPD adds to HAR - it does - but whether it adds anything *on top
-of `lin48`*, where the long-memory information it may simply be proxying is
-already present. That is the next run, and until it is done the honest reading
-is: a change-point posterior is a cheap way to buy about half of what
-forty-eight lags buy.
+**+0.088** where BOCPD's features add +0.0428.
+
+**Answered, and not the way it was framed.** `changepoint-increment.md` split
+the three readings and crossed them with the 48-lag baseline: the change-point
+pair goes **negative in six of six** 1h FX cells on top of `lin48`, and the
+inferred predictive standard deviation adds **+0.2057 to +0.2391**. Extra
+history and a change-point posterior were never alternatives for the same
+information, because the posterior was not supplying the information. The whole
+of the increment below is the variance the member infers.
 
 ### Why BOCPD and not CUSUM, mechanically
 
