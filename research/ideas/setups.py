@@ -1,874 +1,1417 @@
-"""Entry and exit rules a competent retail trader would use, scored against geometry.
+"""Every testable idea from the imported catalogues, as a causal rule with trade geometry.
 
-Asked across 2026-10-17: *"keep testing different entry and exit conditions
-until we get what we want in RR and the win rate is high too"*, with OHLCV,
-multi-timeframe and fractality available, and then *"we can start from the
-mindset and approaches and improve on it fast"*.
+Each setup takes a `Ctx` and returns a signal frame for mt5bt: `i` (the bar whose close knows the
+signal), `side`, `stop_px` (the structural invalidation price), and for resting entries `entry`
+(the price), `limit` and `expires`. `run.py` turns `stop_px` into mt5bt's stop distance and adds
+the exit (trail, 4R or 10R), so the entry and the invalidation are each idea's own and the exits
+are the same for all.
 
-So this starts from the approach rather than from a model: higher-timeframe
-bias, an entry on a pullback, a stop beyond the swing that would disprove the
-idea, and a target at a fixed reward or at the next structure. Every piece of
-that is a rule here, and every rule is scored the same way.
+The geometry is a trader's, not the source's where the source left it loose: enter at the
+structure, put the stop just beyond what would prove the idea wrong (`BUF` x ATR past it), and let
+the market decide the exit. Where the source did fix a geometry (zma's stop at one sigma and target
+at the mean, structural_setup's 3R), that version is run as well, marked `src`.
 
-## The one number, and why it is the only one
-
-**A win rate and a reward are not independent.** On a driftless market the
-chance of reaching the target before the stop is exactly `1 / (1 + r)`: 33% at
-1:2, 25% at 1:3, 9% at 1:10. So "a high win rate **at** a high reward" is not a
-setup to be found among entry rules - it is directional edge under another
-name. Every row below therefore reports
-
-    win - geometric
-
-where `geometric` is averaged over each trade's **own** realised reward, since
-a structural stop makes every trade's geometry different. That difference is
-the only quantity that can be an edge. A rule with a 70% win rate at 1:0.4 and
-a rule with a 9% win rate at 1:10 are **the same rule** by this measure, and
-the point of the column is that it says so.
-
-## The nulls
-
-* **the flip.** Every setup is scored again with its side reversed. If a rule
-  has no directional content, flipping pays the same, and the pair straddles
-  zero. This is the sharpest null available for an entry rule and it costs
-  nothing.
-* **`all`.** Taking every bar, same geometry. A rule that does not beat
-  "always on" has selected nothing.
-* **the walk.** Generated bars through the identical pipeline, where every
-  reading must collapse to the geometry.
-
-## What is deliberately not here
-
-No level-based entry, because `magnets.md` measured twenty-one kinds against a
-story-free control and every one sat inside its noise. No named candle pattern,
-because `sweep_bos_engulf.py` found them level with geometry-preserving twins.
-What is here is **structure** - the directional-change decomposition, which is
-scale-free and is v1's own turn rule generalised - and **dispersion**, which is
-the one forecastable quantity on this desk.
+Mirror images are built by `mirror()` so every rule is symmetric by construction: the bear side is
+the bull side on the negated chart (code-symmetry test, catalogue 2.24).
 """
-
 from __future__ import annotations
 
-import math
-import random
-import statistics
-import sys
-from pathlib import Path
+from dataclasses import dataclass, field
 
 import numpy as np
+import pandas as pd
 
-HERE = Path(__file__).resolve().parent
-for q in (HERE, HERE.parent, HERE.parents[1]):
-    sys.path.insert(0, str(q))
+import prims as P
 
-from dispersion_ml import SIZE, _apply, _ridge, parkinson  # noqa: E402
-from pattern_fingerprint import CACHE, classify, load  # noqa: E402
-
-from till_infinity.structures.statespace.pivoting import pivots  # noqa: E402
-from till_infinity.structures.drawing.displacement import displacements  # noqa: E402
-from till_infinity.structures.vol.volatility import Volatility  # noqa: E402
-from till_infinity.trading.candles import Bar, engulfing  # noqa: E402
-
-FRAME = "1h"
-#: The higher timeframe, for bias. Multi-timeframe is the first thing a
-#: competent retail approach does, so it is an arm rather than an assumption.
-HIGHER = "4h"
-#: Seconds in the higher timeframe's bar, for the resampler.
-HIGHER_SECONDS = 4 * 3600.0
-#: Classes. Widened from three because the thirty-six cells a rule produces are
-#: heavily correlated - same bars, overlapping rewards - so the number of
-#: genuinely independent units is the number of **classes**, and three is too
-#: few to read a median across.
-TRADED = ("fx_major", "fx_cross", "metal", "equity", "index", "energy")
-PER_CLASS = 20
-LIMIT = 12000
-#: Directional-change thresholds, in volatility units. **Fractality**: the same
-#: rule at several scales, which is what the intrinsic-time framework is for.
-EDGES = (1.0, 2.0, 4.0)
-#: Reward multiples, and the hold in bars.
-REWARDS = (1.0, 2.0, 3.0, 5.0)
-HOLD = 120
-#: Round-trip cost in volatility units. Not zero, because
-#: `exotic-spreads-are-a-whole-bar-range` makes cost decisive.
-COST = 0.05
-SEED = 20261017
+BUF = 0.1  # stop buffer beyond the structure, in ATR
 
 
-def _resample(bars: dict[str, np.ndarray], every: float) -> dict[str, np.ndarray]:
-    """Aggregate bars onto fixed `every`-second boundaries.
+@dataclass
+class Ctx:
+    sym: str
+    family: str
+    interval: str
+    sec: int
+    df: pd.DataFrame  # bid OHLC + ts (+ tick_volume)
+    htf: dict = field(default_factory=dict)  # interval -> (df, index map from this TF)
+    peers: dict = field(default_factory=dict)  # symbol -> close series aligned to df.ts
+    cache: dict = field(default_factory=dict)
 
-    **Why this is here rather than reading a 4h file.** The cache holds 555
-    series at 1h and only **84** at 4h, so taking the higher timeframe from
-    disk silently capped the panel at three classes - and the thirty-six cells
-    a rule produces are correlated, which makes the class count the number of
-    genuinely independent units. Three was too few to read a median across.
-    A four-hour bar **is** four one-hour bars, so building it is exact rather
-    than an approximation.
+    def get(self, key, fn):
+        if key not in self.cache:
+            self.cache[key] = fn()
+        return self.cache[key]
 
-    Grouped on absolute boundaries - `floor(time / every)` - and not in runs of
-    four from wherever the series starts, because a 4h bar beginning at 01:00
-    on one instrument and 03:00 on another is not the same clock, and a shared
-    clock is the whole point of a higher timeframe.
-    """
-    times = np.asarray(bars["time"], dtype=float)
-    if len(times) == 0:
-        return {k: np.asarray([], dtype=float) for k in ("time", "open", "high", "low", "close")}
-    buckets = np.floor(times / every).astype(np.int64)
-    edges = np.flatnonzero(np.diff(buckets)) + 1
-    starts = np.concatenate([[0], edges])
-    stops = np.concatenate([edges, [len(times)]])
-    opens, highs, lows, closes, stamps = [], [], [], [], []
-    for a, b in zip(starts, stops, strict=True):
-        opens.append(float(bars["open"][a]))
-        highs.append(float(np.max(bars["high"][a:b])))
-        lows.append(float(np.min(bars["low"][a:b])))
-        closes.append(float(bars["close"][b - 1]))
-        # Stamped at the **close** of the aggregate, because that is when it
-        # became knowable. Stamping it at the open would let a bias be read
-        # four hours before the bar producing it had finished.
-        stamps.append(float(times[b - 1]))
-    return {
-        "time": np.asarray(stamps),
-        "open": np.asarray(opens),
-        "high": np.asarray(highs),
-        "low": np.asarray(lows),
-        "close": np.asarray(closes),
-    }
+    @property
+    def a(self):
+        return self.get("atr", lambda: P.atr(self.df, 14))
 
 
-def _unit(closes: np.ndarray) -> float:
-    steps = np.abs(np.diff(closes))
-    return float(np.mean(steps[steps > 0])) if np.any(steps > 0) else 0.0
-
-
-def _dispersion(logvar: np.ndarray) -> np.ndarray:
-    """Forecast forward dispersion with the arm that measured best, causally."""
-    start, stop = SIZE, len(logvar) - HOLD
-    if stop - start < 400:
-        return np.full(len(logvar), np.nan)
-    rows = np.asarray(
-        [[float(logvar[i - k]) for k in range(SIZE)] for i in range(start, stop)], dtype=float
-    )
-    want = np.asarray(
-        [float(np.mean(logvar[i + 1 : i + 1 + HOLD])) for i in range(start, stop)], dtype=float
-    )
-    cut = len(want) // 2
-    coef, _ = _ridge(rows[:cut], want[:cut], 1e-4)
-    out = np.full(len(logvar), np.nan)
-    out[start:stop] = _apply(coef, rows)
+def flip(df: pd.DataFrame) -> pd.DataFrame:
+    """The chart upside down: negate prices, swap high and low."""
+    out = df.copy()
+    out["open"], out["close"] = -df["open"], -df["close"]
+    out["high"], out["low"] = -df["low"], -df["high"]
     return out
 
 
-def _structure(bars: dict[str, np.ndarray], edge: float) -> list:
-    """Directional-change pivots on log prices, so a swing is scale-free."""
-    closes = np.asarray(bars["close"], dtype=float)
-    if np.any(closes <= 0):
-        return []
-    logs = {
-        k: np.log(np.maximum(np.asarray(bars[k], dtype=float), 1e-300))
-        for k in ("close", "high", "low")
-    }
-    unit = _unit(logs["close"])
-    if unit <= 0:
-        return []
-    return pivots(
-        [float(v) for v in bars["time"]],
-        [float(v) for v in logs["high"]],
-        [float(v) for v in logs["low"]],
-        unit=unit,
-        threshold=edge,
-    )
+def mirror(fn):
+    """Run a bull-side rule on the chart and on its mirror; the mirror's longs are shorts."""
+    def both(ctx: Ctx) -> pd.DataFrame:
+        bull = fn(ctx, ctx.df)
+        m = Ctx(ctx.sym, ctx.family, ctx.interval, ctx.sec, flip(ctx.df),
+                {k: (flip(d), ix) for k, (d, ix) in ctx.htf.items()},
+                {k: -v for k, v in ctx.peers.items()})
+        m.cache["atr"] = ctx.a
+        bear = fn(m, m.df)
+        if not bear.empty:
+            bear = bear.copy()
+            bear["side"] = -bear["side"]
+            for col in ("stop_px", "entry", "target_px"):
+                if col in bear:
+                    bear[col] = -bear[col]
+        return pd.concat([bull, bear], ignore_index=True)
+    both.__name__ = fn.__name__
+    return both
 
 
-#: Bars within which a break has to be rejected for it to count as a sweep
-#: rather than a break of structure. This is what keeps the two from being the
-#: same event with opposite signs.
-REJECTED = 3
+def _ret(c: np.ndarray) -> np.ndarray:
+    """Bar returns that survive the mirror. Log returns of the flipped (negative) chart clip to a
+    constant, so a rule built on them never fires short - which made the first cusum_follow,
+    anomaly and sweep_fade_hivol long-only without saying so."""
+    return np.r_[0.0, np.diff(c) / np.maximum(np.abs(c[:-1]), 1e-12)]
 
 
-#: Kinds of bias, which is the frame this harness settled into. Each is a
-#: separate claim about **which way**, read off the higher timeframe, and each
-#: needs its own walk null because each carries its own mechanics:
-#:
-#: * **structural** - the last confirmed directional-change pivot (`agree`)
-#: * **break** - a prior swing exceeded and extended (`bos 4h`)
-#: * **rejection** - a prior swing exceeded and immediately refused (`sweep 4h`)
-#: * **candle** - an engulfing body (`engulf 4h`)
-#: * **displacement** - a two-bar one-sided push leaving an origin (`displace 4h`)
-#: * **trend** - the sign of a fitted slope (`slope 4h`)
-#: * **location** - where price sits in the higher timeframe's range (`range 4h`)
-#: * **gap** - the sign of the last bar-to-bar gap (`gap 4h`)
-#: * **imbalance** - a band price left behind rather than a shape it drew: a
-#:   fair value gap (`fvg 4h`), as a **causal** three-bar condition. The void
-#:   and volume-imbalance kinds are absent because neither has a causal
-#:   definition - both are defined by what later price did - and the production
-#:   detector that emits all three filters on the gap still being unfilled,
-#:   which is the future. See `_imbalances`.
-#:
-#: Dispersion is deliberately **not** in this list. It is the one forecastable
-#: quantity here and the others are not, but it says how **far** and not which
-#: way - so it enters as the gate `loud` rather than as a bias, which is the
-#: distinction the whole architecture turns on.
-BIASES = (
-    "agree",
-    "bos 4h",
-    "sweep 4h",
-    "engulf 4h",
-    "displace 4h",
-    "slope 4h",
-    "range 4h",
-    "gap 4h",
-    "fvg 4h",
-    "void 4h",
-    "ma200 4h",
-    "wick 4h",
-    "streak 4h",
-    "skew 4h",
-    "slope 1d",
-    # Kept as a **known null**: the intraday pattern is in volatility, not
-    # direction, so this has to read nothing or the harness is broken.
-    "session",
-)
-
-#: Higher-timeframe bars a slope is fitted over, and the share of its range
-#: that counts as the top or the bottom for the location bias.
-SLOPE_BARS = 20
-EDGE_SHARE = 0.33
+def frame(rows: list[dict]) -> pd.DataFrame:
+    return pd.DataFrame(rows, columns=["i", "side", "stop_px", "entry", "limit", "expires", "tag"]) \
+        if not rows else pd.DataFrame(rows)
 
 
-def _pushes(bars: dict[str, np.ndarray], run: int = 2) -> list[tuple[float, int]]:
-    """`(time, side)` for every displacement origin left by a `run`-bar push.
-
-    Production's own `drawing.displacement.displacements` at `run = 2`, the
-    two-push-candle version. The time is the **confirmation** bar and not the
-    origin bar: an origin is knowable only once the push that left it has
-    completed, and using the origin's own time is the leak that distinction
-    exists to prevent.
-    """
-    closes = np.asarray(bars["close"], dtype=float)
-    live = Volatility()
-    for one in closes:
-        live.update(float(one))
-    found = displacements(
-        [float(v) for v in bars["open"]],
-        [float(v) for v in bars["high"]],
-        [float(v) for v in bars["low"]],
-        [float(v) for v in closes],
-        live,
-        run=run,
-    )
-    times = bars["time"]
-    out = [
-        (float(times[min(one.confirmed_at, len(times) - 1)]), 1 if one.up else -1) for one in found
-    ]
-    out.sort()
-    return out
+def long_(i, stop_px, entry=np.nan, limit=0, expires=1, tag=""):
+    return dict(i=int(i), side=1, stop_px=float(stop_px), entry=float(entry), limit=int(limit),
+                expires=int(expires), tag=tag)
 
 
-def _imbalances(bars: dict[str, np.ndarray], kind: str) -> list[tuple[float, int]]:
-    """`(time, side)` for a three-bar gap, computed **causally**.
+def arrays(df):
+    return (df[k].to_numpy(float) for k in ("open", "high", "low", "close"))
 
-    **This does not call `drawing.gaps.imbalances`, and the reason is the most
-    expensive thing found in this harness.** That function ends with
 
-        top, bottom = _remaining(highs, lows, i + 2, low, high, open_share)
-        if top - bottom < (high - low) * open_share:
+# ------------------------------------------------------------------------------------- SMC / ICT
+
+def _bos_up(df, ph_known):
+    """Bars whose close first takes the last known pivot high: (i, level, pivot index)."""
+    c = df["close"].to_numpy()
+    out, used = [], set()
+    for i, piv in enumerate(ph_known):
+        if not piv:
             continue
-
-    - it scans **forward** from the gap and emits it only if it is still
-    unfilled. That is exactly right for its own job, which is drawing the gaps
-    that are open *now*; inside a loop over history, "now" is the end of the
-    series, so the rule is handed *a strong move happened **and price never
-    came back to fill it***. The second half is the future, and a gap that
-    stays unfilled is one where price kept going - which is the direction.
-
-    Measured, before the leak was found: `fvg 4h` read a win gap of **+0.31**
-    and **+0.50R a trade** against a -0.13R baseline, in both halves and every
-    class. Nothing else in the panel was within 0.3R of it, which is what
-    prompted the check rather than the celebration.
-
-    So the causal version is the bare three-bar condition - bar `i+1`'s low
-    above bar `i-1`'s high, or the mirror - knowable at `i + 1` and filtered on
-    nothing that comes after. `kind` is kept in the signature so the caller
-    reads the same, but only the fair-value-gap shape survives a causal
-    definition: a void and a volume imbalance are both defined by what later
-    price did or did not do.
-    """
-    if kind != "fvg":
-        return []
-    highs = np.asarray(bars["high"], dtype=float)
-    lows = np.asarray(bars["low"], dtype=float)
-    times = bars["time"]
-    unit = _unit(np.asarray(bars["close"], dtype=float))
-    out: list[tuple[float, int]] = []
-    for i in range(1, len(highs) - 1):
-        if lows[i + 1] > highs[i - 1]:
-            size, side = float(lows[i + 1] - highs[i - 1]), 1
-        elif lows[i - 1] > highs[i + 1]:
-            size, side = float(lows[i - 1] - highs[i + 1]), -1
-        else:
+        p_idx, lvl = piv[-1]
+        if p_idx in used or i <= p_idx:
             continue
-        # A size floor, in the series' own units, so a one-tick gap is not a
-        # structural claim. No forward reference.
-        if unit <= 0 or size < 0.5 * unit:
+        if c[i] > lvl:
+            used.add(p_idx)
+            out.append((i, lvl, p_idx))
+    return out
+
+
+def _piv(ctx, df, left=5, right=5, k=2):
+    key = ("piv", id(df), left, right, k)
+    return ctx.get(key, lambda: _piv_raw(df, left, right, k))
+
+
+def _piv_raw(df, left, right, k):
+    ph, pl = P.pivots(df["high"].to_numpy(), df["low"].to_numpy(), left, right)
+    n = len(df)
+    return P.last_known(ph, n, k), P.last_known(pl, n, k)
+
+
+@mirror
+def bos_fvg(ctx, df):
+    """Break of structure up with a fresh bullish FVG (gap >= 0.3 ATR) in the last 3 bars."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    ph, _ = _piv(ctx, df)
+    rows = []
+    for i, lvl, _p in _bos_up(df, ph):
+        for k in range(i, max(i - 3, 2) - 1, -1):  # the FVG's third candle k, middle k-1 >= i-3
+            top, bot = l[k], h[k - 2]
+            if top - bot >= 0.3 * a[i] and l[k + 1:i + 1].min(initial=np.inf) > bot:
+                stop = bot - BUF * a[i]
+                rows.append(long_(i, stop, tag="mkt"))
+                rows.append(long_(i, stop, entry=top, limit=1, expires=10, tag="lmt"))
+                break
+    return frame(rows)
+
+
+@mirror
+def choch(ctx, df):
+    """Change of character: after lower highs and lower lows, the first close above the last LH."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    ph, pl = _piv(ctx, df)
+    rows, used = [], set()
+    for i in range(len(df)):
+        if len(ph[i]) < 2 or len(pl[i]) < 2:
             continue
-        out.append((float(times[i + 1]), side))
-    return out
-
-
-def _averages(bars: dict[str, np.ndarray], span: int = 200) -> list[tuple[float, int]]:
-    """`(time, side)` for price above or below its own long average.
-
-    **The most widely used bias in retail trading, and untested here as one.**
-    `magnets.md` measured the 200-period average as a *magnet* - does price get
-    drawn back to it - and found it indistinguishable from the previous bar's
-    high. That is a different claim from *above it means up*, which is what
-    everyone actually uses it for, and a null on the first says nothing about
-    the second.
-    """
-    closes = np.asarray(bars["close"], dtype=float)
-    times = bars["time"]
-    out = []
-    total = 0.0
-    for i, one in enumerate(closes):
-        total += float(one)
-        if i < span:
+        (h1i, h1), (h2i, h2) = ph[i]
+        (_, l1), (_, l2) = pl[i]
+        if not (h2 < h1 and l2 < l1) or h2i in used:
             continue
-        total -= float(closes[i - span])
-        mean = total / span
-        out.append((float(times[i]), 1 if float(one) > mean else -1))
-    return out
+        if c[i] > h2 and c[i - 1] <= h2:
+            used.add(h2i)
+            low = l[h2i:i + 1].min()
+            rows.append(long_(i, low - BUF * a[i]))
+    return frame(rows)
 
 
-def _wicks(bars: dict[str, np.ndarray]) -> list[tuple[float, int]]:
-    """`(time, side)` for where a bar closed inside its own range.
-
-    A close in the top third reads up, the bottom third down - the rejection
-    reading. A different kind of candle claim from an engulfing: that one is
-    about **two** bars' bodies, this is about **one** bar's close against its
-    own extremes, and the two can disagree.
-    """
-    highs = np.asarray(bars["high"], dtype=float)
-    lows = np.asarray(bars["low"], dtype=float)
-    closes = np.asarray(bars["close"], dtype=float)
-    times = bars["time"]
-    out = []
-    for i in range(len(closes)):
-        span = float(highs[i]) - float(lows[i])
-        if span <= 0:
-            out.append((float(times[i]), 0))
+@mirror
+def sweep_equal_lows(ctx, df):
+    """Equal lows (two known pivot lows within 0.1 ATR, inside 50 bars) taken by a wick, close back above."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    _, pl = _piv(ctx, df, k=4)
+    rows, used = [], set()
+    for i in range(1, len(df)):
+        lows = [(j, v) for j, v in pl[i] if i - j <= 50]
+        if len(lows) < 2 or not a[i] > 0:
             continue
-        share = (float(closes[i]) - float(lows[i])) / span
-        out.append(
-            (float(times[i]), 1 if share >= 1.0 - EDGE_SHARE else -1 if share <= EDGE_SHARE else 0)
-        )
-    return out
-
-
-def _streaks(bars: dict[str, np.ndarray], least: int = 3) -> list[tuple[float, int]]:
-    """`(time, side)` after `least` consecutive bars closing the same way.
-
-    Run length rather than slope: a slope fits a line through twenty bars and
-    is indifferent to their order, while a streak is **only** about order. The
-    two are different readings of momentum and a null on one does not carry.
-    """
-    closes = np.asarray(bars["close"], dtype=float)
-    times = bars["time"]
-    out = []
-    run = 0
-    for i in range(1, len(closes)):
-        step = 1 if closes[i] > closes[i - 1] else -1 if closes[i] < closes[i - 1] else 0
-        run = run + step if step and (run == 0 or (run > 0) == (step > 0)) else step
-        out.append((float(times[i]), (1 if run > 0 else -1) if abs(run) >= least else 0))
-    return out
-
-
-def _skews(bars: dict[str, np.ndarray], span: int = 40) -> list[tuple[float, int]]:
-    """`(time, side)` for whether recent up-moves or down-moves were larger.
-
-    The **shape** of the return distribution rather than its location, which
-    makes it a different kind of information from everything above: slope,
-    streak and location are all about where price went, this is about how it
-    travelled. `one-bar-band.md` found skew null for *density scoring*, which
-    is a statement about fitting a shape and not about direction.
-    """
-    closes = np.log(np.maximum(np.asarray(bars["close"], dtype=float), 1e-300))
-    times = bars["time"]
-    steps = np.diff(closes)
-    out = []
-    for i in range(span, len(steps)):
-        window = steps[i - span : i]
-        ups = window[window > 0]
-        downs = -window[window < 0]
-        if len(ups) < 3 or len(downs) < 3:
-            out.append((float(times[i + 1]), 0))
-            continue
-        out.append((float(times[i + 1]), 1 if float(ups.mean()) > float(downs.mean()) else -1))
-    return out
-
-
-def _sessions(bars: dict[str, np.ndarray]) -> list[tuple[float, int]]:
-    """`(time, side)` by hour of day - **a calibration arm, expected null.**
-
-    `seasonality-belongs-on-q` is explicit: the intraday pattern is in
-    **volatility**, and it drives `Q` rather than `R`. So an hour-of-day
-    *direction* bias should read nothing, and it is here to confirm the harness
-    can still say so after ten other rules have been added to it. A panel with
-    no known-null arm cannot tell a dead detector from a dead effect.
-
-    The split is London-and-after against Asia, which is the crudest version
-    and the point: if a crude clock bias reads something, the harness is wrong.
-    """
-    times = np.asarray(bars["time"], dtype=float)
-    hours = (times / 3600.0) % 24.0
-    return [(float(t), 1 if 7.0 <= h < 19.0 else -1) for t, h in zip(times, hours, strict=True)]
-
-
-def _slopes(bars: dict[str, np.ndarray]) -> list[tuple[float, int]]:
-    """`(time, side)` for the sign of a slope fitted over `SLOPE_BARS`."""
-    closes = np.log(np.maximum(np.asarray(bars["close"], dtype=float), 1e-300))
-    times = bars["time"]
-    x = np.arange(SLOPE_BARS, dtype=float)
-    x -= x.mean()
-    spread = float((x * x).sum())
-    out = []
-    for i in range(SLOPE_BARS, len(closes)):
-        window = closes[i - SLOPE_BARS : i]
-        slope = float((x * (window - window.mean())).sum() / spread) if spread > 0 else 0.0
-        out.append((float(times[i]), 1 if slope > 0 else -1 if slope < 0 else 0))
-    return out
-
-
-def _locations(bars: dict[str, np.ndarray]) -> list[tuple[float, int]]:
-    """`(time, side)` for where price sits in its own recent range.
-
-    Top third reads as upward and bottom third as downward - the momentum
-    reading rather than the mean-reverting one. Which of the two is right is
-    exactly what the flip arm answers, so only one has to be written.
-    """
-    highs = np.asarray(bars["high"], dtype=float)
-    lows = np.asarray(bars["low"], dtype=float)
-    closes = np.asarray(bars["close"], dtype=float)
-    times = bars["time"]
-    out = []
-    for i in range(SLOPE_BARS, len(closes)):
-        top = float(highs[i - SLOPE_BARS : i].max())
-        bottom = float(lows[i - SLOPE_BARS : i].min())
-        if top <= bottom:
-            out.append((float(times[i]), 0))
-            continue
-        share = (float(closes[i]) - bottom) / (top - bottom)
-        out.append(
-            (float(times[i]), 1 if share >= 1.0 - EDGE_SHARE else -1 if share <= EDGE_SHARE else 0)
-        )
-    return out
-
-
-def _gaps(bars: dict[str, np.ndarray]) -> list[tuple[float, int]]:
-    """`(time, side)` for the sign of each bar-to-bar gap, zero where none."""
-    opens = np.asarray(bars["open"], dtype=float)
-    closes = np.asarray(bars["close"], dtype=float)
-    times = bars["time"]
-    return [
-        (
-            float(times[i]),
-            1
-            if float(opens[i]) > float(closes[i - 1])
-            else -1
-            if float(opens[i]) < float(closes[i - 1])
-            else 0,
-        )
-        for i in range(1, len(closes))
-    ]
-
-
-def _latest(series: list[tuple[float, int]], when: float, within: float) -> int:
-    """The most recent side in `series` already known at `when`, or 0."""
-    side = 0
-    for seen, which in series:
-        if seen > when:
-            break
-        if (when - seen) <= within:
-            side = which
-    return side
-
-
-def _engulfings(bars: dict[str, np.ndarray]) -> list[tuple[float, int]]:
-    """`(time, side)` for every engulfing bar, using production's own predicate.
-
-    The shipped `trading.candles.engulfing` rather than a copy: it compares
-    **bodies** strictly, which is the claim being made - this bar traded
-    through everything the last one did *and closed beyond it*. A bar whose
-    range covers the previous range but whose body does not is a wider bar and
-    nothing more.
-
-    Marked at the bar's own close, which is when it was knowable - unlike a
-    pivot, an engulfing needs no confirmation lag. As a **higher-timeframe
-    bias** this is untested here: `one_push.py` measured the shape against a
-    push and `sweep_bos_engulf.py` measured it inside a composite, both at one
-    scale.
-    """
-    opens, highs = bars["open"], bars["high"]
-    lows, closes, times = bars["low"], bars["close"], bars["time"]
-    out: list[tuple[float, int]] = []
-    for i in range(1, len(closes)):
-        was = Bar(
-            float(opens[i - 1]), float(highs[i - 1]), float(lows[i - 1]), float(closes[i - 1])
-        )
-        now = Bar(float(opens[i]), float(highs[i]), float(lows[i]), float(closes[i]))
-        got = engulfing(was, now)
-        if got:
-            out.append((float(times[i]), 1 if got == "up" else -1))
-    return out
-
-
-def _breaks(found: list) -> dict[int, tuple[int, bool]]:
-    """Per confirmed pivot: the break's direction, and whether it was rejected.
-
-    **A sweep and a break of structure are the same event read two ways**, and
-    that has to be designed around rather than measured around. On a
-    directional-change sequence a confirmed peak above the previous peak is
-    both *a swept high* - liquidity taken, trade the reversal - and *a bullish
-    break of structure* - trade the continuation. Those are opposite sides of
-    one bar, so a harness testing both would be testing a rule against its own
-    flip and would find a perfectly symmetric nothing. `smc-primitives-overlap-and-are-closed`
-    is the standing record of that shape.
-
-    So they are separated by **what happened next**. A break is a break; it is
-    a *sweep* only if the next confirmed pivot arrives within `REJECTED` bars,
-    which is the market refusing the break rather than extending it. The two
-    rules then select different events, and the flip arm means something again.
-    """
-    out: dict[int, tuple[int, bool]] = {}
-    last: dict[bool, float] = {}
-    for i, one in enumerate(found):
-        prior = last.get(one.peak)
-        last[one.peak] = one.level
-        if prior is None:
-            continue
-        # A peak above the last peak breaks up; a trough below the last trough
-        # breaks down.
-        if one.peak and one.level > prior:
-            side = 1
-        elif not one.peak and one.level < prior:
-            side = -1
-        else:
-            continue
-        quick = (
-            i + 1 < len(found) and (found[i + 1].confirmed_index - one.confirmed_index) <= REJECTED
-        )
-        out[one.confirmed_index] = (side, quick)
-    return out
-
-
-def _bias(higher: list, when: float) -> int:
-    """The higher timeframe's last **confirmed** direction at `when`, or 0.
-
-    Confirmed, not current: a pivot is knowable only at its confirmation time,
-    and using the extreme's own time is the leak `pivoting.Pivot` carries two
-    timestamps to prevent.
-    """
-    side = 0
-    for one in higher:
-        if one.confirmed > when:
-            break
-        # A confirmed peak ends an up-leg, so the bias after it is down.
-        side = -1 if one.peak else 1
-    return side
-
-
-def run(bars: dict[str, np.ndarray], higher: dict[str, np.ndarray], rng) -> dict:
-    """Every entry rule by every exit geometry, with the flip arm beside it."""
-    closes = np.asarray(bars["close"], dtype=float)
-    highs = np.asarray(bars["high"], dtype=float)
-    lows = np.asarray(bars["low"], dtype=float)
-    unit = _unit(closes)
-    if unit <= 0 or len(closes) < 2000:
-        return {}
-    logvar = parkinson(highs, lows)
-    logvar = np.where(np.isfinite(logvar), logvar, np.nanmedian(logvar[np.isfinite(logvar)]))
-    forecast = _dispersion(logvar)
-    loud = float(np.nanquantile(forecast, 0.75)) if np.isfinite(forecast).any() else np.inf
-
-    out: dict[tuple[str, float, float], list[tuple[float, float]]] = {}
-    # **Hoisted out of the threshold loop.** None of these depends on `edge`,
-    # and `_pushes` builds a whole `Volatility` pass over the series, so
-    # computing them per threshold was three times the work for one answer.
-    swallowed = _engulfings(higher)
-    pushed_by = _pushes(higher)
-    sloped = _slopes(higher)
-    located = _locations(higher)
-    gapped = _gaps(higher)
-    # Three more kinds of bias, each a band price left behind rather than a
-    # shape it drew: a fair value gap, a volume imbalance and a void.
-    fvgs = _imbalances(higher, "fvg")
-    # Six more kinds, and one of them is a known null kept on purpose.
-    averaged = _averages(higher)
-    wicked = _wicks(higher)
-    streaked = _streaks(higher)
-    skewed = _skews(higher)
-    sessioned = _sessions(bars)
-    # The next scale up, built by the same resampler. Not a new kind of
-    # information but a new **scale**, and whether bias strength grows with the
-    # timeframe is a question nothing here has asked.
-    daily = _resample(bars, 24 * 3600.0)
-    sloped_1d = _slopes(daily)
-    window = 8 * 4 * 3600.0
-    middle = float(bars["time"][len(bars["time"]) // 2])
-
-    for edge in EDGES:
-        here = _structure(bars, edge)
-        there = _structure(higher, edge)
-        marks = {one.confirmed_index: one for one in here}
-        broke = _breaks(here)
-        # The higher timeframe's breaks, keyed by the time they were
-        # **confirmed** so an entry bar can ask what was known by then.
-        above = _breaks(there)
-        upstairs = [
-            (there[i].confirmed, side, quick)
-            for i, (side, quick) in (
-                (next(k for k, one in enumerate(there) if one.confirmed_index == idx), v)
-                for idx, v in above.items()
-            )
-            for side, quick in ((side, quick),)
-        ]
-        upstairs.sort()
-        for at in range(SIZE + 1, len(closes) - HOLD - 1):
-            one = marks.get(at)
-            when = float(bars["time"][at])
-            price = float(closes[at])
-            # The structural stop: beyond the swing that would disprove it.
-            if one is None:
-                continue
-            side = -1 if one.peak else 1
-            # **Back to price.** The detector ran on log prices so a swing is
-            # scale-free, which means every level it reports is a log price -
-            # and comparing one to a close in price units made every risk about
-            # 95 and every candidate fail its own filter. The conversion is
-            # unconditional, not a guess from the sign.
-            invalid = math.exp(one.level)
-            risk = abs(price - invalid)
-            if risk <= 0.2 * unit or risk > 8.0 * unit:
-                continue
-            bias = _bias(there, when)
-            noisy = bool(np.isfinite(forecast[at]) and forecast[at] >= loud)
-            # This bar's own break, if it is one, and the most recent one on
-            # the higher timeframe that was already confirmed.
-            mine = broke.get(at)
-            theirs = None
-            for seen, up_side, up_quick in upstairs:
-                if seen > when:
+        for (j1, v1), (j2, v2) in zip(lows[:-1], lows[1:]):
+            if abs(v1 - v2) <= 0.1 * a[i] and (j1, j2) not in used:
+                pool = min(v1, v2)
+                if l[i] < pool and c[i] > pool and l[max(j2, j1) + 1:i].min(initial=np.inf) >= pool:
+                    used.add((j1, j2))
+                    rows.append(long_(i, l[i] - BUF * a[i]))
                     break
-                theirs = (up_side, up_quick, seen)
-            fresh = theirs is not None and (when - theirs[2]) <= 8 * 3600.0 * 4
-            eaten = 0
-            for seen, which in swallowed:
-                if seen > when:
-                    break
-                if (when - seen) <= 8 * 3600.0 * 4:
-                    eaten = which
-            rules = {
-                "structure": True,
-                "agree": bias == side,
-                "against": bias == -side,
-                "loud": noisy,
-                "agree+loud": bias == side and noisy,
-                # A break of structure, traded **with** the break.
-                "bos": mine is not None and not mine[1] and mine[0] == side,
-                # A sweep: a break that was rejected, traded **against** it.
-                "sweep": mine is not None and mine[1] and mine[0] == -side,
-                # The same two, but the break is on the higher timeframe and
-                # the entry is down here - which is the version a competent
-                # retail approach actually uses.
-                "bos 4h": fresh and not theirs[1] and theirs[0] == side,
-                "sweep 4h": fresh and theirs[1] and theirs[0] == -side,
-                "bos 4h+loud": fresh and not theirs[1] and theirs[0] == side and noisy,
-                "engulf 4h": eaten == side,
-                "engulf 4h+loud": eaten == side and noisy,
-                "engulf+bos 4h": eaten == side and fresh and not theirs[1] and theirs[0] == side,
-                # The other kinds of bias, each its own claim about which way.
-                "displace 4h": _latest(pushed_by, when, window) == side,
-                "slope 4h": _latest(sloped, when, window) == side,
-                "range 4h": _latest(located, when, window) == side,
-                "gap 4h": _latest(gapped, when, window) == side,
-                "ma200 4h": _latest(averaged, when, window) == side,
-                "wick 4h": _latest(wicked, when, window) == side,
-                "streak 4h": _latest(streaked, when, window) == side,
-                "skew 4h": _latest(skewed, when, window) == side,
-                "session": _latest(sessioned, when, 3600.0) == side,
-                "slope 1d": _latest(sloped_1d, when, 6 * 24 * 3600.0) == side,
-                "fvg 4h": _latest(fvgs, when, window) == side,
-                "fvg 4h+loud": _latest(fvgs, when, window) == side and noisy,
-                "displace 4h+loud": _latest(pushed_by, when, window) == side and noisy,
-                "slope+displace 4h": _latest(sloped, when, window) == side
-                and _latest(pushed_by, when, window) == side,
-            }
-            for reward in REWARDS:
-                stop = price - side * risk
-                target = price + side * reward * risk
-                got = _settle(highs, lows, at, side, stop, target, reward)
-                flip = _settle(
-                    highs,
-                    lows,
-                    at,
-                    -side,
-                    price + side * risk,
-                    price - side * reward * risk,
-                    reward,
-                )
-                half = 0 if when < middle else 1
-                for name, passes in rules.items():
-                    if not passes:
-                        continue
-                    out.setdefault((name, edge, reward, half), []).append((got, reward))
-                    out.setdefault((f"{name}~flip", edge, reward, half), []).append((flip, reward))
+    return frame(rows)
+
+
+def _order_blocks(df, a, k_body=1.5):
+    """Bullish order blocks: a bearish bar followed by a bullish bar with body >= 1.5 ATR."""
+    o, h, l, c = arrays(df)
+    out = []
+    for k in range(1, len(df) - 1):
+        if c[k] < o[k] and c[k + 1] > o[k + 1] and (c[k + 1] - o[k + 1]) >= k_body * a[k + 1] > 0:
+            out.append((k + 1, l[k], h[k]))  # known at k+1, zone [low, high]
     return out
 
 
-def _settle(
-    highs: np.ndarray,
-    lows: np.ndarray,
-    at: int,
-    side: int,
-    stop: float,
-    target: float,
-    reward: float,
-) -> float:
-    """Realised R over the hold: `reward` on a win, -1 on a loss, 0 unresolved.
-
-    A bar that reaches both is charged as a loss, because assuming the
-    favourable order is how a backtest invents edge.
-    """
-    for k in range(at + 1, min(at + 1 + HOLD, len(highs))):
-        hit = highs[k] >= target if side > 0 else lows[k] <= target
-        out = lows[k] <= stop if side > 0 else highs[k] >= stop
-        if hit and out:
-            return -1.0
-        if hit:
-            return reward
-        if out:
-            return -1.0
-    return 0.0
+@mirror
+def order_block(ctx, df):
+    """Order-block retest: the first return into the zone, confirmed by a bullish candle (mkt), or a
+    resting limit at the zone's top (lmt). Stop beyond the zone's low."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    cd = ctx.get(("cd", id(df)), lambda: P.candles(df, a))
+    rows = []
+    for known, zl, zh in _order_blocks(df, a):
+        rows.append(long_(known, zl - BUF * a[known], entry=zh, limit=1, expires=50, tag="lmt"))
+        for i in range(known + 1, min(len(df), known + 51)):
+            if c[i] < zl:
+                break
+            if l[i] <= zh:
+                if cd["bull"].iat[i] and c[i] > zl:
+                    rows.append(long_(i, min(zl, l[i]) - BUF * a[i], tag="mkt"))
+                break
+    return frame(rows)
 
 
-def _walk(n: int, rng: random.Random) -> dict[str, np.ndarray]:
-    """Generated bars through the identical pipeline. **The null for each rule.**
-
-    Not a sanity check but the comparison itself. The structural stop sits at
-    the swing price has only just left, so it is nearer recent action than its
-    mirror - enough to make a rule and its flip differ by **0.17** on a random
-    walk, with no market in the data. Zero is therefore the wrong null; each
-    rule's own reading here is, and `real - walk` is the number worth printing.
-    """
-    step = 0.002
-    closes = [100.0]
-    for _ in range(n):
-        closes.append(closes[-1] * math.exp(rng.gauss(0.0, step)))
-    price = np.asarray(closes[1:], dtype=float)
-    wick = np.abs(np.asarray([rng.gauss(0.0, step) for _ in range(n)]))
-    opens = np.concatenate([[price[0]], price[:-1]])
-    return {
-        "time": np.arange(n, dtype=float) * 3600.0,
-        "open": opens,
-        "high": np.maximum(price, opens) * np.exp(wick),
-        "low": np.minimum(price, opens) * np.exp(-wick),
-        "close": price,
-    }
-
-
-def _read(pooled: dict, key) -> tuple[int, float, float] | None:
-    """`(trades, win rate among resolved, mean R)` or None if too thin.
-
-    The win rate and the money are both returned because they answer different
-    questions and a difference in one does not imply a difference in the other:
-    a rule can win more often at a reward where winning more often does not
-    pay for the crossing.
-    """
-    rows = pooled.get(key)
-    if not rows:
-        return None
-    resolved = [v for v, _ in rows if v != 0]
-    if len(rows) < 60 or len(resolved) < 40:
-        return None
-    return (
-        len(rows),
-        sum(1 for v in resolved if v > 0) / len(resolved),
-        sum(v for v, _ in rows) / len(rows),
-    )
-
-
-def main() -> None:
-    print(
-        "Entry and exit rules, scored against the geometry they carry.\n"
-        f"{FRAME} entries with {HIGHER} bias, structural stops, hold {HOLD} bars,\n"
-        f"cost {COST} of the stop. `win-geom` is the realised win rate less\n"
-        "1/(1+r) - the only column that can be an edge. `~flip` is the same\n"
-        "setup with the side reversed and must straddle zero with it.\n"
-    )
-    rng = random.Random(SEED)
-    groups: dict[str, list[str]] = {}
-    for path in sorted(CACHE.glob(f"*.{FRAME}.npz")):
-        name = path.name[: -len(f".{FRAME}.npz")]
-        groups.setdefault(classify(name), []).append(name)
-
-    # Per (rule, class, half), pooled over instruments. The thirty-six cells a
-    # rule produces are correlated, so the independent units are the classes,
-    # and the halves say whether an effect is stable in time.
-    got: dict[tuple[str, str, int], list[tuple[float, float]]] = {}
-    for label in TRADED:
-        if label not in groups:
+@mirror
+def cisd(ctx, df):
+    """Change in state of delivery at a support: a run of >= 2 down candles into the level, and a
+    close back above the open of the run's first candle. `swept` when the run took the level."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    _, pl = _piv(ctx, df)
+    rows, last_line = [], None
+    for i in range(12, len(df)):
+        if not pl[i] or not a[i] > 0:
             continue
-        for name in sorted(groups[label])[:PER_CLASS]:
-            bars = load(name, FRAME)
-            if bars is None:
-                continue
-            cut = {k: v[-LIMIT:] for k, v in bars.items()}
-            top = _resample(cut, HIGHER_SECONDS)
-            for key, rows in run(cut, top, rng).items():
-                rule, _edge, reward, half = key
-                got.setdefault((rule, label, half), []).extend(rows)
-
-    rules = sorted({k[0] for k in got if not k[0].endswith("~flip")})
-    classes = sorted({k[1] for k in got})
-    print(
-        f"  {'rule':<19}{'half':>5}{'cls':>5}{'win gap':>9}{'+/-':>7}"
-        f"{'R gap':>8}{'cls +':>7}{'R real':>9}{'R flip':>9}{'best net':>10}"
-    )
-    for rule in rules:
-        for half in (0, 1):
-            gaps, monies, reals, flips, trades = [], [], [], [], 0
-            for label in classes:
-                real = _read(got, (rule, label, half))
-                flip = _read(got, (f"{rule}~flip", label, half))
-                if real is None or flip is None:
-                    continue
-                gaps.append(real[1] - flip[1])
-                # Cost cancels in the gap, so what is left is the directional
-                # content in units of risk - **but a gap is not money.** Both
-                # arms can be net negative while differing by 0.20R, so the
-                # absolute figures are carried too and `best net` is the better
-                # side after cost. A stable gap with both sides under water is
-                # a real finding about direction and not a tradeable one.
-                monies.append(real[2] - flip[2])
-                reals.append(real[2] - COST)
-                flips.append(flip[2] - COST)
-                trades += real[0]
-            if not gaps:
-                continue
-            # Standard error of a win-rate difference, pooled over the classes
-            # that contributed, at the rate those classes won at.
-            spread = (
-                statistics.pstdev(gaps) / math.sqrt(len(gaps)) if len(gaps) > 1 else float("nan")
-            )
-            best = max(statistics.median(reals), statistics.median(flips))
-            print(
-                f"  {rule:<19}{half:>5}{len(gaps):>5}{statistics.median(gaps):>+9.4f}"
-                f"{spread:>7.4f}{statistics.median(monies):>+8.3f}"
-                f"{sum(1 for g in gaps if g > 0):>4}/{len(gaps):<2}"
-                f"{statistics.median(reals):>+9.3f}{statistics.median(flips):>+9.3f}"
-                f"{best:>+10.3f}"
-            )
+        lvl = pl[i][-1][1]
+        # the last run of >= 2 consecutive down candles in the 10 bars before i
+        j = i - 1
+        while j > i - 11 and not (c[j] < o[j]):
+            j -= 1
+        end = j
+        while j > i - 11 and c[j] < o[j]:
+            j -= 1
+        start = j + 1
+        if end - start + 1 < 2:
+            continue
+        leg_low = l[start:end + 1].min()
+        if abs(leg_low - lvl) > 1.5 * a[i]:
+            continue
+        line = o[start]
+        if c[i] > line and c[i - 1] <= line and (start, i) != last_line:
+            last_line = (start, i)
+            rows.append(long_(i, leg_low - BUF * a[i], tag="swept" if leg_low < lvl else "near"))
+    return frame(rows)
 
 
-if __name__ == "__main__":
-    main()
+@mirror
+def turtle_soup(ctx, df):
+    """A new 20-bar low, then a close back above the prior 20-bar low within 3 bars."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    prior = pd.Series(l).shift(1).rolling(20, min_periods=20).min().to_numpy()
+    rows, last = [], -10
+    for i in range(22, len(df)):
+        for j in range(i, i - 3, -1):
+            if l[j] < prior[j] and c[i] > prior[j] and i - last > 3:
+                rows.append(long_(i, l[j:i + 1].min() - BUF * a[i]))
+                last = i
+                break
+    return frame(rows)
+
+
+@mirror
+def crt_raid(ctx, df):
+    """Candle range theory: a bar takes the previous bar's low and closes back inside its range."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    i = np.flatnonzero((l[1:] < l[:-1]) & (c[1:] > l[:-1]) & (c[1:] < h[:-1])) + 1
+    return frame([long_(k, l[k] - BUF * a[k]) for k in i if a[k] > 0])
+
+
+@mirror
+def ote(ctx, df):
+    """Optimal trade entry: after a break of structure, a limit at the 0.705 retracement of the leg
+    from the last pivot low to the break bar's high; stop beyond the leg's low."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    ph, pl = _piv(ctx, df)
+    rows = []
+    for i, _lvl, _p in _bos_up(df, ph):
+        if not pl[i]:
+            continue
+        lo = pl[i][-1][1]
+        hi = h[i]
+        if hi - lo < a[i]:
+            continue
+        rows.append(long_(i, lo - BUF * a[i], entry=hi - 0.705 * (hi - lo), limit=1, expires=20))
+    return frame(rows)
+
+
+@mirror
+def ame_sweep(ctx, df):
+    """Accumulation-manipulation-expansion: a 20-bar range no wider than 3 ATR, a wick below its low
+    that closes back inside (mkt, stop under the wick), or the later close above the range's high
+    within 10 bars (exp, stop under the breakout bar)."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    hi = pd.Series(h).shift(1).rolling(20).max().to_numpy()
+    lo = pd.Series(l).shift(1).rolling(20).min().to_numpy()
+    rows = []
+    i = 21
+    while i < len(df):
+        if a[i] > 0 and hi[i] - lo[i] <= 3 * a[i] and l[i] < lo[i] and c[i] > lo[i]:
+            rows.append(long_(i, l[i] - BUF * a[i], tag="sweep"))
+            for k in range(i + 1, min(len(df), i + 11)):
+                if c[k] < l[i]:
+                    break
+                if c[k] > hi[i]:
+                    rows.append(long_(k, l[k] - BUF * a[k], tag="expansion"))
+                    break
+            i += 5
+        i += 1
+    return frame(rows)
+
+
+@mirror
+def impulse_zone(ctx, df):
+    """Demand from an impulse bar (body > 1.5 ATR, small upper wick, tick volume > 1.5x its mean):
+    a resting limit at the bar's open, stop beyond its low, valid 100 bars."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    v = P.tick_volume(df)
+    vm = P.sma(v, 20)
+    rng = np.maximum(h - l, 1e-12)
+    ok = (c - o > 1.5 * a) & ((h - c) < 0.25 * rng) & (v > 1.5 * np.nan_to_num(vm, nan=np.inf))
+    return frame([long_(k, l[k] - BUF * a[k], entry=o[k], limit=1, expires=100)
+                  for k in np.flatnonzero(ok)])
+
+
+# ------------------------------------------------------------------- levels: bjorgum, sage style
+
+def _bjorgum_zones(df, left=20, right=15, keep=4):
+    """Heikin-Ashi pivot zones, half-width min(0.5 ATR30, 2.5%), the newest `keep` per side,
+    each known `right` bars after its pivot. Returns per-bar lists of (bottom, top, is_res)."""
+    o, h, l, c = arrays(df)
+    hc = (o + h + l + c) / 4
+    ho = np.empty_like(hc)
+    ho[0] = (o[0] + c[0]) / 2
+    for i in range(1, len(hc)):
+        ho[i] = (ho[i - 1] + hc[i - 1]) / 2
+    top, bot = np.maximum(ho, hc), np.minimum(ho, hc)
+    a30 = P.atr(df, 30)
+    ph, pl = P.pivots(top, bot, left, right)
+    ev = sorted([(k, p, v, True) for k, p, v in ph] + [(k, p, v, False) for k, p, v in pl])
+    out, j = [], 0
+    res, sup = [], []
+    for i in range(len(df)):
+        while j < len(ev) and ev[j][0] <= i:
+            _, p, v, is_res = ev[j]
+            half = min(0.5 * np.nan_to_num(a30[p]), 0.025 * abs(v))
+            (res if is_res else sup).append((v - half, v + half, is_res))
+            del res[:-keep], sup[:-keep]
+            j += 1
+        out.append(res + sup)
+    return out
+
+
+@mirror
+def bjorgum(ctx, df):
+    """Sage's bjorgum reactions at the nearest zone within 1 ATR30, confirmed by a candle:
+    break (close up through a zone's top), push (a bounce off a support's top), false break
+    (close back inside after closing below). Stop just beyond the zone."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    zones = ctx.get(("bjz", id(df)), lambda: _bjorgum_zones(df))
+    cd = ctx.get(("cd", id(df)), lambda: P.candles(df, a))
+    rows = []
+    for i in range(1, len(df)):
+        if not zones[i] or not a[i] > 0:
+            continue
+        zb, zt, _ = min(zones[i], key=lambda z: abs(c[i] - (z[0] + z[1]) / 2))
+        if min(abs(c[i] - zb), abs(c[i] - zt)) > 1.0 * a[i] and not (zb <= c[i] <= zt):
+            continue
+        if c[i - 1] <= zt < c[i] and cd["bull"].iat[i]:
+            rows.append(long_(i, zb - BUF * a[i], tag="break"))
+        elif c[i - 1] > zt and l[i] <= zt and c[i] > zt and cd["bull"].iat[i]:
+            rows.append(long_(i, min(l[i], zb) - BUF * a[i], tag="push"))
+        elif c[i - 1] < zb and zb <= c[i] <= zt:
+            rows.append(long_(i, min(l[i], l[i - 1]) - BUF * a[i], tag="false_break"))
+    return frame(rows)
+
+
+@mirror
+def level_reaction(ctx, df):
+    """Sage's level reaction: a bullish candle (this bar or the last) at a support within 0.5 ATR,
+    levels being bjorgum zone mids and the 200/50-day SMAs. Tagged by the sage grade: swept
+    (pierced >= 0.1 ATR within 3 bars and closed back) and higher timeframes carrying a zone there."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    zones = ctx.get(("bjz", id(df)), lambda: _bjorgum_zones(df))
+    cd = ctx.get(("cd", id(df)), lambda: P.candles(df, a))
+    mas = []
+    if "1d" in ctx.htf:
+        d1, ix = ctx.htf["1d"]
+        for n in (200, 50):
+            m = P.sma(d1["close"].to_numpy(), n)
+            mas.append(np.where(ix >= 0, m[np.clip(ix, 0, None)], np.nan))
+    htz = {k: ctx.get(("bjz", id(d)), lambda d=d: _bjorgum_zones(d)) for k, (d, _) in ctx.htf.items()}
+    hta = {k: P.atr(d, 30) for k, (d, _) in ctx.htf.items()}
+    adx, pdi, mdi = ctx.get(("adx", id(df)), lambda: P.adx(df))
+    rows, last = [], -5
+    for i in range(3, len(df)):
+        if not a[i] > 0 or i - last < 3:
+            continue
+        levels = [(z[0] + z[1]) / 2 for z in zones[i]] + [m[i] for m in mas if np.isfinite(m[i])]
+        sup = [v for v in levels if v < c[i] and l[i] - v <= 0.5 * a[i]]
+        if not sup or not (cd["bull"].iat[i] or cd["bull"].iat[i - 1]):
+            continue
+        lvl = max(sup)
+        swept = (lvl - l[i - 2:i + 1].min()) >= 0.1 * a[i] and c[i] > lvl
+        credit = 0
+        for k, (d, ix) in ctx.htf.items():
+            j = ix[i]
+            if j >= 0 and any(abs((z[0] + z[1]) / 2 - lvl) <= 0.5 * np.nan_to_num(hta[k][j]) for z in htz[k][j]):
+                credit += 1
+        grade = "none" if credit < 1 and not (swept and not ctx.htf) else \
+            ("B+" if not swept else {1: "A", 2: "A+"}.get(credit, "S" if credit >= 3 else "A"))
+        counter = adx[i] >= 28 and mdi[i] > pdi[i]
+        rows.append(long_(i, min(l[i], lvl) - BUF * a[i], tag=f"{grade}{'|counter' if counter else ''}"))
+        last = i
+    return frame(rows)
+
+
+# ------------------------------------------------------------------------------------- reversion
+
+@mirror
+def zma(ctx, df):
+    """Sage's zma: z over 50 bars against thresholds at the 85th/65th percentile of |z| (250 bars),
+    with the demand/supply momentum read. Tagged A+ (strong, momentum turning), B+ (weak, turning),
+    B (strong, neutral). The source geometry: stop one sigma beyond, target the mean (`src`)."""
+    o, h, l, c = arrays(df)
+    m, s = P.sma(c, 50), P.std(c, 50)
+    z = (c - m) / np.where(s > 0, s, np.nan)
+    az = pd.Series(np.abs(z))
+    strong = az.rolling(250, min_periods=10).quantile(0.85).to_numpy()
+    weak = az.rolling(250, min_periods=10).quantile(0.65).to_numpy()
+    first = pd.Series(c).rolling(25).mean().shift(25).to_numpy()
+    second = pd.Series(c).rolling(25).mean().to_numpy()
+    slope = (second - first) / np.where(first != 0, first, np.nan) * 100
+    thr = pd.Series(np.abs(slope)).rolling(200, min_periods=20).median().to_numpy()
+    prev = np.r_[np.nan, slope[:-1]]
+    rising_demand = (slope > thr) & (slope > prev)
+    weak_supply = (slope < -thr) & ~(slope < prev)
+    neutral = np.abs(slope) <= thr
+    adx, pdi, mdi = ctx.get(("adx", id(df)), lambda: P.adx(df))
+    rows, last = [], -10
+    for i in range(300, len(df)):
+        if not np.isfinite(z[i]) or i - last < 5 or (adx[i] >= 28 and mdi[i] > pdi[i]):
+            continue
+        turn = rising_demand[i] or weak_supply[i]
+        tag = "A+" if z[i] < -strong[i] and turn else "B+" if z[i] < -weak[i] and turn else \
+            "B" if z[i] < -strong[i] and neutral[i] else ""
+        if not tag:
+            continue
+        r = long_(i, c[i] - s[i], tag=tag)
+        r["target_px"] = m[i]
+        rows.append(r)
+        last = i
+    return frame(rows)
+
+
+@mirror
+def anomaly(ctx, df):
+    """A return beyond 5 robust sigmas of the previous 60, closing in the top third: follow it,
+    stop under the bar's low."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    r = _ret(c)
+    s = pd.Series(r)
+    med = s.shift(1).rolling(60).median()
+    mad = (s - med).abs().shift(1).rolling(60).median() * 1.4826
+    z = ((s - med) / mad.replace(0, np.nan)).to_numpy()
+    pos = (c - l) / np.maximum(h - l, 1e-12)
+    k = np.flatnonzero((z >= 5) & (pos >= 0.65))
+    return frame([long_(i, l[i] - BUF * a[i]) for i in k if a[i] > 0])
+
+
+# --------------------------------------------------------------------------- patterns and levels
+
+@mirror
+def ma_reaction(ctx, df):
+    """A bar whose low reaches the 200- or 50-day SMA (within 0.25 ATR) and closes above it with a
+    bullish candle; stop under the bar."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    if ctx.interval == "1d":
+        mas = [P.sma(c, 200), P.sma(c, 50)]
+    elif "1d" in ctx.htf:
+        d1, ix = ctx.htf["1d"]
+        mas = [np.where(ix >= 0, P.sma(d1["close"].to_numpy(), n)[np.clip(ix, 0, None)], np.nan)
+               for n in (200, 50)]
+    else:
+        return frame([])
+    cd = ctx.get(("cd", id(df)), lambda: P.candles(df, a))
+    rows, last = [], -10
+    for i in range(len(df)):
+        for m in mas:
+            if np.isfinite(m[i]) and l[i] <= m[i] + 0.25 * a[i] and c[i] > m[i] and cd["bull"].iat[i] \
+                    and i - last > 5:
+                rows.append(long_(i, min(l[i], m[i]) - BUF * a[i]))
+                last = i
+    return frame(rows)
+
+
+@mirror
+def double_bottom(ctx, df):
+    """Two known pivot lows within 0.25 ATR, at least 5 bars apart: the close above the neckline
+    (the highest high between them), stop under the breakout bar."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    _, pl = _piv(ctx, df, k=2)
+    rows, used = [], set()
+    for i in range(len(df)):
+        if len(pl[i]) < 2 or not a[i] > 0:
+            continue
+        (j1, v1), (j2, v2) = pl[i]
+        if j2 - j1 < 5 or abs(v1 - v2) > 0.25 * a[i] or (j1, j2) in used:
+            continue
+        neck = h[j1:j2 + 1].max()
+        if c[i] > neck and c[i - 1] <= neck:
+            used.add((j1, j2))
+            rows.append(long_(i, l[i] - BUF * a[i]))
+    return frame(rows)
+
+
+@mirror
+def asc_triangle(ctx, df):
+    """Two known pivot highs within 0.2 ATR (a flat top) over two rising pivot lows; the close above
+    the top on 1.5x mean tick volume (mkt, stop under the bar), or a limit back at the top (retest,
+    stop half an ATR under it)."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    ph, pl = _piv(ctx, df)
+    v = P.tick_volume(df)
+    vm = P.sma(v, 20)
+    rows, used = [], set()
+    for i in range(len(df)):
+        if len(ph[i]) < 2 or len(pl[i]) < 2 or not a[i] > 0:
+            continue
+        (hi1, t1), (hi2, t2) = ph[i]
+        (_, b1), (_, b2) = pl[i]
+        top = max(t1, t2)
+        if abs(t1 - t2) > 0.2 * a[i] or not b2 > b1 or (hi1, hi2) in used:
+            continue
+        if c[i] > top and c[i - 1] <= top:
+            used.add((hi1, hi2))
+            loud = not np.isfinite(vm[i]) or v[i] >= 1.5 * vm[i]
+            rows.append(long_(i, l[i] - BUF * a[i], tag="mkt" if loud else "mkt_quiet"))
+            rows.append(long_(i, top - 0.5 * a[i], entry=top, limit=1, expires=5, tag="retest"))
+    return frame(rows)
+
+
+@mirror
+def pullback_confluence(ctx, df):
+    """In an uptrend (EMA21 > EMA50), a pullback into the 0.5-0.618 retracement of the last known
+    swing that is within half an ATR of the EMA21, confirmed by a bullish candle; stop under it."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    e21, e50 = P.ema(c, 21), P.ema(c, 50)
+    ph, pl = _piv(ctx, df, k=1)
+    cd = ctx.get(("cd", id(df)), lambda: P.candles(df, a))
+    rows, last = [], -10
+    for i in range(60, len(df)):
+        if not (ph[i] and pl[i]) or e21[i] <= e50[i] or i - last < 5:
+            continue
+        (hj, hv), (lj, lv) = ph[i][-1], pl[i][-1]
+        if lj >= hj or hv - lv < a[i]:
+            continue
+        f50, f618 = hv - 0.5 * (hv - lv), hv - 0.618 * (hv - lv)
+        if f618 <= l[i] <= f50 and abs(l[i] - e21[i]) <= 0.5 * a[i] and cd["bull"].iat[i]:
+            rows.append(long_(i, l[i] - BUF * a[i]))
+            last = i
+    return frame(rows)
+
+
+def volume_day(ctx):
+    """Daily tick-volume z >= 2 over 30 days: quiet (|change| < 1.5%, side = the change's sign) and
+    momentum (|change| >= 3%, follow). Stop one ATR away; the change's sign decides the side."""
+    if ctx.interval != "1d":
+        return frame([])
+    df = ctx.df
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    v = P.tick_volume(df)
+    z = (v - pd.Series(v).shift(1).rolling(30).mean().to_numpy()) / pd.Series(v).shift(1).rolling(30).std().to_numpy()
+    chg = np.r_[np.nan, c[1:] / c[:-1] - 1]
+    rows = []
+    for i in np.flatnonzero(z >= 2):
+        if not np.isfinite(chg[i]) or not a[i] > 0 or chg[i] == 0:
+            continue
+        side = 1 if chg[i] > 0 else -1
+        tag = "quiet" if abs(chg[i]) < 0.015 else "momentum" if abs(chg[i]) >= 0.03 else ""
+        if tag:
+            rows.append(dict(i=int(i), side=side, stop_px=c[i] - side * a[i], entry=np.nan, limit=0,
+                             expires=1, tag=tag))
+    return frame(rows)
+
+
+# ------------------------------------------------------------------------------ the clock (ICT)
+
+@mirror
+def asia_sweep(ctx, df):
+    """Judas swing / London killzone: the Asia range (20:00-00:00 New York) swept below during
+    02:00-05:00 New York and closed back inside; stop under the sweep. Intraday only."""
+    if ctx.sec > 3600:
+        return frame([])
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    hr = P.ny_hour(df["ts"].to_numpy())
+    day = (pd.to_datetime(df["ts"], unit="s", utc=True).dt.tz_convert("America/New_York")
+           + pd.Timedelta(hours=4)).dt.date.to_numpy()  # an Asia session belongs to the next day
+    rows, done = [], set()
+    asia_lo = {}
+    for i in range(len(df)):
+        d = day[i]
+        if hr[i] >= 20 or hr[i] < 0:
+            asia_lo[d] = min(asia_lo.get(d, np.inf), l[i])
+        elif 2 <= hr[i] < 5 and d in asia_lo and d not in done and a[i] > 0:
+            lo = asia_lo[d]
+            if l[i] < lo and c[i] > lo:
+                rows.append(long_(i, l[i] - BUF * a[i]))
+                done.add(d)
+    return frame(rows)
+
+
+@mirror
+def silver_bullet(ctx, df):
+    """ICT silver bullet: a bullish FVG formed inside 10:00-11:00 New York, traded with a limit at
+    its top for the rest of the window plus an hour, stop under its bottom. 15m and finer."""
+    if ctx.sec > 900:
+        return frame([])
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    hr = P.ny_hour(df["ts"].to_numpy())
+    rows = []
+    for k in range(2, len(df)):
+        if 10 <= hr[k] < 11 and l[k] > h[k - 2] and l[k] - h[k - 2] >= 0.1 * a[k] > 0:
+            rows.append(long_(k, h[k - 2] - BUF * a[k], entry=l[k], limit=1,
+                              expires=max(1, int(7200 / ctx.sec))))
+    return frame(rows)
+
+
+def btc_overnight(ctx):
+    """Long BTC from 22:00 to 00:00 UTC (the overnight seasonality claim); time exit, wide stop."""
+    if not ctx.sym.startswith("BTC") or ctx.sec > 3600:
+        return frame([])
+    ts = ctx.df["ts"].to_numpy()
+    hr = pd.to_datetime(ts, unit="s", utc=True).hour.to_numpy()
+    c, a = ctx.df["close"].to_numpy(), ctx.a
+    k = np.flatnonzero((hr == 21) & (ts % 3600 == 3600 - ctx.sec))  # the bar closing at 22:00
+    rows = [dict(i=int(i), side=1, stop_px=c[i] - 2 * a[i], entry=np.nan, limit=0, expires=1,
+                 tag="time", hold=int(7200 / ctx.sec)) for i in k if a[i] > 0]
+    return frame(rows)
+
+
+# -------------------------------------------------------------------------------- cross-asset
+
+def divergence(ctx):
+    """Relative strength against BTC (crypto) with R^2 >= 0.3 over 30 bars: the 5-bar residual's z
+    over 60 bars beyond 1.5 is followed (sage's sign). Stop 1.5 ATR."""
+    lead = ctx.peers.get("BTCUSD")
+    if lead is None or ctx.sym == "BTCUSD":
+        return frame([])
+    c, a = ctx.df["close"].to_numpy(), ctx.a
+    rf, rl = np.r_[0, np.diff(np.log(c))], np.r_[0, np.diff(np.log(lead))]
+    sf, sl = pd.Series(rf), pd.Series(rl)
+    cov = sf.rolling(30).cov(sl)
+    var = sl.rolling(30).var()
+    beta = (cov / var).to_numpy()
+    r2 = (sf.rolling(30).corr(sl) ** 2).to_numpy()
+    resid = pd.Series(rf - beta * rl).rolling(5).sum()
+    z = ((resid - resid.shift(1).rolling(60).mean()) / resid.shift(1).rolling(60).std()).to_numpy()
+    rows, last = [], -10
+    for i in range(100, len(c)):
+        if r2[i] >= 0.3 and abs(z[i]) >= 1.5 and i - last >= 5 and a[i] > 0:
+            side = 1 if z[i] > 0 else -1
+            rows.append(dict(i=i, side=side, stop_px=c[i] - side * 1.5 * a[i], entry=np.nan,
+                             limit=0, expires=1, tag=""))
+            last = i
+    return frame(rows)
+
+
+USD = {"EURUSD": -1, "GBPUSD": -1, "AUDUSD": -1, "NZDUSD": -1, "USDJPY": 1, "USDCHF": 1, "USDCAD": 1}
+
+
+def usd_confluence(ctx):
+    """Sage's dollar confluence, oriented properly: >= 4 of the 7 majors at a level (a 10-bar swing
+    or the 120-bar extreme, within 0.4 ATR) and >= 66% of them implying the same dollar move.
+    Traded on this pair if it is one of them, with a one-ATR stop."""
+    if ctx.sym not in USD or len(ctx.peers) < 6:
+        return frame([])
+    rows = []
+    reads = {}
+    for s, sgn in USD.items():
+        cs = ctx.df["close"].to_numpy() if s == ctx.sym else ctx.peers.get(s)
+        if cs is None:
+            continue
+        cs = pd.Series(cs)
+        a = (cs.diff().abs().rolling(14).mean()).to_numpy()
+        hi = cs.rolling(120).max().to_numpy()
+        lo = cs.rolling(120).min().to_numpy()
+        x = cs.to_numpy()
+        at_hi = (hi - x) <= 0.4 * a
+        at_lo = (x - lo) <= 0.4 * a
+        # at a high the pair should fall: for EURUSD (sgn -1) that is the dollar rising
+        usd = np.where(at_hi, -sgn, np.where(at_lo, sgn, 0))
+        reads[s] = usd
+    if len(reads) < 6:
+        return frame([])
+    M = np.vstack(list(reads.values()))
+    ready = (M != 0).sum(axis=0)
+    up, dn = (M > 0).sum(axis=0), (M < 0).sum(axis=0)
+    c, a = ctx.df["close"].to_numpy(), ctx.a
+    last = -10
+    for i in range(130, len(c)):
+        if ready[i] >= 4 and max(up[i], dn[i]) / ready[i] >= 0.66 and i - last >= 5 and a[i] > 0:
+            usd_dir = 1 if up[i] > dn[i] else -1
+            side = usd_dir * USD[ctx.sym]
+            rows.append(dict(i=i, side=side, stop_px=c[i] - side * a[i], entry=np.nan, limit=0,
+                             expires=1, tag=""))
+            last = i
+    return frame(rows)
+
+
+# ------------------------------------------------------------------------------------- FOCuS
+
+def _focus(ctx, df, up):
+    th = 12.0 + 3.0 * np.log(3600.0 / ctx.sec)
+    c = df["close"].to_numpy()
+    r = np.r_[0, np.diff(c)]
+    scale = pd.Series(r).abs().ewm(span=100).mean().shift(1).to_numpy() * np.sqrt(np.pi / 2)
+    return P.focus_series(r, scale, max(th, 3.0), up)
+
+
+@mirror
+def focus_follow(ctx, df):
+    """FOCuS on signed returns: an upward change in the mean is followed at market; stop under the
+    lowest low since the change began."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    fired, at = ctx.get(("fu", id(df)), lambda: _focus(ctx, df, True))
+    rows = [long_(i, l[max(at[i], 0):i + 1].min() - BUF * a[i]) for i in np.flatnonzero(fired)
+            if a[i] > 0 and at[i] >= 0]
+    return frame(rows)
+
+
+@mirror
+def focus_retest(ctx, df):
+    """FOCuS zone: after an upward change, a resting limit back at the change's starting bar's
+    high, stop under that bar's low (the zone), valid 50 bars."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    fired, at = ctx.get(("fu", id(df)), lambda: _focus(ctx, df, True))
+    rows = []
+    for i in np.flatnonzero(fired):
+        k = at[i]
+        if k < 0 or not a[i] > 0 or h[k] >= c[i]:
+            continue
+        rows.append(long_(i, l[k] - BUF * a[i], entry=h[k], limit=1, expires=50))
+    return frame(rows)
+
+
+@mirror
+def focus_fade(ctx, df):
+    """FOCuS faded: after a downward change, buy; stop under the low of the move."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    fired, at = ctx.get(("fd", id(df)), lambda: _focus(ctx, df, False))
+    rows = [long_(i, l[max(at[i], 0):i + 1].min() - BUF * a[i]) for i in np.flatnonzero(fired)
+            if a[i] > 0 and at[i] >= 0]
+    return frame(rows)
+
+
+@mirror
+def focus_mtf(ctx, df):
+    """FOCuS agreeing across timeframes: an upward change here while every higher timeframe loaded
+    has fired upward within its last 3 bars. Stop as `focus_follow`."""
+    if not ctx.htf:
+        return frame([])
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    fired, at = ctx.get(("fu", id(df)), lambda: _focus(ctx, df, True))
+    agree = np.ones(len(df), bool)
+    for k, (d, ix) in ctx.htf.items():
+        sec = {"15m": 900, "1h": 3600, "4h": 14400, "1d": 86400}[k]
+        sub = Ctx(ctx.sym, ctx.family, k, sec, d)
+        f, _ = _focus(sub, d, True)
+        recent = pd.Series(f.astype(float)).rolling(3, min_periods=1).max().to_numpy() > 0
+        agree &= np.where(ix >= 0, recent[np.clip(ix, 0, None)], False)
+    rows = [long_(i, l[max(at[i], 0):i + 1].min() - BUF * a[i]) for i in np.flatnonzero(fired & agree)
+            if a[i] > 0 and at[i] >= 0]
+    return frame(rows)
+
+
+def focus_size(ctx):
+    """FOCuS on absolute returns: when move size shifts up, follow the alarm bar's direction; stop
+    beyond that bar's far end."""
+    df = ctx.df
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    r = np.abs(np.r_[0, np.diff(c)])
+    base = pd.Series(r).ewm(span=200).mean().shift(1).to_numpy()
+    th = max(12.0 + 3.0 * np.log(3600.0 / ctx.sec), 3.0)
+    fired, _ = P.focus_series(r - base, base, th, True)
+    rows = []
+    for i in np.flatnonzero(fired):
+        if c[i] == o[i] or not a[i] > 0:
+            continue
+        side = 1 if c[i] > o[i] else -1
+        stop = l[i] - BUF * a[i] if side > 0 else h[i] + BUF * a[i]
+        rows.append(dict(i=int(i), side=side, stop_px=stop, entry=np.nan, limit=0, expires=1, tag=""))
+    return frame(rows)
+
+
+SETUPS = {f.__name__: f for f in (
+    bos_fvg, choch, sweep_equal_lows, order_block, cisd, turtle_soup, crt_raid, ote, ame_sweep,
+    impulse_zone, bjorgum, level_reaction, zma, anomaly, ma_reaction, double_bottom, asc_triangle,
+    pullback_confluence, volume_day, asia_sweep, silver_bullet, btc_overnight, divergence,
+    usd_confluence, focus_follow, focus_retest, focus_fade, focus_mtf, focus_size,
+)}
+
+
+# ================================================================ batch 2: the api and lab ideas
+
+def _sided(i, side, stop_px, entry=np.nan, limit=0, expires=1, tag="", hold=None):
+    r = dict(i=int(i), side=int(side), stop_px=float(stop_px), entry=float(entry), limit=int(limit),
+             expires=int(expires), tag=tag)
+    if hold is not None:
+        r["hold"] = int(hold)
+    return r
+
+
+@mirror
+def ame_raid(ctx, df):
+    """The api's AME sweep patterns at the 20-bar equal-low pool (lows within 0.2% of price):
+    single bar (low through, close back above) and judas (two bars below, then a close above the
+    previous high). Traded both ways: `smc` buys the reclaim (stop under the raid), `inverted`
+    sells it - the direction AME actually shipped (stop above the bar)."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    rows, last = [], -5
+    for i in range(22, len(df)):
+        if i - last < 3 or not a[i] > 0:
+            continue
+        w = l[i - 20:i]
+        lo = w.min()
+        eq = w[w <= lo * 1.002]
+        if len(eq) < 2:
+            continue
+        pool = eq.mean()
+        single = l[i] < pool < c[i]
+        judas = l[i - 1] < pool and c[i - 1] < pool and c[i] > h[i - 1]
+        if single or judas:
+            tag = "single" if single else "judas"
+            rows.append(long_(i, l[i] - BUF * a[i], tag=f"smc|{tag}"))
+            rows.append(dict(i=i, side=-1, stop_px=h[i] + BUF * a[i], entry=np.nan, limit=0, expires=1,
+                             tag=f"inverted|{tag}"))
+            last = i
+    return frame(rows)
+
+
+@mirror
+def cisd_live(ctx, df):
+    """The api's live CISD: >= 2 bearish bars, then a bullish flip bar with body >= 40% of its range
+    closing above the high two bars back; stop under the run's low."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    rows = []
+    for i in range(4, len(df)):
+        rng = h[i] - l[i]
+        if not (c[i] > o[i] and rng > 0 and (c[i] - o[i]) / rng >= 0.4 and c[i] > h[i - 2]) or not a[i] > 0:
+            continue
+        j = i - 1
+        while j >= max(0, i - 10) and c[j] < o[j]:
+            j -= 1
+        if i - 1 - j >= 2:
+            rows.append(long_(i, l[j + 1:i + 1].min() - BUF * a[i]))
+    return frame(rows)
+
+
+@mirror
+def triangle_cook(ctx, df):
+    """Breakouts' 'cooking' triangle: over 60 bars, >= 3 local highs falling and >= 3 lows rising
+    (+-3 bar extrema, known 3 bars later); price within half an ATR of the upper line with the apex
+    <= 10 bars away. A buy stop on the upper line, stop on the lower line."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    ph, pl = _piv(ctx, df, 3, 3, k=6)
+    rows, last = [], -20
+    for i in range(60, len(df)):
+        if i - last < 10 or not a[i] > 0:
+            continue
+        hs = [(j, v) for j, v in ph[i] if i - j <= 60][-3:]
+        ls = [(j, v) for j, v in pl[i] if i - j <= 60][-3:]
+        if len(hs) < 3 or len(ls) < 3:
+            continue
+        bh, ah = np.polyfit([j for j, _ in hs], [v for _, v in hs], 1)
+        bl, al_ = np.polyfit([j for j, _ in ls], [v for _, v in ls], 1)
+        if not (bh < 0 < bl):
+            continue
+        up, dn = bh * i + ah, bl * i + al_
+        if up - dn < 0.5 * a[i] or up - c[i] > 0.5 * a[i] or c[i] > up:
+            continue
+        apex = (ah - al_) / (bl - bh) - i
+        if 0 < apex <= 10:
+            rows.append(long_(i, dn - BUF * a[i], entry=up, limit=0, expires=10))
+            last = i
+    out = frame(rows)
+    if not out.empty:
+        out["limit"] = 0  # a buy *stop* at the line: mt5bt's resting stop order
+    return out
+
+
+@mirror
+def proximity_limit(ctx, df):
+    """The api's proximity peer as a trade: a resting buy limit at the nearest bjorgum support
+    within half an ATR below, stop half an ATR beyond it, valid 10 bars."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    zones = ctx.get(("bjz", id(df)), lambda: _bjorgum_zones(df))
+    rows, last = [], -10
+    for i in range(len(df)):
+        if not zones[i] or not a[i] > 0 or i - last < 10:
+            continue
+        sup = [z for z in zones[i] if z[1] < c[i] and c[i] - z[1] <= 0.5 * a[i]]
+        if sup:
+            zb, zt, _ = max(sup, key=lambda z: z[1])
+            rows.append(long_(i, zt - 0.5 * a[i], entry=zt, limit=1, expires=10))
+            last = i
+    return frame(rows)
+
+
+@mirror
+def cusum_follow(ctx, df):
+    """The api's CUSUM: drift k = 0.5 sigma, line h = 5 sigma, sigma from the 60 returns before the
+    last 30; the first bar the up-sum crosses is followed, stop two ATR."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    r = _ret(c)
+    sig = pd.Series(r).shift(30).rolling(60).std().to_numpy()
+    rows, s_up, armed = [], 0.0, True
+    for i in range(100, len(df)):
+        if not np.isfinite(sig[i]) or sig[i] <= 0:
+            continue
+        s_up = max(0.0, s_up + r[i] - 0.5 * sig[i])
+        if s_up > 5 * sig[i]:
+            if armed and a[i] > 0:
+                rows.append(long_(i, c[i] - 2 * a[i]))
+            armed, s_up = False, 0.0
+        elif s_up == 0.0:
+            armed = True
+    return frame(rows)
+
+
+def rug_short(ctx):
+    """Blow-off top: up 50% from the 60-bar low (5% on non-crypto), the last 10 bars at twice the
+    earlier pace, within 5% of the high, then a rejection bar closing in its lower 40% on a volume
+    jump. Short, stop over the bar."""
+    df = ctx.df
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    v = P.tick_volume(df)
+    need = 0.5 if ctx.family == "crypto" else 0.05
+    rows, last = [], -20
+    for i in range(65, len(df)):
+        lo60, hi60 = l[i - 59:i + 1].min(), h[i - 59:i + 1].max()
+        recent, base = c[i] / c[i - 10] - 1, c[i - 10] / c[i - 59] - 1
+        accel = (recent / 10) / (base / 50) if base > 0 else (np.inf if recent > 0.01 else 0)
+        vb = v[i - 59:i - 9]
+        vz = (v[i - 9:i + 1].mean() - vb.mean()) / (vb.std() or np.inf)
+        pos = (c[i] - l[i]) / max(h[i] - l[i], 1e-12)
+        if (c[i] / lo60 - 1 >= need and accel >= 2 and recent > 0 and c[i] >= 0.95 * hi60
+                and pos <= 0.4 and vz >= 1.5 and i - last > 10 and a[i] > 0):
+            rows.append(_sided(i, -1, h[i] + BUF * a[i]))
+            last = i
+    return frame(rows)
+
+
+@mirror
+def vwap_band_fade(ctx, df):
+    """Fade the 50-bar tick-volume VWAP's lower 1.5-sigma band: a close back above it after closing
+    below; stop under the low of the excursion."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    v = np.nan_to_num(P.tick_volume(df), nan=1.0) + 1e-9
+    tp = (h + l + c) / 3
+    vw = pd.Series(tp * v).rolling(50).sum().to_numpy() / pd.Series(v).rolling(50).sum().to_numpy()
+    var = pd.Series((tp - vw) ** 2 * v).rolling(50).sum().to_numpy() / pd.Series(v).rolling(50).sum().to_numpy()
+    band = vw - 1.5 * np.sqrt(np.maximum(var, 0))
+    k = np.flatnonzero((c[1:] > band[1:]) & (c[:-1] < band[:-1])) + 1
+    return frame([long_(i, l[max(0, i - 3):i + 1].min() - BUF * a[i]) for i in k if a[i] > 0])
+
+
+@mirror
+def absorption(ctx, df):
+    """Absorption at a low: a new 19-bar low on a bullish bar whose lower wick is >= half its range,
+    on a wick-delta z >= 1.5 (tick volume x wick imbalance against the last 19). Stop under the wick."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    v = np.nan_to_num(P.tick_volume(df), nan=1.0)
+    rng = np.maximum(h - l, 1e-12)
+    uw, lw = h - np.maximum(o, c), np.minimum(o, c) - l
+    wd = (lw - uw) / rng * v
+    s = pd.Series(wd)
+    z = ((s - s.shift(1).rolling(19).mean()) / s.shift(1).rolling(19).std()).to_numpy()
+    newlow = l <= pd.Series(l).rolling(19).min().to_numpy()
+    k = np.flatnonzero((z >= 1.5) & (c > o) & newlow & (lw >= 0.5 * rng))
+    return frame([long_(i, l[i] - BUF * a[i]) for i in k if a[i] > 0])
+
+
+@mirror
+def cvd_divergence(ctx, df):
+    """Bar-delta divergence: price below where it was 25 bars ago while the 24-bar sum of
+    tick-volume delta (v x (2c - h - l)/(h - l)) is positive; the first such bar, stop 1.5 ATR."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    v = np.nan_to_num(P.tick_volume(df), nan=1.0)
+    d = v * (2 * c - h - l) / np.maximum(h - l, 1e-12)
+    ds = pd.Series(d).rolling(24).sum().to_numpy()
+    cond = (c < np.r_[np.full(25, np.nan), c[:-25]]) & (ds > 0)
+    k = np.flatnonzero(cond & ~np.r_[False, cond[:-1]])
+    return frame([long_(i, c[i] - 1.5 * a[i]) for i in k if a[i] > 0])
+
+
+PUMP = {"fx": {"15m": .004, "1h": .0025, "4h": .005, "1d": .02}, "metal": {"15m": .004, "1h": .0025, "4h": .005, "1d": .02},
+        "index": {"15m": .005, "1h": .01, "4h": .012, "1d": .015}, "energy": {"15m": .005, "1h": .01, "4h": .012, "1d": .015},
+        "deriv": {"15m": .02, "1h": .03, "4h": .03, "1d": .03}, "crypto": {"15m": .03, "1h": .03, "4h": .03, "1d": .03}}
+
+
+@mirror
+def pump_follow(ctx, df):
+    """The bar pump scanner: a 9-bar close change past the class threshold is followed; stop at the
+    9-bar opposite extreme, held 3 bars."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    th = PUMP.get(ctx.family, PUMP["crypto"]).get(ctx.interval, 0.03)
+    chg = np.r_[np.full(9, np.nan), c[9:] / c[:-9] - 1]
+    cond = chg >= th
+    k = np.flatnonzero(cond & ~np.r_[False, cond[:-1]])
+    return frame([_sided(i, 1, l[i - 9:i + 1].min() - BUF * a[i], hold=3) for i in k if a[i] > 0 and i >= 9])
+
+
+@mirror
+def fisher_extreme(ctx, df):
+    """Fisher transform (10, unsmoothed) at or below -1.5: buy the reversion, held 6 bars, stop under
+    the 10-bar low. Tagged by session (UTC 7-12 and 16-23, the proposed gate)."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    hh = pd.Series(h).rolling(10).max().to_numpy()
+    ll = pd.Series(l).rolling(10).min().to_numpy()
+    x = np.clip(2 * (c - ll) / np.maximum(hh - ll, 1e-12) - 1, -0.999, 0.999)
+    f = 0.5 * np.log((1 + x) / (1 - x))
+    hr = pd.to_datetime(df["ts"].to_numpy(), unit="s", utc=True).hour.to_numpy()
+    cond = f <= -1.5
+    k = np.flatnonzero(cond & ~np.r_[False, cond[:-1]])
+    return frame([_sided(i, 1, ll[i] - BUF * a[i], hold=6,
+                         tag="gate" if (7 <= hr[i] <= 12 or 16 <= hr[i] <= 23) else "off")
+                  for i in k if a[i] > 0])
+
+
+@mirror
+def tf_coherent_breakout(ctx, df):
+    """A close above the 20-bar high, tagged coherent when the next timeframe's EMA20 (closed bars)
+    slopes up, discoherent when not; stop under the breakout bar."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    up = UP_OF.get(ctx.interval)
+    if up not in ctx.htf:
+        return frame([])
+    d, ix = ctx.htf[up]
+    e = P.ema(d["close"].to_numpy(), 20)
+    slope = np.r_[0, np.diff(e)]
+    hs = np.where(ix >= 0, slope[np.clip(ix, 0, None)], 0)
+    prior = pd.Series(h).shift(1).rolling(20).max().to_numpy()
+    cond = c > prior
+    k = np.flatnonzero(cond & ~np.r_[False, cond[:-1]])
+    return frame([long_(i, l[i] - BUF * a[i], tag="coherent" if hs[i] > 0 else "discoherent")
+                  for i in k if a[i] > 0])
+
+
+UP_OF = {"15m": "1h", "1h": "4h", "4h": "1d"}
+
+
+@mirror
+def candle_fade(ctx, df):
+    """The lab's finding that textbook candles work backwards: a bullish pattern (hammer, engulfing,
+    piercing, tweezer) is sold, held 3 bars, stop above the pattern's high."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    cd = ctx.get(("cd", id(df)), lambda: P.candles(df, a))
+    k = np.flatnonzero(cd["bull"].to_numpy())
+    return frame([_sided(i, -1, h[i] + BUF * a[i], hold=3) for i in k if a[i] > 0])
+
+
+@mirror
+def three_bar_continuation(ctx, df):
+    """A 3-bar rise of more than 2 ATR continues (FX claim): buy, held 3 bars, stop under bar 3's low."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    mv = np.r_[np.full(3, np.nan), c[3:] - c[:-3]]
+    cond = mv > 2 * a
+    k = np.flatnonzero(cond & ~np.r_[False, cond[:-1]])
+    return frame([_sided(i, 1, l[i] - BUF * a[i], hold=3) for i in k if a[i] > 0])
+
+
+@mirror
+def sweep_fade_hivol(ctx, df):
+    """A wick under the prior 24-bar low that closes back inside, when 12-bar realised vol is above
+    its 500-bar 66th percentile: buy. `src` geometry is the lab's (stop 2.5 ATR, target 4 ATR, 24
+    bars); the trader's stop sits under the wick."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    r = _ret(c)
+    rv = pd.Series(r).rolling(12).std()
+    gate = (rv > rv.rolling(500, min_periods=100).quantile(0.66)).to_numpy()
+    prior = pd.Series(l).shift(1).rolling(24).min().to_numpy()
+    k = np.flatnonzero((l < prior) & (c > prior) & gate)
+    rows = []
+    for i in k:
+        if a[i] > 0:
+            rows.append(long_(i, l[i] - BUF * a[i], tag="trader"))
+            r_ = _sided(i, 1, c[i] - 2.5 * a[i], tag="lab", hold=24)
+            r_["target_px"] = c[i] + 4 * a[i]
+            rows.append(r_)
+    return frame(rows)
+
+
+def fatigue(ctx):
+    """The lab's liquidity fatigue: touches of the 50-bar high and low, decayed 0.95 a bar. SweepPred:
+    buy when the low side's fatigue is above its 500-bar 80th percentile (sell for the high side);
+    FadeSweep: buy a low-side touch while that fatigue was already high. Held 6 bars, stop 1.5 ATR."""
+    df = ctx.df
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    bsl = pd.Series(h).shift(1).rolling(50).max().to_numpy()
+    ssl = pd.Series(l).shift(1).rolling(50).min().to_numpy()
+    tb, ts_ = (h >= bsl).astype(float), (l <= ssl).astype(float)
+    fb, fs = np.zeros(len(df)), np.zeros(len(df))
+    for i in range(1, len(df)):
+        fb[i], fs[i] = 0.95 * fb[i - 1] + tb[i], 0.95 * fs[i - 1] + ts_[i]
+    qb = pd.Series(fb).rolling(500, min_periods=100).quantile(0.8).to_numpy()
+    qs = pd.Series(fs).rolling(500, min_periods=100).quantile(0.8).to_numpy()
+    rows, last = [], -6
+    for i in range(100, len(df)):
+        if not a[i] > 0 or i - last < 6:
+            continue
+        if fs[i] >= qs[i]:
+            rows.append(_sided(i, 1, c[i] - 1.5 * a[i], hold=6, tag="sweep_pred"))
+            last = i
+        elif fb[i] >= qb[i]:
+            rows.append(_sided(i, -1, c[i] + 1.5 * a[i], hold=6, tag="sweep_pred"))
+            last = i
+        if ts_[i] and fs[i - 1] >= qs[i - 1]:
+            rows.append(_sided(i, 1, l[i] - BUF * a[i], hold=6, tag="fade_sweep"))
+        if tb[i] and fb[i - 1] >= qb[i - 1]:
+            rows.append(_sided(i, -1, h[i] + BUF * a[i], hold=6, tag="fade_sweep"))
+    return frame(rows)
+
+
+def _slope(c, k):
+    x = np.arange(k) - (k - 1) / 2
+    return pd.Series(c).rolling(k).apply(lambda y: float(np.dot(x, y) / np.dot(x, x)), raw=True).to_numpy()
+
+
+def physics(ctx):
+    """The lab's 'verified' per-instrument signals, computed every 6 bars on the last 100, held 6 bars,
+    stop 1.5 ATR. Hurst (> .55 follow the 20-bar slope, < .45 fade it), permutation entropy (order 4,
+    normalised < .92: follow the 10-bar slope), and two the lab computed with lookahead, rebuilt
+    causally: MaxwellCurl (sign change of SMA5 - SMA20 of the bar's order-flow proxy's change, follow
+    the new sign) and Omori (aftershock decay of the last 48 bars, fade fast decay, follow slow)."""
+    df = ctx.df
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    s20, s10 = _slope(c, 20), _slope(c, 10)
+    r = _ret(c)
+    ofi = 2 * (c - l) / np.maximum(h - l, 1e-12) - 1
+    B = np.r_[0, np.diff(ofi)]
+    curl = P.sma(B, 5) - P.sma(B, 20)
+    rows = []
+    for i in range(120, len(df), 6):
+        if not a[i] > 0:
+            continue
+        w = r[i - 99:i + 1]
+        # Hurst by rescaled range over 4 block sizes
+        hs = []
+        for n in (8, 16, 32, 64):
+            m = len(w) // n
+            blocks = w[:m * n].reshape(m, n)
+            dev = np.cumsum(blocks - blocks.mean(axis=1, keepdims=True), axis=1)
+            rs = (dev.max(axis=1) - dev.min(axis=1)) / np.maximum(blocks.std(axis=1), 1e-12)
+            hs.append(np.log(rs.mean()))
+        H = np.polyfit(np.log([8, 16, 32, 64]), hs, 1)[0]
+        if H > 0.55 and s20[i]:
+            rows.append(_sided(i, np.sign(s20[i]), c[i] - np.sign(s20[i]) * 1.5 * a[i], hold=6, tag="hurst"))
+        elif H < 0.45 and s20[i]:
+            rows.append(_sided(i, -np.sign(s20[i]), c[i] + np.sign(s20[i]) * 1.5 * a[i], hold=6, tag="hurst"))
+        # permutation entropy, order 4
+        pats = np.argsort(np.lib.stride_tricks.sliding_window_view(c[i - 99:i + 1], 4), axis=1)
+        _, cnt = np.unique(pats @ np.array([1, 4, 16, 64]), return_counts=True)
+        p_ = cnt / cnt.sum()
+        pe = -(p_ * np.log(p_)).sum() / np.log(24)
+        if pe < 0.92 and s10[i]:
+            rows.append(_sided(i, np.sign(s10[i]), c[i] - np.sign(s10[i]) * 1.5 * a[i], hold=6, tag="permen"))
+        # MaxwellCurl, causal: a sign change of curl within the last 24 bars, as of bar i
+        seg = np.sign(curl[i - 24:i + 1])
+        if np.isfinite(seg).all() and (np.diff(seg) != 0).any() and seg[-1] != 0:
+            rows.append(_sided(i, seg[-1], c[i] - seg[-1] * 1.5 * a[i], hold=6, tag="maxwell"))
+        # Omori, causal: the mainshock's aftershocks only up to bar i
+        ab = np.abs(r[:i + 1])
+        thr95 = np.quantile(ab[max(0, i - 500):], 0.95)
+        thr80 = np.quantile(ab[max(0, i - 500):], 0.80)
+        mains = [j for j in range(i - 47, i - 5) if ab[j] > thr95]
+        if mains and s10[i]:
+            j = mains[-1]
+            after = ab[j + 1:i + 1] > thr80
+            t = np.arange(1, len(after) + 1)
+            cum = np.cumsum(after)
+            ok = cum > 0
+            if ok.sum() >= 3:
+                p = -np.polyfit(np.log(t[ok]), np.log(cum[ok] / t[ok]), 1)[0]
+                side = -np.sign(s10[i]) if p > 0.5 else np.sign(s10[i])
+                rows.append(_sided(i, side, c[i] - side * 1.5 * a[i], hold=6, tag="omori"))
+    return frame(rows)
+
+
+def ts_momentum(ctx):
+    """The lab's daily time-series momentum: the signs of the 7/14/30/60-day returns; long when 3 of
+    4 are up (short when 3 are down), out when that flips; shorts also out on a close above the
+    10-bar swing high. Daily only, stop 3 ATR."""
+    if ctx.interval != "1d":
+        return frame([])
+    df = ctx.df
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    votes = sum(np.sign(c - np.r_[np.full(k, np.nan), c[:-k]]) for k in (7, 14, 30, 60))
+    state = np.where(votes >= 2, 1, np.where(votes <= -2, -1, 0))
+    rows, i = [], 61
+    hi10 = pd.Series(h).shift(1).rolling(10).max().to_numpy()
+    while i < len(df):
+        s = state[i]
+        if s != 0 and state[i - 1] != s and a[i] > 0:
+            j = i + 1
+            while j < len(df) and state[j] == s and not (s < 0 and c[j] > hi10[j]):
+                j += 1
+            rows.append(_sided(i, s, c[i] - s * 3 * a[i], hold=max(1, j - i), tag="long" if s > 0 else "short"))
+            i = j
+        else:
+            i += 1
+    return frame(rows)
+
+
+@mirror
+def donchian_trend(ctx, df):
+    """A close above the 20-bar high while EMA50 > EMA200: buy, stop under the breakout bar."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    e50, e200 = P.ema(c, 50), P.ema(c, 200)
+    prior = pd.Series(h).shift(1).rolling(20).max().to_numpy()
+    cond = (c > prior) & (e50 > e200)
+    k = np.flatnonzero(cond & ~np.r_[False, cond[:-1]])
+    return frame([long_(i, l[i] - BUF * a[i]) for i in k if a[i] > 0 and i > 200])
+
+
+SETUPS.update({f.__name__: f for f in (
+    ame_raid, cisd_live, triangle_cook, proximity_limit, cusum_follow, rug_short, vwap_band_fade,
+    absorption, cvd_divergence, pump_follow, fisher_extreme, tf_coherent_breakout, candle_fade,
+    three_bar_continuation, sweep_fade_hivol, fatigue, physics, ts_momentum, donchian_trend,
+)})
+
+
+# ================================================================ batch 3: the lab scripts' ideas
+
+def _exit_when(cond_exit: np.ndarray, i: int, cap: int = 300) -> int:
+    """Bars from i to the first later bar where the exit condition holds."""
+    j = np.flatnonzero(cond_exit[i + 1:i + 1 + cap])
+    return int(j[0] + 1) if len(j) else cap
+
+
+@mirror
+def bb_sr_reversion(ctx, df):
+    """The lab's FX/index 'one survivor': Bollinger z < -2 (exit when z crosses 0), range position in
+    50 bars < 0.1 (exit at 0.5), and both together (conflu). Stop 3 ATR as a disaster stop only."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    z = (c - P.sma(c, 20)) / np.maximum(P.std(c, 20), 1e-12)
+    lo = pd.Series(l).rolling(50).min().to_numpy()
+    hi = pd.Series(h).rolling(50).max().to_numpy()
+    pir = (c - lo) / np.maximum(hi - lo, 1e-12)
+    rows = []
+    for name, cond, done in (("bb", z < -2, z >= 0), ("sr", pir < 0.1, pir >= 0.5),
+                             ("conflu", (z < -2) & (pir < 0.2), z >= 0)):
+        k = np.flatnonzero(cond & ~np.r_[False, cond[:-1]])
+        rows += [_sided(i, 1, c[i] - 3 * a[i], hold=_exit_when(done, i), tag=name) for i in k if a[i] > 0]
+    return frame(rows)
+
+
+@mirror
+def htf_pullback(ctx, df):
+    """The lab's range cycle: the higher timeframe up (close above its close 20 bars back) and this
+    timeframe low in its 20-bar range (< 0.34): buy, out when the position leaves the lower third or
+    the higher timeframe turns. Stop 2 ATR."""
+    up = UP_OF.get(ctx.interval)
+    if up not in ctx.htf:
+        return frame([])
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    d, ix = ctx.htf[up]
+    dc = d["close"].to_numpy()
+    hdir = np.sign(dc - np.r_[np.full(20, np.nan), dc[:-20]])
+    hd = np.where(ix >= 0, hdir[np.clip(ix, 0, None)], 0)
+    lo = pd.Series(l).rolling(20).min().to_numpy()
+    hi = pd.Series(h).rolling(20).max().to_numpy()
+    pos = (c - lo) / np.maximum(hi - lo, 1e-12)
+    cond = (hd > 0) & (pos < 0.34)
+    k = np.flatnonzero(cond & ~np.r_[False, cond[:-1]])
+    return frame([_sided(i, 1, c[i] - 2 * a[i], hold=_exit_when(~cond, i)) for i in k if a[i] > 0])
+
+
+@mirror
+def range_traverse(ctx, df):
+    """Sweep one side of a 20-bar range no wider than 6 ATR, close back inside: buy at the close,
+    stop under the wick by 0.15 of the bar's range, target the range's other edge (`src`)."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    lo = pd.Series(l).shift(1).rolling(20).min().to_numpy()
+    hi = pd.Series(h).shift(1).rolling(20).max().to_numpy()
+    rows = []
+    for i in np.flatnonzero((l < lo) & (c > lo)):
+        if a[i] > 0 and hi[i] - lo[i] <= 6 * a[i]:
+            r = _sided(i, 1, l[i] - 0.15 * (h[i] - l[i]), hold=120)
+            r["target_px"] = hi[i]
+            rows.append(r)
+    return frame(rows)
+
+
+@mirror
+def box_breakout(ctx, df):
+    """The lab's Donchian box: the first close above the prior 20-bar box, entered at that close (not
+    at the box edge, which the original assumed), stop one box width below, target two (`src`);
+    tagged compressed when ATR is in its 200-bar lowest 30%."""
+    o, h, l, c = arrays(df)
+    a = ctx.a
+    hi = pd.Series(h).shift(1).rolling(20).max().to_numpy()
+    lo = pd.Series(l).shift(1).rolling(20).min().to_numpy()
+    q30 = pd.Series(a).rolling(200, min_periods=100).quantile(0.3).to_numpy()
+    cond = c > hi
+    k = np.flatnonzero(cond & ~np.r_[False, cond[:-1]])
+    rows = []
+    for i in k:
+        w = hi[i] - lo[i]
+        if a[i] > 0 and w > 0:
+            r = _sided(i, 1, c[i] - w, hold=96, tag="compressed" if a[i] <= q30[i] else "open")
+            r["target_px"] = c[i] + 2 * w
+            rows.append(r)
+    return frame(rows)
+
+
+SETUPS.update({f.__name__: f for f in (bb_sr_reversion, htf_pullback, range_traverse, box_breakout)})
+
+
+# ================================================================ batch 4: cross-pollination
+# Combinations of the pieces that survived alone. Exploratory: their parts were chosen on the
+# same data, so a combination that "works" here still needs instruments and time it has not seen.
+
+def _ens(c: np.ndarray) -> np.ndarray:
+    """The time-series momentum ensemble: the mean sign of the 7/14/30/60-bar returns."""
+    return sum(np.sign(c - np.r_[np.full(k, np.nan), c[:-k]]) for k in (7, 14, 30, 60)) / 4
+
+
+def _gate(sig: pd.DataFrame, ok_long: np.ndarray, ok_short: np.ndarray) -> pd.DataFrame:
+    if sig.empty:
+        return sig
+    i, s = sig["i"].to_numpy(int), sig["side"].to_numpy(int)
+    keep = np.where(s > 0, ok_long[i], ok_short[i])
+    return sig[keep].reset_index(drop=True)
+
+
+def cusum_x_trend(ctx):
+    """CUSUM ignition, taken only with the momentum ensemble on its side (>= 0.5)."""
+    e = _ens(ctx.df["close"].to_numpy())
+    return _gate(cusum_follow(ctx), e >= 0.5, e <= -0.5)
+
+
+def anomaly_x_trend(ctx):
+    """A 5-sigma bar followed, only with the momentum ensemble on its side."""
+    e = _ens(ctx.df["close"].to_numpy())
+    return _gate(anomaly(ctx), e >= 0.5, e <= -0.5)
+
+
+def _near(sig: pd.DataFrame, other: pd.DataFrame, n: int, bars: int = 3) -> pd.DataFrame:
+    """Keep the signals that `other` confirmed on the same side within the last `bars` bars."""
+    if sig.empty or other.empty:
+        return sig.iloc[0:0]
+    marks = {1: np.zeros(n, bool), -1: np.zeros(n, bool)}
+    for i, s in zip(other["i"].to_numpy(int), other["side"].to_numpy(int)):
+        marks[int(s)][i:min(n, i + bars + 1)] = True
+    keep = [marks[int(s)][i] for i, s in zip(sig["i"].to_numpy(int), sig["side"].to_numpy(int))]
+    return sig[np.array(keep, bool)].reset_index(drop=True)
+
+
+def cusum_x_anomaly(ctx):
+    """CUSUM ignition confirmed by a 5-sigma bar on the same side within 3 bars."""
+    return _near(cusum_follow(ctx), anomaly(ctx), len(ctx.df))
+
+
+def breakout_x_cusum(ctx):
+    """A Donchian or box breakout confirmed by CUSUM on the same side within 3 bars."""
+    b = pd.concat([donchian_trend(ctx), box_breakout(ctx)], ignore_index=True)
+    if "target_px" in b:
+        b = b.drop(columns=["target_px"])
+    return _near(b, cusum_follow(ctx), len(ctx.df))
+
+
+SETUPS.update({f.__name__: f for f in (cusum_x_trend, anomaly_x_trend, cusum_x_anomaly, breakout_x_cusum)})
