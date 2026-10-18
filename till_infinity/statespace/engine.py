@@ -133,6 +133,22 @@ class Engine:
         interval = str(payload.get("interval") or "")
         if not feed or not interval or not self.settings.wants(feed, interval):
             return None
+        # **A forming bar is a different measurement, not an early one.**
+        # `prices.announce` publishes a notice per *touched* bar, so the bar in
+        # progress arrives again on every sweep - and folding it each time both
+        # multiplies the observation count and feeds a range that is still
+        # growing. `dispersion-noise.md` prices that: the sampling variance of
+        # `log(garman_klass)` runs 0.265 on a bar built from thousands of ticks
+        # and 0.50 on one built from twelve, with the bias going from -0.15 to
+        # -0.79. A tenth-formed bar is not a noisy reading of this bar's
+        # variance, it is an accurate reading of a tenth of it.
+        #
+        # `closed` is absent from some producers and from most tests, so the
+        # rule is fail-open on a missing key and fail-closed on an explicit
+        # `False`. The second guard is for what `closed` cannot catch: a
+        # backfill re-announcing bars the service has already folded.
+        if payload.get("closed") is False:
+            return None
         close = payload.get("close")
         if not isinstance(close, int | float) or not close > 0:
             return None
@@ -147,6 +163,10 @@ class Engine:
         volume = payload.get("volume")
         volume = float(volume) if isinstance(volume, int | float) and volume > 0 else 0.0
 
+        seen = self.progress.of(feed, interval)
+        if seen.bars and when <= seen.at:
+            return None
+
         readout = self.desk.read(
             feed=feed,
             interval=interval,
@@ -155,7 +175,6 @@ class Engine:
             noise=self.settings.noise,
             volume=volume,
         )
-        seen = self.progress.of(feed, interval)
         seen.bars += 1
         seen.at = when
         seen.value = float(readout.value)
