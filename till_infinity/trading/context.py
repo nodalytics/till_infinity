@@ -13,12 +13,23 @@ questions, which `risk.Guard` then asks before any trade:
 | `news.events` | is a high-impact release about to land on this instrument |
 | `prices.quotes` | is our broker's price or spread out of line with the venues |
 | `structures.signals` (`drift`) | did the regime just change under this instrument |
+| `statespace.dispersion` | how wide does the numeric layer expect the next bars to be |
 
-**Nothing here is a forecast.** Each is a reason to stand aside, not a reason
-to trade, and each fails safe: an empty calendar imposes no blackout, an absent
-consensus imposes no dislocation check, and no drift signal means no pause.
-A guard that refuses everything when its input is missing would stop the system
-the first time a collector restarted.
+**The first three are reasons to stand aside, not reasons to trade**, and each
+fails safe: an empty calendar imposes no blackout, an absent consensus imposes
+no dislocation check, and no drift signal means no pause. A guard that refuses
+everything when its input is missing would stop the system the first time a
+collector restarted.
+
+**The fourth is a forecast, and it is recorded rather than consulted.** Nothing
+in `risk.Guard` reads it and no size, stop or gate moves with it: it is written
+onto the decision card so that what the numeric layer expected at the moment of
+each trade can be joined to what that trade went on to do. That is deliberate
+and it is `anomalies.md`'s own conclusion - production's stops already scale
+with volatility, so a second volatility-based cut on top of them was sized on
+reversion rather than on risk, and "any anomaly score used in sizing has to be
+measured in production's R units first". This is the record that makes that
+measurement possible. It carries no direction, because the payload has none.
 """
 
 from __future__ import annotations
@@ -51,6 +62,13 @@ MIN_VENUES = 3
 QUOTE_TTL = 90.0
 
 
+#: Dispersion readouts older than this stop being written onto a card. The
+#: service publishes per bar on its shortest interval, so silence this long
+#: means it is stopped, restarting or warming - and a stale forecast recorded
+#: without its age would later read as what was expected at entry.
+WIDTH_TTL = 1_800.0
+
+
 @dataclass(frozen=True, slots=True)
 class Release:
     """One scheduled release, reduced to what a blackout needs."""
@@ -59,6 +77,34 @@ class Release:
     currency: str
     when: float
     importance: int
+
+
+@dataclass(frozen=True, slots=True)
+class Width:
+    """One `statespace.dispersion` payload, reduced to what a card records.
+
+    Frozen and flat, because this is written down rather than reasoned with.
+    `log_variance` is the space the members were fitted in, so a reader wanting
+    a standard deviation per bar takes `exp(log_variance / 2)` - and should
+    know that the estimator is biased low in log space, which
+    `research/docs/dispersion-noise.md` measures.
+    """
+
+    feed: str
+    interval: str
+    at: float
+    log_variance: float
+    spread: float
+    surprise: float
+    low: float = 0.0
+    high: float = 0.0
+    coverage: float = 0.0
+    source: str = ""
+
+    @property
+    def banded(self) -> bool:
+        """Whether a band came with it. False while the interval is warming."""
+        return self.coverage > 0.0 and self.high > self.low
 
 
 @dataclass(slots=True)
@@ -106,6 +152,10 @@ class Context:
         default_factory=lambda: defaultdict(dict)
     )
     _drifted: dict[str, float] = field(default_factory=dict)
+    #: feed -> interval -> the last dispersion readout for it. Kept per
+    #: interval rather than per feed because the service folds several and the
+    #: shortest is not always the one that arrived last.
+    _widths: dict[str, dict[str, Width]] = field(default_factory=lambda: defaultdict(dict))
     #: feed -> {venue: when it was last flagged wide}.
     _wide: dict[str, dict[str, float]] = field(default_factory=lambda: defaultdict(dict))
     #: feed -> when anything was first heard about it, for `wide_warmup`.
@@ -118,6 +168,35 @@ class Context:
     spreads: Spreads = field(default_factory=Spreads)
 
     # ------------------------------------------------------------- consuming
+
+    def observe_width(self, payload: dict[str, Any]) -> None:
+        """Take one `statespace.dispersion` payload. Never raises on a bad one.
+
+        A malformed payload is dropped rather than reported: this is a record,
+        and a record that can stop a trade being placed is a gate with extra
+        steps.
+        """
+        feed = str(payload.get("feed") or "")
+        interval = str(payload.get("interval") or "")
+        value = payload.get("log_variance")
+        when = payload.get("time")
+        if not feed or not interval:
+            return
+        if not isinstance(value, int | float) or not isinstance(when, int | float):
+            return
+        band = payload.get("band") if isinstance(payload.get("band"), dict) else {}
+        self._widths[feed][interval] = Width(
+            feed=feed,
+            interval=interval,
+            at=float(when),
+            log_variance=float(value),
+            spread=float(payload.get("spread") or 0.0),
+            surprise=float(payload.get("surprise") or 0.0),
+            low=float(band.get("low") or 0.0),
+            high=float(band.get("high") or 0.0),
+            coverage=float(band.get("coverage") or 0.0),
+            source=str(band.get("source") or ""),
+        )
 
     def observe_event(self, payload: dict[str, Any]) -> None:
         """Take one calendar row. Rows are rewritten in place as prints land."""
@@ -353,6 +432,46 @@ class Context:
         when = now if now is not None else time.time()
         left = self.drift_pause - (when - drifted)
         return max(0.0, left)
+
+    def width(self, feed: str, now: float | None = None) -> Width | None:
+        """The freshest dispersion readout for a feed, or None.
+
+        Freshest rather than shortest: the service folds several intervals and
+        publishes each as its bar closes, so the 1m readout is the newest only
+        between 5m closes. Anything older than `WIDTH_TTL` is not returned at
+        all, because a card that records a half-hour-old forecast without
+        saying so has recorded the wrong number.
+        """
+        seen = self._widths.get(feed)
+        if not seen:
+            return None
+        when = now if now is not None else time.time()
+        best = max(seen.values(), key=lambda got: got.at)
+        return best if when - best.at <= WIDTH_TTL else None
+
+    def width_context(self, feed: str, now: float | None = None) -> dict[str, Any]:
+        """What a decision card records about the expected width. Empty if none.
+
+        Flat keys with a `dispersion_` prefix, because the card is a JSON
+        object that gets queried by key - a nested object there would need the
+        reader to know its shape, and every other field on that card is flat.
+        """
+        got = self.width(feed, now)
+        if got is None:
+            return {}
+        out: dict[str, Any] = {
+            "dispersion_interval": got.interval,
+            "dispersion_log_variance": round(got.log_variance, 6),
+            "dispersion_spread": round(got.spread, 6),
+            "dispersion_surprise": round(got.surprise, 4),
+            "dispersion_age": round((now if now is not None else time.time()) - got.at, 1),
+        }
+        if got.banded:
+            out["dispersion_low"] = round(got.low, 6)
+            out["dispersion_high"] = round(got.high, 6)
+            out["dispersion_coverage"] = round(got.coverage, 4)
+            out["dispersion_band"] = got.source
+        return out
 
     # ---------------------------------------------------------------- inside
 

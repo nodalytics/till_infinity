@@ -73,6 +73,55 @@ def test_the_entry_points_each_service_calls_exist():
     assert callable(nw.collect)
     assert callable(td.listen)
 
+    from till_infinity.statespace import config as ss_config
+    from till_infinity.statespace import service as ss_service
+
+    assert callable(ss_service.watch)
+    assert callable(ss_config.Settings.from_env)
+
+
+def test_statespace_runs_unless_it_is_turned_off(monkeypatch):
+    """On by default: it folds one bar at a time and cannot lose money."""
+    monkeypatch.delenv("STATESPACE_ENABLED", raising=False)
+    assert st.Plan.from_env().statespace
+    monkeypatch.setenv("STATESPACE_ENABLED", "0")
+    assert not st.Plan.from_env().statespace
+
+
+def test_statespace_starts_after_its_consumer_and_before_its_producer():
+    """`ORDER`'s rule, applied: an in-memory bus only delivers to groups that
+    already exist when publish is called. `trading` subscribes to
+    `statespace.dispersion` and `prices` publishes the bars this consumes, so
+    a start order with statespace outside that sandwich drops messages at
+    start-up and looks like a service that is simply quiet."""
+    order = list(st.ORDER)
+    assert order.index("trading") < order.index("statespace") < order.index("prices")
+
+
+async def test_the_statespace_runner_subscribes_to_bars_and_publishes_nothing_else():
+    """The runner is the whole wiring, so this is the whole wiring test."""
+    from till_infinity.bus import BARS
+
+    asked: list[str] = []
+
+    class Carrier:
+        def subscribe(self, topic, group="default"):
+            asked.append(topic)
+
+            async def nothing():
+                if False:  # pragma: no cover - an empty async iterator
+                    yield None
+
+            return nothing()
+
+        async def publish(self, topic, payload, *, source=""):  # pragma: no cover
+            raise AssertionError(f"nothing should be published on an empty bus: {topic}")
+
+    stack = st.Stack(st.Plan())
+    stack.bus = Carrier()  # type: ignore[assignment]
+    await stack._run_statespace(None)
+    assert asked == [BARS]
+
 
 def test_trading_is_off_unless_asked_for(monkeypatch):
     """The only service that can lose money, so its absence is never a surprise."""

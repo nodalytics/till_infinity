@@ -68,6 +68,10 @@ ORDER: tuple[str, ...] = (
     "trading",
     "agents",
     "structures",
+    # After its consumer and before its producer, like everything else in this
+    # tuple: it publishes `statespace.dispersion`, which `trading` subscribes
+    # to, and consumes `prices.bars`.
+    "statespace",
     "prices",
     "news",
 )
@@ -117,6 +121,12 @@ class Plan:
     trading: bool = False
     notifications: bool = True
     structures: bool = True
+    #: On by default, and cheap: the numeric layer folds one bar at a time
+    #: through one member per feed and interval, which measured 1.2ms a bar.
+    #: It warms by replay rather than by restore, so start-up costs nothing -
+    #: and it publishes nothing for a feed until `warm_bars` bars have
+    #: arrived, because a readout whose band is missing is worse than none.
+    statespace: bool = True
     prices: bool = True
     news: bool = True
     journal: bool = True
@@ -142,6 +152,7 @@ class Plan:
             trading=truthy("TRADING_ENABLED"),
             notifications=truthy("NOTIFICATIONS_ENABLED", "1"),
             structures=truthy("STRUCTURES_ENABLED", "1"),
+            statespace=truthy("STATESPACE_ENABLED", "1"),
             prices=truthy("PRICES_ENABLED", "1"),
             news=truthy("NEWS_ENABLED", "1"),
             journal=truthy("JOURNAL", "1"),
@@ -684,6 +695,18 @@ class Stack:
 
         await asyncio.to_thread(prepare)
         await watcher.run()
+
+    async def _run_statespace(self, _book) -> None:
+        # Imported here rather than at the top because this package is meant
+        # to lift out in one move - `TestVendoredCusum` asserts it imports
+        # nothing from outside itself but `shared`, and a top-level import
+        # here would make a stack that cannot start without it. The seam is
+        # the bus: `watch` takes a carrier and the topics are named on both
+        # sides, with a test asserting the two names match.
+        from .statespace import config as ss_config
+        from .statespace import service as ss_service
+
+        await ss_service.watch(self.bus, ss_config.Settings.from_env())
 
     async def _run_prices(self, _book) -> None:
         settings = px.Settings.from_env()

@@ -67,7 +67,7 @@ from statistics import median
 from typing import Any, ClassVar
 
 from .. import trading
-from ..bus import ALERTS, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
+from ..bus import ALERTS, DISPERSION, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
 
@@ -190,7 +190,7 @@ ATTEMPT = "_attempt"
 #: ground truth - what the levels we traded actually did - which is consumed
 #: for the record rather than for a decision, and is the seam anything that
 #: learns from outcomes will attach to.
-TOPICS: tuple[str, ...] = (SIGNALS, QUOTES, EVENTS, RESOLUTIONS)
+TOPICS: tuple[str, ...] = (SIGNALS, QUOTES, EVENTS, RESOLUTIONS, DISPERSION)
 
 #: Bounds on `listen`'s intake. Signals, events and resolutions are rare and
 #: kept whole; quotes are a flood, kept in order, oldest shed on overflow.
@@ -948,6 +948,15 @@ class Trader:
             return None
         if message.topic == EVENTS:
             self.context.observe_event(message.payload)
+            return None
+        if message.topic == DISPERSION:
+            # **Recorded, never consulted.** See `context.py`'s docstring: the
+            # numeric layer's expected width goes onto the decision card so it
+            # can be joined to the outcome later, and nothing in `risk.Guard`
+            # reads it. `anomalies.md` is why - a second volatility-based size
+            # cut on top of stops that already scale with volatility was sized
+            # on reversion rather than on risk.
+            self.context.observe_width(message.payload)
             return None
         if message.topic == RESOLUTIONS:
             self._resolution(message.payload)
@@ -4570,6 +4579,11 @@ class Trader:
                 # back to this entry by number alone, with nothing in memory.
                 "magic": magic_for(self.settings.magic, by),
                 "mode": self.settings.mode,
+                # What statespace expected the next bars to be worth at the
+                # moment this was sent, and nothing was done with it. Empty
+                # when the service is off, warming or stale, which is the
+                # honest reading rather than a default.
+                **self.context.width_context(intent.feed),
                 **intent.to_context(),
             },
             tags=(intent.feed, str(intent.side), by or "scalp", self.settings.mode),

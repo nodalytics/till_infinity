@@ -10318,3 +10318,131 @@ def test_the_last_exemption_was_ended_by_its_own_premise():
         n for n, cls in td.STRATEGIES.items() if n not in SHAPED and cls(made).reward_floor <= 0
     ]
     assert bare == [], f"no floor and no shape: {bare}"
+
+
+# ------------------------------------------------- the expected width, recorded
+
+
+def test_a_dispersion_payload_becomes_a_reading_and_a_card():
+    """`statespace.dispersion` is the first consumer of the service's one topic,
+    and what it consumes is written down rather than acted on."""
+    context = Context()
+    context.observe_width(
+        {
+            "feed": "gold",
+            "interval": "5m",
+            "time": 1_000.0,
+            "log_variance": -16.2036,
+            "spread": 0.3187,
+            "surprise": -0.368,
+            "band": {"low": -17.1, "high": -15.3, "coverage": 0.9, "source": "measured"},
+        }
+    )
+    card = context.width_context("gold", now=1_060.0)
+    assert card["dispersion_interval"] == "5m"
+    assert card["dispersion_log_variance"] == -16.2036
+    assert card["dispersion_coverage"] == 0.9
+    assert card["dispersion_band"] == "measured"
+    assert card["dispersion_age"] == 60.0
+    assert "dispersion_side" not in card, "the payload carries no side"
+    assert "side" not in card, "and nothing here invents one"
+
+
+def test_a_stale_or_malformed_reading_is_not_recorded_at_all():
+    """A card that records a half-hour-old forecast without saying so has
+    recorded the wrong number, and a record that can raise is a gate."""
+    from till_infinity.trading.context import WIDTH_TTL
+
+    context = Context()
+    payload = {"feed": "gold", "interval": "1m", "time": 1_000.0, "log_variance": -16.0}
+    context.observe_width(payload)
+    assert context.width_context("gold", now=1_000.0 + WIDTH_TTL - 1)
+    assert context.width_context("gold", now=1_000.0 + WIDTH_TTL + 1) == {}
+
+    for bad in ({}, {"feed": "gold"}, {"feed": "gold", "interval": "1m"}, {"log_variance": 1.0}):
+        context.observe_width(dict(bad))
+    assert context.width_context("silver", now=1_000.0) == {}
+
+
+def test_the_freshest_interval_wins_rather_than_the_shortest():
+    """The service folds several and publishes each as its bar closes, so the
+    1m readout is the newest only between 5m closes."""
+    context = Context()
+    for interval, when in (("1m", 1_000.0), ("5m", 1_200.0)):
+        context.observe_width(
+            {"feed": "gold", "interval": interval, "time": when, "log_variance": -16.0}
+        )
+    assert context.width("gold", now=1_300.0).interval == "5m"
+    context.observe_width(
+        {"feed": "gold", "interval": "1m", "time": 1_260.0, "log_variance": -16.0}
+    )
+    assert context.width("gold", now=1_300.0).interval == "1m"
+
+
+def test_nothing_in_the_risk_layer_reads_the_expected_width():
+    """**Recorded, never consulted**, asserted on the source rather than hoped
+    for. `anomalies.md`: production's stops already scale with volatility, so a
+    second volatility-based cut on top of them was sized on reversion rather
+    than on risk, and any anomaly score used in sizing has to be measured in
+    production's R units first. This is the record that makes that possible."""
+    from till_infinity.trading import risk, sizing
+
+    for module in (risk, sizing):
+        source = Path(module.__file__).read_text()
+        for word in ("dispersion", "observe_width", "width_context"):
+            assert word not in source, f"{module.__name__} reads the forecast: {word}"
+
+
+async def test_a_trade_is_identical_with_and_without_the_forecast(tmp_path):
+    """The whole loop, twice. The card gains four keys and the decision does
+    not move - which is the only way a forecast can be let into the trading
+    service before it has been measured in R units."""
+    from till_infinity.bus import DISPERSION
+    from till_infinity.trading.service import TOPICS
+
+    assert DISPERSION in TOPICS, "the service has to subscribe before it can record"
+
+    taken = []
+    for reading in (False, True):
+        bus = Bus()
+        async with Journal(tmp_path / f"journal-{reading}.db") as book:
+            trader = Trader(bus, settings=settings(), journal=book)
+            await trader.start()
+            if reading:
+                await trader.handle(
+                    Message(
+                        topic=DISPERSION,
+                        payload={
+                            "feed": "gold",
+                            "interval": "5m",
+                            "time": time.time(),
+                            "log_variance": -16.2,
+                            "spread": 0.32,
+                            "surprise": -0.37,
+                            "band": {
+                                "low": -17.1,
+                                "high": -15.3,
+                                "coverage": 0.9,
+                                "source": "measured",
+                            },
+                        },
+                    )
+                )
+            await trader.handle(
+                Message(topic=QUOTES, payload={"feed": "gold", "bid": 4399.5, "ask": 4400.5})
+            )
+            got = await trader.handle(Message(topic=SIGNALS, payload=signal()))
+            assert isinstance(got, Intent)
+            taken.append(got)
+            cards = [
+                entry.context for entry in read(tmp_path / f"journal-{reading}.db") if entry.context
+            ]
+            carried = [card for card in cards if "dispersion_log_variance" in card]
+            assert bool(carried) is reading, "the card records it exactly when there is one"
+            if reading:
+                assert carried[0]["dispersion_log_variance"] == -16.2
+                assert carried[0]["dispersion_band"] == "measured"
+
+    first, second = taken
+    for field_name in ("feed", "side", "entry", "stop", "target", "volume", "stop_vol"):
+        assert getattr(first, field_name) == getattr(second, field_name), field_name

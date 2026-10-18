@@ -435,14 +435,23 @@ def test_structures_does_not_import_the_state_space_package():
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parent.parent / "till_infinity"
-    offenders = []
+    offenders: list[str] = []
+    nested: list[str] = []
     for path in root.rglob("*.py"):
         if "statespace" in path.parts:
             continue
+        inside: set[int] = set()
         try:
             tree = ast.parse(path.read_text())
         except SyntaxError:  # pragma: no cover - a file that will not parse
             continue
+        for scope in ast.walk(tree):
+            if isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
+                inside.update(
+                    node.lineno
+                    for node in ast.walk(scope)
+                    if isinstance(node, ast.Import | ast.ImportFrom)
+                )
         # **Real imports, parsed - not the string anywhere in the file.** The
         # first version grepped, and `shared/codec.py` names this package in the
         # comment explaining why it opts out of the persistence schema. Prose
@@ -455,12 +464,33 @@ def test_structures_does_not_import_the_state_space_package():
                 names = [node.module or "", *(a.name for a in node.names)]
             else:
                 continue
-            if any("statespace" in n.split(".") for n in names):
-                offenders.append(f"{path.relative_to(root)}:{node.lineno}")
+            if not any("statespace" in n.split(".") for n in names):
+                continue
+            where = f"{path.relative_to(root)}:{node.lineno}"
+            # **The graduation site, and the shape it has to keep.** `stack.py`
+            # starts the service, which is what the docstring above calls
+            # leaving behind a flag - `STATESPACE_ENABLED` here rather than a
+            # structures engine flag. The import has to stay *inside* the
+            # runner: at module level a deleted directory takes the whole stack
+            # down where it is imported, and nested it fails in one supervised
+            # task while every other service carries on. That is the
+            # difference between deletable and load-bearing.
+            if path.name == "stack.py":
+                (nested if node.lineno in inside else offenders).append(where)
+            else:
+                offenders.append(where)
     assert not offenders, (
         "statespace is imported from outside itself: "
         f"{offenders}. Nothing in this package publishes until it has beaten a "
         "named null; see its __init__ docstring."
+    )
+    assert nested, (
+        "nothing starts the service. `stack.py` is meant to import it inside "
+        "`_run_statespace`; with no site at all this package is a library that "
+        "folds no bars and publishes to nobody."
+    )
+    assert "STATESPACE_ENABLED" in (root / "stack.py").read_text(), (
+        "the graduation has to be switchable"
     )
 
 
@@ -9831,3 +9861,67 @@ class TestService:
         text = pathlib.Path("till_infinity/statespace/config.py").read_text()
         assert "band_coverage.py" in text
         assert "unmeasured" in text
+
+
+class TestOneBarOneObservation:
+    """`prices.announce` publishes a notice per *touched* bar, so the bar in
+    progress arrives on every sweep and a backfill re-announces old ones. Both
+    were folded before this was wired to the stack."""
+
+    @staticmethod
+    def _bar(when: float, closed: bool | None = True, price: float = 2_400.0):
+        payload = {
+            "feed": "gold",
+            "interval": "5m",
+            "time": when,
+            "open": price,
+            "high": price * 1.002,
+            "low": price * 0.998,
+            "close": price * 1.001,
+            "volume": 1_000.0,
+        }
+        if closed is not None:
+            payload["closed"] = closed
+        return payload
+
+    def _engine(self, tmp_path):
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+
+        return Engine(settings=Settings(state_dir=tmp_path, intervals=("5m",), warm_bars=1))
+
+    def test_a_bar_still_forming_is_not_folded(self, tmp_path):
+        engine = self._engine(tmp_path)
+        assert engine.observe_bar(self._bar(1_000.0, closed=False)) is None
+        assert engine.progress.folded == 0
+        assert engine.observe_bar(self._bar(1_000.0, closed=True)) is not None
+        assert engine.progress.folded == 1
+
+    def test_the_same_bar_announced_twice_is_folded_once(self, tmp_path):
+        engine = self._engine(tmp_path)
+        engine.observe_bar(self._bar(1_000.0))
+        assert engine.observe_bar(self._bar(1_000.0)) is None
+        assert engine.observe_bar(self._bar(900.0)) is None, "a backfill re-announcement"
+        assert engine.observe_bar(self._bar(1_300.0)) is not None
+        assert engine.progress.folded == 2
+        assert engine.progress.of("gold", "5m").at == 1_300.0
+
+    def test_a_producer_that_says_nothing_about_closing_is_still_folded(self, tmp_path):
+        """Fail-open on a missing key: `closed` is absent from other producers
+        and from most of this file, and a guard that silently stopped folding
+        would look exactly like a quiet bus."""
+        engine = self._engine(tmp_path)
+        assert engine.observe_bar(self._bar(1_000.0, closed=None)) is not None
+        assert engine.progress.folded == 1
+
+    def test_the_payload_prices_publishes_has_every_key_the_engine_reads(self):
+        """The contract, checked against the producer rather than assumed. The
+        extremes were once left off this notice and `structures` read every live
+        bar as a doji for it."""
+        import inspect
+
+        from till_infinity.prices import service as px
+
+        source = inspect.getsource(px._notice)
+        for key in ("feed", "interval", "time", "open", "high", "low", "close", "volume", "closed"):
+            assert f'"{key}"' in source, f"prices stopped publishing {key}"
