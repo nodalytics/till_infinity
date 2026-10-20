@@ -84,6 +84,32 @@ LEAST = 200
 #: tracking a level gets the exponent measured on a level.
 EXPONENT = 1.0
 
+#: The spread rule this desk's pools are built with, and **the measurement says
+#: to leave it alone.** `pool-spread.md` swept all three against three values of
+#: `R` on log variance at 15m and 1h, and no rule dominates:
+#:
+#: * `mixture` - the law of total variance - fixes the published spread at 15m,
+#:   taking `var z` from 1.25-1.37 to **1.06-1.13**, and **overshoots at 1h**,
+#:   to 0.82-0.95, where its band also breaches the 0.90 ask at 0.117-0.131
+#:   against `shrinking`'s 0.107-0.109;
+#: * `argmax` is the most consistent on `var z` (1.01-1.03 at 1h, 1.06-1.25 at
+#:   15m) and wins CRPS in three of six traded cells, at a band cost of +0.001
+#:   to +0.009 over `shrinking`;
+#: * `shrinking` has the best band coverage at every frame and class, which is
+#:   the one of these three outputs a consumer reads through `covering`.
+#:
+#: So the field exists and the default does not move. The two frames measured
+#: disagree, and **neither is a frame this service runs on** - `config.py`
+#: folds 1m and 5m, and the lab cache holds neither, so every dispersion
+#: measurement on this desk is at 15m or longer. Picking a rule here would be
+#: extrapolating across the disagreement rather than resolving it.
+#:
+#: It is a field rather than a constant because the sweep needs to request one
+#: without patching internals, and because `pooling.py`'s own `alpha` and
+#: `rule` figures were measured on `shrinking` over **log closes**, not on this
+#: subject at all.
+SPREAD_RULE = "shrinking"
+
 
 #: The widest central coverage the published quantiles can serve, for the grid
 #: `_quantiles` publishes. It is not a tuning knob: the grid runs 0.05 to 0.95,
@@ -357,6 +383,9 @@ class Desk:
 
     exponent: float = EXPONENT
     window: int = WINDOW
+    #: The spread rule this desk's pools use. **Not `pooling.RULE`**, and the
+    #: difference is measured: see `SPREAD_RULE`.
+    rule: str = SPREAD_RULE
     _members: dict[tuple[str, str], Pooled] = field(default_factory=dict)
     _paces: dict[tuple[str, str], Pace] = field(default_factory=dict)
     _residuals: dict[tuple[str, str], deque] = field(default_factory=dict)
@@ -402,7 +431,7 @@ class Desk:
         key = (feed, interval)
         member = self._members.get(key)
         if member is None:
-            member = self._members[key] = Pooled()
+            member = self._members[key] = Pooled(rule=self.rule)
             self._paces[key] = Pace(exponent=self.exponent)
             self._residuals[key] = deque(maxlen=self.window)
 

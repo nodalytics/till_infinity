@@ -9499,10 +9499,10 @@ class TestReadoutTerms:
     """
 
     @staticmethod
-    def _run(prices, noise=0.0004, feed="EURUSD"):
+    def _run(prices, noise=0.0004, feed="EURUSD", rule=None):
         from till_infinity.statespace.facade import Desk
 
-        desk = Desk()
+        desk = Desk() if rule is None else Desk(rule=rule)
         return [
             desk.read(feed, "1h", float(i) * 3600.0, price, noise, volume=0.0)
             for i, price in enumerate(prices)
@@ -9511,15 +9511,31 @@ class TestReadoutTerms:
     def test_a_predicted_bar_is_no_surprise_and_the_first_one_is_all_surprise(self) -> None:
         """A series the filter tracks exactly reports an innovation of zero.
 
-        Except the first bar, which reports **173** on a flat series at 100:
-        the prior sits at zero and the first observation is the whole of the
-        level. That is correct and it is a trap for a consumer, so it is
+        Except the first bar, which reports the whole of the level on a flat
+        series at 100 - the prior sits at zero and the first observation is all
+        there is. That is correct and it is a trap for a consumer, so it is
         pinned here. `Readout.warm` is already False there - the quantile band
         needs a history - so a caller that checks `warm`, as the field's own
         docstring tells it to, never sees the cold-start value.
+
+        **The size of it is set by the spread rule, so both are pinned.**
+        `shrinking`, the shipped rule, reads 173; `mixture` reads 99.98,
+        smaller because the first observation is where the members disagree
+        most and that term is in the denominator. A bare threshold would have
+        been satisfied by either and told a reader neither, which is how a
+        spread rule changes under a green suite - `pool-spread.md` swept these
+        and the default stayed put on the strength of band coverage.
         """
+        tight = self._run([100.0] * 60, rule="shrinking")
+        assert tight[0].surprise == pytest.approx(173.0, abs=1.0)
+        wide = self._run([100.0] * 60, rule="mixture")
+        assert wide[0].surprise == pytest.approx(99.98, abs=0.5)
+        assert wide[0].surprise < tight[0].surprise, (
+            "mixture has to report the smaller innovation: it carries the "
+            "between-member disagreement in the spread it divides by"
+        )
         got = self._run([100.0] * 60)
-        assert got[0].surprise > 100.0
+        assert got[0].surprise > 100.0, "the default is the tighter rule"
         assert not got[0].warm
         assert max(abs(r.surprise) for r in got[1:]) < 1e-9
 
@@ -9539,7 +9555,16 @@ class TestReadoutTerms:
         assert naive > 0.0
         # Same sign, materially different size: the naive one is smaller.
         assert naive < last.surprise
+        # **Rule-dependent, so both are pinned.** The shipped `shrinking` reads
+        # 1.72 and `mixture` reads 6.73, because the post-update spread the
+        # naive reconstruction divides by carries the members' disagreement
+        # while the pre-update one it should have used is measured before they
+        # have seen the reading. Under either rule the attenuation is real,
+        # which is why `surprise` is published rather than reconstructed.
         assert last.surprise / naive == pytest.approx(1.72, abs=0.15)
+        wide = self._run(prices, rule="mixture")[-1]
+        naive_wide = (prices[-1] - wide.value) / math.sqrt(wide.spread)
+        assert wide.surprise / naive_wide == pytest.approx(6.73, abs=0.4)
 
     def test_terms_from_offers_two_and_names_them(self) -> None:
         """Surprise and pace, with pace at zero when the mechanism is inert."""
@@ -9925,3 +9950,70 @@ class TestOneBarOneObservation:
         source = inspect.getsource(px._notice)
         for key in ("feed", "interval", "time", "open", "high", "low", "close", "volume", "closed"):
             assert f'"{key}"' in source, f"prices stopped publishing {key}"
+
+
+class TestTheDeskSpreadRule:
+    """`pool-spread.md`: the published spread was over-confident for two reasons
+    and neither was `Q`. This pins the half that was fixed."""
+
+    def test_the_desk_names_its_own_rule_and_the_module_default_is_untouched(self):
+        """Scoped deliberately. `pooling.RULE` was measured on **log closes** and
+        this desk folds log variance, so the two are separate knobs even while
+        they hold the same value - changing the module default would move a
+        figure in `statespace-pooling-exponent.md` that nothing re-measured."""
+        from till_infinity.statespace.facade import SPREAD_RULE, Desk
+        from till_infinity.statespace.pooling import RULE
+
+        assert SPREAD_RULE == "shrinking", (
+            "pool-spread.md swept all three rules at 15m and 1h and none "
+            "dominates: mixture fixes the spread at 15m and overshoots at 1h, "
+            "and neither frame is one this service folds. The default moves "
+            "when a frame it runs on has been measured, not before."
+        )
+        assert RULE == "shrinking", "the module default belongs to the price studies"
+        assert Desk().rule == SPREAD_RULE
+
+        desk = Desk()
+        desk.read("gold", "5m", 3_600.0, -16.0, 0.67)
+        assert desk._members[("gold", "5m")].rule == SPREAD_RULE
+
+    def test_a_caller_can_ask_for_a_rule_without_patching_internals(self):
+        """The sweep in `pool_calibration.py` has to request each rule, and it
+        had to seed three private maps to do it before this field existed."""
+        from till_infinity.statespace.facade import Desk
+
+        for rule in ("shrinking", "mixture", "argmax"):
+            desk = Desk(rule=rule)
+            desk.read("gold", "5m", 3_600.0, -16.0, 0.67)
+            assert desk._members[("gold", "5m")].rule == rule
+
+    def test_the_mixture_spread_is_never_below_the_shrinking_one(self):
+        """The law of total variance, which is the whole reason this is the
+        honest rule: it cannot fall below the members' own disagreement. Fed the
+        identical series, so any difference is the rule and nothing else."""
+        import random
+
+        from till_infinity.statespace.facade import Desk
+
+        rng = random.Random(20_261_020)
+        bars = []
+        level = -16.0
+        for i in range(400):
+            level += rng.gauss(0.0, 0.08)
+            bars.append((3_600.0 * (i + 1), level + rng.gauss(0.0, 0.5)))
+
+        desks = {rule: Desk(rule=rule) for rule in ("shrinking", "mixture")}
+        spreads: dict[str, list[float]] = {rule: [] for rule in desks}
+        for when, value in bars:
+            for rule, desk in desks.items():
+                spreads[rule].append(desk.read("gold", "1h", when, value, 0.67).spread)
+
+        pairs = list(zip(spreads["shrinking"], spreads["mixture"], strict=True))
+        assert all(mixture >= tight - 1e-9 for tight, mixture in pairs), (
+            "mixture fell below shrinking, which the law of total variance forbids"
+        )
+        assert any(mixture > tight + 1e-6 for tight, mixture in pairs), (
+            "the two rules never differed, so this test proves nothing - the "
+            "members have to disagree somewhere for the between-member term to exist"
+        )
+        assert all(math.isfinite(value) for value in spreads["mixture"])
