@@ -230,6 +230,20 @@ class Readout:
     #: warm-up gate.
     seen: int = 0
 
+    #: **How `spread` was combined, and whether it can be trusted.** Both are
+    #: published because `spread` is not comparable across either of them, and
+    #: a consumer recording it has no other way to know which one it got.
+    #:
+    #: `pool-spread.md` measured the three rules differing by 0.2 to 0.4 on
+    #: the variance of the standardised innovation at the same `R`, so a
+    #: series of recorded spreads spanning a rule change is two series. And
+    #: `adapting-strata.md` measured every member pinned against its lever's
+    #: stop while the pool published a spread three times too small - a bar
+    #: recorded in that state carries a number that should not be joined to
+    #: an outcome at all, which is a per-bar fact rather than a per-deploy one.
+    spread_rule: str = ""
+    spread_saturated: bool = False
+
     @property
     def warm(self) -> bool:
         """Whether the interval is offered. A caller should check this."""
@@ -484,6 +498,8 @@ class Desk:
             value=float(member.value),
             spread=float(member.variance) + max(float(noise), 0.0),
             quantiles=self._quantiles(key, member, noise),
+            spread_rule=self.rule,
+            spread_saturated=bool(getattr(member, "saturated", ())),
             family=classify(feed),
             absorbs=None if traits is None else traits.absorbs,
             paced=bool(paced and volume > 0),
