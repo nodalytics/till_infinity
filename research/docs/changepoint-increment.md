@@ -76,6 +76,18 @@ would also supply. **Until that arm is run, the honest claim is "a
 better-filtered volatility estimate helps a lot", not "BOCPD specifically
 helps".** That is one feature and one run.
 
+**Two things measured since narrow what it can be.**
+[`bocpd-designs.md`](bocpd-designs.md) found the increment survives a
+sixteen-fold hazard sweep unchanged, disappears entirely if the member is fed
+`log(r^2)` instead of a range estimator (-0.0074 at h=1), and does not appear
+at all - +0.0000 - on a *planted* piecewise-constant log variance with a known
+regime spacing. So it is not the hazard, it is not regime structure of the
+planted kind, and it depends completely on the estimator underneath. The
+remaining candidate is the member's inferred measurement scale, and
+[`statespace-anomaly.md`](statespace-anomaly.md) has already shown the EWMA
+control matches it for *classification* while saying nothing about this
+regression.
+
 Where it does not help is where the baseline is already saturated: metals at
 1h h=20 reads +0.7921 on HAR alone and `+sd` adds -0.0007.
 
