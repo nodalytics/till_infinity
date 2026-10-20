@@ -104,6 +104,10 @@ def payload_for(readout: Readout) -> dict[str, object]:
         "paced": bool(readout.paced),
         "pace_factor": float(readout.pace_factor),
         "seen": int(readout.seen),
+        # How `spread` was combined, and whether the loop that scaled it had
+        # run out of room. A recorded spread is not comparable across either.
+        "spread_rule": str(readout.spread_rule),
+        "spread_saturated": bool(readout.spread_saturated),
     }
     if interval is not None:
         out["band"] = {

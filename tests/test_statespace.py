@@ -10090,3 +10090,67 @@ class TestASaturatedLeverIsVisible:
         said = watcher.report(at=2_000_000.0)
         assert "lever's stop" in said
         assert "adapting-strata.md" in said
+
+
+class TestTheCardSaysHowTheSpreadWasFormed:
+    """A recorded `spread` is not comparable across a rule change or a pinned
+    lever, so the card has to carry both or a later join is over two different
+    quantities. `pool-spread.md` measured the rules differing by 0.2 to 0.4 on
+    the variance of the standardised innovation at the same `R`, and
+    `adapting-strata.md` measured a desk publishing a spread three times too
+    small while every lever sat on its stop."""
+
+    @staticmethod
+    def _pinned():
+        """A desk whose loop wants far more process noise than it is allowed.
+
+        Large alternating swings against a tiny measurement noise. A clamp of
+        1.0 is only reached if the loop pushes *up* - on a quiet series it
+        moves the other way and is correctly not saturated, which is why this
+        fixture drives it rather than setting `factor` by hand. Setting it by
+        hand does not survive `read`, which recomputes it.
+        """
+        from till_infinity.statespace.facade import Desk
+
+        desk = Desk(clamp=1.0)
+        for i in range(60):
+            desk.read("gold", "5m", 3_600.0 * (i + 1), -16.0 + (6.0 if i % 2 else -6.0), 0.01)
+        return desk
+
+    def test_a_readout_names_its_rule_and_flags_a_pinned_lever(self):
+        from till_infinity.statespace.facade import SPREAD_RULE, Desk
+
+        quiet = Desk()
+        got = quiet.read("gold", "5m", 3_600.0, -16.0, 0.67)
+        assert got.spread_rule == SPREAD_RULE
+        assert got.spread_saturated is False
+
+        got = self._pinned().read("gold", "5m", 3_600.0 * 61, -10.0, 0.01)
+        assert got.spread_saturated is True
+
+    def test_the_topic_carries_both(self):
+        from till_infinity.statespace.service import payload_for
+
+        payload = payload_for(self._pinned().read("gold", "5m", 3_600.0 * 61, -10.0, 0.01))
+        assert payload["spread_rule"]
+        assert payload["spread_saturated"] is True
+
+    def test_the_card_records_the_rule_always_and_the_flag_only_when_true(self):
+        """A key that is almost always false costs a byte on every card and
+        says nothing; present means the spread beside it should not be joined
+        to this trade's outcome."""
+        from till_infinity.statespace.facade import Desk
+        from till_infinity.statespace.service import payload_for
+        from till_infinity.trading.context import Context
+
+        quiet = Context()
+        got = Desk().read("gold", "5m", 3_600.0, -16.0, 0.67)
+        quiet.observe_width(payload_for(got) | {"time": 1_000.0})
+        card = quiet.width_context("gold", now=1_010.0)
+        assert card["dispersion_rule"] == "shrinking"
+        assert "dispersion_saturated" not in card
+
+        loud = Context()
+        got = self._pinned().read("gold", "5m", 3_600.0 * 61, -10.0, 0.01)
+        loud.observe_width(payload_for(got) | {"time": 1_000.0})
+        assert loud.width_context("gold", now=1_010.0)["dispersion_saturated"] is True

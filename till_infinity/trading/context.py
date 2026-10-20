@@ -100,6 +100,12 @@ class Width:
     high: float = 0.0
     coverage: float = 0.0
     source: str = ""
+    #: How `spread` was combined, and whether the loop that scaled it was
+    #: against its stop. Recorded because `spread` and `surprise` are not
+    #: comparable across either, so a join over cards spanning a change is a
+    #: join over two different quantities unless it can condition on these.
+    rule: str = ""
+    saturated: bool = False
 
     @property
     def banded(self) -> bool:
@@ -196,6 +202,8 @@ class Context:
             high=float(band.get("high") or 0.0),
             coverage=float(band.get("coverage") or 0.0),
             source=str(band.get("source") or ""),
+            rule=str(payload.get("spread_rule") or ""),
+            saturated=bool(payload.get("spread_saturated") or False),
         )
 
     def observe_event(self, payload: dict[str, Any]) -> None:
@@ -466,6 +474,13 @@ class Context:
             "dispersion_surprise": round(got.surprise, 4),
             "dispersion_age": round((now if now is not None else time.time()) - got.at, 1),
         }
+        if got.rule:
+            out["dispersion_rule"] = got.rule
+        if got.saturated:
+            # Only when true, because a key that is almost always `false`
+            # costs a byte on every card and says nothing. Present means the
+            # spread beside it should not be joined to this trade's outcome.
+            out["dispersion_saturated"] = True
         if got.banded:
             out["dispersion_low"] = round(got.low, 6)
             out["dispersion_high"] = round(got.high, 6)
