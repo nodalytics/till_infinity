@@ -7,6 +7,16 @@ and measured; the rest are settled on paper, by naming the measurement here that
 already covers the claim. This page is the record, so the same sources are not
 assessed from scratch a third time.
 
+**Measured since, and two verdicts below are wrong.**
+[`bocpd-designs.md`](bocpd-designs.md) priced every portable idea on this page
+against the metric that matters, and it corrects two of them: score-driven
+variance is worth **+0.0003 to +0.0049** rather than being the one component
+worth porting, and the sequence entropies this page calls "still untested" and
+worth an arm read **-0.0119 to -0.0374**. It also moves the AE-SHIFT critique
+below onto the wrong defect: the plug-in variance is real and inert, because a
+faithful reimplementation of that whole recursion adds +0.0003 where ours adds
++0.20. Each section flags its own correction.
+
 **The pattern across all of them is worth stating first.** Five implement the
 Adams & MacKay recursion, and four of those five get something structural
 wrong - a likelihood that cancels, sufficient statistics that do not travel
@@ -35,10 +45,12 @@ things ours has that the published version does not - it **infers its own
 measurement variance**, which no other member in the package does, and it is
 time-aware through `FRESH_HOURS`.
 
-One component goes the other way and is worth porting: **score-driven
+One component goes the other way and looked worth porting: **score-driven
 variance**, a GARCH-shaped `omega/alpha/beta` recursion on the variance rather
-than a conjugate update. It belongs as a *dispersion* arm, which is the half of
-the problem that pays ([`dispersion-forecast.md`](dispersion-forecast.md)).
+than a conjugate update. **Measured since, and it is not**: implemented as the
+paper gives it, linear in the score, it adds +0.0003 to +0.0049 to a 48-lag
+dispersion ridge against the shipped member's +0.20
+([`bocpd-designs.md`](bocpd-designs.md)).
 
 Note what RegimeLib deliberately does not return: a direction. Its outputs are
 run length, a change-point flag, a regime id and a current variance. That is
@@ -162,6 +174,16 @@ which under-states predictive spread for short runs, exactly where a break is
 being declared. Its **signal is the direction** of the fresh segment from
 three-bar momentum, which is the half measured closed over 112,429 rows.
 
+**Measured since: the hazard does not bind.** A sixteen-fold sweep of the
+fixed hazard moves the increment by 0.007 and the ordering flips with the
+horizon, so an adaptive one has nothing to find - it lands within +-0.001 of
+fixed in every traded cell. The flaw named below is confirmed in the predicted
+direction (the signal gate biases the learned run length 1.5x to 3x long) and
+costs nothing for that reason. See [`bocpd-designs.md`](bocpd-designs.md).
+
+The reasoning as it stood, which is still the reasoning for why it was the
+first thing to try:
+
 **The adaptive hazard is the one genuinely portable idea in any of these
 files**, and ours does not have it: re-estimate the expected run length from
 the observed spacing between change-points, so the hazard is learned per
@@ -197,6 +219,14 @@ The ternary version adds a flat zone at a percentile of `|x|`, which pins
 `p_flat` near 0.55 on every window - so it is a near-constant plus the same
 folded up/down split of the large moves, and order-invariant for the same
 reason.
+
+**Measured since, and it is worse than null.** The sequence versions do see
+order - transition entropy separates an ordered window from a shuffled one
+0.6249 to 0.9917 - and as dispersion features they read -0.0119 to -0.0374,
+negative because a ridge pays for a noise column
+([`bocpd-designs.md`](bocpd-designs.md)). The argument below was right about
+what the published statistic is and wrong about the alternative being worth a
+run.
 
 **What remains untested is the sequence version**, and it is a different
 statistic: entropy of the *transition* distribution, or block entropy over
