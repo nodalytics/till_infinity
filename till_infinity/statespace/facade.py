@@ -386,6 +386,11 @@ class Desk:
     #: The spread rule this desk's pools use. **Not `pooling.RULE`**, and the
     #: difference is measured: see `SPREAD_RULE`.
     rule: str = SPREAD_RULE
+    #: Upper clamp on each member's process-noise lever. `None` takes
+    #: `adapting.MOST`, which `adapting-strata.md` measured **binding on every
+    #: traded instrument** - see `Pooled.most`. Reachable so the value can be
+    #: set once it is known, and left alone until then.
+    clamp: float | None = None
     _members: dict[tuple[str, str], Pooled] = field(default_factory=dict)
     _paces: dict[tuple[str, str], Pace] = field(default_factory=dict)
     _residuals: dict[tuple[str, str], deque] = field(default_factory=dict)
@@ -406,6 +411,23 @@ class Desk:
     @property
     def tracking(self) -> int:
         return len(self._members)
+
+    @property
+    def saturated(self) -> dict[tuple[str, str], tuple[str, ...]]:
+        """Feed-intervals with at least one member against its lever's stop.
+
+        **Published because it was invisible.** A matching loop pinned at its
+        clamp still returns a number for every bar, so a desk whose every
+        member had run out of process noise - and whose published spread was
+        three times too small for it - logged nothing out of the ordinary.
+        `adapting-strata.md` had to go looking. `Watcher.report` now carries
+        the count, so the next time it happens the service says so.
+        """
+        return {
+            key: names
+            for key, member in self._members.items()
+            if (names := getattr(member, "saturated", ()))
+        }
 
     def read(
         self,
@@ -431,7 +453,7 @@ class Desk:
         key = (feed, interval)
         member = self._members.get(key)
         if member is None:
-            member = self._members[key] = Pooled(rule=self.rule)
+            member = self._members[key] = Pooled(rule=self.rule, most=self.clamp)
             self._paces[key] = Pace(exponent=self.exponent)
             self._residuals[key] = deque(maxlen=self.window)
 

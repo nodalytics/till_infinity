@@ -145,11 +145,23 @@ class Watcher:
         if now - self._last_report < REPORT_SECONDS:
             return ""
         self._last_report = now
-        return (
+        saturated = self.engine.saturated
+        line = (
             f"statespace: {self.engine.progress.folded} bars folded, "
             f"{self.engine.tracking} tracking, {self.engine.armed} armed, "
             f"{self.published} published"
         )
+        if saturated:
+            # **The condition that was silent.** A matching loop against its
+            # clamp keeps returning numbers, so every member on this desk can
+            # run out of process noise - publishing a one-step spread three
+            # times too small - without one line being out of the ordinary.
+            # `adapting-strata.md` found it by looking for it.
+            line += (
+                f", {saturated} feed-interval(s) with a member on its lever's stop "
+                "- its spread cannot be trusted, see adapting-strata.md"
+            )
+        return line
 
 
 async def watch(

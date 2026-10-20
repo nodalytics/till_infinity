@@ -41,9 +41,9 @@ column and vanishes in the second.
 | crypto shock, 15m | 0.7104 | +0.0055 | -0.0002 | -0.0003 |
 | crypto range, 15m | 0.7188 | -0.0096 | -0.0015 | -0.0021 |
 | crypto shock, 1h | 0.7354 | -0.0032 | -0.0049 | -0.0029 |
-| **volatility (control)** | 0.5442 | **-0.0356** | -0.0230 | -0.0545 |
-| **jump (control)** | 0.4985 | -0.0123 | +0.0050 | +0.0047 |
-| **boom/crash range, 15m** | 0.5875 | **+0.0814** | +0.0627 | +0.0757 |
+| **volatility** *(moves published memoryless)* | 0.5442 | **-0.0356** | -0.0230 | -0.0545 |
+| **jump** *(jumps published memoryless)* | 0.4985 | -0.0123 | +0.0050 | +0.0047 |
+| **boom/crash range, 15m** *(spike timing memoryless - but carries vol-of-vol, see below)* | 0.5875 | **+0.0814** | +0.0627 | +0.0757 |
 
 ## What it does not support
 
@@ -88,6 +88,16 @@ information. The control did not fail here - it named the mechanism.
 volatility family reads **-0.036 to -0.055** on every arm, and `jump` sits
 within noise of zero. Where a generator has no regime structure, nothing here
 invents any.
+
+**Each of those is a control for one named property, and the names matter**,
+because the third of them gained more than any traded class. Volatility and
+Jump control for *anomaly timing published memoryless* - nothing seen
+beforehand can anticipate one - and that is the only inference they license.
+Boom/Crash controls for the same property and **fails as a control for this
+label**, because it has a real volatility-of-volatility structure that the
+label's trailing-mean denominator is sensitive to. A family is never a control
+in general; `synthetics-are-a-poor-tail-control` is the standing version of the
+same point, measured on kurtosis 3.19 against 20.07 traded.
 
 **The first consumer was the right one.** `statespace.dispersion` is recorded
 on the decision card and read by nothing in `risk.py` or `sizing.py`. This run

@@ -10017,3 +10017,76 @@ class TestTheDeskSpreadRule:
             "members have to disagree somewhere for the between-member term to exist"
         )
         assert all(math.isfinite(value) for value in spreads["mixture"])
+
+
+class TestASaturatedLeverIsVisible:
+    """`adapting-strata.md`: every member on every traded instrument finished at
+    `factor = 1000.000` - `MOST` exactly - while the pool published a one-step
+    spread three times too small, and nothing in the service said anything. A
+    matching loop against its clamp keeps returning numbers, so the failure has
+    no symptom unless something looks for it. These make it look."""
+
+    def test_a_member_on_its_upper_stop_is_named(self):
+        from till_infinity.statespace.pooling import Pooled
+
+        pool = Pooled()
+        assert pool.saturated == (), "a fresh pool has not moved yet"
+        for one in pool.members:
+            one.factor = one.most
+        assert set(pool.saturated) == set(pool.names)
+
+    def test_a_member_on_its_lower_stop_is_named_too(self):
+        """The constant-sigma family pins at `LEAST`, which is the same failure
+        wearing the opposite sign: a lever against a stop cannot answer the
+        next bar, whichever stop it is."""
+        from till_infinity.statespace.pooling import Pooled
+
+        pool = Pooled()
+        pool.members[0].factor = pool.members[0].least
+        assert pool.saturated == (pool.names[0],)
+
+    def test_an_unadapted_pool_has_no_lever_to_saturate(self):
+        """`adapt=False` members carry no loop, so the question does not apply
+        and must not raise - this is the arm every `rule` figure was measured
+        on, and a diagnostic that crashed on it would be worse than none."""
+        from till_infinity.statespace.pooling import Pooled
+
+        assert Pooled(adapt=False).saturated == ()
+
+    def test_the_clamp_is_reachable_and_its_default_has_not_moved(self):
+        """Reachable so the measured value can be set once it is known; left
+        alone until then, because a clamp exists to stop a loop chasing an
+        outlier and widening it by default weakens that for every member."""
+        from till_infinity.statespace.adapting import MOST
+        from till_infinity.statespace.facade import Desk
+        from till_infinity.statespace.pooling import Pooled
+
+        assert Pooled().most is None
+        assert {one.most for one in Pooled().members} == {MOST}
+        assert {one.most for one in Pooled(most=1e7).members} == {1e7}
+
+        assert Desk().clamp is None
+        desk = Desk(clamp=1e7)
+        desk.read("gold", "5m", 3_600.0, -16.0, 0.67)
+        assert {one.most for one in desk._members[("gold", "5m")].members} == {1e7}
+
+    def test_the_service_line_says_when_a_lever_has_run_out_of_room(self):
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+        from till_infinity.statespace.service import Watcher
+
+        engine = Engine(settings=Settings(intervals=("5m",), warm_bars=1))
+        engine.desk.read("gold", "5m", 3_600.0, -16.0, 0.67)
+        watcher = Watcher(engine=engine)
+
+        assert engine.saturated == 0
+        clean = watcher.report(at=1_000_000.0)
+        assert "bars folded" in clean
+        assert "lever" not in clean
+
+        for one in engine.desk._members[("gold", "5m")].members:
+            one.factor = one.most
+        assert engine.saturated == 1
+        said = watcher.report(at=2_000_000.0)
+        assert "lever's stop" in said
+        assert "adapting-strata.md" in said

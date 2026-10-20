@@ -67,7 +67,7 @@ which is 1 exactly when the predictive spread is the right scale.
 
 **15m, median across four instruments per class:**
 
-| R | fx_cross var z | fx_major var z | metal var z | volatility (control) var z |
+| R | fx_cross var z | fx_major var z | metal var z | volatility var z *(sigma fixed by its generator)* |
 |---|---:|---:|---:|---:|
 | 0.145 | 6.33 | 6.00 | 5.51 | 2.15 |
 | 0.250 | 3.70 | 3.50 | 3.23 | **1.22** |
@@ -77,7 +77,7 @@ which is 1 exactly when the predictive spread is the right scale.
 
 **1h, median across four instruments per class:**
 
-| R | fx_cross var z | fx_major var z | metal var z | volatility (control) var z |
+| R | fx_cross var z | fx_major var z | metal var z | volatility var z *(sigma fixed)* |
 |---|---:|---:|---:|---:|
 | 0.145 | 6.36 | 5.50 | 5.80 | 2.39 |
 | 0.250 | 3.76 | 3.25 | 3.44 | **1.13** |
@@ -86,9 +86,13 @@ which is 1 exactly when the predictive spread is the right scale.
 | 1.000 | **1.08** | **1.00** | **0.97** | 0.27 |
 
 **The control lands on Part A, and that is the cross-check this harness was
-built for.** The Deriv volatility family's generator holds sigma fixed, so
-there is no latent movement for `Q` to absorb and the innovation test should
-return the measurement noise alone. It crosses one at **R near 0.30**, against
+built for.** The Deriv volatility family is a control here **for one named
+property and nothing else**: its generator holds sigma fixed, so there is no
+latent movement for `Q` to absorb and the innovation test should return the
+measurement noise alone. It is a real market, tradeable and spread-bearing -
+what makes it usable here is that its generator is *published*, not that it is
+synthetic, and it is a poor control for anything tail-shaped (kurtosis 3.19
+against 20.07 traded). It crosses one at **R near 0.30**, against
 0.265 simulated and 0.295 at a 240-tick bar. Two independent measurements, one
 synthetic and one on real quoted bars, agree.
 

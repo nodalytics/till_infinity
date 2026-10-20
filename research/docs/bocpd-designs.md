@@ -18,7 +18,7 @@ larger instrument sample.
 
 h=1, increments over `lin48`:
 
-| arm | fx_cross | fx_major | metal | volatility (control) |
+| arm | fx_cross | fx_major | metal | volatility *(no regime to detect)* |
 |---|---:|---:|---:|---:|
 | `lin48` baseline | 0.1051 | 0.0920 | 0.6775 | -0.0082 |
 | ours, hazard x0.25 | +0.1970 | +0.2268 | +0.0000 | -0.0000 |
@@ -42,7 +42,10 @@ ours fixed **+0.1768 / +0.0832**, the hazard sweep spanning +0.1694 to +0.1802,
 every `theirs` arm inside +0.0049, close-to-close **-0.0205 / -0.0021**, and the
 entropy arms from -0.0374 to +0.0005. Metals is saturated at both horizons, as
 [`changepoint-increment.md`](changepoint-increment.md) already found, and the
-constant-sigma control reads +-0.0001 on all sixteen arms.
+constant-sigma family reads +-0.0001 on all sixteen arms - a control for
+exactly one property, that there is no regime to find, which is the thing a
+change-point arm has to be measured against and the only thing this family
+licenses a claim about.
 
 ## 1. The hazard is not what limits this member
 

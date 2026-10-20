@@ -120,6 +120,11 @@ class Engine:
         """Feed-intervals with enough bars folded to publish."""
         return self.progress.armed(self.settings.warm_bars)
 
+    @property
+    def saturated(self) -> int:
+        """Feed-intervals with a member against its lever's stop. See `Desk`."""
+        return len(self.desk.saturated)
+
     def observe_bar(self, payload: dict[str, Any]) -> Readout | None:
         """Fold one `prices.bars` payload. Returns what may be published.
 
