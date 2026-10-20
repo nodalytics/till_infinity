@@ -169,6 +169,24 @@ class Pooled:
     #: See `ADAPT`. `False` is the un-adapting pool, kept because it is the arm
     #: every `alpha` and `rule` figure was originally measured on.
     adapt: bool = ADAPT
+    #: Upper clamp on each member's process-noise lever, as a multiple of its
+    #: starting value. `None` takes `adapting.MOST`.
+    #:
+    #: **Reachable because it was measured binding.** `adapting-strata.md`
+    #: found every member on every traded instrument finishing at
+    #: `factor = 1000.000` - `MOST` exactly - with the loop's own `excess`
+    #: reading what the sample reads: it knew how wrong it was and was not
+    #: allowed to move. Released to 1e7 the loop converges at a factor of 1.3
+    #: to 4.2 **million**, which is the scale between a price and a log
+    #: variance rather than a tuning error.
+    #:
+    #: The default does not move. Six orders of magnitude is a unit problem,
+    #: and whether the answer is a wider clamp or an input on the scale the
+    #: priors expect is being measured; a clamp exists to stop a loop chasing
+    #: an outlier and widening it by default would weaken that for every
+    #: member. What ships here is the knob and `saturated`, so the condition is
+    #: observable instead of silent.
+    most: float | None = None
 
     #: Combined state, formed in `predict`.
     value: float = 0.0
@@ -197,10 +215,15 @@ class Pooled:
                     "used directly."
                 )
             if self.adapt:
-                from .adapting import Adapting
+                from .adapting import MOST, Adapting
 
                 self._pool = [
-                    Adapting(build=make, lever=LEVERS.get(name, "jerk"), mode="matching")
+                    Adapting(
+                        build=make,
+                        lever=LEVERS.get(name, "jerk"),
+                        mode="matching",
+                        most=MOST if self.most is None else float(self.most),
+                    )
                     for name, make in zip(self.names, built, strict=False)
                 ]
             else:
@@ -212,6 +235,33 @@ class Pooled:
     def members(self) -> tuple:
         """The pooled members, for a caller that wants to inspect them."""
         return tuple(self._pool)
+
+    @property
+    def saturated(self) -> tuple[str, ...]:
+        """Members whose process-noise lever has run out of room, by name.
+
+        **A loop on its clamp is not adapting**, which `adapting.py` says in so
+        many words - and until this existed there was no way to see it from
+        outside. `adapting-strata.md` measured every traded member pinned at
+        `MOST` while publishing a one-step spread three times too small, and
+        the service logged nothing unusual for the whole run, because nothing
+        looked.
+
+        Both ends count. The constant-sigma family pins at `LEAST` instead -
+        its lever runs to 0.028 and then to the floor - which is the same
+        failure wearing the opposite sign: a lever against a stop cannot
+        answer the next bar.
+        """
+        out = []
+        for name, one in zip(self.names, self._pool, strict=False):
+            factor = getattr(one, "factor", None)
+            if factor is None:
+                continue
+            most = float(getattr(one, "most", math.inf))
+            least = float(getattr(one, "least", 0.0))
+            if float(factor) >= most * (1.0 - 1e-9) or float(factor) <= least * (1.0 + 1e-9):
+                out.append(name)
+        return tuple(out)
 
     @property
     def sd(self) -> float:

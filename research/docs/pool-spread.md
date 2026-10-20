@@ -24,11 +24,11 @@ be measured: is each member matched, and is the pool?
 | 15m | fx_cross | 3.12 | 2.00 | 2.58 | **3.39** |
 | 15m | fx_major | 2.96 | 1.94 | 2.50 | **3.23** |
 | 15m | metal | 2.82 | 1.65 | 2.53 | **3.05** |
-| 15m | **volatility (control)** | **1.03** | **1.01** | **1.02** | **1.08** |
+| 15m | **volatility** *(sigma fixed, so nothing to disagree about)* | **1.03** | **1.01** | **1.02** | **1.08** |
 | 1h | fx_cross | 2.16 | 1.08 | 2.02 | **2.99** |
 | 1h | fx_major | 2.17 | 1.07 | 2.02 | **3.00** |
 | 1h | metal | 2.30 | 1.07 | 2.17 | **3.21** |
-| 1h | **volatility (control)** | **0.99** | **1.00** | **0.99** | **1.03** |
+| 1h | **volatility** *(as above)* | **0.99** | **1.00** | **0.99** | **1.03** |
 
 **The members are not matched on markets, and they are matched exactly on the
 control, at both frames.** `Adapting` hits its target of one to within 1-3%
@@ -66,7 +66,7 @@ variance at the shipped `R = 0.670`:
 | 1h | fx_cross | 1.205 / 0.5242 / **0.1072** | 0.948 / 0.5242 / 0.1165 | **1.032** / **0.5146** / 0.1099 |
 | 1h | fx_major | **1.204** / **0.5400** / **0.1091** | 0.815 / 0.5402 / 0.1304 | 1.013 / 0.5418 / 0.1158 |
 | 1h | metal | 1.236 / 0.5524 / **0.1080** | 0.903 / 0.5532 / 0.1308 | **1.011** / **0.5420** / 0.1163 |
-| 1h | volatility (control) | 0.401 / 0.2933 / 0.1014 | 0.399 / 0.2933 / 0.1016 | 0.401 / 0.2932 / 0.1012 |
+| 1h | volatility *(sigma fixed)* | 0.401 / 0.2933 / 0.1014 | 0.399 / 0.2933 / 0.1016 | 0.401 / 0.2932 / 0.1012 |
 
 **At 15m `mixture` looked like a free fix and at 1h it overshoots.** It takes
 `var z` to 1.06-1.13 at 15m - an honest spread, at a CRPS a hair better - and
@@ -82,9 +82,11 @@ to +0.009 over `shrinking`. It is the one worth revisiting, and it is not a
 dominance.
 
 **`shrinking` has the best band coverage in every traded cell at both frames**,
-and the band is the output a consumer reads through `covering`. The control
-cannot tell the three rules apart (0.399 to 0.401) because there the members
-have nothing to disagree about, which is what makes the traded rows readable.
+and the band is the output a consumer reads through `covering`. The
+constant-sigma family cannot tell the three rules apart (0.399 to 0.401)
+because there the members have nothing to disagree about - a control for that
+one property, which is what makes the traded rows readable. It is not a control
+for the tails, for the spread, or for anything else in this table.
 
 ## So the default does not move, and the reason is a frame nobody has measured
 

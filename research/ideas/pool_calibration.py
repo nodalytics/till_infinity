@@ -82,11 +82,18 @@ from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 from till_infinity.statespace.diagnostics import crps  # noqa: E402
 from till_infinity.statespace.engine import dispersion  # noqa: E402
 from till_infinity.statespace.facade import Desk  # noqa: E402
+from till_infinity.statespace.adapting import MOST, Adapting  # noqa: E402
 from till_infinity.statespace.pacing import Pace  # noqa: E402
-from till_infinity.statespace.pooling import Pooled  # noqa: E402
+from till_infinity.statespace.pooling import DEFAULT, LEVERS, Pooled, _factories  # noqa: E402
 
 RULES = ("shrinking", "mixture", "argmax")
-NOISES = (0.265, 0.400, 0.670)
+NOISES = (0.265, 0.670)
+#: The matching loop's clamp. `adapting.MOST` ships at 1e3 and
+#: `adapting_strata.md` measured every traded member **pinned against it**,
+#: with the loop converging at a factor of 1.3 to 4.2 million once released -
+#: so the first column here is the shipped configuration and the second is the
+#: one where the members can reach their own target.
+CLAMPS = (MOST, 1e7)
 COVERS = (0.90, 0.95, 0.99)
 
 FRAMES = ("15m", "1h")
@@ -97,7 +104,7 @@ LIMIT = 12_000
 WARM = 500
 
 
-def _prepared(rule: str, adapt: bool, feed: str, interval: str) -> Desk:
+def _prepared(rule: str, adapt: bool, feed: str, interval: str, most: float = MOST) -> Desk:
     """A desk whose one member is built with the rule under test.
 
     `Desk.read` only builds a member when the key is missing, so seeding all
@@ -107,17 +114,34 @@ def _prepared(rule: str, adapt: bool, feed: str, interval: str) -> Desk:
     """
     desk = Desk()
     key = (feed, interval)
-    desk._members[key] = Pooled(rule=rule, adapt=adapt)
+    if adapt:
+        built = _factories(DEFAULT)
+        desk._members[key] = Pooled(
+            names=DEFAULT,
+            rule=rule,
+            _pool=[
+                Adapting(build=make, lever=LEVERS.get(name, "jerk"), mode="matching", most=most)
+                for name, make in zip(DEFAULT, built, strict=False)
+            ],
+        )
+    else:
+        desk._members[key] = Pooled(rule=rule, adapt=False)
     desk._paces[key] = Pace(exponent=desk.exponent)
     desk._residuals[key] = deque(maxlen=desk.window)
     return desk
 
 
 def _score(
-    bars: dict, frame: str, feed: str, noise: float, rule: str, adapt: bool = True
+    bars: dict,
+    frame: str,
+    feed: str,
+    noise: float,
+    rule: str,
+    adapt: bool = True,
+    most: float = MOST,
 ) -> dict[str, float]:
-    """One pass of the service's own path, at one rule and one noise."""
-    desk = _prepared(rule, adapt, feed, frame)
+    """One pass of the service's own path, at one rule, noise and clamp."""
+    desk = _prepared(rule, adapt, feed, frame, most)
     when = bars["time"]
     o, h, lo, c = bars["open"], bars["high"], bars["low"], bars["close"]
     breaches = dict.fromkeys(COVERS, 0)
@@ -175,7 +199,7 @@ def main() -> None:
     print("classes:", ", ".join(f"{k} ({len(v)})" for k, v in sorted(wanted.items())), flush=True)
 
     for frame in FRAMES:
-        rows: dict[tuple[str, str, float], list[dict[str, float]]] = {}
+        rows: dict[tuple[str, str, float, float], list[dict[str, float]]] = {}
         reference: dict[str, list[dict[str, float]]] = {}
         for klass, names in sorted(wanted.items()):
             for name in names:
@@ -183,11 +207,12 @@ def main() -> None:
                 if bars is None:
                     continue
                 bars = {k: v[-LIMIT:] for k, v in bars.items()}
-                for rule in RULES:
-                    for noise in NOISES:
-                        got = _score(bars, frame, name, noise, rule)
-                        if got:
-                            rows.setdefault((klass, rule, noise), []).append(got)
+                for most in CLAMPS:
+                    for rule in RULES:
+                        for noise in NOISES:
+                            got = _score(bars, frame, name, noise, rule, most=most)
+                            if got:
+                                rows.setdefault((klass, rule, noise, most), []).append(got)
                 got = _score(bars, frame, name, 0.670, "shrinking", adapt=False)
                 if got:
                     reference.setdefault(klass, []).append(got)
@@ -195,26 +220,28 @@ def main() -> None:
             print(f"\n=== {frame}: nothing loaded", flush=True)
             continue
 
-        for klass in sorted({k for k, _, _ in rows}):
+        for klass in sorted({k for k, _, _, _ in rows}):
             print(f"\n=== {frame}, {klass}")
             print(
-                f"{'rule':>10}{'R':>8}{'n':>9}{'var z':>9}{'CRPS':>9}"
+                f"{'clamp':>8}{'rule':>10}{'R':>8}{'n':>9}{'var z':>9}{'CRPS':>9}"
                 f"{'breach .90':>12}{'breach .95':>12}{'breach .99':>12}"
             )
-            for rule in RULES:
-                for noise in NOISES:
-                    got = rows.get((klass, rule, noise))
-                    if not got:
-                        continue
-                    take = lambda key: float(np.median([g[key] for g in got]))  # noqa: E731
-                    mark = " <-" if (rule, noise) == ("shrinking", 0.670) else ""
-                    print(
-                        f"{rule:>10}{noise:>8.3f}{int(sum(g['n'] for g in got)):>9,}"
-                        f"{take('zvar'):>9.3f}{take('crps'):>9.4f}"
-                        f"{take('breach_90'):>12.4f}{take('breach_95'):>12.4f}"
-                        f"{take('breach_99'):>12.4f}{mark}",
-                        flush=True,
-                    )
+            for most in CLAMPS:
+                for rule in RULES:
+                    for noise in NOISES:
+                        got = rows.get((klass, rule, noise, most))
+                        if not got:
+                            continue
+                        take = lambda key: float(np.median([g[key] for g in got]))  # noqa: E731
+                        shipped = (rule, noise, most) == ("shrinking", 0.670, MOST)
+                        print(
+                            f"{most:>8.0e}{rule:>10}{noise:>8.3f}"
+                            f"{int(sum(g['n'] for g in got)):>9,}"
+                            f"{take('zvar'):>9.3f}{take('crps'):>9.4f}"
+                            f"{take('breach_90'):>12.4f}{take('breach_95'):>12.4f}"
+                            f"{take('breach_99'):>12.4f}{' <-' if shipped else ''}",
+                            flush=True,
+                        )
             got = reference.get(klass)
             if got:
                 take = lambda key: float(np.median([g[key] for g in got]))  # noqa: E731
@@ -227,7 +254,22 @@ def main() -> None:
                 )
 
             # The premise, measured: each member's own E[z^2] against the pool's.
-            shipped = rows.get((klass, "shrinking", 0.265)) or []
+            for most in CLAMPS:
+                released = rows.get((klass, "shrinking", 0.265, most)) or []
+                names = sorted({k[7:] for g in released for k in g if k.startswith("member.")})
+                if not names:
+                    continue
+                parts = [
+                    f"{name} "
+                    f"{float(np.median([g[f'member.{name}'] for g in released if f'member.{name}' in g])):.2f}"
+                    for name in names
+                ]
+                pool = float(np.median([g["zvar"] for g in released]))
+                print(
+                    f"  clamp {most:.0e}, R=0.265: E[z^2] per member "
+                    f"{', '.join(parts)}  |  pool {pool:.2f}"
+                )
+            shipped = rows.get((klass, "shrinking", 0.265, MOST)) or []
             names = sorted({k[7:] for g in shipped for k in g if k.startswith("member.")})
             if names:
                 parts = [
