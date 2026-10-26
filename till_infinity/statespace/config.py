@@ -96,6 +96,12 @@ class Settings(Restorable):
     #: set of simultaneous positions amounts to - cannot be derived downstream
     #: from one feed's payload. See `cohort.py`.
     cohorts: bool = True
+    #: Whether to publish trading proposals on `bus.PROPOSALS`. **On**, and
+    #: nothing consumes it: `proposing.py` says why the desk's gates would
+    #: refuse them today, and `trading.turn_exit` is the standing reason not to
+    #: ship a producer switched off - it "has never once run in production"
+    #: while its end-to-end path passed every test.
+    proposals: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -114,6 +120,7 @@ class Settings(Restorable):
             publish=_flag("STATESPACE_PUBLISH", True),
             signals=_flag("STATESPACE_SIGNALS", True),
             cohorts=_flag("STATESPACE_COHORTS", True),
+            proposals=_flag("STATESPACE_PROPOSALS", True),
             signal_surprise=_float("STATESPACE_SIGNAL_SURPRISE", DEFAULT_SIGNAL_SURPRISE),
             signal_width=_float("STATESPACE_SIGNAL_WIDTH", DEFAULT_SIGNAL_WIDTH),
             signal_quiet_hours=_float("STATESPACE_SIGNAL_QUIET_HOURS", DEFAULT_SIGNAL_QUIET_HOURS),
