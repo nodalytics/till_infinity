@@ -3330,9 +3330,15 @@ class TestSwitching:
         assert slow[0][1] > quick[0][1]
         for row in (*quick, *slow):
             assert sum(row) == pytest.approx(1.0)
-        # Over a step equal to the duration, about 63% have left.
+        # Over a step equal to the duration, about 63% have left. **The
+        # invariant is the total leaving mass, not one off-diagonal entry.**
+        # With three regimes that mass splits over the other two, so the entry
+        # halved while the model did not change - which is why the assertion is
+        # written against the row rather than against `[0][1]`.
         full = engine._switch(24.0)
-        assert full[0][1] == pytest.approx(1.0 - math.exp(-1.0), rel=1e-9)
+        leaving = sum(full[0]) - full[0][0]
+        assert leaving == pytest.approx(1.0 - math.exp(-1.0), rel=1e-9)
+        assert full[0][1] == pytest.approx(full[0][2], rel=1e-12)
 
     def test_the_mixture_spread_carries_the_disagreement(self):
         """Two regimes disagreeing about the value *is* uncertainty.
@@ -3348,6 +3354,122 @@ class TestSwitching:
         engine.weights = [0.5, 0.5]
         # Within-component spread alone would be 1.0; the gap adds 25.
         assert engine.sd == pytest.approx(math.sqrt(26.0), rel=1e-9)
+
+    @staticmethod
+    def _simple(kind: str, seed: int, n: int = 2000):
+        import random
+
+        rng = random.Random(seed)
+        level, out = 100.0, []
+        for _ in range(n):
+            if kind == "walk":
+                level += rng.gauss(0.0, 0.3)
+            elif kind == "ou":
+                level += -0.3 * (level - 100.0) + rng.gauss(0.0, 0.3)
+            else:
+                level += rng.gauss(0.25, 0.3)
+            out.append(level)
+        return out
+
+    @staticmethod
+    def _loglike(values, **kw):
+        from till_infinity.statespace.switching import Switching
+
+        engine = Switching(**kw)
+        for i, value in enumerate(values):
+            engine.predict(i * 3600.0)
+            engine.update(value, 0.09, i * 3600.0)
+        return engine.loglike
+
+    def test_the_trending_regime_takes_the_trend_that_was_called_imbalance(self):
+        """**Read every cell against 1/3, not 1/2.**
+
+        Three regimes move the chance level, which is what changed the original
+        reading rather than the model getting worse: balance went from 0.528
+        against a coin (1.06x chance) to 0.459 against 0.333 (1.38x chance).
+        """
+        import statistics
+
+        from till_infinity.statespace.switching import Switching
+
+        values, phase = self._alternating()
+        engine = Switching()
+        seen = ([], [], [])
+        for i, value in enumerate(values):
+            engine.predict(i * 3600.0)
+            engine.update(value, 0.09, i * 3600.0)
+            seen[0].append(engine.balance)
+            seen[1].append(engine.seeking)
+            seen[2].append(engine.trending)
+
+        def during(xs, want):
+            return statistics.fmean(xs[i] for i in range(len(xs)) if phase[i] == want)
+
+        chance = 1.0 / 3.0
+        # Trending takes the trend, and is below chance during rotation.
+        assert during(seen[2], 1) > 2.0 * chance, during(seen[2], 1)
+        assert during(seen[2], 0) < chance, during(seen[2], 0)
+        # Balance beats chance during rotation by more than it used to beat a
+        # coin, and its rejection of a trend sharpened from 0.015 to 0.009.
+        assert during(seen[0], 0) > 1.3 * chance, during(seen[0], 0)
+        assert during(seen[0], 1) < 0.015, during(seen[0], 1)
+        # The walk regime is indifferent: this fixture has no walk segment, so
+        # a component that still discriminated would be representing something
+        # other than a walk - which is the defect the third state removed.
+        assert abs(during(seen[1], 0) - during(seen[1], 1)) < 0.08
+
+    def test_the_third_regime_is_scored_against_a_constructible_null(self):
+        """`regimes=2` is the nested null. An unbuildable null cannot score."""
+        two = self._loglike(self._simple("trend", 13), regimes=2)
+        three = self._loglike(self._simple("trend", 13))
+        assert three > two + 6.0, (three, two)
+
+    def test_it_barely_gains_on_a_driftless_walk_and_loses_on_pure_reversion(self):
+        """**The control the wander was selected on, pinned.**
+
+        A trending state must add almost nothing to a walk and must *lose* on
+        pure reversion. At a smaller wander it gained +310 on a walk by
+        degenerating into a better-tuned random walk than imbalance, which is
+        flexibility rather than signal.
+        """
+        walk = self._simple("walk", 11)
+        gain = self._loglike(walk) - self._loglike(walk, regimes=2)
+        assert gain < 150.0, gain
+
+        reverting = self._simple("ou", 12)
+        loss = self._loglike(reverting) - self._loglike(reverting, regimes=2)
+        assert loss < 0.0, loss
+
+    def test_a_restored_two_regime_state_is_padded_not_rejected(self):
+        """This member was two regimes before it was three."""
+        from till_infinity.statespace.switching import Switching
+
+        engine = Switching(means=[100.0, 101.0], variances=[1.0, 2.0], weights=[0.4, 0.6])
+        # Padded up to the default, not rejected and not left at two.
+        assert engine.regimes == 3
+        assert len(engine.means) == len(engine.variances) == len(engine.weights) == 3
+        # **The new regime starts at zero posterior with a live estimate.**
+        # Copying the imbalance component rather than a stale zero is what
+        # lets it earn weight through the transition matrix instead of first
+        # having to unlearn a wrong level.
+        assert engine.weights[2] == 0.0
+        assert engine.means[2] == pytest.approx(101.0)
+        assert sum(engine.weights) == pytest.approx(1.0)
+        assert engine.trending == 0.0
+        engine.predict(3600.0)
+        engine.update(100.5, 0.09, 3600.0)
+        assert math.isfinite(engine.value)
+        assert len(engine.observation()[0]) == len(engine.state())
+
+        # And an explicit two-regime model stays two: that is the null.
+        null = Switching(regimes=2)
+        assert len(null.weights) == 2
+        assert null.trending == 0.0
+        for i in range(50):
+            null.predict(i * 3600.0)
+            null.update(100.0 + i * 0.1, 0.09, i * 3600.0)
+        assert math.isfinite(null.loglike)
+        assert len(null.observation()[0]) == len(null.state())
 
     def test_it_satisfies_enough_of_the_contract_to_be_scored(self):
         import random
