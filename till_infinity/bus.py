@@ -79,6 +79,28 @@ DISPERSION = "statespace.dispersion"
 #: 0.5 is **reversion**, not an edge: the sign of a mean-reverting quantity is
 #: predictable in a way the sign of a price is not.
 STATESPACE_SIGNALS = "statespace.signals"
+#: A statespace **proposal**: the signal contract `trading` reads, so the
+#: strategies can build an Intent from it the way they do from `SIGNALS`.
+#:
+#: Deliberately **not** `SIGNALS`. Two producers on a topic named after one of
+#: them is how a consumer loses track of which produced what, and a separate
+#: topic is one subscription to remove if this turns out to be worth nothing.
+#:
+#: **Nothing consumes it yet, and it publishes anyway.** Every strategy on the
+#: desk is level-based and statespace has no levels, so these would be refused
+#: by `wants` even if trading subscribed - and two configured gates refuse them
+#: outright: `TRADING_MIN_PROBABILITY` at 0.75 against a 2R barrier that cannot
+#: exceed a third, and `TRADING_MIN_BASE_RATE` at 0.51 against an honest 0.50.
+#: It publishes regardless because `trading.turn_exit` "has never once run in
+#: production" while its end-to-end path passed every test, and a producer left
+#: switched off is no witness that it works.
+#:
+#: The **sign comes from the triggering bar**, not from the readout. This
+#: service folds log variance, so a side taken from its own innovation would be
+#: the side of a *volatility* move - the error already corrected twice here,
+#: where `side` became `variance_side` and the alert kind `break` became
+#: `surprise`.
+PROPOSALS = "statespace.proposals"
 #: What agents ask for. Notifications is the consumer.
 ALERTS = "alerts"
 #: Decisions and their reasoning, on their way to the journal. Any service can

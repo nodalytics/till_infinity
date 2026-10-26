@@ -53,7 +53,7 @@ import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
 
-from . import cohort
+from . import cohort, proposing
 from .config import Settings
 from .engine import Engine
 from .facade import Readout
@@ -85,6 +85,9 @@ TOPIC = "statespace.dispersion"
 #: for one deciding what to look at. This fires on a change of state and then
 #: stays quiet for `signal_quiet_hours`.
 NOTICES = "statespace.signals"
+
+#: The proposal topic. Must equal `bus.PROPOSALS`; a test asserts it.
+PROPOSES = "statespace.proposals"
 
 
 @runtime_checkable
@@ -297,6 +300,7 @@ class Watcher:
     pool: cohort.Pool = field(default_factory=cohort.Pool)
     published: int = 0
     noticed: int = 0
+    proposed: int = 0
     _last_report: float = field(default=0.0, repr=False)
     #: key -> exponentially weighted mean of the log band width, so a widening
     #: is judged against this feed-interval's own history rather than a
@@ -365,6 +369,13 @@ class Watcher:
                 payload.update(cohort_fields(self.pool, readout))
             await bus.publish(TOPIC, payload, source="statespace")
             self.published += 1
+        if self.engine.settings.proposals:
+            # **The bar, not the readout, carries the sign.** `proposal_for`
+            # takes both for that reason and the module docstring says why.
+            proposal = proposing.proposal_for(readout, message.payload)
+            if proposal is not None:
+                await bus.publish(PROPOSES, proposal, source="statespace")
+                self.proposed += 1
         if self.engine.settings.signals:
             change = self.transition(readout)
             if change is not None and not self.quiet(readout, change[0], at=readout.at):
@@ -382,7 +393,8 @@ class Watcher:
         line = (
             f"statespace: {self.engine.progress.folded} bars folded, "
             f"{self.engine.tracking} tracking, {self.engine.armed} armed, "
-            f"{self.published} published, {self.noticed} announced"
+            f"{self.published} published, {self.noticed} announced, "
+            f"{self.proposed} proposed"
         )
         if saturated:
             # **The condition that was silent.** A matching loop against its
