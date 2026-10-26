@@ -54,13 +54,17 @@ def _consider(engine: Dispersing, payload: dict, tick: Tick | None = None):
 
 
 class TestItReadsOnlyStatespaceProposals:
-    def test_it_wants_the_statespace_shape(self) -> None:
-        assert _engine().wants({"shape": "statespace"}) is True
+    def test_it_wants_the_statespace_shape_on_a_listed_feed(self) -> None:
+        assert _engine().wants({"shape": "statespace", "feed": "eurusd"}) is True
+
+    def test_the_shape_alone_is_not_enough(self) -> None:
+        """A payload with no feed is not this strategy's. See `feeds`."""
+        assert _engine().wants({"shape": "statespace"}) is False
 
     def test_it_ignores_every_structures_shape(self) -> None:
         engine = _engine()
         for shape in ("level", "drift", "agent", "trade", ""):
-            assert engine.wants({"shape": shape}) is False
+            assert engine.wants({"shape": shape, "feed": "eurusd"}) is False
 
 
 class TestTheGates:
@@ -191,3 +195,71 @@ class TestItCanBeScored:
     def test_it_is_not_in_the_default_strategy_list(self) -> None:
         """Registered and not configured: it does not trade until asked."""
         assert "statespace-surprise" not in Settings().strategies
+
+
+class TestTheFeedRestriction:
+    """`TRADING_SYMBOLS` is global, so the restriction has to be in the class.
+
+    Naming the strategy in `TRADING_STRATEGIES` makes it eligible on every
+    configured symbol. On a wide feed `cost_share` would refuse nearly every
+    proposal anyway - `exotic-spreads-are-a-whole-bar-range` measured round
+    trips of 0.40 to 0.97 bar-ranges - but an incidental refusal and a
+    deliberate exclusion read the same in a tally and mean different things.
+    """
+
+    def test_it_takes_the_fx_majors(self) -> None:
+        engine = _engine()
+        for feed in ("eurusd", "gbpusd", "usdjpy", "usdcad", "usdchf", "audusd", "nzdusd"):
+            assert engine.wants({"shape": "statespace", "feed": feed}), feed
+
+    def test_it_takes_the_fx_crosses(self) -> None:
+        engine = _engine()
+        for feed in ("eurgbp", "eurjpy", "gbpjpy", "eurchf", "audjpy", "chfjpy", "euraud"):
+            assert engine.wants({"shape": "statespace", "feed": feed}), feed
+
+    def test_it_declines_everything_else_on_the_desk(self) -> None:
+        """The other 18 configured symbols, including the ones it would lose on."""
+        engine = _engine()
+        for feed in (
+            "gold",
+            "silver",
+            "btc",
+            "eth",
+            "sol",
+            "spx500",
+            "us100",
+            "us30",
+            "us2000",
+            "ger40",
+            "uk100",
+            "fra40",
+            "eu50",
+            "aus200",
+            "hk50",
+            "wti",
+            "brent",
+            "usdcnh",
+        ):
+            assert not engine.wants({"shape": "statespace", "feed": feed}), feed
+
+    def test_the_feed_check_is_case_insensitive(self) -> None:
+        engine = _engine()
+        assert engine.wants({"shape": "statespace", "feed": "EURUSD"})
+
+    def test_an_unlisted_feed_is_not_counted_as_a_refusal(self) -> None:
+        """`wants` is the pre-filter, so `seen` never moves on another feed.
+
+        A proposal on `btcusd` was never this strategy's to decline, and
+        counting it would make the cost gate's own tally unreadable - a gate
+        that fires constantly is mis-set, and that only means anything if
+        everything it counts was actually eligible.
+        """
+        engine = _engine()
+        before = engine.seen
+        assert not engine.wants({"shape": "statespace", "feed": "btcusd"})
+        assert engine.seen == before
+
+    def test_the_restriction_is_not_in_the_environment(self) -> None:
+        """It is a measurement about spreads, not an operator preference."""
+        assert isinstance(Dispersing.feeds, frozenset)
+        assert len(Dispersing.feeds) == 14
