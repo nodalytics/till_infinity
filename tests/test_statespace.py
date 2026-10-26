@@ -10249,7 +10249,7 @@ class TestTheTransitionTopic:
 
         assert notices, "a planted shock has to produce at least one notice"
         assert len(notices) < len(readings), "a notice per bar would defeat the topic"
-        assert {"break", "widening"} & {one["kind"] for one in notices}
+        assert {"surprise", "widening"} & {one["kind"] for one in notices}
         assert watcher.noticed == len(notices)
 
     def test_the_quiet_period_is_what_keeps_it_rare(self):
@@ -10468,3 +10468,110 @@ class TestTheAnchoredFairValue:
             anchor.observe(-16.0, 0.67, 3_600.0 * i)
         assert anchor.stretch(-10.0, 0.0) == 0.0
         assert anchor.stretch(-10.0, 2.0) == pytest.approx(3.0, abs=0.01)
+
+
+class TestTheAlertReadsInPlainWords:
+    """`agents` composes the alert body with a model and `notifications` sends
+    it to a phone, so `detail` is the line that survives when the analysis says
+    nothing useful - and it is read by whoever is holding the phone. Twice this
+    evening a field name would have been read as a price claim (`side`, and a
+    kind called `break`), so the wording is pinned."""
+
+    @staticmethod
+    def _readout():
+        import random
+
+        from till_infinity.statespace.facade import Desk
+
+        desk = Desk()
+        rng = random.Random(5)
+        level = -16.0
+        got = None
+        for i in range(400):
+            level += rng.gauss(0.0, 0.03)
+            got = desk.read("gold", "1h", 3_600.0 * (i + 1), level + rng.gauss(0.0, 0.5), 0.67)
+        return got
+
+    def test_no_jargon_reaches_the_line(self):
+        from till_infinity.statespace.service import notice_for
+
+        got = self._readout()
+        banned = (
+            "sigma",
+            "z ",
+            "z-score",
+            "dispersion",
+            "half-band",
+            "log-wider",
+            "log-narrower",
+            "variance",
+            "lever",
+            "quantile",
+            "posterior",
+        )
+        for kind, score in (
+            ("surprise", 3.42),
+            ("surprise", -4.6),
+            ("widening", 0.62),
+            ("quieting", -0.55),
+            ("saturated", 0.0),
+        ):
+            line = str(notice_for(got, kind, score)["detail"]).lower()
+            for word in banned:
+                assert word not in line, (kind, word, line)
+
+    def test_it_never_implies_a_direction_for_the_price(self):
+        """The service says how big, never which way. A line containing "up",
+        "down", "bullish" or "long" would be acted on as a price call."""
+        from till_infinity.statespace.service import notice_for
+
+        got = self._readout()
+        for kind, score in (("surprise", 5.0), ("widening", 0.8), ("quieting", -0.8)):
+            line = str(notice_for(got, kind, score)["detail"]).lower()
+            for word in (" up", " down", "bullish", "bearish", "long", "short", "buy", "sell"):
+                assert word not in line, (kind, word, line)
+
+    def test_an_unreliable_reading_quotes_no_probability(self):
+        """Quoting a probability in the same breath as "these readings are
+        unreliable" invites the reader to use the probability."""
+        from till_infinity.statespace.service import notice_for
+
+        line = str(notice_for(self._readout(), "saturated", 0.0)["detail"])
+        assert "unreliable" in line
+        assert "%" not in line
+        assert ";" not in line
+
+    def test_the_numbers_are_multiples_and_percentages(self):
+        from till_infinity.statespace.service import notice_for
+
+        got = self._readout()
+        wider = str(notice_for(got, "widening", 0.62)["detail"])
+        assert "1.9x wider" in wider
+        narrower = str(notice_for(got, "quieting", -0.55)["detail"])
+        assert "42% narrower" in narrower
+
+    def test_the_technical_fields_are_still_all_there(self):
+        """Plain words in the line, every number in the payload - a consumer
+        reading the topic loses nothing to the phrasing."""
+        from till_infinity.statespace.service import notice_for
+
+        payload = notice_for(self._readout(), "surprise", 3.42)
+        for name in (
+            "kind",
+            "score",
+            "shape",
+            "log_variance",
+            "spread",
+            "surprise",
+            "rate",
+            "rate_sd",
+            "rate_vol",
+            "drift_free",
+            "drift_revert",
+            "variance_side",
+            "variance_side_z",
+            "variance_up",
+            "fair_variance",
+            "stretch",
+        ):
+            assert name in payload, name

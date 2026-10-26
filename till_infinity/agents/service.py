@@ -723,7 +723,26 @@ class Watcher:
             # finding needs one for the same reason a detector does: a channel
             # narrowed to `level,drift` would otherwise drop every one of these
             # silently, which is the worst way for an analysis to fail.
-            fields = {"shape": "agent"}
+            # **`shape` is the routing key, so this changes it as little as
+            # possible.** `filters.key` reads `fields["shape"]` and
+            # `NOTIFY_SHAPES` matches on it, so widening this to "carry
+            # whatever woke the run" would silently re-route every existing
+            # alert - a channel asking for `agent` would stop seeing
+            # level-triggered findings, which is the failure this comment block
+            # exists to prevent rather than cause.
+            #
+            # So: `agent` stays the answer unless the run was woken **only** by
+            # `statespace.signals`, in which case the shape is `statespace` and
+            # a channel can ask for those specifically. A mixed window keeps
+            # `agent`, which is the conservative reading of "what is this
+            # about".
+            woke = tuple(trigger_context.get("trigger_topics") or ()) if trigger_context else ()
+            fields = {"shape": "statespace" if woke == (STATESPACE_SIGNALS,) else "agent"}
+            if woke:
+                # Informational, never routed on: which topics were in the
+                # window, so a reader of the card can see what it was about
+                # without the routing key having to carry it.
+                fields["woke"] = ", ".join(woke)
             if finding.instrument:
                 fields["instrument"] = finding.instrument
             if finding.evidence:
@@ -800,6 +819,9 @@ class Watcher:
             return None
         context = {
             "triggers": [t.reason for t in triggers],
+            # The topics that woke this run, so `publish` can route a finding
+            # by what caused it rather than by the fact an agent wrote it.
+            "trigger_topics": sorted({t.topic for t in triggers}),
             "window_messages": window.messages,
             "spread_bps_threshold": self.settings.spread_bps,
         }

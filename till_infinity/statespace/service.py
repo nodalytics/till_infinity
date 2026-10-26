@@ -147,6 +147,61 @@ def payload_for(readout: Readout) -> dict[str, object]:
     return out
 
 
+def _detail(readout: Readout, kind: str, score: float) -> str:
+    """One line in plain words, for a reader who does not know what a sigma is.
+
+    **The payload keeps every technical field; this does not.** `agents`
+    composes the alert body with a model, and `notifications` sends it to a
+    phone - so this is the line that survives if the analysis says nothing
+    useful, and it is read by whoever happens to be holding the phone. Numbers
+    appear as multiples and percentages because those are read correctly
+    without training; sigmas, z-scores, log widths and "half-bands" are not.
+
+    Two namings earlier this evening would have been read as price claims by
+    anyone sensible - a field called `side` and a kind called `break`. The same
+    care applies here, so every line says **move size** or **swings** and never
+    implies a direction for the price.
+    """
+    size = abs(score)
+    if kind == "surprise":
+        if size >= 6.0:
+            how = "an extreme move"
+        elif size >= 4.0:
+            how = "a far bigger move than usual"
+        else:
+            how = "a much bigger move than usual"
+        if score < 0:
+            how = "a far quieter bar than usual" if size >= 4.0 else "a much quieter bar than usual"
+        parts = [f"{how} just printed"]
+    elif kind in ("widening", "quieting"):
+        times = math.exp(abs(score))
+        if kind == "widening":
+            parts = [f"swings are about {times:.1f}x wider than they have been"]
+        else:
+            parts = [
+                f"swings are about {100.0 * (1.0 - 1.0 / times):.0f}% narrower than they have been"
+            ]
+    elif kind == "saturated":
+        # **And nothing else.** Quoting a probability in the same breath as
+        # "these readings are unreliable" invites the reader to use the
+        # probability, which is the one thing this line exists to prevent.
+        return "these readings are unreliable right now - treat the range as a guess"
+    else:  # pragma: no cover - a kind without a line is still readable
+        parts = [f"{kind} {score:+.2f}"]
+
+    if readout.stretch:
+        stretch = readout.stretch
+        if abs(stretch) < 0.5:
+            parts.append("about average for the session so far")
+        elif stretch > 0:
+            parts.append("busier than the rest of the session")
+        else:
+            parts.append("calmer than the rest of the session")
+    if readout.variance_up:
+        parts.append(f"{100.0 * readout.variance_up:.0f}% chance the next bar is bigger again")
+    return "; ".join(parts)
+
+
 def notice_for(readout: Readout, kind: str, score: float) -> dict[str, object]:
     """What a transition puts on the bus.
 
@@ -165,7 +220,14 @@ def notice_for(readout: Readout, kind: str, score: float) -> dict[str, object]:
     out = dict(payload_for(readout))
     out["kind"] = kind
     out["score"] = round(float(score), 4)
-    out["detail"] = f"{kind} at {score:+.2f}"
+    out["detail"] = _detail(readout, kind, score)
+    # **`shape` is what the notification filter routes on**, and a payload
+    # without one is keyed by its *source* instead - so a channel narrowed with
+    # `NOTIFY_SHAPES=level,drift` would drop every notice from this service
+    # silently, which `agents.publish` calls the worst way for an analysis to
+    # fail. The kind is the shape, so a channel can ask for breaks and not
+    # quietings.
+    out["shape"] = kind
     # Two structural drifts that disagree by construction, and the slope's own
     # realised volatility beside its estimation uncertainty.
     out["drift_free"] = round(float(readout.drift_free), 8)
@@ -208,7 +270,7 @@ class Watcher:
         """The kind of change this bar represents, and how big, or None.
 
         Ordered by what a consumer should act on first: a spread that cannot
-        be trusted beats a break, and a break beats a change of width.
+        be trusted beats a surprise, and a surprise beats a change of width.
         """
         settings = self.engine.settings
         key = (readout.feed, readout.interval)
@@ -225,7 +287,10 @@ class Watcher:
         if readout.spread_saturated:
             return ("saturated", 0.0)
         if abs(readout.surprise) >= settings.signal_surprise:
-            return ("break", readout.surprise)
+            # **`surprise`, not `break`.** "Break" is a level word to anybody
+            # who trades, and this is a standardised innovation on log
+            # variance - the quantity's own field name says what it is.
+            return ("surprise", readout.surprise)
         if width is not None and was is not None:
             moved = width - was
             if moved >= settings.signal_width:
