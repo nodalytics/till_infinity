@@ -60,6 +60,25 @@ RESOLUTIONS = "structures.resolutions"
 #: closed. A consumer sizes, places a stop or declines to trade on it; nothing
 #: should read a side out of it, and there is none in the payload to read.
 DISPERSION = "statespace.dispersion"
+#: What the statespace service thinks is worth looking at **now**, as opposed
+#: to `DISPERSION`, which is a reading on every bar. Emitted on a transition
+#: only - a regime change, a widening, a quieting - because 207 armed
+#: feed-intervals at 1m would otherwise be a thousand messages an hour and no
+#: consumer could tell which mattered.
+#:
+#: **It carries a sign, and the sign names its own subject.** This service
+#: folds log variance, so `variance_side` is whether *dispersion* is drifting
+#: up - not whether price is - and `variance_side_z` ships beside it, omitted
+#: rather than zeroed when the drift's sd is unknown. `variance_up` is
+#: `hmm.Direction`'s independent reading of the same sign.
+#:
+#: Direction at the level is measured closed here - 0.50 across 112,429 rows
+#: and 67 feed cells, 16 of 17 bias kinds null, 0 of 28 cells profitable after
+#: costs - so a consumer acting on a sign without its significance is acting on
+#: a quantity this desk has measured at nothing. And a `variance_up` far from
+#: 0.5 is **reversion**, not an edge: the sign of a mean-reverting quantity is
+#: predictable in a way the sign of a price is not.
+STATESPACE_SIGNALS = "statespace.signals"
 #: What agents ask for. Notifications is the consumer.
 ALERTS = "alerts"
 #: Decisions and their reasoning, on their way to the journal. Any service can
@@ -75,6 +94,7 @@ TOPICS: tuple[str, ...] = (
     SIGNALS,
     RESOLUTIONS,
     DISPERSION,
+    STATESPACE_SIGNALS,
     ALERTS,
     JOURNAL,
 )

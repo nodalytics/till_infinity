@@ -10154,3 +10154,424 @@ class TestTheCardSaysHowTheSpreadWasFormed:
         got = self._pinned().read("gold", "5m", 3_600.0 * 61, -10.0, 0.01)
         loud.observe_width(payload_for(got) | {"time": 1_000.0})
         assert loud.width_context("gold", now=1_010.0)["dispersion_saturated"] is True
+
+
+class TestTheTransitionTopic:
+    """`statespace.signals` exists because `statespace.dispersion` is a reading
+    on every bar: production runs 207 armed feed-intervals at 1m, so a per-bar
+    topic is twelve thousand messages an hour and no consumer can tell which
+    mattered. This fires on a change of state and then stays quiet."""
+
+    class Fake:
+        """Anything with `publish` and `subscribe` drives the loop."""
+
+        def __init__(self):
+            self.sent: list[tuple[str, dict]] = []
+
+        async def publish(self, topic, payload, *, source=""):
+            self.sent.append((topic, dict(payload)))
+            return 1
+
+        def subscribe(self, topic, group="default"):  # pragma: no cover
+            raise AssertionError("the watcher subscribes, this test drives it directly")
+
+    @staticmethod
+    def _bar(when: float, price: float, width: float):
+        return {
+            "feed": "gold",
+            "interval": "1h",
+            "time": when,
+            "open": price,
+            "close": price * 1.0001,
+            "high": price * (1.0 + width),
+            "low": price * (1.0 - width),
+            "volume": 1_000.0,
+            "closed": True,
+        }
+
+    def _run(self, *, quiet_hours: float = 0.0, bars: int = 300, shock_at: int = 200):
+        import asyncio
+        import random
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+        from till_infinity.statespace.service import Watcher
+
+        bus = self.Fake()
+        watcher = Watcher(
+            engine=Engine(
+                settings=Settings(intervals=("1h",), warm_bars=5, signal_quiet_hours=quiet_hours)
+            )
+        )
+
+        class Msg:
+            def __init__(self, payload):
+                self.topic = "prices.bars"
+                self.payload = payload
+
+        rng = random.Random(11)
+        price = 2_400.0
+
+        async def drive():
+            for i in range(bars):
+                shock = 14.0 if i == shock_at else 1.0
+                step = rng.gauss(0.0, 0.004) * shock
+                await watcher.handle(
+                    Msg(
+                        self._bar(
+                            3_600.0 * (i + 1),
+                            price * (1.0 + step),
+                            abs(rng.gauss(0.0, 0.003)) * shock,
+                        )
+                    ),
+                    bus,
+                )
+
+        asyncio.run(drive())
+        return bus, watcher
+
+    def test_the_duplicated_topic_name_matches_the_bus(self):
+        """The package cannot import `..bus` - `TestVendoredCusum` asserts it
+        imports nothing outside itself but `shared` - so the name is duplicated
+        and the duplicate is checked here, outside the package."""
+        from till_infinity.bus import STATESPACE_SIGNALS, TOPICS
+        from till_infinity.statespace.service import NOTICES
+
+        assert NOTICES == STATESPACE_SIGNALS
+        assert STATESPACE_SIGNALS in TOPICS
+
+    def test_it_announces_a_break_and_a_widening_but_not_every_bar(self):
+        from till_infinity.statespace.service import NOTICES
+
+        bus, watcher = self._run()
+        notices = [payload for topic, payload in bus.sent if topic == NOTICES]
+        readings = [topic for topic, _ in bus.sent if topic != NOTICES]
+
+        assert notices, "a planted shock has to produce at least one notice"
+        assert len(notices) < len(readings), "a notice per bar would defeat the topic"
+        assert {"surprise", "widening"} & {one["kind"] for one in notices}
+        assert watcher.noticed == len(notices)
+
+    def test_the_quiet_period_is_what_keeps_it_rare(self):
+        """Same bars, same transitions, one knob."""
+        from till_infinity.statespace.service import NOTICES
+
+        loud, _ = self._run(quiet_hours=0.0)
+        quiet, _ = self._run(quiet_hours=72.0)
+        said = {
+            name: sum(1 for topic, _ in bus.sent if topic == NOTICES)
+            for name, bus in (("loud", loud), ("quiet", quiet))
+        }
+        assert said["quiet"] < said["loud"], said
+
+    def test_the_side_never_ships_without_its_significance(self):
+        """**The field that keeps this honest.** Direction at the level is
+        measured closed here - 0.50 across 112,429 rows, 16 of 17 bias kinds
+        null, 0 of 28 cells profitable after costs - so a consumer reading a
+        sign alone is acting on a measured nothing. The z is omitted when the
+        drift's sd is unknown rather than defaulted to zero, because a zero
+        there reads as certainty."""
+        from till_infinity.statespace.service import NOTICES
+
+        bus, _ = self._run()
+        notices = [payload for topic, payload in bus.sent if topic == NOTICES]
+        for one in notices:
+            assert ("variance_side" in one) == ("variance_side_z" in one)
+            if "variance_side" in one:
+                assert one["variance_side"] in (-1, 0, 1)
+                assert isinstance(one["variance_side_z"], float)
+
+    def test_the_sign_fields_name_their_subject(self):
+        """**This service folds log variance, so a sign is about dispersion,
+        not about price.** A field called `side` in an alert would be read as
+        the second thing within a day, which is why there is no such field."""
+        from till_infinity.statespace.service import NOTICES
+
+        bus, _ = self._run()
+        for payload in (one for topic, one in bus.sent if topic == NOTICES):
+            assert "side" not in payload
+            assert "side_z" not in payload
+            assert not any(k == "direction" for k in payload)
+
+    def test_the_discrete_chain_gives_a_second_independent_reading(self):
+        """`hmm.Direction` was built to be shown wrong and says so: direction
+        agrees with its predecessor 49.5% of the time against 50% +/- 3.1%.
+        Two independent nulls agreeing is worth more than one.
+
+        **But fed log-variance changes it is not measuring that null.** The
+        sign of a mean-reverting quantity *is* predictable - after dispersion
+        falls it is likelier to rise - so a reading far from 0.5 here is
+        reversion rather than a directional edge, and carries no price content.
+        """
+        from till_infinity.statespace.service import NOTICES
+
+        bus, _ = self._run()
+        notices = [one for topic, one in bus.sent if topic == NOTICES]
+        seen = [one["variance_up"] for one in notices if "variance_up" in one]
+        assert seen, "the chain has to produce a forecast once warm"
+        assert all(0.0 < value < 1.0 for value in seen)
+
+    def test_a_notice_carries_both_structural_drifts_and_both_dispersions(self):
+        """The blend hides the disagreement, so the two drifts are published
+        separately - and the slope gets its realised volatility beside its
+        estimation uncertainty, which is what makes `jerk`'s guess checkable."""
+        from till_infinity.statespace.service import NOTICES
+
+        bus, _ = self._run()
+        one = [payload for topic, payload in bus.sent if topic == NOTICES][-1]
+        for name in ("kind", "score", "detail", "drift_free", "drift_revert", "rate", "rate_vol"):
+            assert name in one, name
+        # A superset of the reading, so a consumer needs only one parser.
+        reading = [payload for topic, payload in bus.sent if topic != NOTICES][-1]
+        assert set(reading) <= set(one)
+
+    def test_turning_signals_off_leaves_the_readings_alone(self):
+        import asyncio
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+        from till_infinity.statespace.service import NOTICES, Watcher
+
+        bus = self.Fake()
+        watcher = Watcher(
+            engine=Engine(settings=Settings(intervals=("1h",), warm_bars=1, signals=False))
+        )
+
+        class Msg:
+            def __init__(self, payload):
+                self.topic = "prices.bars"
+                self.payload = payload
+
+        async def drive():
+            for i in range(60):
+                await watcher.handle(Msg(self._bar(3_600.0 * (i + 1), 2_400.0, 0.02)), bus)
+
+        asyncio.run(drive())
+        assert not [topic for topic, _ in bus.sent if topic == NOTICES]
+        assert [topic for topic, _ in bus.sent if topic != NOTICES]
+
+    def test_agents_routes_it_through_the_same_loudest_rule(self):
+        """A notice competes with a level call for the same attention, so it
+        goes through the same rule rather than a parallel one - and the Trigger
+        is tagged with the topic it came from, not with `SIGNALS`."""
+        from till_infinity.agents.service import TOPICS, Settings, Window
+        from till_infinity.bus import STATESPACE_SIGNALS
+
+        assert STATESPACE_SIGNALS in TOPICS
+
+        analyst = Window(settings=Settings())
+        analyst._signal(
+            {"feed": "gold", "score": 4.2, "detail": "break at +4.20", "venue": "deriv"},
+            topic=STATESPACE_SIGNALS,
+        )
+        score, trigger = analyst.loudest["gold"]
+        assert score == 4.2
+        assert trigger.topic == STATESPACE_SIGNALS
+        assert "break at +4.20" in trigger.reason
+
+        # And a louder level call still wins the feed, which is the point of
+        # sharing the rule.
+        analyst._signal({"feed": "gold", "score": 9.0, "detail": "level swept"})
+        assert analyst.loudest["gold"][0] == 9.0
+
+
+class TestTheAnchoredFairValue:
+    """The VWAP this desk can actually have. `orderflow.md` measured volume
+    profile levels bouncing like random prices - FX within 1.2 points of the
+    placebo - and the reason is mechanical: MT5 tick volume counts quote
+    updates, not contracts, and spot FX has no trade volume at all. So the
+    weights are precisions instead, and the bands are the measured ones."""
+
+    @staticmethod
+    def _run(bars: int = 400, hours: float | None = None):
+        import random
+
+        from till_infinity.statespace.facade import Desk
+
+        desk = Desk()
+        rng = random.Random(3)
+        level = -16.0
+        last = None
+        for i in range(bars):
+            level += rng.gauss(0.0, 0.03)
+            last = desk.read("gold", "1h", 3_600.0 * (i + 1), level + rng.gauss(0.0, 0.5), 0.67)
+            if hours is not None:
+                desk._anchors[("gold", "1h")].hours = hours
+        return desk, last
+
+    def test_it_offers_a_fair_value_and_a_stretch_in_band_units(self):
+        _, got = self._run()
+        assert got.fair_variance < 0.0, "log variance is negative at gold's scale"
+        assert got.fair_sd > 0.0
+        # The fair value's own spread is tighter than one observation's, which
+        # is the whole point of weighting by precision and accumulating.
+        assert got.fair_sd < math.sqrt(0.67)
+        assert abs(got.stretch) < 10.0
+
+    def test_nothing_is_offered_before_the_floor(self):
+        """Zero means "not offered" rather than "at fair", which is why the
+        payload omits the keys instead of publishing a zero."""
+        from till_infinity.statespace.anchored import LEAST
+        from till_infinity.statespace.service import payload_for
+
+        _, got = self._run(bars=LEAST - 1)
+        assert got.fair_variance == 0.0
+        assert got.stretch == 0.0
+        assert "fair_variance" not in payload_for(got)
+        assert "stretch" not in payload_for(got)
+
+    def test_the_anchor_resets_and_the_fair_value_follows(self):
+        """A session anchor has edges, and the edges are the point: "high
+        relative to today" is a different claim from "high relative to the
+        last fortnight"."""
+        from till_infinity.statespace.anchored import Anchor
+
+        anchor = Anchor(hours=5.0)
+        for i in range(12):
+            anchor.observe(-16.0, 0.67, 3_600.0 * i)
+        before = anchor.seen
+        anchor.observe(-10.0, 0.67, 3_600.0 * 100)
+        assert anchor.seen == 1, "past the window it starts again"
+        assert anchor.mean == pytest.approx(-10.0)
+        assert before > 1
+
+    def test_the_weights_are_precisions_so_a_noisier_reading_counts_less(self):
+        """The honest version of "volume-weighted": the weight is how well the
+        reading was measured."""
+        from till_infinity.statespace.anchored import Anchor
+
+        tight = Anchor()
+        loose = Anchor()
+        for i in range(20):
+            tight.observe(0.0, 1.0, 3_600.0 * i)
+            loose.observe(0.0, 1.0, 3_600.0 * i)
+        tight.observe(10.0, 0.01, 3_600.0 * 20)  # a well-measured outlier
+        loose.observe(10.0, 100.0, 3_600.0 * 20)  # a badly-measured one
+        assert tight.mean > loose.mean * 10, (tight.mean, loose.mean)
+
+    def test_a_bad_reading_cannot_move_it(self):
+        from till_infinity.statespace.anchored import Anchor
+
+        anchor = Anchor()
+        for i in range(15):
+            anchor.observe(-16.0, 0.67, 3_600.0 * i)
+        was = (anchor.mean, anchor.seen)
+        for bad in ((float("nan"), 0.67), (-16.0, 0.0), (-16.0, -1.0), (float("inf"), 0.67)):
+            anchor.observe(bad[0], bad[1], 3_600.0 * 20)
+        assert (anchor.mean, anchor.seen) == was
+
+    def test_the_stretch_is_zero_without_a_band_rather_than_infinite(self):
+        from till_infinity.statespace.anchored import Anchor
+
+        anchor = Anchor()
+        for i in range(15):
+            anchor.observe(-16.0, 0.67, 3_600.0 * i)
+        assert anchor.stretch(-10.0, 0.0) == 0.0
+        assert anchor.stretch(-10.0, 2.0) == pytest.approx(3.0, abs=0.01)
+
+
+class TestTheAlertReadsInPlainWords:
+    """`agents` composes the alert body with a model and `notifications` sends
+    it to a phone, so `detail` is the line that survives when the analysis says
+    nothing useful - and it is read by whoever is holding the phone. Twice this
+    evening a field name would have been read as a price claim (`side`, and a
+    kind called `break`), so the wording is pinned."""
+
+    @staticmethod
+    def _readout():
+        import random
+
+        from till_infinity.statespace.facade import Desk
+
+        desk = Desk()
+        rng = random.Random(5)
+        level = -16.0
+        got = None
+        for i in range(400):
+            level += rng.gauss(0.0, 0.03)
+            got = desk.read("gold", "1h", 3_600.0 * (i + 1), level + rng.gauss(0.0, 0.5), 0.67)
+        return got
+
+    def test_no_jargon_reaches_the_line(self):
+        from till_infinity.statespace.service import notice_for
+
+        got = self._readout()
+        banned = (
+            "sigma",
+            "z ",
+            "z-score",
+            "dispersion",
+            "half-band",
+            "log-wider",
+            "log-narrower",
+            "variance",
+            "lever",
+            "quantile",
+            "posterior",
+        )
+        for kind, score in (
+            ("surprise", 3.42),
+            ("surprise", -4.6),
+            ("widening", 0.62),
+            ("quieting", -0.55),
+            ("saturated", 0.0),
+        ):
+            line = str(notice_for(got, kind, score)["detail"]).lower()
+            for word in banned:
+                assert word not in line, (kind, word, line)
+
+    def test_it_never_implies_a_direction_for_the_price(self):
+        """The service says how big, never which way. A line containing "up",
+        "down", "bullish" or "long" would be acted on as a price call."""
+        from till_infinity.statespace.service import notice_for
+
+        got = self._readout()
+        for kind, score in (("surprise", 5.0), ("widening", 0.8), ("quieting", -0.8)):
+            line = str(notice_for(got, kind, score)["detail"]).lower()
+            for word in (" up", " down", "bullish", "bearish", "long", "short", "buy", "sell"):
+                assert word not in line, (kind, word, line)
+
+    def test_an_unreliable_reading_quotes_no_probability(self):
+        """Quoting a probability in the same breath as "these readings are
+        unreliable" invites the reader to use the probability."""
+        from till_infinity.statespace.service import notice_for
+
+        line = str(notice_for(self._readout(), "saturated", 0.0)["detail"])
+        assert "unreliable" in line
+        assert "%" not in line
+        assert ";" not in line
+
+    def test_the_numbers_are_multiples_and_percentages(self):
+        from till_infinity.statespace.service import notice_for
+
+        got = self._readout()
+        wider = str(notice_for(got, "widening", 0.62)["detail"])
+        assert "1.9x wider" in wider
+        narrower = str(notice_for(got, "quieting", -0.55)["detail"])
+        assert "42% narrower" in narrower
+
+    def test_the_technical_fields_are_still_all_there(self):
+        """Plain words in the line, every number in the payload - a consumer
+        reading the topic loses nothing to the phrasing."""
+        from till_infinity.statespace.service import notice_for
+
+        payload = notice_for(self._readout(), "surprise", 3.42)
+        for name in (
+            "kind",
+            "score",
+            "shape",
+            "log_variance",
+            "spread",
+            "surprise",
+            "rate",
+            "rate_sd",
+            "rate_vol",
+            "drift_free",
+            "drift_revert",
+            "variance_side",
+            "variance_side_z",
+            "variance_up",
+            "fair_variance",
+            "stretch",
+        ):
+            assert name in payload, name

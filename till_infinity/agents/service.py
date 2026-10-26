@@ -41,7 +41,17 @@ from collections import Counter, OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from ..bus import ALERTS, ARTICLES, BARS, EVENTS, QUOTES, SIGNALS, Bus, Message
+from ..bus import (
+    ALERTS,
+    ARTICLES,
+    BARS,
+    EVENTS,
+    QUOTES,
+    SIGNALS,
+    STATESPACE_SIGNALS,
+    Bus,
+    Message,
+)
 from ..journal import Journal, decide, observe
 from ..logging import get_logger
 from ..news.symbols import feeds_for
@@ -55,7 +65,7 @@ log = get_logger(__name__)
 
 #: What the watcher listens to. Macro is left out on purpose: reserves move
 #: monthly, so a bulk row count is not a reason to wake anything.
-TOPICS: tuple[str, ...] = (QUOTES, BARS, EVENTS, ARTICLES, SIGNALS)
+TOPICS: tuple[str, ...] = (QUOTES, BARS, EVENTS, ARTICLES, SIGNALS, STATESPACE_SIGNALS)
 
 #: A finding has to clear this to become an alert.
 MIN_CONFIDENCE = 0.5
@@ -340,6 +350,14 @@ class Window:
         self.topics[message.topic] += 1
         if message.topic == SIGNALS:
             self._signal(payload)
+        elif message.topic == STATESPACE_SIGNALS:
+            # **The same path, deliberately.** A statespace notice competes
+            # with a level call for the same attention, so it goes through the
+            # same loudest-per-feed rule rather than a parallel one - and
+            # `notice_for` supplies the `feed`, `score` and `detail` that rule
+            # reads. Nothing downstream changes: `notifications` subscribes to
+            # `ALERTS` alone, so this is already the whole path to a phone.
+            self._signal(payload, topic=STATESPACE_SIGNALS)
         elif message.topic == QUOTES:
             self._quote(payload)
         elif message.topic == EVENTS:
@@ -347,7 +365,7 @@ class Window:
         elif message.topic == ARTICLES:
             self._article(payload)
 
-    def _signal(self, payload: dict) -> None:
+    def _signal(self, payload: dict, topic: str = SIGNALS) -> None:
         # A signal has already cleared the numeric layer's own guards, so it
         # needs no second arithmetic gate - it arrives *because* something
         # passed one. Re-filtering would discard the work that made it worth
@@ -359,7 +377,7 @@ class Window:
                 f"{payload.get('venue', '')} {payload.get('feed', '')}: "
                 f"{payload.get('detail') or payload.get('shape', 'signal')}"
             ).strip(),
-            topic=SIGNALS,
+            topic=topic,
             payload=dict(payload),
         )
         known = self.loudest.get(feed)
@@ -705,7 +723,26 @@ class Watcher:
             # finding needs one for the same reason a detector does: a channel
             # narrowed to `level,drift` would otherwise drop every one of these
             # silently, which is the worst way for an analysis to fail.
-            fields = {"shape": "agent"}
+            # **`shape` is the routing key, so this changes it as little as
+            # possible.** `filters.key` reads `fields["shape"]` and
+            # `NOTIFY_SHAPES` matches on it, so widening this to "carry
+            # whatever woke the run" would silently re-route every existing
+            # alert - a channel asking for `agent` would stop seeing
+            # level-triggered findings, which is the failure this comment block
+            # exists to prevent rather than cause.
+            #
+            # So: `agent` stays the answer unless the run was woken **only** by
+            # `statespace.signals`, in which case the shape is `statespace` and
+            # a channel can ask for those specifically. A mixed window keeps
+            # `agent`, which is the conservative reading of "what is this
+            # about".
+            woke = tuple(trigger_context.get("trigger_topics") or ()) if trigger_context else ()
+            fields = {"shape": "statespace" if woke == (STATESPACE_SIGNALS,) else "agent"}
+            if woke:
+                # Informational, never routed on: which topics were in the
+                # window, so a reader of the card can see what it was about
+                # without the routing key having to carry it.
+                fields["woke"] = ", ".join(woke)
             if finding.instrument:
                 fields["instrument"] = finding.instrument
             if finding.evidence:
@@ -782,6 +819,9 @@ class Watcher:
             return None
         context = {
             "triggers": [t.reason for t in triggers],
+            # The topics that woke this run, so `publish` can route a finding
+            # by what caused it rather than by the fact an agent wrote it.
+            "trigger_topics": sorted({t.topic for t in triggers}),
             "window_messages": window.messages,
             "spread_bps_threshold": self.settings.spread_bps,
         }

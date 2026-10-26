@@ -61,8 +61,10 @@ import math
 from collections import deque
 from dataclasses import dataclass, field
 
+from .anchored import Anchor
 from .behaving import classify, drives_q, traits_for
 from .bounding import feasible, least_horizon, shifts_for
+from .hmm import Direction
 from .pacing import Pace
 from .pooling import Pooled
 from .tails import coverage as _coverage
@@ -179,6 +181,36 @@ class Interval:
         return (self.high - self.centre) - (self.centre - self.low)
 
 
+def _rate_sd(member) -> float:
+    """The drift's standard deviation, from the members that carry one.
+
+    `Pooled` combines `value` and its variance but not the rate's, so this
+    takes the weighted mean of the members that expose `p11` and falls back to
+    zero for a pool of members that do not. Zero means "not stated" rather
+    than "certain", which is why `side_z` is omitted when it is.
+    """
+    parts: list[float] = []
+    for one in getattr(member, "members", ()):
+        inner = getattr(one, "_member", one)
+        variance = getattr(inner, "p11", None)
+        if isinstance(variance, int | float) and variance > 0:
+            parts.append(float(variance))
+    return math.sqrt(sum(parts) / len(parts)) if parts else 0.0
+
+
+def _drift(member, name: str) -> float:
+    """One named member's own drift per hour, or zero if it is not pooled.
+
+    Zero means "this member is not in the pool" rather than "no drift", which
+    is why the payload omits the field when the pool does not carry it.
+    """
+    names = tuple(getattr(member, "names", ()))
+    if name not in names:
+        return 0.0
+    inner = getattr(member, "members", ())[names.index(name)]
+    return float(getattr(getattr(inner, "_member", inner), "rate", 0.0))
+
+
 @dataclass(frozen=True, slots=True)
 class Readout:
     """Everything statespace can say about one bar, and nothing about how.
@@ -253,6 +285,87 @@ class Readout:
     #: this is expected to stay false and is here for when it does not.
     spread_rule: str = ""
     spread_saturated: bool = False
+
+    #: The filtered drift per hour, and its own standard deviation. Published
+    #: **together** because the first without the second is a direction with
+    #: no significance, and direction at the level is measured closed on this
+    #: desk: 0.50 across 112,429 rows, 16 of 17 bias kinds null, and a gate
+    #: that finds a *planted* drift at z +2.90 still earning 2% of a spread.
+    #:
+    #: `rate_sd` comes from the members that carry a rate covariance, which is
+    #: also where `observability.md` measured what a scalar observation can
+    #: say about a drift: `sd(rate)` runs 0.0010 per hour over 500 bars at 1h
+    #: and 1.44 over 60 bars at 1m. A consumer reading `rate` without
+    #: `rate_sd` at the short end is reading noise.
+    rate: float = 0.0
+    rate_sd: float = 0.0
+
+    #: **Two structural drifts that disagree by construction**, so a consumer
+    #: can see which structure the pool is reading rather than a blended
+    #: number. `drift_free` is the momentum member's unconstrained drift per
+    #: hour; `drift_revert` is the mean-reverting member's pull toward its own
+    #: level, which is negative when the quantity is above where it reverts to.
+    #:
+    #: They are published rather than combined because the pool's `rate` is
+    #: already the blend and the blend hides the disagreement. `inputs.py`'s
+    #: own docstring records the relevant warning: in `slope_fade.py` the two
+    #: signals that survived the overlap correction were built on the slope and
+    #: **the raw slope itself did not**.
+    drift_free: float = 0.0
+    drift_revert: float = 0.0
+
+    #: **The slope's own volatility, realised rather than assumed.** The
+    #: valuation this package describes is two estimates with two dispersions -
+    #: where the quantity is and which way it is going, each with a width - and
+    #: until now only the first had one. `rate_sd` is the *estimation*
+    #: uncertainty of the drift; this is how much the drift has actually
+    #: **moved**, as the root of an exponentially weighted mean of its squared
+    #: changes per hour.
+    #:
+    #: Publishing both makes a guess checkable. `linear.jerk` is the model's
+    #: *assumed* slope volatility and its own comment says it "has not been
+    #: measured for any subject yet"; `observability.md` then measured the
+    #: state it drives at **0.17 to 0.56 of its own posterior sd** on every
+    #: class - never distinguishable from zero - with the matching loop running
+    #: it to its clamp. A reader comparing `rate_vol` against the jerk the
+    #: member is carrying can see the gap rather than trust it.
+    rate_vol: float = 0.0
+
+    #: **An anchored fair value for the quantity being tracked, and the
+    #: distance from it in half-band units.** The reference is VWAP, with the
+    #: weights replaced: each reading enters weighted by its own precision
+    #: rather than by a volume field, because MT5 tick volume counts quote
+    #: updates and spot FX has no trade volume at all - see `anchored.py`.
+    #:
+    #: **It is a fair *volatility*, not a fair price.** This service folds
+    #: `log(garman_klass(...))`, so `fair_variance` is where dispersion has sat
+    #: since the anchor and `stretch` is how far above or below that the
+    #: current reading is, in units of half the published band. 1.0 means the
+    #: reading is exactly at the band's edge, and the number is comparable
+    #: across feeds because the band's coverage is measured.
+    #:
+    #: Zero in all three means "not offered yet" - fewer than `anchored.LEAST`
+    #: readings since the anchor, or no band - rather than "at fair".
+    fair_variance: float = 0.0
+    fair_sd: float = 0.0
+    stretch: float = 0.0
+
+    #: **P(the tracked quantity's next move is up), from `hmm.Direction`** - a
+    #: second and independent reading of the same sign the drift gives, so a
+    #: consumer can see two methods agree or disagree rather than trust one.
+    #:
+    #: The member was built to be shown wrong and says so: measured on eurusd
+    #: 4h, "speed is 8.1x as persistent as the signed rate" and direction
+    #: agrees with its predecessor **49.5% of the time against 50% +/- 3.1%**,
+    #: so an HMM on direction "is being asked to model a fair coin".
+    #: `sequencing.md` then read direction AUC **0.50150 over 462 cells and
+    #: 7,728,858 test rows**, with the phase surrogate scoring *higher*.
+    #:
+    #: Published because two independent nulls agreeing is worth more than one,
+    #: and because the forecast it returns is the one a caller would have had
+    #: to bet on - `Direction.update` gives P(up) **before** the move is
+    #: folded in. 0.0 means not yet offered.
+    variance_up: float = 0.0
 
     @property
     def warm(self) -> bool:
@@ -418,6 +531,15 @@ class Desk:
     _members: dict[tuple[str, str], Pooled] = field(default_factory=dict)
     _paces: dict[tuple[str, str], Pace] = field(default_factory=dict)
     _residuals: dict[tuple[str, str], deque] = field(default_factory=dict)
+    #: key -> (last drift, exponentially weighted mean of its squared change).
+    _drifts: dict[tuple[str, str], tuple[float, float]] = field(default_factory=dict)
+    #: key -> the anchored fair value since the last session boundary.
+    _anchors: dict[tuple[str, str], Anchor] = field(default_factory=dict)
+    #: key -> (the discrete direction chain, the previous observation). The
+    #: chain is fed the signed **change** in the tracked quantity, so on this
+    #: service it forecasts whether dispersion rises next, not whether price
+    #: does - see `Readout.variance_up`.
+    _ups: dict[tuple[str, str], tuple[Direction, float]] = field(default_factory=dict)
 
     def forget(self, feed: str = "", interval: str = "") -> int:
         """Drop state. Everything, or one feed, or one feed and interval."""
@@ -430,11 +552,79 @@ class Desk:
             self._members.pop(key, None)
             self._paces.pop(key, None)
             self._residuals.pop(key, None)
+            self._drifts.pop(key, None)
+            self._anchors.pop(key, None)
+            self._ups.pop(key, None)
         return len(keys)
 
     @property
     def tracking(self) -> int:
         return len(self._members)
+
+    def _anchored(
+        self,
+        key: tuple[str, str],
+        value: float,
+        noise: float,
+        when: float,
+        quantiles: tuple[tuple[float, float], ...],
+    ) -> dict[str, float]:
+        """The anchored fair value, its spread, and the stretch from it.
+
+        The band's half width comes from the quantiles already computed for
+        this readout, so `stretch` is measured against the same interval a
+        consumer would read - not against a second one built differently.
+        """
+        anchor = self._anchors.get(key)
+        if anchor is None:
+            anchor = self._anchors[key] = Anchor()
+        anchor.observe(value, noise, when)
+        half = 0.0
+        if quantiles:
+            low = min(one[1] for one in quantiles)
+            high = max(one[1] for one in quantiles)
+            half = 0.5 * (high - low)
+        if not anchor.ready:
+            return {"fair_variance": 0.0, "fair_sd": 0.0, "stretch": 0.0}
+        return {
+            "fair_variance": float(anchor.mean),
+            "fair_sd": float(anchor.sd),
+            "stretch": float(anchor.stretch(value, half)),
+        }
+
+    def _up(self, key: tuple[str, str], value: float, when: float) -> float:
+        """P(the next change is up), read **before** this change is folded in.
+
+        That ordering is the member's own contract and the reason the number
+        means anything: "a probability read after the outcome is folded in is
+        not a forecast of it".
+        """
+        if not math.isfinite(value):
+            return 0.0
+        known = self._ups.get(key)
+        if known is None:
+            self._ups[key] = (Direction(), value)
+            return 0.0
+        chain, last = known
+        forecast = chain.update(value - last, when)
+        self._ups[key] = (chain, value)
+        return float(forecast) if math.isfinite(forecast) else 0.0
+
+    def _rate_vol(self, key: tuple[str, str], rate: float) -> float:
+        """Root of the exponentially weighted mean square change in the drift.
+
+        The memory is the residual window's, so the slope's volatility and the
+        band's quantiles are estimated over the same history - a reader
+        comparing them is then comparing like with like.
+        """
+        if not math.isfinite(rate):
+            return 0.0
+        last, mean = self._drifts.get(key, (rate, 0.0))
+        step = rate - last
+        decay = 1.0 - 1.0 / max(float(self.window), 2.0)
+        mean = decay * mean + (1.0 - decay) * step * step
+        self._drifts[key] = (rate, mean)
+        return math.sqrt(max(mean, 0.0))
 
     @property
     def saturated(self) -> dict[tuple[str, str], tuple[str, ...]]:
@@ -503,15 +693,25 @@ class Desk:
         member.update(float(value), float(noise), float(when))
 
         traits = traits_for(feed)
+        # Hoisted because `_anchored` measures its stretch against **this**
+        # readout's band rather than a second one built differently.
+        quantiles = self._quantiles(key, member, noise)
         return Readout(
             feed=feed,
             interval=interval,
             at=float(when),
             value=float(member.value),
             spread=float(member.variance) + max(float(noise), 0.0),
-            quantiles=self._quantiles(key, member, noise),
+            quantiles=quantiles,
             spread_rule=self.rule,
             spread_saturated=bool(getattr(member, "saturated", ())),
+            rate=float(getattr(member, "rate", 0.0)),
+            rate_sd=_rate_sd(member),
+            drift_free=_drift(member, "kalman"),
+            drift_revert=_drift(member, "reverting"),
+            rate_vol=self._rate_vol(key, float(getattr(member, "rate", 0.0))),
+            **self._anchored(key, float(value), float(noise), float(when), quantiles),
+            variance_up=self._up(key, float(value), float(when)),
             family=classify(feed),
             absorbs=None if traits is None else traits.absorbs,
             paced=bool(paced and volume > 0),

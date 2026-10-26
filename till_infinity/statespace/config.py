@@ -54,6 +54,23 @@ DEFAULT_SAVE_SECONDS = 300.0
 #: ships a readout whose interval is missing rather than wide.
 DEFAULT_WARM_BARS = 60
 
+#: Standardised innovation above which a bar is a **break** worth announcing.
+#: 3.0 rather than 2.0 because `band-coverage.md` measured the 0.99 interval
+#: breaching at 0.0006 to 0.0018 - a 3-sigma reading is genuinely rare here,
+#: where on a Gaussian assumption it would not be.
+DEFAULT_SIGNAL_SURPRISE = 3.0
+
+#: Log change in the published band's width that counts as a widening or a
+#: quieting. 0.5 is a 65% change in width, which is large enough that a
+#: consumer sizing off it would act differently.
+DEFAULT_SIGNAL_WIDTH = 0.5
+
+#: Hours a feed-interval stays quiet after announcing the same kind. **The
+#: whole reason this topic exists separately from `DISPERSION`**: production
+#: runs 207 armed feed-intervals at 1m, so a per-bar topic would be twelve
+#: thousand messages an hour and no consumer could tell which mattered.
+DEFAULT_SIGNAL_QUIET_HOURS = 6.0
+
 
 @dataclass(slots=True)
 class Settings(Restorable):
@@ -64,6 +81,13 @@ class Settings(Restorable):
     feeds: tuple[str, ...] = ()
     noise: float = DEFAULT_NOISE
     save_seconds: float = DEFAULT_SAVE_SECONDS
+    #: Whether to announce transitions on `statespace.signals`. On, because a
+    #: topic with no traffic teaches a consumer nothing - but every reading is
+    #: still on `DISPERSION`, so turning this off loses only the notice.
+    signals: bool = True
+    signal_surprise: float = DEFAULT_SIGNAL_SURPRISE
+    signal_width: float = DEFAULT_SIGNAL_WIDTH
+    signal_quiet_hours: float = DEFAULT_SIGNAL_QUIET_HOURS
     warm_bars: int = DEFAULT_WARM_BARS
     publish: bool = True
 
@@ -82,6 +106,10 @@ class Settings(Restorable):
             save_seconds=_float("STATESPACE_SAVE_SECONDS", DEFAULT_SAVE_SECONDS),
             warm_bars=_int("STATESPACE_WARM_BARS", DEFAULT_WARM_BARS),
             publish=_flag("STATESPACE_PUBLISH", True),
+            signals=_flag("STATESPACE_SIGNALS", True),
+            signal_surprise=_float("STATESPACE_SIGNAL_SURPRISE", DEFAULT_SIGNAL_SURPRISE),
+            signal_width=_float("STATESPACE_SIGNAL_WIDTH", DEFAULT_SIGNAL_WIDTH),
+            signal_quiet_hours=_float("STATESPACE_SIGNAL_QUIET_HOURS", DEFAULT_SIGNAL_QUIET_HOURS),
         )
 
     def wants(self, feed: str, interval: str) -> bool:
