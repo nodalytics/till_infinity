@@ -41,7 +41,17 @@ from collections import Counter, OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from ..bus import ALERTS, ARTICLES, BARS, EVENTS, QUOTES, SIGNALS, Bus, Message
+from ..bus import (
+    ALERTS,
+    ARTICLES,
+    BARS,
+    EVENTS,
+    QUOTES,
+    SIGNALS,
+    STATESPACE_SIGNALS,
+    Bus,
+    Message,
+)
 from ..journal import Journal, decide, observe
 from ..logging import get_logger
 from ..news.symbols import feeds_for
@@ -55,7 +65,7 @@ log = get_logger(__name__)
 
 #: What the watcher listens to. Macro is left out on purpose: reserves move
 #: monthly, so a bulk row count is not a reason to wake anything.
-TOPICS: tuple[str, ...] = (QUOTES, BARS, EVENTS, ARTICLES, SIGNALS)
+TOPICS: tuple[str, ...] = (QUOTES, BARS, EVENTS, ARTICLES, SIGNALS, STATESPACE_SIGNALS)
 
 #: A finding has to clear this to become an alert.
 MIN_CONFIDENCE = 0.5
@@ -340,6 +350,14 @@ class Window:
         self.topics[message.topic] += 1
         if message.topic == SIGNALS:
             self._signal(payload)
+        elif message.topic == STATESPACE_SIGNALS:
+            # **The same path, deliberately.** A statespace notice competes
+            # with a level call for the same attention, so it goes through the
+            # same loudest-per-feed rule rather than a parallel one - and
+            # `notice_for` supplies the `feed`, `score` and `detail` that rule
+            # reads. Nothing downstream changes: `notifications` subscribes to
+            # `ALERTS` alone, so this is already the whole path to a phone.
+            self._signal(payload, topic=STATESPACE_SIGNALS)
         elif message.topic == QUOTES:
             self._quote(payload)
         elif message.topic == EVENTS:
@@ -347,7 +365,7 @@ class Window:
         elif message.topic == ARTICLES:
             self._article(payload)
 
-    def _signal(self, payload: dict) -> None:
+    def _signal(self, payload: dict, topic: str = SIGNALS) -> None:
         # A signal has already cleared the numeric layer's own guards, so it
         # needs no second arithmetic gate - it arrives *because* something
         # passed one. Re-filtering would discard the work that made it worth
@@ -359,7 +377,7 @@ class Window:
                 f"{payload.get('venue', '')} {payload.get('feed', '')}: "
                 f"{payload.get('detail') or payload.get('shape', 'signal')}"
             ).strip(),
-            topic=SIGNALS,
+            topic=topic,
             payload=dict(payload),
         )
         known = self.loudest.get(feed)

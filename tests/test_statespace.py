@@ -10154,3 +10154,192 @@ class TestTheCardSaysHowTheSpreadWasFormed:
         got = self._pinned().read("gold", "5m", 3_600.0 * 61, -10.0, 0.01)
         loud.observe_width(payload_for(got) | {"time": 1_000.0})
         assert loud.width_context("gold", now=1_010.0)["dispersion_saturated"] is True
+
+
+class TestTheTransitionTopic:
+    """`statespace.signals` exists because `statespace.dispersion` is a reading
+    on every bar: production runs 207 armed feed-intervals at 1m, so a per-bar
+    topic is twelve thousand messages an hour and no consumer can tell which
+    mattered. This fires on a change of state and then stays quiet."""
+
+    class Fake:
+        """Anything with `publish` and `subscribe` drives the loop."""
+
+        def __init__(self):
+            self.sent: list[tuple[str, dict]] = []
+
+        async def publish(self, topic, payload, *, source=""):
+            self.sent.append((topic, dict(payload)))
+            return 1
+
+        def subscribe(self, topic, group="default"):  # pragma: no cover
+            raise AssertionError("the watcher subscribes, this test drives it directly")
+
+    @staticmethod
+    def _bar(when: float, price: float, width: float):
+        return {
+            "feed": "gold",
+            "interval": "1h",
+            "time": when,
+            "open": price,
+            "close": price * 1.0001,
+            "high": price * (1.0 + width),
+            "low": price * (1.0 - width),
+            "volume": 1_000.0,
+            "closed": True,
+        }
+
+    def _run(self, *, quiet_hours: float = 0.0, bars: int = 300, shock_at: int = 200):
+        import asyncio
+        import random
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+        from till_infinity.statespace.service import Watcher
+
+        bus = self.Fake()
+        watcher = Watcher(
+            engine=Engine(
+                settings=Settings(intervals=("1h",), warm_bars=5, signal_quiet_hours=quiet_hours)
+            )
+        )
+
+        class Msg:
+            def __init__(self, payload):
+                self.topic = "prices.bars"
+                self.payload = payload
+
+        rng = random.Random(11)
+        price = 2_400.0
+
+        async def drive():
+            for i in range(bars):
+                shock = 14.0 if i == shock_at else 1.0
+                step = rng.gauss(0.0, 0.004) * shock
+                await watcher.handle(
+                    Msg(
+                        self._bar(
+                            3_600.0 * (i + 1),
+                            price * (1.0 + step),
+                            abs(rng.gauss(0.0, 0.003)) * shock,
+                        )
+                    ),
+                    bus,
+                )
+
+        asyncio.run(drive())
+        return bus, watcher
+
+    def test_the_duplicated_topic_name_matches_the_bus(self):
+        """The package cannot import `..bus` - `TestVendoredCusum` asserts it
+        imports nothing outside itself but `shared` - so the name is duplicated
+        and the duplicate is checked here, outside the package."""
+        from till_infinity.bus import STATESPACE_SIGNALS, TOPICS
+        from till_infinity.statespace.service import NOTICES
+
+        assert NOTICES == STATESPACE_SIGNALS
+        assert STATESPACE_SIGNALS in TOPICS
+
+    def test_it_announces_a_break_and_a_widening_but_not_every_bar(self):
+        from till_infinity.statespace.service import NOTICES
+
+        bus, watcher = self._run()
+        notices = [payload for topic, payload in bus.sent if topic == NOTICES]
+        readings = [topic for topic, _ in bus.sent if topic != NOTICES]
+
+        assert notices, "a planted shock has to produce at least one notice"
+        assert len(notices) < len(readings), "a notice per bar would defeat the topic"
+        assert {"break", "widening"} & {one["kind"] for one in notices}
+        assert watcher.noticed == len(notices)
+
+    def test_the_quiet_period_is_what_keeps_it_rare(self):
+        """Same bars, same transitions, one knob."""
+        from till_infinity.statespace.service import NOTICES
+
+        loud, _ = self._run(quiet_hours=0.0)
+        quiet, _ = self._run(quiet_hours=72.0)
+        said = {
+            name: sum(1 for topic, _ in bus.sent if topic == NOTICES)
+            for name, bus in (("loud", loud), ("quiet", quiet))
+        }
+        assert said["quiet"] < said["loud"], said
+
+    def test_the_side_never_ships_without_its_significance(self):
+        """**The field that keeps this honest.** Direction at the level is
+        measured closed here - 0.50 across 112,429 rows, 16 of 17 bias kinds
+        null, 0 of 28 cells profitable after costs - so a consumer reading
+        `side` alone is acting on a measured nothing. `side_z` is omitted when
+        the drift's sd is unknown rather than defaulted to zero, because a zero
+        there reads as certainty."""
+        from till_infinity.statespace.service import NOTICES
+
+        bus, _ = self._run()
+        notices = [payload for topic, payload in bus.sent if topic == NOTICES]
+        for one in notices:
+            assert ("side" in one) == ("side_z" in one)
+            if "side" in one:
+                assert one["side"] in (-1, 0, 1)
+                assert isinstance(one["side_z"], float)
+
+    def test_a_notice_carries_both_structural_drifts_and_both_dispersions(self):
+        """The blend hides the disagreement, so the two drifts are published
+        separately - and the slope gets its realised volatility beside its
+        estimation uncertainty, which is what makes `jerk`'s guess checkable."""
+        from till_infinity.statespace.service import NOTICES
+
+        bus, _ = self._run()
+        one = [payload for topic, payload in bus.sent if topic == NOTICES][-1]
+        for name in ("kind", "score", "detail", "drift_free", "drift_revert", "rate", "rate_vol"):
+            assert name in one, name
+        # A superset of the reading, so a consumer needs only one parser.
+        reading = [payload for topic, payload in bus.sent if topic != NOTICES][-1]
+        assert set(reading) <= set(one)
+
+    def test_turning_signals_off_leaves_the_readings_alone(self):
+        import asyncio
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+        from till_infinity.statespace.service import NOTICES, Watcher
+
+        bus = self.Fake()
+        watcher = Watcher(
+            engine=Engine(settings=Settings(intervals=("1h",), warm_bars=1, signals=False))
+        )
+
+        class Msg:
+            def __init__(self, payload):
+                self.topic = "prices.bars"
+                self.payload = payload
+
+        async def drive():
+            for i in range(60):
+                await watcher.handle(Msg(self._bar(3_600.0 * (i + 1), 2_400.0, 0.02)), bus)
+
+        asyncio.run(drive())
+        assert not [topic for topic, _ in bus.sent if topic == NOTICES]
+        assert [topic for topic, _ in bus.sent if topic != NOTICES]
+
+    def test_agents_routes_it_through_the_same_loudest_rule(self):
+        """A notice competes with a level call for the same attention, so it
+        goes through the same rule rather than a parallel one - and the Trigger
+        is tagged with the topic it came from, not with `SIGNALS`."""
+        from till_infinity.agents.service import TOPICS, Settings, Window
+        from till_infinity.bus import STATESPACE_SIGNALS
+
+        assert STATESPACE_SIGNALS in TOPICS
+
+        analyst = Window(settings=Settings())
+        analyst._signal(
+            {"feed": "gold", "score": 4.2, "detail": "break at +4.20", "venue": "deriv"},
+            topic=STATESPACE_SIGNALS,
+        )
+        score, trigger = analyst.loudest["gold"]
+        assert score == 4.2
+        assert trigger.topic == STATESPACE_SIGNALS
+        assert "break at +4.20" in trigger.reason
+
+        # And a louder level call still wins the feed, which is the point of
+        # sharing the rule.
+        analyst._signal({"feed": "gold", "score": 9.0, "detail": "level swept"})
+        assert analyst.loudest["gold"][0] == 9.0

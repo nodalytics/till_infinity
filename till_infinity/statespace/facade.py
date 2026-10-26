@@ -179,6 +179,36 @@ class Interval:
         return (self.high - self.centre) - (self.centre - self.low)
 
 
+def _rate_sd(member) -> float:
+    """The drift's standard deviation, from the members that carry one.
+
+    `Pooled` combines `value` and its variance but not the rate's, so this
+    takes the weighted mean of the members that expose `p11` and falls back to
+    zero for a pool of members that do not. Zero means "not stated" rather
+    than "certain", which is why `side_z` is omitted when it is.
+    """
+    parts: list[float] = []
+    for one in getattr(member, "members", ()):
+        inner = getattr(one, "_member", one)
+        variance = getattr(inner, "p11", None)
+        if isinstance(variance, int | float) and variance > 0:
+            parts.append(float(variance))
+    return math.sqrt(sum(parts) / len(parts)) if parts else 0.0
+
+
+def _drift(member, name: str) -> float:
+    """One named member's own drift per hour, or zero if it is not pooled.
+
+    Zero means "this member is not in the pool" rather than "no drift", which
+    is why the payload omits the field when the pool does not carry it.
+    """
+    names = tuple(getattr(member, "names", ()))
+    if name not in names:
+        return 0.0
+    inner = getattr(member, "members", ())[names.index(name)]
+    return float(getattr(getattr(inner, "_member", inner), "rate", 0.0))
+
+
 @dataclass(frozen=True, slots=True)
 class Readout:
     """Everything statespace can say about one bar, and nothing about how.
@@ -253,6 +283,51 @@ class Readout:
     #: this is expected to stay false and is here for when it does not.
     spread_rule: str = ""
     spread_saturated: bool = False
+
+    #: The filtered drift per hour, and its own standard deviation. Published
+    #: **together** because the first without the second is a direction with
+    #: no significance, and direction at the level is measured closed on this
+    #: desk: 0.50 across 112,429 rows, 16 of 17 bias kinds null, and a gate
+    #: that finds a *planted* drift at z +2.90 still earning 2% of a spread.
+    #:
+    #: `rate_sd` comes from the members that carry a rate covariance, which is
+    #: also where `observability.md` measured what a scalar observation can
+    #: say about a drift: `sd(rate)` runs 0.0010 per hour over 500 bars at 1h
+    #: and 1.44 over 60 bars at 1m. A consumer reading `rate` without
+    #: `rate_sd` at the short end is reading noise.
+    rate: float = 0.0
+    rate_sd: float = 0.0
+
+    #: **Two structural drifts that disagree by construction**, so a consumer
+    #: can see which structure the pool is reading rather than a blended
+    #: number. `drift_free` is the momentum member's unconstrained drift per
+    #: hour; `drift_revert` is the mean-reverting member's pull toward its own
+    #: level, which is negative when the quantity is above where it reverts to.
+    #:
+    #: They are published rather than combined because the pool's `rate` is
+    #: already the blend and the blend hides the disagreement. `inputs.py`'s
+    #: own docstring records the relevant warning: in `slope_fade.py` the two
+    #: signals that survived the overlap correction were built on the slope and
+    #: **the raw slope itself did not**.
+    drift_free: float = 0.0
+    drift_revert: float = 0.0
+
+    #: **The slope's own volatility, realised rather than assumed.** The
+    #: valuation this package describes is two estimates with two dispersions -
+    #: where the quantity is and which way it is going, each with a width - and
+    #: until now only the first had one. `rate_sd` is the *estimation*
+    #: uncertainty of the drift; this is how much the drift has actually
+    #: **moved**, as the root of an exponentially weighted mean of its squared
+    #: changes per hour.
+    #:
+    #: Publishing both makes a guess checkable. `linear.jerk` is the model's
+    #: *assumed* slope volatility and its own comment says it "has not been
+    #: measured for any subject yet"; `observability.md` then measured the
+    #: state it drives at **0.17 to 0.56 of its own posterior sd** on every
+    #: class - never distinguishable from zero - with the matching loop running
+    #: it to its clamp. A reader comparing `rate_vol` against the jerk the
+    #: member is carrying can see the gap rather than trust it.
+    rate_vol: float = 0.0
 
     @property
     def warm(self) -> bool:
@@ -418,6 +493,8 @@ class Desk:
     _members: dict[tuple[str, str], Pooled] = field(default_factory=dict)
     _paces: dict[tuple[str, str], Pace] = field(default_factory=dict)
     _residuals: dict[tuple[str, str], deque] = field(default_factory=dict)
+    #: key -> (last drift, exponentially weighted mean of its squared change).
+    _drifts: dict[tuple[str, str], tuple[float, float]] = field(default_factory=dict)
 
     def forget(self, feed: str = "", interval: str = "") -> int:
         """Drop state. Everything, or one feed, or one feed and interval."""
@@ -430,11 +507,28 @@ class Desk:
             self._members.pop(key, None)
             self._paces.pop(key, None)
             self._residuals.pop(key, None)
+            self._drifts.pop(key, None)
         return len(keys)
 
     @property
     def tracking(self) -> int:
         return len(self._members)
+
+    def _rate_vol(self, key: tuple[str, str], rate: float) -> float:
+        """Root of the exponentially weighted mean square change in the drift.
+
+        The memory is the residual window's, so the slope's volatility and the
+        band's quantiles are estimated over the same history - a reader
+        comparing them is then comparing like with like.
+        """
+        if not math.isfinite(rate):
+            return 0.0
+        last, mean = self._drifts.get(key, (rate, 0.0))
+        step = rate - last
+        decay = 1.0 - 1.0 / max(float(self.window), 2.0)
+        mean = decay * mean + (1.0 - decay) * step * step
+        self._drifts[key] = (rate, mean)
+        return math.sqrt(max(mean, 0.0))
 
     @property
     def saturated(self) -> dict[tuple[str, str], tuple[str, ...]]:
@@ -512,6 +606,11 @@ class Desk:
             quantiles=self._quantiles(key, member, noise),
             spread_rule=self.rule,
             spread_saturated=bool(getattr(member, "saturated", ())),
+            rate=float(getattr(member, "rate", 0.0)),
+            rate_sd=_rate_sd(member),
+            drift_free=_drift(member, "kalman"),
+            drift_revert=_drift(member, "reverting"),
+            rate_vol=self._rate_vol(key, float(getattr(member, "rate", 0.0))),
             family=classify(feed),
             absorbs=None if traits is None else traits.absorbs,
             paced=bool(paced and volume > 0),

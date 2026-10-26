@@ -48,6 +48,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+import math
 import time
 from dataclasses import dataclass, field
 from typing import Any, Protocol, runtime_checkable
@@ -58,13 +59,31 @@ from .facade import Readout
 
 log = logging.getLogger(__name__)
 
-__all__ = ["CONSUMES", "TOPIC", "Carrier", "Watcher", "payload_for", "watch"]
+__all__ = [
+    "CONSUMES",
+    "NOTICES",
+    "TOPIC",
+    "Carrier",
+    "Watcher",
+    "notice_for",
+    "payload_for",
+    "watch",
+]
 
 #: The topic this service reads. Must equal `bus.BARS`; a test asserts it.
 CONSUMES = "prices.bars"
 
 #: The topic it publishes. Must equal `bus.DISPERSION`; a test asserts it.
 TOPIC = "statespace.dispersion"
+
+#: The transition topic. Must equal `bus.STATESPACE_SIGNALS`; a test asserts it.
+#:
+#: **Separate from `TOPIC` because of the arithmetic.** Production runs 207
+#: armed feed-intervals at 1m, so a reading per bar is twelve thousand messages
+#: an hour - fine for a consumer that wants the latest value per feed, useless
+#: for one deciding what to look at. This fires on a change of state and then
+#: stays quiet for `signal_quiet_hours`.
+NOTICES = "statespace.signals"
 
 
 @runtime_checkable
@@ -119,13 +138,92 @@ def payload_for(readout: Readout) -> dict[str, object]:
     return out
 
 
+def notice_for(readout: Readout, kind: str, score: float) -> dict[str, object]:
+    """What a transition puts on the bus.
+
+    A superset of `payload_for`, plus the three things a notice needs that a
+    reading does not: `kind`, a `score` comparable across feeds, and a `detail`
+    line, because `agents._signal` builds its alert text from `detail` and
+    keeps the loudest `score` per feed.
+
+    **The side ships with its own significance or not at all.** `side_z` is
+    omitted when the drift's standard deviation is unknown rather than
+    defaulted, because a zero there would read as certainty. Direction at the
+    level is measured closed on this desk - 0.50 across 112,429 rows, 16 of 17
+    bias kinds null, 0 of 28 cells profitable after costs - so a consumer that
+    reads `side` without `side_z` is acting on a measured nothing.
+    """
+    out = dict(payload_for(readout))
+    out["kind"] = kind
+    out["score"] = round(float(score), 4)
+    out["detail"] = f"{kind} at {score:+.2f}"
+    # Two structural drifts that disagree by construction, and the slope's own
+    # realised volatility beside its estimation uncertainty.
+    out["drift_free"] = round(float(readout.drift_free), 8)
+    out["drift_revert"] = round(float(readout.drift_revert), 8)
+    out["rate"] = round(float(readout.rate), 8)
+    out["rate_vol"] = round(float(readout.rate_vol), 8)
+    if readout.rate_sd > 0:
+        out["rate_sd"] = round(float(readout.rate_sd), 8)
+        out["side"] = 1 if readout.rate > 0 else -1 if readout.rate < 0 else 0
+        out["side_z"] = round(float(readout.rate / readout.rate_sd), 4)
+    return out
+
+
 @dataclass(slots=True)
 class Watcher:
     """One bus message in, zero or one publish out."""
 
     engine: Engine
     published: int = 0
+    noticed: int = 0
     _last_report: float = field(default=0.0, repr=False)
+    #: key -> exponentially weighted mean of the log band width, so a widening
+    #: is judged against this feed-interval's own history rather than a
+    #: constant that would mean something different on every instrument.
+    _widths: dict[tuple[str, str], float] = field(default_factory=dict, repr=False)
+    #: (key, kind) -> when it was last announced, for the quiet period.
+    _said: dict[tuple[tuple[str, str], str], float] = field(default_factory=dict, repr=False)
+
+    def transition(self, readout: Readout) -> tuple[str, float] | None:
+        """The kind of change this bar represents, and how big, or None.
+
+        Ordered by what a consumer should act on first: a spread that cannot
+        be trusted beats a break, and a break beats a change of width.
+        """
+        settings = self.engine.settings
+        key = (readout.feed, readout.interval)
+
+        interval = readout.covering(0.90)
+        width = None
+        if interval is not None and interval.high > interval.low:
+            width = math.log(interval.high - interval.low)
+        was = self._widths.get(key)
+        if width is not None:
+            decay = 0.0 if was is None else 1.0 - 1.0 / 64.0
+            self._widths[key] = width if was is None else decay * was + (1.0 - decay) * width
+
+        if readout.spread_saturated:
+            return ("saturated", 0.0)
+        if abs(readout.surprise) >= settings.signal_surprise:
+            return ("break", readout.surprise)
+        if width is not None and was is not None:
+            moved = width - was
+            if moved >= settings.signal_width:
+                return ("widening", moved)
+            if moved <= -settings.signal_width:
+                return ("quieting", moved)
+        return None
+
+    def quiet(self, readout: Readout, kind: str, *, at: float | None = None) -> bool:
+        """Whether this kind is still inside its quiet period for this feed."""
+        now = time.time() if at is None else float(at)
+        key = ((readout.feed, readout.interval), kind)
+        last = self._said.get(key)
+        if last is not None and now - last < self.engine.settings.signal_quiet_hours * 3600.0:
+            return True
+        self._said[key] = now
+        return False
 
     async def handle(self, message: Any, bus: Carrier) -> Readout | None:
         """Fold a bar and publish what came back.
@@ -141,6 +239,11 @@ class Watcher:
         if self.engine.settings.publish:
             await bus.publish(TOPIC, payload_for(readout), source="statespace")
             self.published += 1
+        if self.engine.settings.signals:
+            change = self.transition(readout)
+            if change is not None and not self.quiet(readout, change[0], at=readout.at):
+                await bus.publish(NOTICES, notice_for(readout, *change), source="statespace")
+                self.noticed += 1
         return readout
 
     def report(self, *, at: float | None = None) -> str:
@@ -153,7 +256,7 @@ class Watcher:
         line = (
             f"statespace: {self.engine.progress.folded} bars folded, "
             f"{self.engine.tracking} tracking, {self.engine.armed} armed, "
-            f"{self.published} published"
+            f"{self.published} published, {self.noticed} announced"
         )
         if saturated:
             # **The condition that was silent.** A matching loop against its
