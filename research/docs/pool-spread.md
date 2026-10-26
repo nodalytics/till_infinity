@@ -15,6 +15,15 @@ whose entire job is to drive the exponentially weighted square of its
 standardised innovation to 1.0. So before sweeping anything, the premise had to
 be measured: is each member matched, and is the pool?
 
+**Corrected after the 1h frame landed.** Every per-member number on this page
+is at `R = 0.265`, the estimator's physically correct noise - and
+[`dispersion-noise.md`](dispersion-noise.md) had already concluded that value
+should not be shipped. **At the shipped `R = 0.670` the clamp behind these
+numbers does not bind**: releasing it moves the variance of the standardised
+innovation by 0.009, and the published spread is **1.20 to 1.24** rather than
+2.99. [`adapting-strata.md`](adapting-strata.md) has that table. The diagnosis
+below is sound and describes a configuration the service does not run.
+
 ## The premise, measured - and it is not what either docstring implied
 
 `E[z^2]` per member at `R = 0.265`, median across three instruments per class:
@@ -67,6 +76,12 @@ variance at the shipped `R = 0.670`:
 | 1h | fx_major | **1.204** / **0.5400** / **0.1091** | 0.815 / 0.5402 / 0.1304 | 1.013 / 0.5418 / 0.1158 |
 | 1h | metal | 1.236 / 0.5524 / **0.1080** | 0.903 / 0.5532 / 0.1308 | **1.011** / **0.5420** / 0.1163 |
 | 1h | volatility *(sigma fixed)* | 0.401 / 0.2933 / 0.1014 | 0.399 / 0.2933 / 0.1016 | 0.401 / 0.2932 / 0.1012 |
+
+**And the full 1h frame is worse for `mixture` than the partial one was.** At
+`R = 0.670` it reads `var z` 0.807 to 0.948 with breach at the 0.90 ask of
+**0.1165 to 0.1312**, against `shrinking`'s 0.1072 to 0.1091 - so both
+pre-registered lines fail on both frames and at both clamps, and the staged
+change was dropped rather than shipped.
 
 **At 15m `mixture` looked like a free fix and at 1h it overshoots.** It takes
 `var z` to 1.06-1.13 at 15m - an honest spread, at a CRPS a hair better - and

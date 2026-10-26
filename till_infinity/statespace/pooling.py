@@ -172,13 +172,16 @@ class Pooled:
     #: Upper clamp on each member's process-noise lever, as a multiple of its
     #: starting value. `None` takes `adapting.MOST`.
     #:
-    #: **Reachable because it was measured binding.** `adapting-strata.md`
-    #: found every member on every traded instrument finishing at
+    #: **Reachable because it was measured binding - at an `R` we do not
+    #: ship.** `adapting-strata.md` found every member finishing at
     #: `factor = 1000.000` - `MOST` exactly - with the loop's own `excess`
-    #: reading what the sample reads: it knew how wrong it was and was not
-    #: allowed to move. Released to 1e7 the loop converges at a factor of 1.3
-    #: to 4.2 **million**, which is the scale between a price and a log
-    #: variance rather than a tuning error.
+    #: reading what the sample reads, and released to 1e7 the lever converges
+    #: at a factor of 1.3 to 4.2 **million**. All of that is at `R = 0.265`,
+    #: the estimator's physically correct noise. **At the shipped `R = 0.670`
+    #: the clamp does not bind**: releasing it moves the variance of the
+    #: standardised innovation by 0.009, because the measurement variance
+    #: dominates the predictive spread and the loop never reaches its
+    #: ceiling.
     #:
     #: The default does not move. Six orders of magnitude is a unit problem,
     #: and whether the answer is a wider clamp or an input on the scale the
@@ -243,9 +246,10 @@ class Pooled:
         **A loop on its clamp is not adapting**, which `adapting.py` says in so
         many words - and until this existed there was no way to see it from
         outside. `adapting-strata.md` measured every traded member pinned at
-        `MOST` while publishing a one-step spread three times too small, and
-        the service logged nothing unusual for the whole run, because nothing
-        looked.
+        `MOST` while publishing a one-step spread three times too small - at
+        `R = 0.265`; at the shipped 0.670 the same desk is 20% out, not 200% -
+        and the service logged nothing unusual for the whole run, because
+        nothing looked. The condition is worth seeing whatever its size.
 
         Both ends count. The constant-sigma family pins at `LEAST` instead -
         its lever runs to 0.028 and then to the floor - which is the same
