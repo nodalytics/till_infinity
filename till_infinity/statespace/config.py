@@ -90,6 +90,12 @@ class Settings(Restorable):
     signal_quiet_hours: float = DEFAULT_SIGNAL_QUIET_HOURS
     warm_bars: int = DEFAULT_WARM_BARS
     publish: bool = True
+    #: Whether a readout also carries its cohort's pooled reading. On, because
+    #: it adds fields to a message already being sent rather than traffic of its
+    #: own, and the reading a consumer needs most - how many independent bets a
+    #: set of simultaneous positions amounts to - cannot be derived downstream
+    #: from one feed's payload. See `cohort.py`.
+    cohorts: bool = True
 
     @classmethod
     def from_env(cls) -> Settings:
@@ -107,6 +113,7 @@ class Settings(Restorable):
             warm_bars=_int("STATESPACE_WARM_BARS", DEFAULT_WARM_BARS),
             publish=_flag("STATESPACE_PUBLISH", True),
             signals=_flag("STATESPACE_SIGNALS", True),
+            cohorts=_flag("STATESPACE_COHORTS", True),
             signal_surprise=_float("STATESPACE_SIGNAL_SURPRISE", DEFAULT_SIGNAL_SURPRISE),
             signal_width=_float("STATESPACE_SIGNAL_WIDTH", DEFAULT_SIGNAL_WIDTH),
             signal_quiet_hours=_float("STATESPACE_SIGNAL_QUIET_HOURS", DEFAULT_SIGNAL_QUIET_HOURS),
