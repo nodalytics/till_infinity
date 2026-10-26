@@ -174,8 +174,18 @@ def notice_for(readout: Readout, kind: str, score: float) -> dict[str, object]:
     out["rate_vol"] = round(float(readout.rate_vol), 8)
     if readout.rate_sd > 0:
         out["rate_sd"] = round(float(readout.rate_sd), 8)
-        out["side"] = 1 if readout.rate > 0 else -1 if readout.rate < 0 else 0
-        out["side_z"] = round(float(readout.rate / readout.rate_sd), 4)
+        # **`variance_side`, not `side`.** This service folds log variance, so
+        # the sign is whether *dispersion* is drifting up - not whether price
+        # is. A field called `side` in an alert would be read as the second
+        # thing within a day.
+        out["variance_side"] = 1 if readout.rate > 0 else -1 if readout.rate < 0 else 0
+        out["variance_side_z"] = round(float(readout.rate / readout.rate_sd), 4)
+    if readout.variance_up:
+        # The discrete chain's independent reading of the same sign. Built to
+        # be shown wrong - direction agrees with its predecessor 49.5% of the
+        # time against 50% +/- 3.1% - so two methods disagreeing is the
+        # expected case and a consumer should see both.
+        out["variance_up"] = round(float(readout.variance_up), 4)
     return out
 
 

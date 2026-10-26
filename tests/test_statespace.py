@@ -10267,19 +10267,49 @@ class TestTheTransitionTopic:
     def test_the_side_never_ships_without_its_significance(self):
         """**The field that keeps this honest.** Direction at the level is
         measured closed here - 0.50 across 112,429 rows, 16 of 17 bias kinds
-        null, 0 of 28 cells profitable after costs - so a consumer reading
-        `side` alone is acting on a measured nothing. `side_z` is omitted when
-        the drift's sd is unknown rather than defaulted to zero, because a zero
+        null, 0 of 28 cells profitable after costs - so a consumer reading a
+        sign alone is acting on a measured nothing. The z is omitted when the
+        drift's sd is unknown rather than defaulted to zero, because a zero
         there reads as certainty."""
         from till_infinity.statespace.service import NOTICES
 
         bus, _ = self._run()
         notices = [payload for topic, payload in bus.sent if topic == NOTICES]
         for one in notices:
-            assert ("side" in one) == ("side_z" in one)
-            if "side" in one:
-                assert one["side"] in (-1, 0, 1)
-                assert isinstance(one["side_z"], float)
+            assert ("variance_side" in one) == ("variance_side_z" in one)
+            if "variance_side" in one:
+                assert one["variance_side"] in (-1, 0, 1)
+                assert isinstance(one["variance_side_z"], float)
+
+    def test_the_sign_fields_name_their_subject(self):
+        """**This service folds log variance, so a sign is about dispersion,
+        not about price.** A field called `side` in an alert would be read as
+        the second thing within a day, which is why there is no such field."""
+        from till_infinity.statespace.service import NOTICES
+
+        bus, _ = self._run()
+        for payload in (one for topic, one in bus.sent if topic == NOTICES):
+            assert "side" not in payload
+            assert "side_z" not in payload
+            assert not any(k == "direction" for k in payload)
+
+    def test_the_discrete_chain_gives_a_second_independent_reading(self):
+        """`hmm.Direction` was built to be shown wrong and says so: direction
+        agrees with its predecessor 49.5% of the time against 50% +/- 3.1%.
+        Two independent nulls agreeing is worth more than one.
+
+        **But fed log-variance changes it is not measuring that null.** The
+        sign of a mean-reverting quantity *is* predictable - after dispersion
+        falls it is likelier to rise - so a reading far from 0.5 here is
+        reversion rather than a directional edge, and carries no price content.
+        """
+        from till_infinity.statespace.service import NOTICES
+
+        bus, _ = self._run()
+        notices = [one for topic, one in bus.sent if topic == NOTICES]
+        seen = [one["variance_up"] for one in notices if "variance_up" in one]
+        assert seen, "the chain has to produce a forecast once warm"
+        assert all(0.0 < value < 1.0 for value in seen)
 
     def test_a_notice_carries_both_structural_drifts_and_both_dispersions(self):
         """The blend hides the disagreement, so the two drifts are published

@@ -64,6 +64,7 @@ from dataclasses import dataclass, field
 from .anchored import Anchor
 from .behaving import classify, drives_q, traits_for
 from .bounding import feasible, least_horizon, shifts_for
+from .hmm import Direction
 from .pacing import Pace
 from .pooling import Pooled
 from .tails import coverage as _coverage
@@ -349,6 +350,23 @@ class Readout:
     fair_sd: float = 0.0
     stretch: float = 0.0
 
+    #: **P(the tracked quantity's next move is up), from `hmm.Direction`** - a
+    #: second and independent reading of the same sign the drift gives, so a
+    #: consumer can see two methods agree or disagree rather than trust one.
+    #:
+    #: The member was built to be shown wrong and says so: measured on eurusd
+    #: 4h, "speed is 8.1x as persistent as the signed rate" and direction
+    #: agrees with its predecessor **49.5% of the time against 50% +/- 3.1%**,
+    #: so an HMM on direction "is being asked to model a fair coin".
+    #: `sequencing.md` then read direction AUC **0.50150 over 462 cells and
+    #: 7,728,858 test rows**, with the phase surrogate scoring *higher*.
+    #:
+    #: Published because two independent nulls agreeing is worth more than one,
+    #: and because the forecast it returns is the one a caller would have had
+    #: to bet on - `Direction.update` gives P(up) **before** the move is
+    #: folded in. 0.0 means not yet offered.
+    variance_up: float = 0.0
+
     @property
     def warm(self) -> bool:
         """Whether the interval is offered. A caller should check this."""
@@ -517,6 +535,11 @@ class Desk:
     _drifts: dict[tuple[str, str], tuple[float, float]] = field(default_factory=dict)
     #: key -> the anchored fair value since the last session boundary.
     _anchors: dict[tuple[str, str], Anchor] = field(default_factory=dict)
+    #: key -> (the discrete direction chain, the previous observation). The
+    #: chain is fed the signed **change** in the tracked quantity, so on this
+    #: service it forecasts whether dispersion rises next, not whether price
+    #: does - see `Readout.variance_up`.
+    _ups: dict[tuple[str, str], tuple[Direction, float]] = field(default_factory=dict)
 
     def forget(self, feed: str = "", interval: str = "") -> int:
         """Drop state. Everything, or one feed, or one feed and interval."""
@@ -531,6 +554,7 @@ class Desk:
             self._residuals.pop(key, None)
             self._drifts.pop(key, None)
             self._anchors.pop(key, None)
+            self._ups.pop(key, None)
         return len(keys)
 
     @property
@@ -567,6 +591,24 @@ class Desk:
             "fair_sd": float(anchor.sd),
             "stretch": float(anchor.stretch(value, half)),
         }
+
+    def _up(self, key: tuple[str, str], value: float, when: float) -> float:
+        """P(the next change is up), read **before** this change is folded in.
+
+        That ordering is the member's own contract and the reason the number
+        means anything: "a probability read after the outcome is folded in is
+        not a forecast of it".
+        """
+        if not math.isfinite(value):
+            return 0.0
+        known = self._ups.get(key)
+        if known is None:
+            self._ups[key] = (Direction(), value)
+            return 0.0
+        chain, last = known
+        forecast = chain.update(value - last, when)
+        self._ups[key] = (chain, value)
+        return float(forecast) if math.isfinite(forecast) else 0.0
 
     def _rate_vol(self, key: tuple[str, str], rate: float) -> float:
         """Root of the exponentially weighted mean square change in the drift.
@@ -669,6 +711,7 @@ class Desk:
             drift_revert=_drift(member, "reverting"),
             rate_vol=self._rate_vol(key, float(getattr(member, "rate", 0.0))),
             **self._anchored(key, float(value), float(noise), float(when), quantiles),
+            variance_up=self._up(key, float(value), float(when)),
             family=classify(feed),
             absorbs=None if traits is None else traits.absorbs,
             paced=bool(paced and volume > 0),

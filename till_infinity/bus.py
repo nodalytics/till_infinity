@@ -66,13 +66,18 @@ DISPERSION = "statespace.dispersion"
 #: feed-intervals at 1m would otherwise be a thousand messages an hour and no
 #: consumer could tell which mattered.
 #:
-#: **It carries a `side`, and the side is published with its own z-score.**
+#: **It carries a sign, and the sign names its own subject.** This service
+#: folds log variance, so `variance_side` is whether *dispersion* is drifting
+#: up - not whether price is - and `variance_side_z` ships beside it, omitted
+#: rather than zeroed when the drift's sd is unknown. `variance_up` is
+#: `hmm.Direction`'s independent reading of the same sign.
+#:
 #: Direction at the level is measured closed here - 0.50 across 112,429 rows
 #: and 67 feed cells, 16 of 17 bias kinds null, 0 of 28 cells profitable after
-#: costs - so the side is the filtered drift's sign with `side_z` beside it,
-#: and a reader can see for itself whether it is distinguishable from zero. A
-#: consumer that acts on `side` without reading `side_z` is acting on a
-#: quantity this desk has measured at nothing.
+#: costs - so a consumer acting on a sign without its significance is acting on
+#: a quantity this desk has measured at nothing. And a `variance_up` far from
+#: 0.5 is **reversion**, not an edge: the sign of a mean-reverting quantity is
+#: predictable in a way the sign of a price is not.
 STATESPACE_SIGNALS = "statespace.signals"
 #: What agents ask for. Notifications is the consumer.
 ALERTS = "alerts"
