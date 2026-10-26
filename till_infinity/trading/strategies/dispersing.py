@@ -102,6 +102,44 @@ class Dispersing(Strategy):
     #: trade anything.
     reward_floor: ClassVar[float] = 1.70
 
+    #: **The feeds it is allowed on, because `TRADING_SYMBOLS` is global.**
+    #: Naming the strategy in `TRADING_STRATEGIES` would otherwise make it
+    #: eligible on all 32 configured symbols, and the restriction belongs in
+    #: code rather than in an environment variable: it is a claim about where
+    #: the spread clears `cost_share`, which is a measurement, not an operator
+    #: preference.
+    #:
+    #: FX majors and crosses only. `exotic-spreads-are-a-whole-bar-range`
+    #: measured round trips of **0.40 to 0.97 bar-ranges** on the exotics, and
+    #: this week's cross-section died at 74.91 bp against a best breakeven of
+    #: 16.88 - so on a wide feed the cost gate would refuse nearly every
+    #: proposal anyway. Restricting the set makes those refusals deliberate
+    #: rather than incidental, which is what lets the first week's journal
+    #: answer one question instead of two.
+    #:
+    #: `usdcnh` is left out: it is neither a classic major nor a cross, and its
+    #: spread is the one in that group the gate would be fighting.
+    feeds: ClassVar[frozenset[str]] = frozenset(
+        {
+            # majors
+            "eurusd",
+            "gbpusd",
+            "usdjpy",
+            "usdcad",
+            "usdchf",
+            "audusd",
+            "nzdusd",
+            # crosses
+            "eurgbp",
+            "eurjpy",
+            "gbpjpy",
+            "eurchf",
+            "audjpy",
+            "chfjpy",
+            "euraud",
+        }
+    )
+
     #: Standardised innovation a proposal needs before it is worth a position.
     least_surprise: ClassVar[float] = 3.5
     #: Most of the stop distance the spread may be. See the module docstring:
@@ -112,6 +150,17 @@ class Dispersing(Strategy):
     #: the same geometry rather than two different ones.
     stop_vol: ClassVar[float] = 2.0
     target_r: ClassVar[float] = 2.0
+
+    def wants(self, payload: dict[str, Any]) -> bool:
+        """The shape **and** the feed. See `feeds`.
+
+        Checked here rather than in `consider` so a proposal on an unlisted
+        feed costs nothing and is not counted as a refusal - it was never
+        this strategy's to decline.
+        """
+        if str(payload.get("shape") or "") != self.shape:
+            return False
+        return str(payload.get("feed") or "").lower() in self.feeds
 
     def consider(  # noqa: PLR0911 - one gate per return, in the order they are
         # applied, for the reason `service.on_signal` gives for the same
