@@ -320,6 +320,13 @@ MAGIC_ORDER: tuple[str, ...] = (
     # Agreement sizes the trade instead of gating it. See
     # `strategies/stretching.py`. Appended, never inserted.
     "cycle-turn-scalp",
+    # 2026-10-26. The first strategy on this desk that is not level-based:
+    # continuation of a bar the statespace service found surprising, stopped
+    # and targeted off its band rather than off a level. See
+    # `strategies/dispersing.py`. Appended before it is configured to run, not
+    # after - the note above records two strategies that ran live for an hour
+    # without a slot and whose trades are unattributable for ever.
+    "statespace-surprise",
 )
 
 

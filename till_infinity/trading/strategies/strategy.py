@@ -830,6 +830,7 @@ def build(names: Sequence[str] | None, settings: Settings) -> list[Strategy]:
     two is only noticed by the trades that never happened.
     """
     from . import council as _council  # noqa: F401 - registers `council`
+    from . import dispersing as _disp  # noqa: F401 - registers `statespace-surprise`
     from . import opportunity as _opp  # noqa: F401 - registers `opportunity`
     from . import scalper as _  # noqa: F401 - registers the built-ins
     from . import swing as _swing  # noqa: F401 - registers the swings

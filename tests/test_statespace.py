@@ -3442,12 +3442,14 @@ class TestSwitching:
 
     def test_a_restored_two_regime_state_is_padded_not_rejected(self):
         """This member was two regimes before it was three."""
-        from till_infinity.statespace.switching import Switching
+        from till_infinity.statespace.switching import STATES, Switching
 
         engine = Switching(means=[100.0, 101.0], variances=[1.0, 2.0], weights=[0.4, 0.6])
-        # Padded up to the default, not rejected and not left at two.
-        assert engine.regimes == 3
-        assert len(engine.means) == len(engine.variances) == len(engine.weights) == 3
+        # Padded up to the default, not rejected and not left at two. Written
+        # against `STATES` rather than a literal, so adding a regime does not
+        # need this test edited - which is how it last reported a false failure.
+        assert engine.regimes == STATES
+        assert len(engine.means) == len(engine.variances) == len(engine.weights) == STATES
         # **The new regime starts at zero posterior with a live estimate.**
         # Copying the imbalance component rather than a stale zero is what
         # lets it earn weight through the transition matrix instead of first
