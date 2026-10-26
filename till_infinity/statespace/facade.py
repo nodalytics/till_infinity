@@ -61,6 +61,7 @@ import math
 from collections import deque
 from dataclasses import dataclass, field
 
+from .anchored import Anchor
 from .behaving import classify, drives_q, traits_for
 from .bounding import feasible, least_horizon, shifts_for
 from .pacing import Pace
@@ -329,6 +330,25 @@ class Readout:
     #: member is carrying can see the gap rather than trust it.
     rate_vol: float = 0.0
 
+    #: **An anchored fair value for the quantity being tracked, and the
+    #: distance from it in half-band units.** The reference is VWAP, with the
+    #: weights replaced: each reading enters weighted by its own precision
+    #: rather than by a volume field, because MT5 tick volume counts quote
+    #: updates and spot FX has no trade volume at all - see `anchored.py`.
+    #:
+    #: **It is a fair *volatility*, not a fair price.** This service folds
+    #: `log(garman_klass(...))`, so `fair_variance` is where dispersion has sat
+    #: since the anchor and `stretch` is how far above or below that the
+    #: current reading is, in units of half the published band. 1.0 means the
+    #: reading is exactly at the band's edge, and the number is comparable
+    #: across feeds because the band's coverage is measured.
+    #:
+    #: Zero in all three means "not offered yet" - fewer than `anchored.LEAST`
+    #: readings since the anchor, or no band - rather than "at fair".
+    fair_variance: float = 0.0
+    fair_sd: float = 0.0
+    stretch: float = 0.0
+
     @property
     def warm(self) -> bool:
         """Whether the interval is offered. A caller should check this."""
@@ -495,6 +515,8 @@ class Desk:
     _residuals: dict[tuple[str, str], deque] = field(default_factory=dict)
     #: key -> (last drift, exponentially weighted mean of its squared change).
     _drifts: dict[tuple[str, str], tuple[float, float]] = field(default_factory=dict)
+    #: key -> the anchored fair value since the last session boundary.
+    _anchors: dict[tuple[str, str], Anchor] = field(default_factory=dict)
 
     def forget(self, feed: str = "", interval: str = "") -> int:
         """Drop state. Everything, or one feed, or one feed and interval."""
@@ -508,11 +530,43 @@ class Desk:
             self._paces.pop(key, None)
             self._residuals.pop(key, None)
             self._drifts.pop(key, None)
+            self._anchors.pop(key, None)
         return len(keys)
 
     @property
     def tracking(self) -> int:
         return len(self._members)
+
+    def _anchored(
+        self,
+        key: tuple[str, str],
+        value: float,
+        noise: float,
+        when: float,
+        quantiles: tuple[tuple[float, float], ...],
+    ) -> dict[str, float]:
+        """The anchored fair value, its spread, and the stretch from it.
+
+        The band's half width comes from the quantiles already computed for
+        this readout, so `stretch` is measured against the same interval a
+        consumer would read - not against a second one built differently.
+        """
+        anchor = self._anchors.get(key)
+        if anchor is None:
+            anchor = self._anchors[key] = Anchor()
+        anchor.observe(value, noise, when)
+        half = 0.0
+        if quantiles:
+            low = min(one[1] for one in quantiles)
+            high = max(one[1] for one in quantiles)
+            half = 0.5 * (high - low)
+        if not anchor.ready:
+            return {"fair_variance": 0.0, "fair_sd": 0.0, "stretch": 0.0}
+        return {
+            "fair_variance": float(anchor.mean),
+            "fair_sd": float(anchor.sd),
+            "stretch": float(anchor.stretch(value, half)),
+        }
 
     def _rate_vol(self, key: tuple[str, str], rate: float) -> float:
         """Root of the exponentially weighted mean square change in the drift.
@@ -597,13 +651,16 @@ class Desk:
         member.update(float(value), float(noise), float(when))
 
         traits = traits_for(feed)
+        # Hoisted because `_anchored` measures its stretch against **this**
+        # readout's band rather than a second one built differently.
+        quantiles = self._quantiles(key, member, noise)
         return Readout(
             feed=feed,
             interval=interval,
             at=float(when),
             value=float(member.value),
             spread=float(member.variance) + max(float(noise), 0.0),
-            quantiles=self._quantiles(key, member, noise),
+            quantiles=quantiles,
             spread_rule=self.rule,
             spread_saturated=bool(getattr(member, "saturated", ())),
             rate=float(getattr(member, "rate", 0.0)),
@@ -611,6 +668,7 @@ class Desk:
             drift_free=_drift(member, "kalman"),
             drift_revert=_drift(member, "reverting"),
             rate_vol=self._rate_vol(key, float(getattr(member, "rate", 0.0))),
+            **self._anchored(key, float(value), float(noise), float(when), quantiles),
             family=classify(feed),
             absorbs=None if traits is None else traits.absorbs,
             paced=bool(paced and volume > 0),

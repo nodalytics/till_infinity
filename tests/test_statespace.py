@@ -10343,3 +10343,98 @@ class TestTheTransitionTopic:
         # sharing the rule.
         analyst._signal({"feed": "gold", "score": 9.0, "detail": "level swept"})
         assert analyst.loudest["gold"][0] == 9.0
+
+
+class TestTheAnchoredFairValue:
+    """The VWAP this desk can actually have. `orderflow.md` measured volume
+    profile levels bouncing like random prices - FX within 1.2 points of the
+    placebo - and the reason is mechanical: MT5 tick volume counts quote
+    updates, not contracts, and spot FX has no trade volume at all. So the
+    weights are precisions instead, and the bands are the measured ones."""
+
+    @staticmethod
+    def _run(bars: int = 400, hours: float | None = None):
+        import random
+
+        from till_infinity.statespace.facade import Desk
+
+        desk = Desk()
+        rng = random.Random(3)
+        level = -16.0
+        last = None
+        for i in range(bars):
+            level += rng.gauss(0.0, 0.03)
+            last = desk.read("gold", "1h", 3_600.0 * (i + 1), level + rng.gauss(0.0, 0.5), 0.67)
+            if hours is not None:
+                desk._anchors[("gold", "1h")].hours = hours
+        return desk, last
+
+    def test_it_offers_a_fair_value_and_a_stretch_in_band_units(self):
+        _, got = self._run()
+        assert got.fair_variance < 0.0, "log variance is negative at gold's scale"
+        assert got.fair_sd > 0.0
+        # The fair value's own spread is tighter than one observation's, which
+        # is the whole point of weighting by precision and accumulating.
+        assert got.fair_sd < math.sqrt(0.67)
+        assert abs(got.stretch) < 10.0
+
+    def test_nothing_is_offered_before_the_floor(self):
+        """Zero means "not offered" rather than "at fair", which is why the
+        payload omits the keys instead of publishing a zero."""
+        from till_infinity.statespace.anchored import LEAST
+        from till_infinity.statespace.service import payload_for
+
+        _, got = self._run(bars=LEAST - 1)
+        assert got.fair_variance == 0.0
+        assert got.stretch == 0.0
+        assert "fair_variance" not in payload_for(got)
+        assert "stretch" not in payload_for(got)
+
+    def test_the_anchor_resets_and_the_fair_value_follows(self):
+        """A session anchor has edges, and the edges are the point: "high
+        relative to today" is a different claim from "high relative to the
+        last fortnight"."""
+        from till_infinity.statespace.anchored import Anchor
+
+        anchor = Anchor(hours=5.0)
+        for i in range(12):
+            anchor.observe(-16.0, 0.67, 3_600.0 * i)
+        before = anchor.seen
+        anchor.observe(-10.0, 0.67, 3_600.0 * 100)
+        assert anchor.seen == 1, "past the window it starts again"
+        assert anchor.mean == pytest.approx(-10.0)
+        assert before > 1
+
+    def test_the_weights_are_precisions_so_a_noisier_reading_counts_less(self):
+        """The honest version of "volume-weighted": the weight is how well the
+        reading was measured."""
+        from till_infinity.statespace.anchored import Anchor
+
+        tight = Anchor()
+        loose = Anchor()
+        for i in range(20):
+            tight.observe(0.0, 1.0, 3_600.0 * i)
+            loose.observe(0.0, 1.0, 3_600.0 * i)
+        tight.observe(10.0, 0.01, 3_600.0 * 20)  # a well-measured outlier
+        loose.observe(10.0, 100.0, 3_600.0 * 20)  # a badly-measured one
+        assert tight.mean > loose.mean * 10, (tight.mean, loose.mean)
+
+    def test_a_bad_reading_cannot_move_it(self):
+        from till_infinity.statespace.anchored import Anchor
+
+        anchor = Anchor()
+        for i in range(15):
+            anchor.observe(-16.0, 0.67, 3_600.0 * i)
+        was = (anchor.mean, anchor.seen)
+        for bad in ((float("nan"), 0.67), (-16.0, 0.0), (-16.0, -1.0), (float("inf"), 0.67)):
+            anchor.observe(bad[0], bad[1], 3_600.0 * 20)
+        assert (anchor.mean, anchor.seen) == was
+
+    def test_the_stretch_is_zero_without_a_band_rather_than_infinite(self):
+        from till_infinity.statespace.anchored import Anchor
+
+        anchor = Anchor()
+        for i in range(15):
+            anchor.observe(-16.0, 0.67, 3_600.0 * i)
+        assert anchor.stretch(-10.0, 0.0) == 0.0
+        assert anchor.stretch(-10.0, 2.0) == pytest.approx(3.0, abs=0.01)

@@ -128,6 +128,15 @@ def payload_for(readout: Readout) -> dict[str, object]:
         "spread_rule": str(readout.spread_rule),
         "spread_saturated": bool(readout.spread_saturated),
     }
+    if readout.fair_variance:
+        # **A fair *volatility*, not a fair price** - this service folds log
+        # variance. `stretch` is in half-band units, so 1.0 is the band's own
+        # edge and the number is comparable across feeds because that band's
+        # coverage is measured. See `anchored.py` for why the weights are
+        # precisions rather than volume.
+        out["fair_variance"] = round(float(readout.fair_variance), 6)
+        out["fair_sd"] = round(float(readout.fair_sd), 6)
+        out["stretch"] = round(float(readout.stretch), 4)
     if interval is not None:
         out["band"] = {
             "low": float(interval.low),
