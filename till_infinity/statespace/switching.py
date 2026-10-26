@@ -107,6 +107,36 @@ For the third regime the null is **this member with `regimes=2`**, which is
 constructible for exactly that reason: a nested null that cannot be built
 cannot be scored, and three of the parameters here exist only to serve a state
 that has to earn them.
+
+## A fourth regime was built and refuted, so it is not here
+
+The obvious next state is a **shock** regime: the same walk as imbalance but
+with inflated *measurement* noise, which is the standard two-component normal
+approximation to a Student-t. It has a good motivation -
+`no-gaussian-band-is-calibrated` found that of every horizon tested only the
+**one-bar** band was miscalibrated and a Student-t at dof 3-5 fixed it on 64 of
+64 out of sample, against traded kurtosis of 47-74 - and a one-bar
+miscalibration is a statement about the print, which no other regime here
+makes. It was built, scored against a scale-matched Student-t arm, and
+discarded. Three measurements, each on 2,000-4,000 bars and several seeds:
+
+* **It barely moves the likelihood.** At its only non-harmful setting the gain
+  over `regimes=3` was **+0.8 on gaussian prints and +22.7 on Student-t ones**,
+  an excess of +21.9 against the trending regime's +509.8. At a larger noise
+  multiplier it *lost* 21 to 42 loglike on gaussian prints outright.
+* **Its mean says nothing**, reading 0.031 on a gaussian walk, 0.032 on a clean
+  trend and 0.031 on a Student-t walk. That is the wrong statistic for a state
+  meant to spike on single bars, and measuring it properly was what nearly got
+  this discarded for the wrong reason.
+* **The incumbent beats it.** Flagging the top 5% of bars by standardised
+  measurement error, the shock posterior read **AUC 0.769** while
+  `abs(last_standardised)` from the three-regime model read **0.805** - a field
+  already published on every reading, needing no regime and no parameters.
+
+`auc-is-free-on-volatility-targets` is why that last line is decisive: it
+records incumbents alone reading 0.74-0.78 on this kind of target, so 0.769 is
+inside the range that is free. The fourth regime was a re-encoding of a
+quantity this member already reports, at the cost of two parameters.
 """
 
 from __future__ import annotations

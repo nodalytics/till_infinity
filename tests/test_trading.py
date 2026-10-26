@@ -9971,6 +9971,10 @@ FLOORED_UNMEASURED = (
     "council",
     "cycle-turn",
     "cycle-turn-scalp",
+    # Its floor comes from a harness rather than from arithmetic - a 38.1% win
+    # rate over 905 trades implies a breakeven of 1.625 - but it has no live
+    # decisions in the journal either, which is what this table is about.
+    "statespace-surprise",
 )
 
 #: The two that take their floor from `opportunity.Shape` instead of a class
