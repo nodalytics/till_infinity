@@ -80,10 +80,10 @@ answer; the closed form costs four and lands 4e-12 from it.
 
 ## What it is not
 
-Not a two-regime model. `switching.py` already mixes two linear members and
-would fit a trending and a reverting state as separate hypotheses; this is one
-member whose single rate equation produces both behaviours depending on how
-large the rate currently is. The difference is testable and the harness tests
+Not a discrete-regime model. `switching.py` mixes a reverting, a walking and
+a trending member and fits them as separate hypotheses; this is one member
+whose single rate equation produces both behaviours depending on how large the
+rate currently is. The difference is testable and the harness tests
 it: a double well predicts the *transition* through zero to be fast and the
 time spent near a mode to be long, where a switching model predicts dwell
 times set by its transition matrix and nothing about the rate's magnitude.

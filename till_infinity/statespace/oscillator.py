@@ -34,9 +34,9 @@ from this and from nothing else.
 * `zeta > 1` - **overdamped**: deviations decay slowly without crossing. The
   state that looks like a trend.
 
-`switching.py` labels balance and imbalance with two regimes and a transition
-prior. This gets a *continuous* version of the same distinction out of two
-fitted parameters, which is worth having beside it - and the two disagreeing
+`switching.py` labels balance, imbalance and trending with three regimes and a
+transition prior. This gets a *continuous* version of the same distinction out
+of two fitted parameters, which is worth having beside it - and the two disagreeing
 would be informative rather than embarrassing.
 
 ## The discretisation is exact, not Euler

@@ -317,7 +317,7 @@ must exist and mention the item, and a `-` must have no module claiming it.
 | --- | --- | --- |
 | **I6** | a rate is per unit time, and a bar is not a unit of time | `rates.py` |
 | I5 | observability is the real argument about acceleration | `reverting.py` |
-| I9 | two state spaces, and there already are two | `switching.py` |
+| I9 | three state spaces: reverting, walking, trending | `switching.py` |
 | I10 | the slope has a volatility, and it is currently a guess | `linear.py` |
 | I2 | the state is the memory of the system, and this one leaks | `linear.py` |
 | I8 | state, input or output - the question a feature list never asks | `driven.py` |
