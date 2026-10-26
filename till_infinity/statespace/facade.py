@@ -98,6 +98,14 @@ EXPONENT = 1.0
 #: * `shrinking` has the best band coverage at every frame and class, which is
 #:   the one of these three outputs a consumer reads through `covering`.
 #:
+#: **And the 1h frame makes the choice easier rather than harder.** No rule
+#: in the grid holds the band: `shrinking` reads 0.1072-0.1091, `argmax`
+#: 0.1099-0.1163 and `mixture` 0.1165-0.1312, against a 0.090-0.110 line. The
+#: discrepancy the sweep was chasing is also smaller than it looked - at the
+#: shipped `R` the published spread is 1.20-1.24 rather than the 2.99 measured
+#: at `R = 0.265`, because the clamp that produced that number does not bind
+#: here. See `adapting-strata.md`.
+#:
 #: So the field exists and the default does not move. The two frames measured
 #: disagree, and **neither is a frame this service runs on** - `config.py`
 #: folds 1m and 5m, and the lab cache holds neither, so every dispersion
@@ -238,9 +246,11 @@ class Readout:
     #: the variance of the standardised innovation at the same `R`, so a
     #: series of recorded spreads spanning a rule change is two series. And
     #: `adapting-strata.md` measured every member pinned against its lever's
-    #: stop while the pool published a spread three times too small - a bar
-    #: recorded in that state carries a number that should not be joined to
-    #: an outcome at all, which is a per-bar fact rather than a per-deploy one.
+    #: stop while the pool published a spread three times too small at
+    #: `R = 0.265` - a bar recorded in that state carries a number that should
+    #: not be joined to an outcome, which is a per-bar fact rather than a
+    #: per-deploy one. At the shipped `R = 0.670` the clamp does not bind, so
+    #: this is expected to stay false and is here for when it does not.
     spread_rule: str = ""
     spread_saturated: bool = False
 
@@ -433,9 +443,11 @@ class Desk:
         **Published because it was invisible.** A matching loop pinned at its
         clamp still returns a number for every bar, so a desk whose every
         member had run out of process noise - and whose published spread was
-        three times too small for it - logged nothing out of the ordinary.
-        `adapting-strata.md` had to go looking. `Watcher.report` now carries
-        the count, so the next time it happens the service says so.
+        three times too small for it, at `R = 0.265` - logged nothing out of
+        the ordinary. `adapting-strata.md` had to go looking, and then found
+        the shipped `R = 0.670` does not reach the clamp at all.
+        `Watcher.report` carries the count so the next time it happens the
+        service says so, whatever the size.
         """
         return {
             key: names

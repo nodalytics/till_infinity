@@ -157,10 +157,12 @@ class Watcher:
         )
         if saturated:
             # **The condition that was silent.** A matching loop against its
-            # clamp keeps returning numbers, so every member on this desk can
-            # run out of process noise - publishing a one-step spread three
-            # times too small - without one line being out of the ordinary.
-            # `adapting-strata.md` found it by looking for it.
+            # clamp keeps returning numbers, so every member can run out of
+            # process noise without one line being out of the ordinary.
+            # `adapting-strata.md` found it by looking, measured a spread
+            # three times too small at `R = 0.265`, and then found the shipped
+            # `R = 0.670` does not reach the clamp - so this line is expected
+            # to stay absent, which is the point of having it.
             line += (
                 f", {saturated} feed-interval(s) with a member on its lever's stop "
                 "- its spread cannot be trusted, see adapting-strata.md"
