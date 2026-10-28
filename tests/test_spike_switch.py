@@ -152,7 +152,6 @@ def test_spike_scale_reads_the_signal_features():
     "module",
     [
         "till_infinity.trading.service",  # consensus, parallel and follower re-sizing
-        "till_infinity.trading.strategies.swing",  # FadeToValue, which skips risk_scale
     ],
 )
 def test_every_path_that_sizes_a_trade_reads_it(module):

@@ -103,13 +103,6 @@ from .strategies.scalper import (
     SweepAware,
 )
 from .strategies.strategy import STRATEGIES, Strategy, catalogue
-from .strategies.swing import (
-    ApproachScalp,
-    FadeToValue,
-    OriginSwing,
-    Runner,
-    SwingLevel,
-)
 from .turning import TurnExit, TurnOutcome, TurnTally
 from .valuation import Priced, Valuation, price_it
 from .venues.broker import (
@@ -145,14 +138,12 @@ __all__ = [
     "SUFFIXES",
     "Account",
     "Affordability",
-    "ApproachScalp",
     "Book",
     "Broker",
     "BrokerError",
     "ConfluenceScalp",
     "Context",
     "Exposure",
-    "FadeToValue",
     "Guard",
     "Intent",
     "LevelScalp",
@@ -163,7 +154,6 @@ __all__ = [
     "Opportunity",
     "Order",
     "OrderResult",
-    "OriginSwing",
     "PaperBroker",
     "Plan",
     "Position",
@@ -174,7 +164,6 @@ __all__ = [
     "Report",
     "Resolution",
     "Ride",
-    "Runner",
     "Seen",
     "Settings",
     "Shape",
@@ -183,7 +172,6 @@ __all__ = [
     "Speeds",
     "Strategy",
     "SweepAware",
-    "SwingLevel",
     "SymbolSpec",
     "Tick",
     "Trade",

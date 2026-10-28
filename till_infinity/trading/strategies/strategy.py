@@ -832,7 +832,6 @@ def build(names: Sequence[str] | None, settings: Settings) -> list[Strategy]:
     from . import dispersing as _disp  # noqa: F401 - registers `statespace-surprise`
     from . import opportunity as _opp  # noqa: F401 - registers `opportunity`
     from . import scalper as _  # noqa: F401 - registers the built-ins
-    from . import swing as _swing  # noqa: F401 - registers the swings
 
     chosen = tuple(names) if names else settings.strategies
     unknown = [n for n in chosen if n not in STRATEGIES]
