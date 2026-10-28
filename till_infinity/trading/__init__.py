@@ -103,7 +103,6 @@ from .strategies.scalper import (
     SweepAware,
 )
 from .strategies.strategy import STRATEGIES, Strategy, catalogue
-from .strategies.stretching import CycleTurnScalp
 from .strategies.swing import (
     ApproachScalp,
     FadeToValue,
@@ -111,7 +110,6 @@ from .strategies.swing import (
     Runner,
     SwingLevel,
 )
-from .strategies.turning import CycleTurn
 from .turning import TurnExit, TurnOutcome, TurnTally
 from .valuation import Priced, Valuation, price_it
 from .venues.broker import (
@@ -153,8 +151,6 @@ __all__ = [
     "BrokerError",
     "ConfluenceScalp",
     "Context",
-    "CycleTurn",
-    "CycleTurnScalp",
     "Exposure",
     "FadeToValue",
     "Guard",

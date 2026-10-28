@@ -192,9 +192,18 @@ class TestItCanBeScored:
         built = build(["statespace-surprise"], Settings())
         assert [s.name for s in built] == ["statespace-surprise"]
 
-    def test_it_is_not_in_the_default_strategy_list(self) -> None:
-        """Registered and not configured: it does not trade until asked."""
-        assert "statespace-surprise" not in Settings().strategies
+    def test_it_is_the_default_strategy_list(self) -> None:
+        """**This assertion inverted on 2026-10-28, and that is the point of it.**
+
+        It used to read `not in`: registered and not configured, so it did not
+        trade until asked. What changed is not this strategy's standing but
+        everything beside it - the level strategies were retired with the
+        structures service that fed them, so the only strategy left that does
+        not need a level is this one. `build` raises on an unknown name rather
+        than skipping it, so a default naming a retired strategy would stop the
+        service starting.
+        """
+        assert Settings().strategies == ("statespace-surprise",)
 
 
 class TestTheFeedRestriction:

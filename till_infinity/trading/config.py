@@ -475,12 +475,20 @@ class Settings:
     #: Strategies to run, by registered name. Several may run together; the
     #: per-instrument position limit is what stops two of them doubling a
     #: position rather than any coordination between them.
-    #: The two the desk actually runs. `cycle-scalp` is the unified scalp
-    #: thesis - 4h bias, 1h structure, fast pullback entry - and `cycle-turn`
-    #: is the slower reversion trade that the 4h cycle has to agree with, on a
-    #: feed whose 4h record earns a say.
-    #: Measured; see `research/docs/settings.md`.
-    strategies: tuple[str, ...] = ("cycle-turn", "cycle-turn-scalp", "cycle-scalp")
+    #:
+    #: **The default is the one strategy that does not need a level.** It was
+    #: `("cycle-turn", "cycle-turn-scalp", "cycle-scalp")` - measured, and
+    #: argued in `research/docs/settings.md` - until the level strategies were
+    #: retired on 2026-10-28 with the structures service that fed them. A
+    #: default naming a retired strategy is not a smaller problem than a wrong
+    #: one: `build` raises on an unknown name rather than skipping it, so the
+    #: service would refuse to start.
+    #:
+    #: `statespace-surprise` is what is left, and `research/docs/
+    #: statespace-signals.md` is the measurement behind it: a 2R hold on a
+    #: large standardised innovation, +0.1436R +/- 0.0485 over 905 trades,
+    #: t 2.96 across fifteen feeds.
+    strategies: tuple[str, ...] = ("statespace-surprise",)
     #: The named risk plan. Individual limits set in the environment win over
     #: it - see `plans`.
     risk_plan: str = "standard"
