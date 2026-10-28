@@ -80,7 +80,12 @@ def test_no_strategy_trades_a_pivot_interval():
     """Publishing pivot signals must not start trading them: strategies select by interval."""
     import till_infinity.trading.service  # noqa: F401  (registers every strategy)
 
-    assert len(ts.STRATEGIES) >= 10
+    # **A count, not a threshold.** This asserted `>= 10` and broke when the
+    # level strategies retired on 2026-10-28 - a magic number that has to be
+    # edited every time the registry changes says nothing about pivots. What
+    # the test needs is that the registry is populated at all, so that the
+    # loop below is not vacuously true.
+    assert ts.STRATEGIES, "no strategy registered, so the loop proves nothing"
     for name, cls in ts.STRATEGIES.items():
         entries = getattr(cls, "entries", ()) or ()
         assert not set(entries) & set(pivots.PERIODS), name

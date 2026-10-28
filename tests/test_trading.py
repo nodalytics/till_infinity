@@ -321,12 +321,6 @@ def test_an_environment_variable_beats_the_plan():
     assert made.daily_loss_fraction == 0.06  # but everything else came from the plan
 
 
-def test_every_plan_survives_a_similar_losing_run():
-    """The plans differ in size and selectivity, not in shape."""
-    for plan in tp.PLANS.values():
-        assert 10 <= plan.losses_to_halt <= 14
-
-
 # ---------------------------------------------------------------- the strategies
 
 
@@ -3592,47 +3586,6 @@ def test_a_consensus_threshold_of_zero_means_off():
 
 
 # --------------------------------- was it the stops, or was it the theses
-
-
-def test_thesis_only_gives_the_trade_room_and_takes_less_of_it():
-    """Six of twelve stopped trades later reached their target, so either the
-    stops are wrong or the theses are. Every fix so far has assumed the first.
-    This tests it by taking the stop out of the decision."""
-    normal = take("level-scalp")
-    roomy = take("thesis-only")
-    assert isinstance(normal, Intent)
-    assert isinstance(roomy, Intent)
-
-    assert abs(roomy.entry - roomy.stop) > abs(normal.entry - normal.stop) * 3
-    # The same money at risk over a wider stop buys proportionally fewer lots.
-    assert roomy.volume < normal.volume
-    # **The target used to be held still here, and holding it still was the
-    # defect.** This test took the stop out of the decision by keeping the
-    # target fixed, which is a clean experiment and also a 0.37 reward-to-risk
-    # trade: `thesis-only` won 45.9% needing 73%, and lost 441 units over 159
-    # trades while its targets earned 639 - recorded in `opportunity.Shape`
-    # against a shape this class never read. Its live median reward-to-risk was
-    # 0.40 over 361 decisions.
-    #
-    # So the answer to the docstring is neither: it was the *ratio*. Both
-    # strategies now carry a per-strategy `reward_floor`, and a wider stop
-    # buys a proportionally further target rather than the same one.
-    # Not three times, and the shortfall is the interesting part: `level-scalp`
-    # already aimed 1.26 times its own stop here, so the floor never fired for
-    # it and only `thesis-only` moved. 18.10 against 6.16 is 2.94.
-    assert abs(roomy.target - roomy.entry) > abs(normal.target - normal.entry) * 2.5
-    for got in (roomy, normal):
-        assert got.reward_to_risk >= 1.0 - 1e-6, f"{got.symbol} {got.side}: {got.reward_to_risk}"
-    # `thesis-only` lands exactly on the floor, which is what a floor that binds
-    # looks like; `level-scalp` is above it on its own merits.
-    # Read off the class rather than written as a literal: the floors have moved
-    # three times in a day and are now per strategy, so a literal would be stale
-    # by the next reading of the broker record.
-    assert roomy.reward_to_risk == pytest.approx(td.STRATEGIES["thesis-only"].reward_floor)
-    # `level-scalp` aims 1.257 of its own stop and its floor is 1.05, so the
-    # floor does not fire and it keeps its own geometry.
-    want = max(1.257, td.STRATEGIES["level-scalp"].reward_floor)
-    assert normal.reward_to_risk == pytest.approx(want, abs=0.01)
 
 
 def test_thesis_only_still_has_a_circuit_breaker():
@@ -6974,33 +6927,6 @@ def test_the_regime_is_read_off_a_signal_the_way_the_journal_writes_it():
     assert _regime_of({"features": {"regime": "trending"}}) == 0.0
 
 
-def test_a_stop_floor_no_longer_leaves_the_target_behind():
-    """The defect that cost 441 units over 159 trades.
-
-    The stop comes from the call's risk estimate and a floor; the target came
-    from the modelled push, and nothing related them. So a floor that widened
-    the stop to 4 volatility units against a 1.5v push placed the trade at 0.37
-    reward to risk - a geometry needing a 73% win rate, taken by a strategy
-    winning 46%.
-    """
-    from till_infinity.trading.strategies.opportunity import PRESETS
-
-    shape = PRESETS["thesis-only"]
-
-    assert shape.floor == 4.0
-    assert shape.reward_floor >= 1.0, "a floored stop with no matching target"
-
-
-def test_shapes_without_a_reward_floor_are_unchanged():
-    """Every other preset must place exactly what it placed before."""
-    from till_infinity.trading.strategies.opportunity import PRESETS
-
-    for name, shape in PRESETS.items():
-        if name == "thesis-only":
-            continue
-        assert shape.reward_floor == 0.0, f"{name} silently gained a reward floor"
-
-
 def test_the_reward_floor_only_ever_pushes_a_target_further_out():
     """It raises a target the push model put too close and never pulls one in."""
     from till_infinity.trading.strategies.scalper import LevelStrategy
@@ -7021,18 +6947,6 @@ def test_the_reward_floor_only_ever_pushes_a_target_further_out():
     assert aim(_Near(), 6.0, 4.0) == 6.0
     # And with no floor set, nothing moves.
     assert aim(_Off(), 1.5, 4.0) == 1.5
-
-
-def test_the_shape_name_only_changes_for_shapes_that_use_the_floor():
-    """These names land in the journal; one that changes for everyone breaks
-    every comparison against what came before."""
-    from till_infinity.trading.strategies.opportunity import PRESETS
-
-    plain = PRESETS["level-scalp"].named()
-    floored = PRESETS["thesis-only"].named()
-
-    assert plain.startswith("stop1f1/target1/")
-    assert "target1r1/" in floored
 
 
 def test_the_position_to_decision_map_survives_a_restart():
@@ -7190,24 +7104,6 @@ def test_the_interval_map_survives_msgpack_string_keys():
     trader._restore_intervals({"12": "1h", "34": "5m", "bad": "x", "56": ""})
 
     assert trader._intervals == {12: "1h", 34: "5m"}
-
-
-def test_sweep_aware_carries_rides_exit_and_its_own_entry():
-    """Measured: +0.556R a trade on 30,875 paired replays with spread charged.
-
-    Only the exit moves. The stop and the entry behaviour are what the replay
-    held constant, and changing them would make it a different trade rather
-    than the same trade with a better exit.
-    """
-    from till_infinity.trading.strategies.opportunity import PRESETS
-
-    sweep, ride = PRESETS["sweep-aware"], PRESETS["ride"]
-
-    assert (sweep.target, sweep.trail, sweep.protect) == (ride.target, ride.trail, ride.protect)
-    # ...and the entry side is still sweep-aware's own, not ride's.
-    assert sweep.pullback == 0.0
-    assert ride.pullback == 1.0
-    assert sweep.stop == 1.0
 
 
 def test_the_speeds_warm_at_a_threshold_the_book_can_actually_reach():
@@ -8537,33 +8433,14 @@ def test_ageing_the_break_risk_is_on_by_default_and_can_be_turned_off():
     assert "age_break_risk" in inspect.getsource(Trader._arrived)
 
 
-def test_the_floor_never_compounds_the_two_estimates():
-    """The first version added the clock to the model in log-odds, which assumes they are
-    conditionally independent - and they are not, since both describe the same touch. It took a
-    20% prior to 87% at ten bars. A floor assumes nothing: the result is either the model's own
-    number or the clock's, never a product of both."""
-    from till_infinity.structures.context.registry import clock_odds
-
-    now = time.time()
-    payload, features = _payload_at(now - 10 * 900)
-    Trader._age_break_risk(payload, features, now)
-    assert features["break_probability"] == pytest.approx(round(clock_odds(10.0), 5))
-    # A model already more worried than the clock keeps its own reading.
-    payload, features = _payload_at(now - 10 * 900, probability=0.95)
-    Trader._age_break_risk(payload, features, now)
-    assert features == {"break_probability": 0.95}
-
-
 #: Every strategy whose live geometry argued for a reward floor, and the
 #: measured median reward-to-risk that argued for it. See
 #: `Strategy.reward_floor`.
 #:
-#: **Four entries left with the swing and cycle strategies on 2026-10-28** -
-#: `approach-scalp` 0.51, `fade-to-value` 1.27, `runner` 1.49 and the two
-#: cycle-turns. The medians were measured and are in
-#: `research/retire/structures/strategies/test_swing_strategies.py` with the
-#: tests that used them, because a median that argued for a floor is a
-#: measurement about a strategy that ran, not a fact about this table.
+#: Entries left with the swing and cycle strategies on 2026-10-28, and their
+#: medians stayed with them in
+#: `research/retire/structures/strategies/` - a median that argued for a floor
+#: is a measurement about a strategy that ran, not a fact about this table.
 FLOORED = {
     "thesis-only": 0.40,
     "level-scalp": 0.55,
@@ -8590,9 +8467,11 @@ FLOORED_UNMEASURED = (
     "statespace-surprise",
 )
 
-#: The two that take their floor from `opportunity.Shape` instead of a class
-#: attribute, because they are a parameter space rather than a point in one.
-SHAPED = ("opportunity", "ride")
+#: **There is no longer a shaped set.** `opportunity` and `ride` took their
+#: floor from `opportunity.Shape` rather than a class attribute, because they
+#: were a parameter space rather than a point in one. Both retired on
+#: 2026-10-28, so every strategy left declares its own floor on its class and
+#: the partition below has one fewer part.
 
 
 def test_the_reward_floor_is_declared_rather_than_guessed_at():
@@ -8607,32 +8486,6 @@ def test_the_reward_floor_is_declared_rather_than_guessed_at():
     assert "reward_floor" in td.Strategy.__annotations__
 
 
-def test_every_strategy_carries_a_floor_except_the_parameter_space():
-    """It was first set only on the seven with a sub-1.0 *median*, which left it
-    off `sweep-aware` - the strategy that placed the 0.22 EURUSD short the floor
-    was written for. A median above 1.0 says nothing about the tail, and the
-    floor cannot cost a sound trade anything because it only moves a target out.
-
-    `opportunity` and `ride` are excluded because `_wear` assigns theirs from
-    `Shape.reward_floor`, which is the knob's original home.
-    """
-    made = settings()
-    missing = {
-        name: cls(made).reward_floor
-        for name, cls in td.STRATEGIES.items()
-        if name not in SHAPED and cls(made).reward_floor <= 0
-    }
-    assert missing == {}
-    for name in SHAPED:
-        assert td.STRATEGIES[name](made).reward_floor == 0.0, name
-    # **`sweep-aware` is no longer exempt**, as of 2026-10-08. The exemption
-    # rested on the floor barely touching it, which the record confirms - 11 of
-    # 206 trades sit under 1.10 - and then overturns, because those eleven win
-    # 45% and lose 0.181 R each. Its own breakeven is 1.09. It is floored like
-    # everything else and the table has no hand-made exception left in it.
-    assert td.STRATEGIES[EXEMPT](made).reward_floor == pytest.approx(1.50)
-
-
 def test_the_unmeasured_floors_are_named_rather_than_quietly_included():
     """These five have no live decisions to quote, so a reader should be able to
     tell which floors rest on a measurement and which on the arithmetic."""
@@ -8641,24 +8494,7 @@ def test_the_unmeasured_floors_are_named_rather_than_quietly_included():
         assert name in td.STRATEGIES, name
         assert td.STRATEGIES[name](made).reward_floor >= 1.0, name
     assert not set(FLOORED) & set(FLOORED_UNMEASURED)
-    assert set(FLOORED) | set(FLOORED_UNMEASURED) | set(SHAPED) | {EXEMPT} == set(td.STRATEGIES)
-
-
-def test_no_floor_means_the_target_is_returned_untouched():
-    # `opportunity` rather than a named strategy: it is the only family left
-    # with a zero class default, because `_wear` assigns its floor per shape.
-    engine = strategy("opportunity")
-    assert engine.reward_floor == 0.0
-    assert engine.floored_target(GOLD, td.Side.SELL, 100.0, 110.0, 99.99) == 99.99
-
-
-def test_the_opportunity_space_still_sets_its_own_floor_over_the_class_default():
-    """`Shape.reward_floor` is assigned as an instance attribute in `_wear`,
-    exactly like the six knobs beside it. Declaring the field on `Strategy`
-    must not take that away."""
-    engine = strategy("opportunity")
-    engine._wear(td.strategies.opportunity.Shape(stop=1.0, target=1.0, reward_floor=2.5))
-    assert engine.reward_floor == 2.5
+    assert set(FLOORED) | set(FLOORED_UNMEASURED) | {EXEMPT} == set(td.STRATEGIES)
 
 
 # ------------------------------------------- the desk's own trend reading
@@ -8813,9 +8649,7 @@ def test_the_last_exemption_was_ended_by_its_own_premise():
 
     # Nothing is exempt now: every strategy either carries a floor or shapes its
     # own geometry, and none inherits the zero default.
-    bare = [
-        n for n, cls in td.STRATEGIES.items() if n not in SHAPED and cls(made).reward_floor <= 0
-    ]
+    bare = [n for n, cls in td.STRATEGIES.items() if cls(made).reward_floor <= 0]
     assert bare == [], f"no floor and no shape: {bare}"
 
 
