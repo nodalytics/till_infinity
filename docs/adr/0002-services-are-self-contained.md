@@ -35,6 +35,15 @@ rule.
 - **Every service lives in `services/<name>/` and is self-contained.** It
   carries its own code, its own dependency manifest and its own container
   build. Nothing outside it imports from inside it.
+- **`services/` holds both languages.** A Go service and a Python service are
+  peers there - `services/ticks/` with a `go.mod` beside the Python ones - and
+  nothing about the directory says which language is inside. That is the point:
+  a service's language is its own business, visible in its manifest rather than
+  in where it lives.
+- **A message broker gets a directory too, holding configuration and no code.**
+  If this moves to Redis or NATS, its config lives in `services/redis/` or
+  `services/nats/` with a README saying what it is for, beside the services
+  that use it rather than in a deployment folder away from them.
 - **The bus is the only link between services.** A service publishes and
   subscribes; it does not import another service.
 - **`shared/` holds contracts, not utilities.** Topic names, message schemas

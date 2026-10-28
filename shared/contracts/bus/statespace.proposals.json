@@ -1,0 +1,52 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "statespace.proposals",
+  "title": "A statespace proposal",
+  "description": "Published by statespace/proposing.py when a standardised innovation clears its trigger. The signal contract trading reads, deliberately not SIGNALS: two producers on a topic named after one of them is how a consumer loses track of which produced what.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["feed", "interval", "time", "direction", "shape", "confluence", "detail", "features"],
+  "properties": {
+    "feed": {"type": "string"},
+    "interval": {"type": "string"},
+    "time": {"type": "number", "description": "Epoch seconds of the readout."},
+    "direction": {
+      "type": "integer",
+      "enum": [-1, 1],
+      "description": "The sign of the TRIGGERING BAR's body, not of the readout. This service folds log variance, so a side taken from its own innovation would be the side of a volatility move - the error corrected twice here, where side became variance_side and the alert kind break became surprise. A doji expresses no direction and is not published."
+    },
+    "shape": {
+      "const": "statespace",
+      "description": "Routed on by notifications/filters.py and stamped by the alert layer, so it must be the same word in both places or a card renders as the wrong shape - which is how NOTIFY_SHAPES silently dropped every statespace alert while the path itself worked."
+    },
+    "confluence": {"type": "array", "items": {"type": "string"}},
+    "detail": {"type": "string"},
+    "features": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["vol_bps", "surprise", "probability", "base_rate_up", "log_variance", "spread",
+                   "stop_vol", "target_r"],
+      "properties": {
+        "vol_bps": {"type": "number", "exclusiveMinimum": 0, "description": "One volatility unit in basis points: exp(log_variance / 2) * 1e4."},
+        "surprise": {"type": "number", "description": "The standardised innovation. Signed; the gate reads its magnitude."},
+        "log_variance": {"type": "number"},
+        "spread": {"type": "number", "description": "The readout's band spread in log-variance units - NOT a bid-ask spread."},
+        "probability": {
+          "type": "number", "minimum": 0, "maximum": 1,
+          "description": "A TOUCH probability, not a win probability. A win probability for a 2R target cannot exceed a third on a driftless path, and the desk's probability gate is about reaching a level - which is what structures' field also means."
+        },
+        "base_rate_up": {"type": "number", "minimum": 0, "maximum": 1, "description": "0.50. Direction measured 0.50150 over 7,728,858 rows; reporting 0.51 would be clearing a gate rather than measuring."},
+        "band_coverage": {"type": "number", "minimum": 0, "maximum": 1},
+        "stretch": {"type": "number", "description": "Half-band units against this feed's own anchor, so it is comparable across feeds where the level of log variance is not."},
+        "stop_vol": {
+          "type": "number",
+          "description": "DEBT. A risk DECISION, not a measurement, and ADR 0004 says a proposal must not carry one: the moment the producer is another runtime this is a real position sized by code the trading service never tested. strategies/dispersing.py already holds its own stop_vol = 2.0, so this is duplication waiting to diverge. Remove it from the producer, then delete it here - tests/test_bus_contracts.py names it so the removal is not forgotten."
+        },
+        "target_r": {
+          "type": "number",
+          "description": "DEBT, for the same reason as stop_vol. dispersing.py holds target_r = 2.0 and a reward_floor of 1.70 measured against a 1.625 breakeven."
+        }
+      }
+    }
+  }
+}
