@@ -86,14 +86,22 @@ STATESPACE_SIGNALS = "statespace.signals"
 #: them is how a consumer loses track of which produced what, and a separate
 #: topic is one subscription to remove if this turns out to be worth nothing.
 #:
-#: **Nothing consumes it yet, and it publishes anyway.** Every strategy on the
-#: desk is level-based and statespace has no levels, so these would be refused
-#: by `wants` even if trading subscribed - and two configured gates refuse them
-#: outright: `TRADING_MIN_PROBABILITY` at 0.75 against a 2R barrier that cannot
-#: exceed a third, and `TRADING_MIN_BASE_RATE` at 0.51 against an honest 0.50.
-#: It publishes regardless because `trading.turn_exit` "has never once run in
-#: production" while its end-to-end path passed every test, and a producer left
-#: switched off is no witness that it works.
+#: **`trading` consumes it as of 2026-10-28, and for a while nothing did.**
+#: The three reasons it published to nobody have each since gone:
+#: every strategy on the desk was level-based and statespace has no levels, so
+#: `wants` refused these on all of them - until `strategies/dispersing.py` was
+#: written against what statespace actually measures; and
+#: `TRADING_MIN_PROBABILITY` at 0.75 against a 2R barrier that cannot exceed a
+#: third, with `TRADING_MIN_BASE_RATE` at 0.51 against an honest 0.50, both of
+#: which now read 0.0 on the instance and are gated per-strategy instead.
+#:
+#: **The unsubscribed window was invisible while structures was running.** The
+#: producer's own tally said "proposed", which counts what it *published*, and
+#: the bus's "published to a topic with nobody subscribed" warning was one line
+#: among a desk's worth of traffic. Retiring the structures service is what
+#: surfaced it: with the other producer silent, the only thing left on the bus
+#: was a proposal nobody was listening to. A tally of what a producer sent is
+#: not evidence that anything received it.
 #:
 #: The **sign comes from the triggering bar**, not from the readout. This
 #: service folds log variance, so a side taken from its own innovation would be

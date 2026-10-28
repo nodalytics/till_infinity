@@ -1415,6 +1415,80 @@ def test_resolutions_are_a_declared_topic():
     assert RESOLUTIONS in TOPICS
 
 
+def proposal(**over):
+    """A statespace proposal as `statespace/proposing.py` publishes one."""
+    features = {
+        "vol_bps": 6.0,
+        "surprise": 4.2,
+        "stop_vol": 2.0,
+        "target_r": 2.0,
+        # A touch probability, not a win probability - see `proposing.py`.
+        "probability": 0.30,
+        "base_rate_up": 0.5,
+        "log_variance": -17.4,
+        "spread": 0.0004,
+    }
+    features.update(over.pop("features", {}))
+    made = {
+        "feed": "eurusd",
+        "interval": "5m",
+        "time": time.time(),
+        "direction": 1,
+        "shape": "statespace",
+        "confluence": ("statespace:surprise",),
+        "detail": "a 4.2 sigma bar",
+        "features": features,
+    }
+    made.update(over)
+    return made
+
+
+def test_proposals_are_a_declared_topic_and_subscribed_early():
+    """**The regression this is here for shipped.** `proposing.py` published to
+    `statespace.proposals` and `TOPICS` did not name it, so every proposal went
+    to nobody for as long as the producer ran - and the producer's own tally
+    said "proposed", which counts what it sent, not what arrived. The bus's
+    "nobody subscribed" warning was one line in a desk's worth of traffic and
+    only became audible when the structures service was retired.
+
+    `EARLY` as well as `TOPICS`: a proposal published while the terminal attach
+    is in progress would otherwise be dropped, and statespace warms by replay
+    rather than by collecting bars, so it is publishing within a minute."""
+    from till_infinity.bus import PROPOSALS
+    from till_infinity.trading.service import EARLY, TOPICS
+
+    assert PROPOSALS in TOPICS, "a producer's own tally is not evidence of receipt"
+    assert PROPOSALS in EARLY, "warms by replay, so it publishes inside the attach window"
+
+
+async def test_a_statespace_proposal_reaches_a_strategy(tmp_path):
+    """The receipt itself: a proposal on the bus becomes a decision.
+
+    This is the half that `test_proposals_are_a_declared_topic_and_subscribed_early`
+    cannot prove. A topic can be subscribed and still reach no strategy, because
+    `Strategy.wants` sorts on `shape` and every strategy but `statespace-surprise`
+    wants a level this payload does not carry."""
+    from till_infinity.bus import PROPOSALS
+
+    bus = Bus()
+    async with Journal(tmp_path / "journal.db") as book:
+        # `settings()` pins `level-scalp`; this is the one test about the other
+        # producer, so it names the one strategy written for that shape.
+        chosen = settings(symbols=("eurusd",), strategies=("statespace-surprise",))
+        trader = Trader(bus, settings=chosen, journal=book)
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "eurusd", "bid": 1.08500, "ask": 1.08505})
+        )
+        got = await trader.handle(Message(topic=PROPOSALS, payload=proposal()))
+
+        assert trader.proposals == 1, "the message was not routed into on_signal"
+        assert trader.received == 0, "a proposal is not a structures signal"
+        assert got is not None, "the proposal reached no strategy at all"
+        assert isinstance(got, Intent), f"reached a strategy and was refused: {got}"
+        assert got.side is Side.BUY, "the side is the triggering bar's, not the readout's"
+
+
 # ------------------------------------------------------- scoring what it did
 
 
