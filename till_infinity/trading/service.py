@@ -105,9 +105,6 @@ from .sessions import Sessions
 from .shadow import ShadowGates
 from .sizing import lots, price_distance, respects_stops_level
 from .strategies import strategy
-from .strategies.opportunity import PRESETS
-from .strategies.policy import DECAY as _POLICY_DECAY
-from .strategies.policy import Entries, Policy
 from .strategies.strategy import Strategy
 from .venues import replicate
 from .venues import symbols as sym
@@ -350,13 +347,6 @@ class Untaken(Restorable):
     #: level call and was dropped here.
     regime: float = 0.0
     market: str = ""
-    #: The shape the strategy wore when it wanted this, taken at decision time. `_credit` used to
-    #: read the strategy's *current* arm when the intent resolved, hours later, by which time the
-    #: policy may have chosen another. Empty for strategies the policy does not shape.
-    arm: str = ""
-    #: What the policy's default would have done where the policy chose otherwise. Credits the
-    #: shape ledger only: it is not a strategy's own entry, so `Entries` must not hear it.
-    counterfactual: bool = False
 
 
 @dataclass(slots=True)
@@ -742,21 +732,6 @@ class Trader:
         #: own barriers. See `Untaken`. Bounded per feed because this grows
         #: with strategies times signals and nothing else evicts it.
         self._untaken: dict[str, list[Untaken]] = {}
-        #: What each shape has been worth, and the chooser that reads it. Fed
-        #: from `_record_untaken` - which is full information, every arm on
-        #: every signal - and from real closes.
-        self.policy = Policy()
-        #: Which strategy's *entry* is worth taking on each family, which the
-        #: shape policy cannot express: `_credit` keys its arms by shape, so two
-        #: strategies with the same exit are one arm there. Recording only -
-        #: nothing reads this yet, by design. See `Entries`.
-        self.entries = Entries()
-        # Attached to whichever strategies read one. A strategy without a
-        # policy keeps its class defaults, which are the measured ones - so
-        # nothing is ever shaped by a guess, only by a default or by evidence.
-        for engine in self.strategies:
-            if hasattr(engine, "policy"):
-                engine.policy = self.policy
         #: Unresolved intents dropped for want of room. Counted because a
         #: silent eviction is a silent bias - see `MAX_UNTAKEN`.
         self._spilled: int = 0
@@ -1486,9 +1461,6 @@ class Trader:
         if not self.settings.evaluate_all:
             return wanted_by
         for engine in self.strategies:
-            if engine.name == taken_by and engine.wants(payload):
-                # The taker's own default is owed a score too; its arm is the one it traded with.
-                self._score_default(engine, payload, spec, tick)
             if engine.name == taken_by or not engine.wants(payload):
                 continue
             try:
@@ -1524,9 +1496,7 @@ class Trader:
                     tick.time,
                     float(state) if isinstance(state, int | float) else 0.0,
                     str(payload.get("market") or ""),
-                    arm=str(getattr(engine, "arm", "") or ""),
                 )
-            self._score_default(engine, payload, spec, tick)
             await observe(
                 self.journal,
                 f"{engine.name} would have {'taken' if wanted else 'passed'} {payload.get('feed')}",
@@ -2817,12 +2787,8 @@ class Trader:
                 # write, and the things that must not be forgotten across a
                 # deploy are forgotten or kept together.
                 "guard": self.guard.state(),
-                # What the strategies have learned about each other, and the
-                # shadow record it is learned from. The only genuinely
-                # *learned* state here - pressure and trend rebuild from the
-                # market in minutes, a ranking does not.
-                "policy": self.policy,
-                "entries": self.entries,
+                # The shadow record. Pressure and trend rebuild from the market in
+                # minutes; this does not.
                 "untaken": self._untaken,
                 "shadows": self._shadows,
                 # A stop that re-arms and is then lost to a deploy is a
@@ -2900,15 +2866,6 @@ class Trader:
         # by an older build is missing keys rather than wrong, and a desk that
         # refuses to start because one is absent is worse than one that starts
         # without it.
-        got = payload.get("policy")
-        if type(got).__name__ == "Policy":
-            # The memory is policy, not state: a ledger written under an older decay learns at
-            # the current one from here on (`policy.DECAY`).
-            got.ledger.decay = _POLICY_DECAY
-            self.policy = got
-        entries = payload.get("entries")
-        if type(entries).__name__ == "Entries":
-            self.entries = entries
         self._restore_refs(payload.get("refs"))
         self._restore_learned(payload.get("learned"))
         self._restore_intervals(payload.get("intervals"))
@@ -2950,12 +2907,10 @@ class Trader:
         if kept:
             log.info("trading: recovered %d high-water mark(s) across the restart", kept)
         log.info(
-            "trading: recovered the day - %d shadow(s), %d untaken feed(s), "
-            "%d queued re-entry(s), policy %s",
+            "trading: recovered the day - %d shadow(s), %d untaken feed(s), %d queued re-entry(s)",
             len(self._shadows),
             len(self._untaken),
             len(self._rearm),
-            "restored" if type(got).__name__ == "Policy" else "fresh",
         )
 
     async def sweep(self) -> None:
@@ -3785,8 +3740,6 @@ class Trader:
         now: float,
         regime: float = 0.0,
         market: str = "",
-        arm: str = "",
-        counterfactual: bool = False,
     ) -> None:
         """Keep an intent a strategy wanted but did not get, to score later.
 
@@ -3810,8 +3763,6 @@ class Trader:
                 placed_at=now,
                 regime=regime,
                 market=market,
-                arm=arm,
-                counterfactual=counterfactual,
             )
         )
         if len(kept) > self.MAX_UNTAKEN:
@@ -3935,104 +3886,9 @@ class Trader:
                 # Carried from the signal so `reward_r` can be split by it.
                 "regime": shade.regime,
                 "market": shade.market,
-                # The shape credited, and whether this is the policy's default scored as a
-                # counterfactual rather than the strategy's own intent.
-                "arm": shade.arm,
-                "counterfactual": shade.counterfactual,
             },
             tags=(shade.feed, shade.by, "untaken"),
         )
-        if how != "never filled":
-            self._credit(
-                shade.by,
-                shade.feed,
-                shade.interval,
-                reward,
-                arm=getattr(shade, "arm", ""),
-                entries=not getattr(shade, "counterfactual", False),
-            )
-
-    def _score_default(
-        self, engine: Strategy, payload: dict[str, Any], spec: SymbolSpec, tick: Tick
-    ) -> None:
-        """Follow what the policy's default shape would have done with this signal.
-
-        Only where a policy chose a shape other than the default: there the default is not what
-        was worn, so nothing else scores it. `research/docs/zeroskill.md` found the default never
-        warm in any context, so every challenger was compared with nothing. Counterfactual:
-        credits the shape ledger, never `Entries`, and never trades. Wrapped, because a shadow
-        must not break the signal it shadows.
-        """
-        policy = getattr(engine, "policy", None)
-        dress = getattr(engine, "consider_as", None)
-        if policy is None or dress is None:
-            return
-        fallback = policy.fallback
-        if str(getattr(engine, "arm", "") or "") in ("", fallback.named()):
-            return
-        try:
-            verdict = dress(
-                fallback, payload, spec=spec, tick=tick, equity=self.equity, peak=self.peak_equity
-            )
-        except Exception as exc:
-            log.debug("trading: no default counterfactual for %s: %s", engine.name, exc)
-            return
-        if isinstance(verdict, Intent):
-            interval = str(payload.get("interval") or "")
-            self._remember_untaken(
-                str(payload.get("feed") or ""),
-                engine.name,
-                verdict,
-                interval,
-                engine.hold_for(interval),
-                tick.time,
-                arm=fallback.named(),
-                counterfactual=True,
-            )
-
-    def _arm_of(self, by: str) -> str:
-        """The shape the named strategy last chose, or "" if it chooses none.
-
-        Read off the engine rather than remembered here: `Opportunity.consider`
-        sets it as it decides, and `consider` is synchronous, so the value is
-        the one this decision was made with.
-        """
-        engine = next((e for e in self.strategies if e.name == by), None)
-        return str(getattr(engine, "arm", "") or "")
-
-    def _credit(
-        self,
-        by: str,
-        feed: str,
-        interval: str,
-        reward: float,
-        *,
-        arm: str = "",
-        entries: bool = True,
-    ) -> None:
-        """Tell the policy what a strategy's shape was worth here.
-
-        Keyed by the **shape** rather than the strategy name, because the names
-        are not the thing being chosen between - `level-scalp` and
-        `sweep-aware` are the same point, and crediting them separately would
-        split one arm's evidence in half.
-        """
-        # The arm recorded when the intent was made wins: the strategy's current arm may have
-        # changed since, and crediting it would score one shape with another's outcome.
-        if not arm:
-            shape = PRESETS.get(by)
-            arm = shape.named() if shape is not None else ""
-        if not arm:
-            engine = next((e for e in self.strategies if e.name == by), None)
-            arm = str(getattr(engine, "arm", "") or "")
-        if arm:
-            self.policy.observe(feed, interval, arm, reward)
-        # The same reward, filed against the strategy rather than its shape. The
-        # shape ledger deliberately pools strategies that share an exit, so this
-        # is the only place the per-strategy question is even asked. Not for a
-        # counterfactual default, which is no strategy's own entry.
-        if entries:
-            self.entries.observe(feed, by, reward)
 
     async def _watch_shadows(self, feed: str, tick: Tick) -> None:
         """Follow stopped trades to see whether the target arrived anyway.
@@ -4350,10 +4206,6 @@ class Trader:
         # paid the spread, the slippage and whatever the broker actually gave.
         # Same unit either way - `r_multiple` against the intent, which `Score`
         # clips - so the two are directly comparable in one ledger.
-        if live.by:
-            self._credit(
-                live.by, live.intent.feed, live.intent.interval, _r_multiple(live.intent, price)
-            )
         self._maybe_rearm(live, price)
         log.info(
             "trading: closed #%d %s [%s] @ %.5g for %+.2f (%s) · %s",
@@ -4585,10 +4437,6 @@ class Trader:
             actor="trading",
             context={
                 "strategy": by,
-                # **Which shape the policy chose**, for the strategies that
-                # choose one. `opportunity` is a parameter vector rather than a
-                # See `trading-service.md` in research/docs.
-                "arm": self._arm_of(by),
                 # What the spread actually was when this was sent. Three gates
                 # judge spread and none of them wrote down the number they
                 # judged, so "what did execution cost" could be argued about
