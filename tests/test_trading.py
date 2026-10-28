@@ -26,6 +26,7 @@ from till_infinity.structures.context import cusum as td_cusum
 from till_infinity.trading import exposure as ex
 from till_infinity.trading import manage
 from till_infinity.trading import plans as tp
+from till_infinity.trading import report as tr
 from till_infinity.trading import sessions as td_sessions
 from till_infinity.trading.book import Book, Seen
 from till_infinity.trading.context import Context
@@ -1351,6 +1352,290 @@ def test_resolutions_are_a_declared_topic():
     from till_infinity.bus import TOPICS
 
     assert RESOLUTIONS in TOPICS
+
+
+def proposal(**over):
+    """A statespace proposal as `statespace/proposing.py` publishes one."""
+    features = {
+        "vol_bps": 6.0,
+        "surprise": 4.2,
+        "stop_vol": 2.0,
+        "target_r": 2.0,
+        # A touch probability, not a win probability - see `proposing.py`.
+        "probability": 0.30,
+        "base_rate_up": 0.5,
+        "log_variance": -17.4,
+        "spread": 0.0004,
+    }
+    features.update(over.pop("features", {}))
+    made = {
+        "feed": "eurusd",
+        "interval": "5m",
+        "time": time.time(),
+        "direction": 1,
+        "shape": "statespace",
+        "confluence": ("statespace:surprise",),
+        "detail": "a 4.2 sigma bar",
+        "features": features,
+    }
+    made.update(over)
+    return made
+
+
+def test_proposals_are_a_declared_topic_and_subscribed_early():
+    """**The regression this is here for shipped.** `proposing.py` published to
+    `statespace.proposals` and `TOPICS` did not name it, so every proposal went
+    to nobody for as long as the producer ran - and the producer's own tally
+    said "proposed", which counts what it sent, not what arrived. The bus's
+    "nobody subscribed" warning was one line in a desk's worth of traffic and
+    only became audible when the structures service was retired.
+
+    `EARLY` as well as `TOPICS`: a proposal published while the terminal attach
+    is in progress would otherwise be dropped, and statespace warms by replay
+    rather than by collecting bars, so it is publishing within a minute."""
+    from till_infinity.bus import PROPOSALS
+    from till_infinity.trading.service import EARLY, TOPICS
+
+    assert PROPOSALS in TOPICS, "a producer's own tally is not evidence of receipt"
+    assert PROPOSALS in EARLY, "warms by replay, so it publishes inside the attach window"
+
+
+async def test_a_statespace_proposal_reaches_a_strategy(tmp_path):
+    """The receipt itself: a proposal on the bus becomes a decision.
+
+    This is the half that `test_proposals_are_a_declared_topic_and_subscribed_early`
+    cannot prove. A topic can be subscribed and still reach no strategy, because
+    `Strategy.wants` sorts on `shape` and every strategy but `statespace-surprise`
+    wants a level this payload does not carry."""
+    from till_infinity.bus import PROPOSALS
+
+    bus = Bus()
+    async with Journal(tmp_path / "journal.db") as book:
+        # `settings()` pins `level-scalp`; this is the one test about the other
+        # producer, so it names the one strategy written for that shape.
+        chosen = settings(symbols=("eurusd",), strategies=("statespace-surprise",))
+        trader = Trader(bus, settings=chosen, journal=book)
+        await trader.start()
+        await trader.handle(
+            Message(topic=QUOTES, payload={"feed": "eurusd", "bid": 1.08500, "ask": 1.08505})
+        )
+        got = await trader.handle(Message(topic=PROPOSALS, payload=proposal()))
+
+        assert trader.proposals == 1, "the message was not routed into on_signal"
+        assert trader.received == 0, "a proposal is not a structures signal"
+        assert got is not None, "the proposal reached no strategy at all"
+        assert isinstance(got, Intent), f"reached a strategy and was refused: {got}"
+        assert got.side is Side.BUY, "the side is the triggering bar's, not the readout's"
+
+
+# ------------------------------------------------------- scoring what it did
+
+
+async def a_closed_trade(
+    book, *, strategy="level-scalp", profit=10.0, risk=20.0, feed="gold", at=4400.5
+):
+    """Write the decision/outcome pair the trader writes.
+
+    `at` varies the entry price, and it has to. Journal entries are
+    content-addressed on `(time, actor, title)` and written INSERT OR IGNORE,
+    so two trades with the same title inside one clock tick are deliberately
+    one entry. A fixture that wrote ten identical titles therefore produced six
+    rows on a fast machine and ten on a slow one - which is the journal working
+    as documented, and a test that had not noticed real titles carry the volume
+    and the fill price.
+    """
+    from till_infinity.journal import decide, outcome
+
+    ref = await decide(
+        book,
+        f"paper: buy 0.05 {feed} @ {at:.5g}",
+        rationale="up from above",
+        actor="trading",
+        context={
+            "strategy": strategy,
+            "mode": "paper",
+            "feed": feed,
+            "side": "buy",
+            "risk_money": risk,
+            "reward_to_risk": 1.4,
+        },
+        tags=(feed, "buy", strategy, "paper"),
+    )
+    await outcome(
+        book,
+        ref,
+        f"{feed} closed {profit:+.2f} from {at:.5g}",
+        actor="trading",
+        context={"profit": profit, "seconds": 300, "reason": "target", "exit_source": "broker"},
+    )
+    return ref
+
+
+async def test_a_closed_trade_is_scored_in_r_not_money(tmp_path):
+    """40 won risking 20 and 40 won risking 200 are not the same result."""
+    async with Journal(tmp_path / "j.db") as book:
+        await a_closed_trade(book, profit=40.0, risk=20.0)
+    found = tr.trades(tmp_path / "j.db")
+    assert len(found) == 1
+    assert found[0].r == pytest.approx(2.0)
+    assert found[0].won
+
+
+async def test_a_trade_open_across_a_restart_is_still_scored(tmp_path):
+    """A position this process did not open is rebuilt by `_intent_from`, which
+    has the broker's position and no sizing to state - so its `risk_money` is the
+    dataclass default and the close record spreads that zero over the figure the
+    decision recorded.
+
+    The trade was then dropped entirely rather than scored badly: 839 of 1,486
+    closed trades in the live journal carried this zero on 2026-10-04, so 56% of
+    the record was invisible to every report.
+    """
+    from till_infinity.journal import decide, outcome
+
+    async with Journal(tmp_path / "j.db") as book:
+        ref = await decide(
+            book,
+            "paper: buy 0.05 eurusd @ 1.1",
+            rationale="up from above",
+            actor="trading",
+            context={
+                "strategy": "level-scalp",
+                "mode": "paper",
+                "feed": "eurusd",
+                "side": "buy",
+                "risk_money": 20.0,
+                "reward_to_risk": 1.4,
+            },
+        )
+        await outcome(
+            book,
+            ref,
+            "eurusd closed +40.00 from 1.1",
+            actor="trading",
+            context={
+                "profit": 40.0,
+                "seconds": 300,
+                "reason": "target",
+                "exit_source": "broker",
+                # What a rebuilt intent spreads over the decision's own figure.
+                "risk_money": 0.0,
+            },
+        )
+    found = tr.trades(tmp_path / "j.db")
+    assert len(found) == 1
+    assert found[0].risk_money == pytest.approx(20.0)
+    assert found[0].r == pytest.approx(2.0)
+
+
+async def test_a_trade_with_no_risk_anywhere_is_still_skipped(tmp_path):
+    """The fallback reaches for the decision's figure, not for any figure: a
+    trade neither record sized is still not scoreable, and counting it at zero
+    risk would land as an infinite R."""
+    from till_infinity.journal import decide, outcome
+
+    async with Journal(tmp_path / "j.db") as book:
+        ref = await decide(
+            book,
+            "paper: buy 0.05 eurusd @ 1.1",
+            rationale="up from above",
+            actor="trading",
+            context={"strategy": "level-scalp", "mode": "paper", "feed": "eurusd", "side": "buy"},
+        )
+        await outcome(
+            book,
+            ref,
+            "eurusd closed +40.00 from 1.1",
+            actor="trading",
+            context={"profit": 40.0, "seconds": 300, "reason": "target", "risk_money": 0.0},
+        )
+    assert tr.trades(tmp_path / "j.db") == []
+
+
+async def test_a_small_sample_is_refused_rather_than_characterised(tmp_path):
+    """A 70% win rate over ten trades is a coin that came up heads seven times."""
+    async with Journal(tmp_path / "j.db") as book:
+        for index in range(10):
+            await a_closed_trade(book, profit=10.0 if index < 7 else -20.0, at=4400.0 + index)
+    report = tr.build(tmp_path / "j.db")
+    assert report.overall.count == 10
+    assert not report.enough
+    assert "too few to characterise" in report.overall.verdict()
+
+
+async def test_a_large_enough_sample_is_characterised(tmp_path):
+    async with Journal(tmp_path / "j.db") as book:
+        for index in range(tr.ENOUGH + 5):
+            await a_closed_trade(book, profit=10.0 if index % 2 else -20.0, at=4400.0 + index)
+    report = tr.build(tmp_path / "j.db")
+    assert report.enough
+    assert "won" in report.overall.verdict()
+    assert "R mean" in report.overall.verdict()
+
+
+async def test_trades_are_grouped_by_strategy(tmp_path):
+    async with Journal(tmp_path / "j.db") as book:
+        await a_closed_trade(book, strategy="level-scalp", profit=20.0, at=4400.0)
+        await a_closed_trade(book, strategy="approach-scalp", profit=-20.0, at=4401.0)
+    report = tr.build(tmp_path / "j.db")
+    assert report.by_strategy["level-scalp"].total_r == pytest.approx(1.0)
+    assert report.by_strategy["approach-scalp"].total_r == pytest.approx(-1.0)
+
+
+async def test_a_trade_with_no_risk_recorded_is_skipped_not_counted_as_zero(tmp_path):
+    """Counting it would land as an infinite R or a silent zero."""
+    from till_infinity.journal import decide, outcome
+
+    async with Journal(tmp_path / "j.db") as book:
+        ref = await decide(
+            book,
+            "paper: buy 0.05 gold",
+            rationale="adopted",
+            actor="trading",
+            context={"strategy": "level-scalp", "feed": "gold", "risk_money": 0.0},
+        )
+        await outcome(book, ref, "closed", actor="trading", context={"profit": 5.0})
+    assert tr.trades(tmp_path / "j.db") == []
+
+
+async def test_declines_are_tallied_per_gate(tmp_path):
+    """A gate that never fires does nothing; one that always fires is mis-set."""
+    from till_infinity.journal import observe
+
+    async with Journal(tmp_path / "j.db") as book:
+        # Distinct titles for the same reason `a_closed_trade` varies its
+        # price: two identical titles in one tick are one journal entry.
+        for index, gate in enumerate(("news", "news", "exposure")):
+            await observe(
+                book,
+                f"declined buy gold @ {4400 + index} ({gate})",
+                rationale=gate,
+                actor="trading",
+                context={"gate": gate, "strategy": "level-scalp"},
+            )
+    counted = tr.declines(tmp_path / "j.db")
+    assert counted["news"] == 2
+    assert counted["exposure"] == 1
+
+
+async def test_paper_and_live_are_not_averaged_together(tmp_path):
+    """Simulated fills and real ones describe different things."""
+    from till_infinity.journal import decide, outcome
+
+    async with Journal(tmp_path / "j.db") as book:
+        await a_closed_trade(book, profit=20.0)
+        ref = await decide(
+            book,
+            "live: buy 0.05 gold",
+            rationale="up",
+            actor="trading",
+            context={"strategy": "level-scalp", "mode": "live", "feed": "gold", "risk_money": 20.0},
+        )
+        await outcome(book, ref, "closed", actor="trading", context={"profit": -20.0})
+
+    assert tr.build(tmp_path / "j.db", mode="paper").overall.count == 1
+    assert tr.build(tmp_path / "j.db", mode="live").overall.count == 1
+    assert tr.build(tmp_path / "j.db").overall.count == 2
 
 
 # ------------------------------------------------- reaching a Windows terminal
@@ -8093,6 +8378,7 @@ async def test_received_counts_signals_and_survives_the_day_restore(caplog):
     import logging
     import time
 
+    from till_infinity.bus import PROPOSALS
     from till_infinity.trading import service as svc
 
     trader = Trader(Bus(), settings=settings())
@@ -8101,6 +8387,11 @@ async def test_received_counts_signals_and_survives_the_day_restore(caplog):
     await trader.handle(Message(topic=SIGNALS, payload=signal()))
     await trader.handle(Message(topic=SIGNALS, payload=signal()))
     assert trader.received == 2, "handle must count every signal it is given"
+    # And a proposal is counted apart from them: two producers on one tally is
+    # how a dead one hides behind a live one.
+    await trader.handle(Message(topic=PROPOSALS, payload=proposal()))
+    assert trader.received == 2, "a proposal is not a structures signal"
+    assert trader.proposals == 1
 
     # A restored day must not touch it.
     trader.taken = 999
@@ -8112,7 +8403,7 @@ async def test_received_counts_signals_and_survives_the_day_restore(caplog):
         trader._say_what_it_is_doing()
     said = [r.getMessage() for r in caplog.records]
     line = next((m for m in said if "received this process" in m), "")
-    assert "2 signal(s) received this process" in line, said
+    assert "2 signal(s) and 1 proposal(s) received this process" in line, said
     assert len(line) < 120, f"must fit on one console line, got {len(line)}"
 
 
@@ -8129,7 +8420,7 @@ async def test_received_says_never_when_nothing_has_arrived(caplog):
     with caplog.at_level(logging.INFO, logger=svc.log.name):
         trader._say_what_it_is_doing()
     said = " ".join(r.getMessage() for r in caplog.records)
-    assert "0 signal(s) received this process, last never" in said, said
+    assert "0 signal(s) and 0 proposal(s) received this process, last never" in said, said
 
 
 class TestOneStoppedTradeMustNotStallEveryFeed:
