@@ -49,6 +49,7 @@ import time
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
+from ..shared.state import Restorable
 from .levels import (
     ARRIVAL_RUN_VOL,
     CONFIDENT_TOUCHES,
@@ -62,7 +63,6 @@ from .levels import (
     Side,
     SideStats,
 )
-from .state import Restorable
 from .vol.volatility import Volatility
 
 #: Neighbours consulted for the cold-start prior.

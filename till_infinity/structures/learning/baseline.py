@@ -49,7 +49,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import ClassVar
 
-from ..state import Restorable
+from ...shared.state import Restorable
 from .attention import Attention, Embedding
 from .online import Logistic
 

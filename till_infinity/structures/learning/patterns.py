@@ -53,8 +53,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 
 from ...logging import get_logger
+from ...shared.state import Restorable
 from ..drawing.pips import Point
-from ..state import Restorable
 
 log = get_logger(__name__)
 

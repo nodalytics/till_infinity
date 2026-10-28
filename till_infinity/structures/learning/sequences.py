@@ -52,8 +52,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from itertools import pairwise
 
+from ...shared.state import Restorable
 from ..drawing.pips import Point
-from ..state import Restorable
 from ..vol.volatility import Volatility
 
 #: Legs shorter than this are not legs. In volatility units.

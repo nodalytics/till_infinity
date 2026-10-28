@@ -34,7 +34,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from enum import StrEnum
 
-from ..state import Restorable
+from ...shared.state import Restorable
 
 #: A swing needs this many bars after it before it is treated as established.
 #: Fewer and every wiggle is a turning point; more and levels arrive too late

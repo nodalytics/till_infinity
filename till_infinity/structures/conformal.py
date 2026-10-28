@@ -111,7 +111,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from .state import Restorable
+from ..shared.state import Restorable
 
 #: The coverage the band is calibrated to hold.
 #:

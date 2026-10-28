@@ -23,7 +23,6 @@ coordinate, and the whole system in one log.
 ```bash
 cp .env.example .env
 docker compose up -d                    # collectors, levels, journal
-docker compose --profile agents up -d   # including the paid one
 ```
 
 This is the shape the bus was designed for: they scale and fail independently,
@@ -102,9 +101,8 @@ Two things follow for sizing:
 - **There is no swap**, so an overshoot is a kill rather than a slowdown. That
   does not improve on a larger machine; it just gets harder to reach.
 
-Nothing heavier than a read should run alongside it at this size. Both
-`till-infinity agents ask` and `till-infinity prices prune` - each a second
-Python process importing the whole application - killed the container outright.
+Nothing heavier than a read should run alongside it at this size. `till-infinity prices prune` - a second Python process importing the whole
+application - killed the container outright.
 
 Databases and model state live on a mounted volume. Without one they go when
 the container does, and for online models that means starting cold - no learned
@@ -117,47 +115,20 @@ Everything comes from the environment, documented in
 [environment.md](environment.md). Real environment variables win over the
 file, so a deployment is never overridden by a stray `.env`.
 
-Agents are **off** unless `AGENTS_ENABLED=1`. They are the only part needing a
-paid credential, and the collectors and levels model should not be hostage to
-one.
+## The offline models are frozen
 
-## Retraining the offline models
+`till_infinity/models/*.json` ship with the image and are read by
+`shared/frozen.py` - the shock forecaster, the boosted FX envelope, the touch
+models. **The pipeline that retrained them was retired on 2026-10-28** and is in
+[`research/retire/models/`](../research/retire/models/) with its GitHub Actions
+workflow: it trained on a runner, promoted a challenger only when it beat the
+shipped model on the last fourteen days, and opened a PR so the model shipped
+like code. The gates and the first lab run are in
+[`research/docs/anomalies.md`](../research/docs/anomalies.md).
 
-The frozen models in `till_infinity/models/` (today, the shock forecaster) are
-retrained fortnightly by `till-infinity models retrain`, which promotes a
-challenger only when it beats the shipped model on the last 14 days. The gates
-and the first lab run are in
-[`research/docs/anomalies.md`](../research/docs/anomalies.md). A run holds a few
-million feature rows, 2-4 GB, so **it does not run on the instance** as sized.
-
-**Where it runs: GitHub Actions.** `.github/workflows/retrain.yml` runs on the
-1st and 15th (and by hand). It trains on a runner, promotes straight over the
-shipped copy, runs the lint and tests against the promoted model, and opens a
-PR. The model then ships like code: merge, deploy. The report is in the run's
-summary and artifacts.
-
-The runner reaches the bridge the way the app does. The terminal host is behind
-NAT and holds a reverse tunnel open to the instance ([`trading.md`](trading.md)),
-so the runner forwards a local port through the instance, using the deploy
-secrets, to that tunnel. Nothing runs on the instance. It needs:
-
-```bash
-gh secret set TRADING_MT5_API_KEY          # the bridge's key
-gh variable set MODELS_SYMBOLS --body "EURUSD,XAUUSD,BTCUSD,Volatility 75 Index,Jump 50 Index"
-```
-
-Without them the run is skipped with a notice. If the terminal's tunnel is down
-the run fails red, as the app's trading would. A `TRADING_MT5_URL` secret
-replaces the forward with a route GitHub can reach directly.
-
-**Or on the instance,** if it is resized to take it: run
-`till-infinity models retrain --once` fortnightly in a second, short-lived
-container from the same image, with the app's environment and data volume (the
-flags `deploy.sh` uses) and a memory cap of about 4 GB. A promotion is written
-into `.data/models/` and the running app re-reads it within five minutes, with
-no deploy. Under compose, the same is `docker compose --profile models up -d`, a
-service that waits out the fortnight itself. Either way the image already
-carries scikit-learn (the `train` extra); the app never imports it.
+`TI_MODELS_DIR` still works and the engine still prefers a model found there
+over the shipped copy, re-reading a changed file within five minutes. Nothing
+writes into it now, so a model gets there by hand or not at all.
 
 ## Features that wait on memory headroom
 
@@ -359,9 +330,9 @@ output could tell that.
 
 **line 45**
 
-Agents are off: they need a paid credential, and this box has 908 MB of RAM,
-so the free path is the one that fits. Set AGENTS_ENABLED=1 and add a key to
-turn them on.
+Agents were off here: they needed a paid credential and this box has 908 MB of
+RAM, so the free path was the one that fit. The service was retired on
+2026-10-28.
 
 **line 61**
 

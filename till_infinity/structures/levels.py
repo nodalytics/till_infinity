@@ -50,10 +50,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from ..shared.state import Restorable
 from .conformal import Zones
 from .drawing.pips import Point, Swing
 from .drawing.pips import structure as pips_structure
-from .state import Restorable
 from .vol.volatility import Volatility
 
 #: How wide a level's zone is, as a multiple of its own uncertainty. Two
@@ -270,23 +270,11 @@ DRIFT_VOL_PER_HOUR = 0.02
 #: neighbours'. Below this, inference leans on kNN over similar levels.
 CONFIDENT_TOUCHES = 5
 
-#: How long one bar of each timeframe lasts. Needed here because evidence
-#: decays in *time* while a level lives on a timeframe, and the two only line
-#: up if the conversion is written down.
-SECONDS: dict[str, float] = {
-    "1m": 60.0,
-    "3m": 180.0,
-    "5m": 300.0,
-    "15m": 900.0,
-    "30m": 1_800.0,
-    "1h": 3_600.0,
-    "2h": 7_200.0,
-    "4h": 14_400.0,
-    "1d": 86_400.0,
-    "daily": 86_400.0,
-    "1w": 604_800.0,
-    "weekly": 604_800.0,
-}
+#: Moved to `shared/intervals.py`, and re-exported here because this module's
+#: own research docs cite `levels.SECONDS`. Evidence decays in *time* while a
+#: level lives on a timeframe, so the conversion is still needed here - it is
+#: just no longer owned here.
+from ..shared.intervals import SECONDS  # noqa: E402
 
 #: Bars of evidence half-life. Anchored to the window a level is formed from
 #: (500 bars), so evidence halves over roughly half the history the timeframe

@@ -42,9 +42,9 @@ from collections.abc import Mapping
 from dataclasses import dataclass, field
 
 from ...shared import frozen
+from ...shared.state import Restorable
 from .. import rollover as ro
 from ..context import trend
-from ..state import Restorable
 
 #: The bars ahead the touch is forecast for: the card's envelope horizon.
 AHEAD = 5

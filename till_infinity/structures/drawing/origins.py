@@ -66,8 +66,8 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 
+from ...shared.state import Restorable
 from ..learning.focus import Focus
-from ..state import Restorable
 
 #: How many origins are kept per feed and timeframe. Origins are rare - the
 #: move has to clear `MOVE_VOL` and break structure - so this is generous, and

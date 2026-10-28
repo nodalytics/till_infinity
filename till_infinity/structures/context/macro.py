@@ -71,8 +71,8 @@ from pathlib import Path
 from typing import NamedTuple
 
 from ...logging import get_logger
+from ...shared.state import Restorable
 from ..models import Shape, Signal
-from ..state import Restorable
 
 log = get_logger(__name__)
 

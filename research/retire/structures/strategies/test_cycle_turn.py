@@ -270,7 +270,7 @@ class TestGeometry:
         Fails if a faster entry or a longer horizon is added without revisiting
         the cap, which is the only reason it is written this way.
         """
-        from till_infinity.structures.levels import SECONDS
+        from till_infinity.shared.intervals import SECONDS
 
         for interval in strategy.entries:
             for horizon in (strategy.STOP_HORIZON, strategy.TARGET_HORIZON):

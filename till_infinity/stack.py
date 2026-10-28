@@ -5,19 +5,16 @@ right shape for deploying them separately and an awkward one for answering
 "does it work". This module starts all of them in one process against one bus,
 so an end-to-end run is a single command.
 
-    prices ──┬─▶ structures ─┬─▶ structures.signals ─┬─▶ trading ─▶ broker
-             │               └───────────────────────┼─▶ alerts ─▶ notifications
-    news  ───┴───────────────────▶ agents ───────────┘
+    prices ──┬─▶ statespace ─┬─▶ statespace.proposals ─┬─▶ trading ─▶ broker
+             │               └─────────────────────────┼─▶ alerts ─▶ notifications
+    news  ───┴──────────────────────────────────────────┘
                                       │
-        structures, agents, trading ──┴─▶ journal ─▶ journal.db
+        statespace, trading ──────────┴─▶ journal ─▶ journal.db
+
+The levels service that used to sit where `statespace` sits was retired on
+2026-10-28; see `docs/adr/0002-services-are-self-contained.md`.
 
 ## What is optional, and why
-
-**Agents are off unless asked for.** They are the only part that needs a paid
-credential, and a stack that refuses to start without one would make the free
-path - collect, detect levels, alert on a dead feed - hostage to the expensive
-one. `AGENTS_ENABLED=1` turns them on; without a key they stay off however the
-flag is set, with a warning rather than a crash.
 
 **Notifications are off unless configured.** Same reasoning: no Telegram token
 is a reason to skip delivery, not to stop collecting.
@@ -46,12 +43,10 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import agents as ag
 from . import journal as jr
 from . import news as nw
 from . import notifications as nt
 from . import prices as px
-from . import structures as sx
 from . import trading as td
 from .bus import Bus
 from .logging import get_logger
@@ -66,11 +61,9 @@ ORDER: tuple[str, ...] = (
     "journal",
     "notifications",
     "trading",
-    "agents",
-    "structures",
     # After its consumer and before its producer, like everything else in this
-    # tuple: it publishes `statespace.dispersion`, which `trading` subscribes
-    # to, and consumes `prices.bars`.
+    # tuple: it publishes `statespace.proposals` and `statespace.dispersion`,
+    # which `trading` subscribes to, and consumes `prices.bars`.
     "statespace",
     "prices",
     "news",
@@ -115,12 +108,9 @@ class Plan:
     """Which services to run, and where their data lives."""
 
     redis_url: str | None = None
-    #: Off by default: the only part needing a paid credential.
-    agents: bool = False
     #: Off by default: the only part that can lose money. See the docstring.
     trading: bool = False
     notifications: bool = True
-    structures: bool = True
     #: On by default, and cheap: the numeric layer folds one bar at a time
     #: through one member per feed and interval, which measured 1.2ms a bar.
     #: It warms by replay rather than by restore, so start-up costs nothing -
@@ -148,10 +138,8 @@ class Plan:
         intervals = os.environ.get("INTERVALS", "")
         return cls(
             redis_url=os.environ.get("TILL_REDIS_URL") or None,
-            agents=truthy("AGENTS_ENABLED"),
             trading=truthy("TRADING_ENABLED"),
             notifications=truthy("NOTIFICATIONS_ENABLED", "1"),
-            structures=truthy("STRUCTURES_ENABLED", "1"),
             statespace=truthy("STATESPACE_ENABLED", "1"),
             prices=truthy("PRICES_ENABLED", "1"),
             news=truthy("NEWS_ENABLED", "1"),
@@ -266,10 +254,6 @@ def check(plan: Plan) -> dict[str, str]:
     rather than after a collector has been running for a minute.
     """
     reasons: dict[str, str] = {}
-    if plan.agents:
-        settings = ag.Settings.from_env()
-        if not settings.ready:
-            reasons["agents"] = ag.providers.missing(settings.model)
     if plan.notifications:
         settings = nt.Settings.from_env()
         if not nt.build_notifiers(None, settings):
@@ -622,7 +606,22 @@ class Stack:
                 return
 
     def _start(self, group: asyncio.TaskGroup, name: str, book, say):
-        """Launch one service as a supervised task. Returns it, or None."""
+        """Launch one service as a supervised task. Returns it, or None.
+
+        **A runner that does synchronous start-up work must thread it.** Every
+        actor here shares one event loop, so a restore or a replay run inline
+        holds every other service behind it. The retired levels runner read a
+        150MB state file and replayed a few hundred thousand bars, and the same
+        shape elsewhere - one synchronous query at the top of the collector -
+        stopped the desk for twenty minutes on 2026-09-16 and wrote no quotes
+        for the whole of it. `asyncio.to_thread` is safe at start-up precisely
+        because nothing has subscribed to the bus yet.
+
+        No current runner needs it: `statespace` warms by replay rather than by
+        restoring a file, which is why there is no `to_thread` left in this
+        module. The rule is here because the test that used to carry it was
+        asserted against the runner that is gone.
+        """
         runner = getattr(self, f"_run_{name}", None)
         if runner is None:  # pragma: no cover - ORDER and methods are written together
             self.status.failed[name] = "no runner"
@@ -655,46 +654,8 @@ class Stack:
     async def _run_notifications(self, _book) -> None:
         await nt.listen(self.bus)
 
-    async def _run_agents(self, book) -> None:
-        await ag.watch(self.bus, journal=book)
-
     async def _run_trading(self, book) -> None:
         await td.listen(self.bus, journal=book)
-
-    async def _run_structures(self, book) -> None:
-        watcher = sx.Watcher(self.bus, journal=book)
-
-        # One line, in one place - `structures.watch` had the same two lines and
-        # only one of them was fixed, so production kept the bug for a deploy
-        # after the fix shipped. Warming is decided by whether there are levels,
-        # not by whether the restore worked.
-        # **In a thread, all of it.** Every actor on this box shares one event
-        # loop, and none of this is async: the restore reads a 150MB state file
-        # and the warm replays a few hundred thousand bars, which together held
-        # the loop for minutes while `prices` sat behind them with nothing
-        # collected. Measured on 2026-09-16: the same shape - one synchronous
-        # query at the top of the collector - stopped the desk for twenty
-        # minutes and wrote no quotes for the whole of it.
-        #
-        # Safe in a thread precisely because it is start-up: the watcher has
-        # not subscribed to the bus yet, so nothing else can be touching the
-        # engine while this runs. It is the last moment where that is true.
-        def prepare() -> None:
-            watcher.load()
-            watcher.arm()
-            if watcher.cold:
-                log.info("stack: structures restored no levels, warming from the store")
-                watcher.warm()
-            else:
-                # And the feeds added since the last cold start, which `cold`
-                # cannot see - it asks whether the engine holds *any* levels,
-                # and with 2,018 restored it does. Eleven instruments added to
-                # a running deployment had 2,700 stored bars each and seven
-                # levels between them, because nothing replayed their history.
-                watcher.warm_new()
-
-        await asyncio.to_thread(prepare)
-        await watcher.run()
 
     async def _run_statespace(self, _book) -> None:
         # Imported here rather than at the top because this package is meant

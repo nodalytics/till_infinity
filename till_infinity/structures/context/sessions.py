@@ -54,7 +54,7 @@ import math
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 
-from ..state import Restorable
+from ...shared.state import Restorable
 
 #: Hours in a day, and the only bucketing this module does. Finer than an hour
 #: divides the evidence past the point of meaning anything; coarser loses the

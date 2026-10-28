@@ -33,7 +33,6 @@ The pieces, in dependency order:
 | `strategy` | the port a strategy implements, and the register |
 | `scalper` | the four arithmetic level strategies |
 | `turning` | the cycle reading as an entry, gated on its own record |
-| `council` | agents that reason their own way to a trade, and discuss it |
 | `valuation` | asking an analyst what a thing is worth, rather than which way it goes |
 | `speeds` | three EWMAs and their agreement, for `momentum-scalp` |
 | `book` | the levels seen so far, for the ones that trade toward a level |
@@ -95,7 +94,6 @@ from .risk import Guard
 from .service import Trader, listen
 from .sizing import Sizing, lots, price_distance
 from .speeds import Speeds
-from .strategies.council import Council, CouncilStrategy, Opinion, Voice
 from .strategies.opportunity import PRESETS, Opportunity, Ride, Shape
 from .strategies.scalper import (
     ConfluenceScalp,
@@ -105,15 +103,6 @@ from .strategies.scalper import (
     SweepAware,
 )
 from .strategies.strategy import STRATEGIES, Strategy, catalogue
-from .strategies.stretching import CycleTurnScalp
-from .strategies.swing import (
-    ApproachScalp,
-    FadeToValue,
-    OriginSwing,
-    Runner,
-    SwingLevel,
-)
-from .strategies.turning import CycleTurn
 from .turning import TurnExit, TurnOutcome, TurnTally
 from .valuation import Priced, Valuation, price_it
 from .venues.broker import (
@@ -149,18 +138,12 @@ __all__ = [
     "SUFFIXES",
     "Account",
     "Affordability",
-    "ApproachScalp",
     "Book",
     "Broker",
     "BrokerError",
     "ConfluenceScalp",
     "Context",
-    "Council",
-    "CouncilStrategy",
-    "CycleTurn",
-    "CycleTurnScalp",
     "Exposure",
-    "FadeToValue",
     "Guard",
     "Intent",
     "LevelScalp",
@@ -168,11 +151,9 @@ __all__ = [
     "MomentumScalp",
     "Move",
     "NotConnectedError",
-    "Opinion",
     "Opportunity",
     "Order",
     "OrderResult",
-    "OriginSwing",
     "PaperBroker",
     "Plan",
     "Position",
@@ -183,7 +164,6 @@ __all__ = [
     "Report",
     "Resolution",
     "Ride",
-    "Runner",
     "Seen",
     "Settings",
     "Shape",
@@ -192,7 +172,6 @@ __all__ = [
     "Speeds",
     "Strategy",
     "SweepAware",
-    "SwingLevel",
     "SymbolSpec",
     "Tick",
     "Trade",
@@ -203,7 +182,6 @@ __all__ = [
     "TurnTally",
     "Valuation",
     "Verdict",
-    "Voice",
     "advance",
     "available",
     "build",

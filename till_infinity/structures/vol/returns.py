@@ -40,8 +40,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
+from ...shared.state import Restorable
 from ..learning.online import Linear
-from ..state import Restorable
 
 #: The inputs, named so the fitted weights can be read. Every one is either
 #: already scale-free or in [0, 1] - a feature in price units would defeat the

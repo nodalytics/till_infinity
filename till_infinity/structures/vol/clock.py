@@ -38,7 +38,7 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from ..state import Restorable
+from ...shared.state import Restorable
 
 ENABLED = os.environ.get("STRUCTURES_VOL_CLOCK", "1") not in ("0", "false", "no")
 

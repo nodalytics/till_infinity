@@ -52,10 +52,8 @@ To change a setting:
 |---|---|---|---|
 | `PRICES_ENABLED` | `1` | Whether `till-infinity run` starts the price collector. | restart |
 | `NEWS_ENABLED` | `1` | Whether `run` starts the news collector. | restart |
-| `STRUCTURES_ENABLED` | `1` | Whether `run` starts the levels / structures service. | restart |
 | `NOTIFICATIONS_ENABLED` | `1` | Whether `run` starts notification delivery. It exits quietly with no channel configured. | restart |
 | `JOURNAL` | `1` | Whether `run` starts the journal writer. | restart |
-| `AGENTS_ENABLED` | `0` | Whether `run` starts the agents. Off because they are the only part needing a paid credential. | restart |
 | `TRADING_ENABLED` | `0` | Whether `run` starts the trading service at all. Orders also need `TRADING_LIVE`. | trades |
 | `BACKFILL_ON_START` | `1` | Pull history at start when the store holds too little for levels to form, rather than collecting for days first. | restart |
 | `SYMBOLS` | *(all)* | Narrow collection to these instruments (comma-separated feed names). Unset collects the whole catalogue. `STRUCTURES_FEEDS` falls back to it. | restart |
@@ -160,7 +158,7 @@ To change a setting:
 | `STRUCTURES_PROJECTION` | `0` | The exact-law forward cone for Deriv synthetics, published and calibrated. Off until measured live. The envelope's own law path (Volatility/Jump/Step) does not need it. | restart |
 | `STRUCTURES_VOL_CLOCK` | `1` | Scale the envelope's unit by the hour of the week: FX on New York's clock (outside the boosted 15m), and crypto. It also drives the "this hour is historically N× average volatility" card line (FX, metals, crypto). [calendar-returns.md](../research/docs/calendar-returns.md) | restart |
 | `STRUCTURES_ENVELOPE_MONDRIAN` | `0` | Key the envelope's AgACI correction by the ZMA stretched state, once a bucket has 200 outcomes of its own. It closes 1-2 points of coverage gap when price is stretched, at equal or better pinball ([zma-conformal.md](../research/docs/zma-conformal.md)). **Off by default: it roughly triples each series' envelope state (about 65 KB to 189 KB).** **Switching Mondrian on is one setting once memory headroom is confirmed**: `STRUCTURES_ENVELOPE_MONDRIAN=1` and a restart. See [deployment.md](deployment.md), "Features that wait on memory headroom". | restart |
-| `TI_MODELS_DIR` | `.data/models` | Where frozen offline models are read from and promoted into: the shock forecaster, the boosted FX envelope, the touch models. The engine prefers a model here over the one shipped in `till_infinity/models/`, and re-reads a changed file within five minutes. | state |
+| `TI_MODELS_DIR` | `.data/models` | Where frozen offline models are read from: the shock forecaster, the boosted FX envelope, the touch models. The engine prefers a model here over the one shipped in `till_infinity/models/`, and re-reads a changed file within five minutes. **Nothing promotes into it any more** - the retraining pipeline was retired on 2026-10-28, so it is read-only unless a model is placed here by hand. | state |
 
 ### Rollover mask
 
@@ -315,11 +313,6 @@ wins over it.
 
 | Variable | Default | What it does | Change |
 |---|---|---|---|
-| `TRADING_COUNCIL_QUORUM` | `2` | Voices that must agree. Only used if `council` is in `TRADING_STRATEGIES`. | trades |
-| `TRADING_COUNCIL_MIN_CONVICTION` | `0.55` | Mean conviction needed across agreeing voices. | trades |
-| `TRADING_COUNCIL_DISCUSS` | `1` | Voices see each other and may revise once; 0 halves the calls. | restart |
-| `TRADING_COUNCIL_TIMEOUT_S` | `25` | Per-call timeout. | restart |
-| `TRADING_COUNCIL_DAILY_CALLS` | `400` | Daily model-call ceiling, for cost. | restart |
 
 ### Execution and the MT5 bridge
 
@@ -349,14 +342,6 @@ wins over it.
 
 | Variable | Default | What it does | Change |
 |---|---|---|---|
-| `AGENTS_MODEL` | `claude-opus-5` | `provider:model`; a bare name is Anthropic's. `till-infinity agents providers` lists them. | restart |
-| `AGENTS_FALLBACK_MODELS` | *(empty)* | Models to fall back to, comma-separated. | restart |
-| `AGENTS_WINDOW_S` | `60` | Seconds of bus traffic per judgement. Widen on free tiers. | restart |
-| `AGENTS_SPREAD_BPS` | `8` | Spread that wakes the model. | restart |
-| `AGENTS_IMPORTANCE` | `3` | Least news importance considered. | restart |
-| `AGENTS_MAX_TOKENS` / `AGENTS_TOOL_CALLS` / `AGENTS_TIMEOUT_S` / `AGENTS_THINKING` | `2048` / `48` / `120` / `1` | Per-run model limits. | restart |
-| `ANTHROPIC_API_KEY` | — | Anthropic (Claude). | **secret** |
-| `OPENAI_API_KEY` | — | OpenAI. | **secret** |
 | `GOOGLE_API_KEY` / `GEMINI_API_KEY` | — | Gemini (either name). | **secret** |
 | `GROQ_API_KEY` | — | Groq. | **secret** |
 | `XAI_API_KEY` | — | xAI Grok (OpenAI wire format). | **secret** |
@@ -396,7 +381,6 @@ were, and what they did, are in that directory's own history.
 | Variable | Default | What it does | Change |
 |---|---|---|---|
 | `TI_MODELS_DIR` | `.data/models` | See the envelope table above. | state |
-| `MODELS_SYMBOLS` | `$PRICES_BROKER_SYMBOLS` | Instruments `till-infinity models retrain` trains on. In GitHub Actions, a repository variable. | restart |
 | `TRADING_MT5_URL`, `TRADING_MT5_API_KEY` | — | The bridge the retrain fetches bars through (secrets in the workflow). | **secret** |
 
 ## Research-only (not read by production)

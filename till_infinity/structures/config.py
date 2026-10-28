@@ -13,7 +13,7 @@ from pathlib import Path
 
 from ..shared.env import number as _float
 from ..shared.env import whole as _int
-from .state import Restorable
+from ..shared.state import Restorable
 
 DEFAULT_STATE_DIR = ".data/structures"
 DEFAULT_JOURNAL_DB = ".data/journal/journal.db"

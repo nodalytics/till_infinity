@@ -475,12 +475,20 @@ class Settings:
     #: Strategies to run, by registered name. Several may run together; the
     #: per-instrument position limit is what stops two of them doubling a
     #: position rather than any coordination between them.
-    #: The two the desk actually runs. `cycle-scalp` is the unified scalp
-    #: thesis - 4h bias, 1h structure, fast pullback entry - and `cycle-turn`
-    #: is the slower reversion trade that the 4h cycle has to agree with, on a
-    #: feed whose 4h record earns a say.
-    #: Measured; see `research/docs/settings.md`.
-    strategies: tuple[str, ...] = ("cycle-turn", "cycle-turn-scalp", "cycle-scalp")
+    #:
+    #: **The default is the one strategy that does not need a level.** It was
+    #: `("cycle-turn", "cycle-turn-scalp", "cycle-scalp")` - measured, and
+    #: argued in `research/docs/settings.md` - until the level strategies were
+    #: retired on 2026-10-28 with the structures service that fed them. A
+    #: default naming a retired strategy is not a smaller problem than a wrong
+    #: one: `build` raises on an unknown name rather than skipping it, so the
+    #: service would refuse to start.
+    #:
+    #: `statespace-surprise` is what is left, and `research/docs/
+    #: statespace-signals.md` is the measurement behind it: a 2R hold on a
+    #: large standardised innovation, +0.1436R +/- 0.0485 over 905 trades,
+    #: t 2.96 across fifteen feeds.
+    strategies: tuple[str, ...] = ("statespace-surprise",)
     #: The named risk plan. Individual limits set in the environment win over
     #: it - see `plans`.
     risk_plan: str = "standard"
@@ -853,25 +861,6 @@ class Settings:
     #: price is not drawn to a level, so the last stretch into the zone is the
     #: part that was measured and did not survive.
     fade_buffer_vol: float = 0.25
-
-    # ------------------------------------------------------- the council
-    #: Agents that reason their own way to a trade. Off unless `council` is in
-    #: TRADING_STRATEGIES, and it needs a model credential like `agents` does.
-    #:
-    #: Voices agreeing before anything is traded. Two of four is a majority of
-    #: those who spoke in the common case where two abstain.
-    council_quorum: int = 2
-    #: Mean conviction across the agreeing voices, below which the panel is not
-    #: confident enough to be worth the spread.
-    council_min_conviction: float = 0.55
-    #: Whether the voices see each other's answers and may revise, once. Off
-    #: makes each signal cost half as many model calls.
-    council_discuss: bool = True
-    council_timeout: float = 25.0
-    #: Model calls a day, across every voice and round. A cost ceiling, not a
-    #: quality setting: four voices over two rounds is eight calls per signal
-    #: considered. Zero removes the ceiling, which is rarely what anybody wants.
-    council_daily_calls: int = 400
 
     # -------------------------------------------- managing an open trade
     #: R multiple at which the stop moves to break even. Zero is off, which is
@@ -1476,11 +1465,6 @@ class Settings:
             fade_max_distance_vol=_float("TRADING_FADE_MAX_DISTANCE_VOL", 8.0),
             fade_min_distance_vol=_float("TRADING_FADE_MIN_DISTANCE_VOL", 1.5),
             fade_buffer_vol=_float("TRADING_FADE_BUFFER_VOL", 0.25),
-            council_quorum=_int("TRADING_COUNCIL_QUORUM", 2),
-            council_min_conviction=_float("TRADING_COUNCIL_MIN_CONVICTION", 0.55),
-            council_discuss=_flag("TRADING_COUNCIL_DISCUSS", True),
-            council_timeout=_float("TRADING_COUNCIL_TIMEOUT_S", 25.0),
-            council_daily_calls=_int("TRADING_COUNCIL_DAILY_CALLS", 400),
             break_even_at=_float("TRADING_BREAK_EVEN_AT", 0.0),
             break_even_ticks=_int("TRADING_BREAK_EVEN_TICKS", 2),
             trail_vol=_float("TRADING_TRAIL_VOL", 0.0),

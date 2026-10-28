@@ -28,8 +28,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
+from ...shared.state import Restorable
 from ..levels import Kalman, Level
-from ..state import Restorable
 from ..vol.volatility import Volatility
 
 #: Sessions a pivot set is computed for. Daily is what most desks watch;

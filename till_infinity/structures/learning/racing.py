@@ -72,7 +72,7 @@ import time
 from dataclasses import dataclass, field
 
 from ...logging import get_logger
-from ..state import Restorable
+from ...shared.state import Restorable
 from .online import Logistic
 
 log = get_logger(__name__)

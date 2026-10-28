@@ -182,7 +182,7 @@ class Filter:
         """
         if not self.floor:
             return ""
-        from ..structures.levels import SECONDS
+        from ..shared.intervals import SECONDS
 
         want = SECONDS.get(self.floor, 0.0)
         if want <= 0:

@@ -81,10 +81,19 @@ class Settings(Restorable):
     feeds: tuple[str, ...] = ()
     noise: float = DEFAULT_NOISE
     save_seconds: float = DEFAULT_SAVE_SECONDS
-    #: Whether to announce transitions on `statespace.signals`. On, because a
-    #: topic with no traffic teaches a consumer nothing - but every reading is
-    #: still on `DISPERSION`, so turning this off loses only the notice.
-    signals: bool = True
+    #: Whether to announce transitions on `statespace.signals`. **Off since
+    #: 2026-10-28, when its only consumer was retired.**
+    #:
+    #: It was on for the opposite reason - a topic with no traffic teaches a
+    #: consumer nothing - and `agents` was the consumer that read it. With
+    #: `agents` in `research/retire/`, nothing subscribes, and a producer
+    #: publishing to a topic with no subscriber is the bug that hid
+    #: `statespace.proposals` for weeks: the producer's own tally counts what
+    #: it sent, so it looks healthy. Either a consumer or silence; this is
+    #: silence until something wants the notice.
+    #:
+    #: Every reading is still on `DISPERSION`, so this loses only the notice.
+    signals: bool = False
     signal_surprise: float = DEFAULT_SIGNAL_SURPRISE
     signal_width: float = DEFAULT_SIGNAL_WIDTH
     signal_quiet_hours: float = DEFAULT_SIGNAL_QUIET_HOURS

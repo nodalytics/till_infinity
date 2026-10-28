@@ -108,7 +108,7 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from statistics import NormalDist
 
-from ..state import Restorable
+from ...shared.state import Restorable
 from . import projection as pj
 from .ranges import Ranges
 

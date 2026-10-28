@@ -328,59 +328,9 @@ def _engine(name, **over):
     return td.STRATEGIES[name](Settings(**over))
 
 
-def test_a_swing_and_a_scalp_have_different_ceilings():
-    """`max_hold` was never a global cap - `hold_for` read it only when a
-    strategy named no hold of its own, so every swing was governed by a
-    hardcoded ClassVar no deployment could reach."""
-    assert _engine("swing-level").ceiling == 21_600.0
-    assert _engine("level-scalp").ceiling == 1_800.0
-
-
-def test_each_ceiling_is_settable():
-    assert _engine("swing-level", max_hold_swing=7_200.0).ceiling == 7_200.0
-    assert _engine("level-scalp", max_hold=600.0).ceiling == 600.0
-
-
-def test_a_strategy_asking_for_longer_than_its_style_is_capped():
-    """That is what makes these ceilings rather than defaults. `council` asks
-    for 2,700s as a scalp and is held to 1,800."""
-    engine = _engine("council")
-    assert engine.hold_seconds > engine.ceiling
-    assert engine.hold_for("1h") == engine.ceiling
-
-
 def test_a_strategy_asking_for_less_keeps_what_it_asked_for():
     """`snap` wants 120 seconds and a ceiling must not lengthen a trade."""
     assert _engine("snap").hold_for("1h") == 120.0
-
-
-def test_the_swing_ceiling_falls_back_to_the_scalp_one():
-    """Zero means unset, not "no hold at all" - a swing with no ceiling of its
-    own is capped like everything else rather than uncapped."""
-    assert _engine("swing-level", max_hold_swing=0.0).ceiling == 1_800.0
-
-
-def test_every_swing_enters_strictly_below_the_frame_that_judges_it():
-    """**This asserted a 15m floor on swing entries until 2026-09-22.**
-
-    The floor is gone - the break-rate figure behind it was a selection effect,
-    see research/break-trade.md - but the invariant that replaced it is the one
-    that was doing the real work all along: a swing's trigger has to sit
-    strictly below every timeframe in its `context`, or the gap that makes it a
-    swing rather than a fast trade wearing a swing's patience has collapsed.
-
-    That is also why the band stops at 30m and not at 1h: swing context starts
-    at 1h, so a 1h entry would tie rather than clear.
-    """
-    import till_infinity.trading as td
-    from till_infinity.structures.levels import SECONDS
-
-    for name, cls in td.STRATEGIES.items():
-        if cls.style != "swing" or not cls.entries or not cls.context:
-            continue
-        slowest_trigger = max(SECONDS[e] for e in cls.entries)
-        fastest_judge = min(SECONDS[c] for c in cls.context)
-        assert slowest_trigger < fastest_judge, name
 
 
 # ------------------------------------- a close with no decision behind it
@@ -492,16 +442,6 @@ def test_every_strategy_wants_context():
         assert cls.needs_context is True, name
 
 
-def test_a_strategy_naming_no_context_is_not_gated():
-    """`council` delegates to its members, which carry their own anchors.
-    Asking it for agreement it never declared would refuse every call."""
-    import till_infinity.trading as td
-
-    engine = td.STRATEGIES["council"](_scalp().settings)
-    assert engine.context == ()
-    assert engine.anchors == ()
-
-
 def test_the_gate_reads_both():
     import inspect
 
@@ -509,16 +449,6 @@ def test_the_gate_reads_both():
 
     source = inspect.getsource(scalper.LevelStrategy.consider)
     assert "self.needs_context and bool(self.context)" in source
-
-
-def test_origin_swing_analyses_on_the_same_frame_as_the_rest():
-    """Was (4h, 1d) alone from 2026-09-01. Folded into the shared 1h-4h
-    analysis frame on 2026-09-03: the break rate flattens past 30m - 2.8% at
-    30m, 1.4% at 1h, 0.0% at 2h, 4.3% at 4h - so insisting on the daily buys
-    nothing over 4h and costs most of the signals."""
-    import till_infinity.trading as td
-
-    assert td.STRATEGIES["origin-swing"].context == ("1h", "2h", "4h")
 
 
 def test_a_stop_that_overshoots_gives_back_the_size_it_overshot_by():
@@ -624,12 +554,22 @@ def test_opportunity_triggers_across_the_fast_band_but_not_at_the_hour():
 
 def test_the_presets_recover_the_named_strategies():
     """The nine are points in this space, not separate things. If a preset
-    drifts from the class it names, the map is a lie."""
+    drifts from the class it names, the map is a lie.
+
+    **`PRESETS` still names strategies that retired on 2026-10-28**, so this
+    checks the ones still registered. That is a real loose end rather than a
+    tidy-up: a map whose keys do not resolve is the same defect this test was
+    written to catch, pointing the other way. `PRESETS` lives in
+    `strategies/opportunity.py` and goes when that does - see
+    `docs/specs/2026-10-28-services-layout-design.md`.
+    """
     import till_infinity.trading as td
     from till_infinity.trading.config import Settings
 
     made = Settings()
-    for name, shape in td.PRESETS.items():
+    live = {n: s for n, s in td.PRESETS.items() if n in td.STRATEGIES}
+    assert live, "no preset resolves at all, which is not a narrowing but a break"
+    for name, shape in live.items():
         engine = td.STRATEGIES[name](made)
         assert engine.stop_multiple == shape.stop, name
         assert engine.target_multiple == shape.target, name
@@ -916,7 +856,7 @@ def test_an_untaken_intent_waits_exactly_as_long_as_a_real_resting_entry():
     withdrawn. That credited fills the live system would never have seen, to
     exactly the strategies that rest their entry furthest out of reach."""
     from till_infinity.bus import Bus
-    from till_infinity.structures.levels import SECONDS
+    from till_infinity.shared.intervals import SECONDS
     from till_infinity.trading.service import Trader
 
     trader = Trader(Bus(), settings=_scalp().settings)
@@ -1021,17 +961,6 @@ def test_the_strategy_passes_the_interval_through():
 
 
 # --------------------------------------- momentum leads, the candle confirms
-
-
-def test_every_higher_timeframe_strategy_lets_momentum_lead():
-    """Asked for on 2026-09-03. On a higher timeframe a bar takes hours to
-    close, so a trade taken on the candle alone is taken on evidence that has
-    already happened."""
-    import till_infinity.trading as td
-
-    for name, cls in td.STRATEGIES.items():
-        if cls.style == "swing":
-            assert cls.momentum_leads is True, name
 
 
 def test_the_scalps_are_left_alone():
@@ -1190,50 +1119,6 @@ def test_the_floor_actually_bites_on_an_alert_shaped_payload():
     assert "below the 15m floor" in made.rejects(alert("5m"))
     assert made.rejects(alert("15m")) == ""
     assert made.rejects(alert("4h")) == ""
-
-
-def test_every_swing_analyses_slow_and_enters_fast():
-    """Asked for on 2026-09-03: analysis on the slow frames, entry on the fast
-    ones, the exit horizon at an hour or more. It is what `swing-level` already
-    argued for - the slow frame says *whether*, the fast one says *when* - and
-    it was only true of the context, never of the entries.
-
-    Written as the literal tuples, which made the two impossible to move
-    together: `fade-to-value` was asked for a 1h entry on 2026-10-05, and a 1h
-    entry is only coherent if its context starts at 2h. So the claim here is
-    now the **relation** - every entry strictly faster than the fastest context
-    frame - which is what "slow says whether, fast says when" actually means,
-    and which the old literal only happened to satisfy.
-    """
-    import till_infinity.trading as td
-    from till_infinity.structures.levels import SECONDS
-    from till_infinity.trading.config import Settings
-
-    made = Settings()
-    #: Allowed to enter at or above the hour. Named rather than skipped, so a
-    #: second strategy widening that far trips this test and has to argue for
-    #: it: 1h entries are the slowest band `swing` has, and the measurement
-    #: behind the one exception is in research/docs/lrc-retest.md.
-    at_the_hour = {"fade-to-value"}
-    for name, cls in td.STRATEGIES.items():
-        if cls.style != "swing":
-            continue
-        engine = cls(made)
-        assert engine.entries, name
-        assert engine.context, name
-        slowest_entry = max(SECONDS[iv] for iv in engine.entries)
-        fastest_context = min(SECONDS[iv] for iv in engine.context)
-        assert slowest_entry < fastest_context, name
-        # Widened below 15m on 2026-09-22 - see research/break-trade.md.
-        assert "15m" in engine.entries, name
-        if name not in at_the_hour:
-            assert slowest_entry < SECONDS["1h"], name
-            assert engine.entries == ("1m", "3m", "5m", "15m", "30m"), name
-            assert engine.context == ("1h", "2h", "4h"), name
-        # And the exit horizon stays at an hour or more, on every frame it
-        # enters on - not just the one the old test happened to sample.
-        for interval in engine.entries:
-            assert engine.hold_for(interval) >= 3600.0, f"{name} on {interval}"
 
 
 # ------------------------------- the trail-only exit, beside the target one

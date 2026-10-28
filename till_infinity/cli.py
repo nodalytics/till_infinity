@@ -20,7 +20,6 @@ from rich.markup import escape
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 from rich.table import Table
 
-from . import agents as ag
 from . import journal as jr
 from . import news as nw
 from . import notifications as nt
@@ -1216,223 +1215,6 @@ def notify_listen(target, redis_url, group, verbose, quiet, log_file):
 
 
 @main.group()
-def agents() -> None:
-    """Ask an analyst about the collected data, or leave one watching."""
-
-
-def _agent_settings(prices_db, news_db, model, role_name):
-    settings = ag.Settings.from_env()
-    if prices_db is not None:
-        settings.prices_db = Path(prices_db)
-    if news_db is not None:
-        settings.news_db = Path(news_db)
-    if model:
-        settings.model = model
-    if not settings.ready:
-        console.print(f"[red]{escape(ag.providers.missing(settings.model))}[/]")
-        raise SystemExit(1)
-    return settings, ag.resolve(role_name)
-
-
-agent_options = [
-    click.option(
-        "--role",
-        "-r",
-        "role_name",
-        type=click.Choice(sorted(ag.ROLES)),
-        default=ag.DEFAULT_ROLE,
-        show_default=True,
-        help="Which analyst. Each sees a different set of tools.",
-    ),
-    click.option(
-        "--model",
-        "-m",
-        help=(
-            "provider:model - openai:gpt-5, google:gemini-2.5-pro, xai:grok-4. "
-            f"A bare name is Anthropic's. Default: {ag.DEFAULT_MODEL}."
-        ),
-    ),
-    click.option("--prices-db", type=click.Path(path_type=Path), help="Prices SQLite file."),
-    click.option("--news-db", type=click.Path(path_type=Path), help="News SQLite file."),
-    click.option("-v", "--verbose", is_flag=True, help="Debug logging."),
-    click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only."),
-    click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs."),
-]
-
-
-def _agent_common(func):
-    for option in reversed(agent_options):
-        func = option(func)
-    return func
-
-
-def _show(run: ag.Run) -> None:
-    console.print(f"[bold]{escape(run.analysis.summary)}[/]")
-    if not run.analysis.findings:
-        console.print("[dim]no findings - the data does not support an alert[/]")
-    for finding in run.analysis.findings:
-        colour = {"critical": "red", "warning": "yellow"}.get(finding.level, "cyan")
-        console.print(
-            f"\n[{colour}]{finding.level}[/] [bold]{escape(finding.title)}[/] "
-            f"[dim]({finding.confidence:.0%}"
-            f"{', ' + escape(finding.instrument) if finding.instrument else ''})[/]"
-        )
-        if finding.detail:
-            console.print(f"  {escape(finding.detail)}")
-        for line in finding.evidence:
-            console.print(f"  [dim]· {escape(line)}[/]")
-    console.print(f"\n[dim]{run.role} via {run.model}: {run}[/]")
-
-
-@agents.command("ask")
-@click.argument("question", nargs=-1, required=True)
-@_agent_common
-def agents_ask(question, role_name, model, prices_db, news_db, verbose, quiet, log_file):
-    """Ask a question about the stored data.
-
-    The analyst answers only from tool calls against the databases - it has no
-    prices of its own, and every store it reads is opened read-only.
-    """
-    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
-    settings, role = _agent_settings(prices_db, news_db, model, role_name)
-    try:
-        outcome = run(ag.analyse(" ".join(question), role=role, settings=settings))
-    except (ag.NotConfiguredError, ag.ProviderUnavailableError) as exc:
-        console.print(f"[red]{escape(str(exc))}[/]")
-        raise SystemExit(1) from None
-    _show(outcome)
-
-
-@agents.command("watch")
-@_agent_common
-@click.option(
-    "--redis",
-    "redis_url",
-    metavar="URL",
-    help="Redis to consume from. Default: TILL_REDIS_URL.",
-)
-@click.option("--window", type=float, help="Seconds of bus traffic per judgement. Default: 60.")
-@click.option("--spread-bps", type=float, help="Spread that wakes the model. Default: 8.")
-@click.option("--group", default="agents", show_default=True, help="Consumer group name.")
-@click.option("--journal-db", type=click.Path(path_type=Path), help="Journal SQLite file.")
-@click.option("--no-journal", is_flag=True, help="Do not record decisions.")
-@click.option("--once", is_flag=True, help="Judge a single window and exit.")
-def agents_watch(
-    role_name,
-    model,
-    prices_db,
-    news_db,
-    verbose,
-    quiet,
-    log_file,
-    redis_url,
-    window,
-    spread_bps,
-    group,
-    journal_db,
-    no_journal,
-    once,
-):
-    """Watch the bus and alert when something is worth a human's attention.
-
-    Consumes what the collectors publish, judges each window without a model
-    first, and only then asks one. Findings go to the `alerts` topic, which
-    `notify listen` delivers.
-    """
-    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
-    settings, role = _agent_settings(prices_db, news_db, model, role_name)
-    if window is not None:
-        settings.window_seconds = window
-    if spread_bps is not None:
-        settings.spread_bps = spread_bps
-    if journal_db is not None:
-        settings.journal_db = Path(journal_db)
-    if no_journal:
-        settings.journalling = False
-
-    url = redis_url or os.environ.get("TILL_REDIS_URL") or None
-    bus = Bus(redis_url=url)
-    if url is None:
-        console.print(
-            "[yellow]no redis configured[/] - an in-process bus only hears "
-            "publishers inside this command. Set TILL_REDIS_URL or pass --redis."
-        )
-    console.print(
-        f"[bold]{role.name}[/] watching {bus.backend} in "
-        f"{settings.window_seconds:.0f}s windows, Ctrl-C to stop"
-    )
-
-    def window_done(index, messages, outcome):
-        console.print(
-            f"[dim]{_clock()}[/] window {index}: {len(messages)} message(s)"
-            + ("" if outcome is None else f" -> {outcome}")
-        )
-        if outcome is not None:
-            _show(outcome)
-
-    async def go() -> None:
-        book = jr.Journal(settings.journal_db) if settings.journalling else None
-        try:
-            if book is not None:
-                await book.open()
-            await ag.watch(
-                bus,
-                settings=settings,
-                role=role,
-                group=group,
-                windows=1 if once else None,
-                on_window=window_done,
-                journal=book,
-            )
-        finally:
-            if book is not None:
-                await book.close()
-            await bus.close()
-
-    try:
-        run(go())
-    except KeyboardInterrupt:
-        console.print("stopped")
-
-
-@agents.command("providers")
-def agents_providers():
-    """Show which model providers are usable from here."""
-    setup_logging()
-    table = Table(title="model providers")
-    for column in ("prefix", "models", "environment", "ready", "installs with"):
-        table.add_column(column)
-    for name in sorted({p.name for p in ag.providers.PROVIDERS.values()}):
-        known = ag.providers.PROVIDERS[name]
-        ready = ag.providers.ready(f"{name}:x")
-        table.add_row(
-            f"[bold]{name}[/]" + (" [dim](default)[/]" if name == "anthropic" else ""),
-            escape(known.label),
-            escape(known.env_names or "-"),
-            "[green]yes[/]" if ready else "[dim]no[/]",
-            escape(known.install or "-"),
-        )
-    console.print(table)
-    console.print("[dim]Use as[/] --model openai:gpt-5 [dim]· a bare name is Anthropic's[/]")
-
-
-@agents.command("roles")
-def agents_roles():
-    """Show the analysts and what each one can read."""
-    table = Table(title="analysts")
-    for column in ("role", "goal", "tools"):
-        table.add_column(column)
-    for name in sorted(ag.ROLES):
-        role = ag.ROLES[name]
-        table.add_row(
-            f"[bold]{name}[/]" + (" [dim](default)[/]" if name == ag.DEFAULT_ROLE else ""),
-            escape(role.goal),
-            escape(", ".join(role.tools)),
-        )
-    console.print(table)
-
-
-@main.group()
 def structures() -> None:
     """Online models over the price data - what is unusual, what has changed."""
 
@@ -2324,7 +2106,6 @@ def journal_export(db, out, kind, hours, limit):
 
 @main.command("run")
 @click.option("--redis", "redis_url", metavar="URL", help="Redis. Default: TILL_REDIS_URL.")
-@click.option("--agents/--no-agents", default=None, help="Override AGENTS_ENABLED.")
 @click.option("--notify/--no-notify", default=None, help="Override NOTIFICATIONS_ENABLED.")
 @click.option("-s", "--symbol", multiple=True, help="Instrument; repeatable.")
 @click.option("-i", "--interval", multiple=True, help="Interval; repeatable.")
@@ -2333,24 +2114,18 @@ def journal_export(db, out, kind, hours, limit):
 @click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
 @click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only.")
 @click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs.")
-def run_command(
-    redis_url, agents, notify, symbol, interval, duration, once, verbose, quiet, log_file
-):
+def run_command(redis_url, notify, symbol, interval, duration, once, verbose, quiet, log_file):
     """Run every service together - the end-to-end path.
 
-    Collectors publish, structures finds levels and anomalies, agents judge,
+    Collectors publish, statespace folds and proposes, trading decides,
     notifications deliver, and the journal records. One bus, one process.
 
-    Agents are off unless `AGENTS_ENABLED=1` or `--agents`: they are the only
-    part needing a paid credential, and the rest should not be hostage to it.
     Anything that cannot start says why and the others carry on.
     """
     setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
     plan = st.Plan.from_env()
     if redis_url:
         plan.redis_url = redis_url
-    if agents is not None:
-        plan.agents = agents
     if notify is not None:
         plan.notifications = notify
     if symbol:
@@ -3020,94 +2795,6 @@ def _decline_table(report) -> None:
     for gate, count in sorted(report.declines.items(), key=lambda kv: -kv[1]):
         table.add_row(gate, str(count))
     console.print(table)
-
-
-@main.group()
-def models() -> None:
-    """The offline models: retrain on fresh bars, promote only what beats the model in service."""
-
-
-@models.command("retrain")
-@click.option("--model", "-m", "names", multiple=True, help="Only this model. Default: all.")
-@click.option("--every-days", type=float, default=14.0, show_default=True, help="Days apart.")
-@click.option("--once", is_flag=True, help="One run now, then exit.")
-@click.option("--redis", "redis_url", metavar="URL", help="Card each run to this bus's alerts.")
-@click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
-@click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only.")
-@click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs.")
-def models_retrain(names, every_days, once, redis_url, verbose, quiet, log_file):
-    """Retrain on the terminal's history and promote a challenger only when it passes the gates.
-
-    Needs the bridge (TRADING_MT5_URL) and the `train` extra (scikit-learn). A promoted model is
-    written to TI_MODELS_DIR, which a running `structures watch` re-reads within five minutes.
-    """
-    from .bus import ALERTS
-    from .models import bridge
-    from .models import retrain as rt
-
-    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
-    try:
-        import sklearn  # noqa: F401
-    except ImportError as exc:
-        raise click.ClickException("training needs the `train` extra (scikit-learn)") from exc
-    http = bridge.client()
-    symbols = rt.symbols()
-    missing = (
-        "no bridge: set TRADING_MT5_URL"
-        if http is None
-        else "no instruments: set PRICES_BROKER_SYMBOLS or MODELS_SYMBOLS"
-        if not symbols
-        else ""
-    )
-    if missing and http is not None:
-        http.close()
-    if missing and once:
-        raise click.ClickException(missing)
-    if missing:
-        # As a service, idle rather than exit: an exit is restarted straight back into the same
-        # missing setting, and the shipped models keep serving meanwhile.
-        log.warning("models: %s - idle, the shipped models stay in service", missing)
-        while True:
-            time.sleep(3600)
-    for name in names:
-        if name not in rt.REGISTRY:
-            raise click.ClickException(f"unknown model {name!r}: {', '.join(rt.REGISTRY)}")
-    url = redis_url or os.environ.get("TILL_REDIS_URL") or None
-
-    def publish(card: dict) -> None:
-        if url is None:
-            return
-
-        async def go() -> None:
-            bus = Bus(redis_url=url)
-            try:
-                await bus.publish(ALERTS, card, source="models")
-            finally:
-                await bus.close()
-
-        try:
-            run(go())
-        except Exception:  # a card is a courtesy; the run already happened
-            log.exception("models: could not publish the card")
-
-    console.print(
-        f"retraining {', '.join(names or rt.REGISTRY)} on {len(symbols)} instruments"
-        + ("" if once else f", every {every_days:g} days")
-        + f"; models in {rt.frozen.models_dir()}"
-    )
-    try:
-        rt.watch(
-            every_days,
-            lambda symbol, interval: bridge.bars(http, symbol, interval),
-            symbols,
-            publish,
-            once=once,
-            only=names or None,
-        )
-    except KeyboardInterrupt:
-        console.print("stopped")
-    finally:
-        http.close()
 
 
 if __name__ == "__main__":  # pragma: no cover

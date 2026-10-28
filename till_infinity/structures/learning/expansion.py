@@ -34,7 +34,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from ...shared import frozen
-from ..state import Restorable
+from ...shared.state import Restorable
 from .shocks import _log, _z
 
 MODEL = "expansion"

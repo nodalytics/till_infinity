@@ -66,7 +66,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from ...logging import get_logger
-from ..state import Restorable
+from ...shared.state import Restorable
 from .macro import currencies
 
 log = get_logger(__name__)

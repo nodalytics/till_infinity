@@ -62,7 +62,7 @@ from pathlib import Path
 
 from ..logging import get_logger
 from ..shared import effects
-from .state import Restorable
+from ..shared.state import Restorable
 
 #: Recorded and surfaced always; it costs one array pass a bar.
 ENABLED = os.environ.get("STRUCTURES_ZMA", "1") not in ("0", "false", "no")

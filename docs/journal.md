@@ -131,9 +131,14 @@ Two details that had to be right for any of this to work:
   of being proven right or wrong, and inventing one would fill the record with
   labels nobody could check.
 
-## What the agents record automatically
+## What the agents recorded automatically
 
-`agents watch` journals every window it takes to a model:
+**The agents service was retired on 2026-10-28**
+(`research/retire/agents/`). This stays because the `decision` and
+`observation` entry kinds are still in the journal's vocabulary and the
+existing entries are still readable; nothing writes them now.
+
+`agents watch` journalled every window it took to a model:
 
 - an **alert** becomes a `decision`, with the finding's reasoning, its evidence,
   the trigger that woke the model and the confidence;

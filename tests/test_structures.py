@@ -788,7 +788,6 @@ async def test_a_thin_store_is_backfilled_before_anything_starts(tmp_path, monke
     plan = st.Plan(
         prices=False,
         news=False,
-        structures=False,
         journal=False,
         notifications=False,
         backfill=True,
@@ -1011,7 +1010,7 @@ def test_every_persisted_class_restores_a_field_it_predates():
 
     import till_infinity.structures as package
     from till_infinity.shared import codec
-    from till_infinity.structures.state import Restorable
+    from till_infinity.shared.state import Restorable
 
     checked = 0
     # `walk_packages`, not `iter_modules`: the package has subpackages since
@@ -2344,37 +2343,6 @@ def test_a_missing_prices_database_is_silence_rather_than_a_fault(tmp_path):
     watcher = Watcher(Bus(), settings=Settings(prices_db=tmp_path / "absent.db"))
     assert watcher.unwarmed() == ()
     assert watcher.warm_new() == 0
-
-
-def test_both_entry_points_warm_the_new_feeds():
-    """`structures.watch` and the stack had the same two lines once, and only
-    one of them was fixed - production kept the bug for a deploy after the fix
-    shipped."""
-    import inspect
-
-    from till_infinity import stack
-    from till_infinity.structures import service
-
-    assert "warm_new()" in inspect.getsource(service.watch)
-    assert "warm_new()" in inspect.getsource(stack.Stack._run_structures)
-
-
-def test_the_stack_prepares_structures_off_the_event_loop():
-    """**Every actor on this box shares one loop and none of the start-up is
-    async.** The restore reads a 150MB state file and the warm replays a few
-    hundred thousand bars; run inline they hold the loop for minutes with
-    `prices` behind them collecting nothing. The same shape - one synchronous
-    query at the top of the collector - stopped the desk for twenty minutes on
-    2026-09-16."""
-    import inspect
-
-    from till_infinity import stack
-
-    source = inspect.getsource(stack.Stack._run_structures)
-    assert "asyncio.to_thread" in source, "structures start-up must not run on the shared loop"
-    threaded = source.partition("asyncio.to_thread")[0]
-    for step in ("watcher.load()", "watcher.arm()", "watcher.warm()", "watcher.warm_new()"):
-        assert step in threaded, f"{step} must be inside the threaded prepare, not after it"
 
 
 def test_a_thin_series_counts_as_unwarmed(tmp_path):
