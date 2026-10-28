@@ -33,3 +33,44 @@ jobs:
       # No network in CI: every test runs against fakes and temp SQLite files.
       - name: Tests
         run: uv run pytest -q
+
+  # **A second toolchain, which ADR 0003 said this would cost.** Separate from
+  # `check` rather than bolted onto it: the two have nothing to share, and a Go
+  # compile failure should not read as a Python test failure in the checks list.
+  #
+  # One job for every Go service under `services/`, found rather than listed,
+  # so adding the next one does not need this file edited - the mistake made
+  # once already in `strategy.py`, where a new strategy had to be registered in
+  # two places and the second was forgotten.
+  go:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-go@v5
+        with:
+          go-version: '1.24'
+          cache-dependency-path: services/*/go.sum
+
+      - name: Vet, format and test every Go service
+        run: |
+          shopt -s nullglob
+          found=0
+          for mod in services/*/go.mod; do
+            dir=$(dirname "$mod")
+            found=1
+            echo "::group::$dir"
+            # `gofmt -l` prints the files it would change and exits 0, so the
+            # check is that it printed nothing.
+            unformatted=$(gofmt -l "$dir")
+            if [ -n "$unformatted" ]; then
+              echo "::error::gofmt would change: $unformatted"
+              exit 1
+            fi
+            ( cd "$dir" && go vet ./... && go build ./... && go test ./... )
+            echo "::endgroup::"
+          done
+          if [ "$found" = 0 ]; then
+            echo "::error::no Go module under services/ - this job is pointing at nothing"
+            exit 1
+          fi
