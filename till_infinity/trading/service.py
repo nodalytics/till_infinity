@@ -77,9 +77,9 @@ from ..logging import get_logger
 # and a duplicated string would drift silently.
 from ..prices.config import BROKER as BROKER_SOURCE
 from ..shared import effects
+from ..shared.codec import pack, registry, unpack
 from ..shared.intervals import SECONDS
 from ..shared.state import Restorable
-from ..structures.codec import pack, registry, unpack
 from ..structures.context.cusum import Cusum, Ensemble, adaptive_threshold
 from ..structures.context.holds import Book as HoldBook
 from ..structures.context.reach import Reaches
