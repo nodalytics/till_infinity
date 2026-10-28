@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "prices.bars",
+  "title": "One newly written bar",
+  "description": "Published by prices once per bar actually written, oldest first, capped by MAX_NOTICES. A notice, not a series: the four prices are the bar's own, not a window.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source", "feed", "venue", "ticker", "interval", "inserted", "updated",
+               "time", "open", "high", "low", "volume", "close", "closed"],
+  "properties": {
+    "source": {"type": "string", "description": "Which collector wrote it."},
+    "feed": {"type": "string", "description": "The desk's own name, lowercase."},
+    "venue": {"type": "string"},
+    "ticker": {"type": "string", "description": "The venue's name for it."},
+    "interval": {"type": "string", "description": "A key of shared.intervals.SECONDS."},
+    "inserted": {"type": "integer", "minimum": 0},
+    "updated": {"type": "integer", "minimum": 0},
+    "time": {"type": "number", "description": "Bar open, epoch seconds."},
+    "open": {"type": "number"},
+    "high": {"type": "number"},
+    "low": {"type": "number"},
+    "close": {"type": "number"},
+    "volume": {
+      "type": "number",
+      "description": "Activity, not size. TradingView's v counts price changes rather than contracts and spot FX has no real volume, so a consumer must read it as a ratio against this instrument's own typical bar - never across instruments."
+    },
+    "closed": {"type": "boolean", "description": "Whether the interval has elapsed. A consumer that folds an unclosed bar folds the same bar twice."}
+  }
+}
