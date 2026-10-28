@@ -8,8 +8,6 @@ import random
 
 import pytest
 
-from till_infinity.models import retrain as rt
-from till_infinity.models import touches_train as tt
 from till_infinity.prices.models import Bar
 from till_infinity.shared import frozen
 from till_infinity.structures.learning import touches as tc
@@ -76,21 +74,6 @@ def _ship_stumps(tmp_path) -> None:
     frozen.forget_cache()
 
 
-def test_a_shipped_model_has_earned_its_place(monkeypatch):
-    """Whatever ships under the current recipe passed the contest's skill gate. None may ship:
-    over the boosted envelope's bands the touch models' skill fell under the gate
-    (`touches.RECIPE`), and then the reading is simply absent."""
-    monkeypatch.delenv("TI_MODELS_DIR")
-    frozen.forget_cache()
-    for name in tc.MODELS.values():
-        spec = frozen.load(name, recipe=tc.RECIPE, names=tc.NAMES)
-        if spec is None:
-            continue
-        assert spec["names"] == list(tc.NAMES)
-        assert 0.1 < spec["base_rate"] < 0.35
-        assert spec["test"]["skill"] >= rt.TOUCH_GATES["min_skill"]
-
-
 def test_a_warm_fx_series_gets_both_probabilities(tmp_path):
     _ship_stumps(tmp_path)
     got = _fed().reading("eurusd", "15m")
@@ -152,57 +135,6 @@ def test_the_envelope_card_carries_the_touch_line():
 
 
 # ------------------------------------------------------------------ training and the gates
-
-
-def test_the_dataset_labels_touches_and_keeps_only_fx_15m():
-    rows = tt.dataset(
-        {
-            ("EURUSD", "15m"): _bars(1500),
-            ("XAUUSD", "15m"): _bars(1500, seed=2),
-            ("EURUSD", "1h"): _bars(800, seed=3),
-        }
-    )
-    when, x, y90, y10 = rows.arrays()
-    assert set(rows.key) == {"eurusd"}
-    assert x.shape[1] == len(tc.NAMES)
-    assert list(when) == sorted(when)
-    assert 0.05 < y90.mean() < 0.5
-    assert 0.05 < y10.mean() < 0.5
-
-
-def test_a_decile_fails_only_beyond_both_the_error_and_the_noise():
-    good = {"predicted": 0.10, "realised": 0.13, "n": 500, "error": 0.30, "se": 0.02}  # noise
-    bad = {"predicted": 0.10, "realised": 0.16, "n": 500, "error": 0.60, "se": 0.02}
-    close = {"predicted": 0.30, "realised": 0.33, "n": 500, "error": 0.10, "se": 0.001}
-    assert tt.miscalibrated([good, close]) == []
-    assert tt.miscalibrated([good, bad, close]) == [bad]
-
-
-def test_the_touch_gate():
-    """Skill over the flat base rate the card would otherwise print - not over geometry, which the
-    boosted bands now carry - with calibration and the champion as before."""
-    ok = {"skill_rate": 0.08, "skill_rate_se": 0.01, "skill": 0.01, "calibration_fails": 1}
-    assert rt.touch_gate(ok, {}) == []  # little over geometry is no longer a reason
-    assert rt.touch_gate({**ok, "skill_rate": 0.02}, {})
-    assert rt.touch_gate({**ok, "calibration_fails": 2}, {})
-    assert rt.touch_gate({k: v for k, v in ok.items() if k != "calibration_fails"}, {})
-    assert rt.touch_gate({**ok, "skill_rate": 0.06}, {"skill_rate": 0.09})  # beyond the slack
-    assert rt.touch_gate({**ok, "skill_rate": 0.08}, {"skill_rate": 0.085}) == []
-
-
-def test_the_touch_contest_runs_and_its_export_is_exact(monkeypatch):
-    pytest.importorskip("sklearn")
-    monkeypatch.setattr(tt, "CAL_DAYS", 10)
-    series = {"EURUSD": _bars(4000, seed=4), "XAUUSD": _bars(4000, seed=5)}
-    spec, report = rt.run_touch90(
-        lambda symbol, interval: series[symbol] if interval == "15m" else [], list(series)
-    )
-    assert report["series"] == 1
-    assert report["evaluator_max_diff"] <= rt.GATES["exact"]
-    assert {"skill", "skill_rate", "calibration_fails"} <= set(report["challenger"])
-    assert isinstance(report["champion"], dict)  # empty while no model has earned the recipe
-    assert (spec is not None) == report["promoted"]
-    json.dumps(report)  # the report file must be able to hold it
 
 
 def test_a_boosted_band_without_a_touch_model_states_the_measured_rate():

@@ -158,7 +158,7 @@ To change a setting:
 | `STRUCTURES_PROJECTION` | `0` | The exact-law forward cone for Deriv synthetics, published and calibrated. Off until measured live. The envelope's own law path (Volatility/Jump/Step) does not need it. | restart |
 | `STRUCTURES_VOL_CLOCK` | `1` | Scale the envelope's unit by the hour of the week: FX on New York's clock (outside the boosted 15m), and crypto. It also drives the "this hour is historically N× average volatility" card line (FX, metals, crypto). [calendar-returns.md](../research/docs/calendar-returns.md) | restart |
 | `STRUCTURES_ENVELOPE_MONDRIAN` | `0` | Key the envelope's AgACI correction by the ZMA stretched state, once a bucket has 200 outcomes of its own. It closes 1-2 points of coverage gap when price is stretched, at equal or better pinball ([zma-conformal.md](../research/docs/zma-conformal.md)). **Off by default: it roughly triples each series' envelope state (about 65 KB to 189 KB).** **Switching Mondrian on is one setting once memory headroom is confirmed**: `STRUCTURES_ENVELOPE_MONDRIAN=1` and a restart. See [deployment.md](deployment.md), "Features that wait on memory headroom". | restart |
-| `TI_MODELS_DIR` | `.data/models` | Where frozen offline models are read from and promoted into: the shock forecaster, the boosted FX envelope, the touch models. The engine prefers a model here over the one shipped in `till_infinity/models/`, and re-reads a changed file within five minutes. | state |
+| `TI_MODELS_DIR` | `.data/models` | Where frozen offline models are read from: the shock forecaster, the boosted FX envelope, the touch models. The engine prefers a model here over the one shipped in `till_infinity/models/`, and re-reads a changed file within five minutes. **Nothing promotes into it any more** - the retraining pipeline was retired on 2026-10-28, so it is read-only unless a model is placed here by hand. | state |
 
 ### Rollover mask
 
@@ -381,7 +381,6 @@ were, and what they did, are in that directory's own history.
 | Variable | Default | What it does | Change |
 |---|---|---|---|
 | `TI_MODELS_DIR` | `.data/models` | See the envelope table above. | state |
-| `MODELS_SYMBOLS` | `$PRICES_BROKER_SYMBOLS` | Instruments `till-infinity models retrain` trains on. In GitHub Actions, a repository variable. | restart |
 | `TRADING_MT5_URL`, `TRADING_MT5_API_KEY` | — | The bridge the retrain fetches bars through (secrets in the workflow). | **secret** |
 
 ## Research-only (not read by production)

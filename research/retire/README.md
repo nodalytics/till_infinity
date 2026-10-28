@@ -14,6 +14,7 @@ checkable, but they are out of the suite that gates CI.
 
 | retired | when | why |
 |---|---|---|
+| `models` | 2026-10-28 | the offline retraining pipeline: `retrain.py`, five `*_train.py` trainers, `bridge.py` and the GitHub Actions workflow that ran it fortnightly. Retired because everything it trained is a **structures** model - the shock forecaster, the boosted FX envelope, the touch models - and structures is being retired. Promoting a challenger into a service that is switched off is work with no reader. The `*.json` models stay in `till_infinity/models/`, because `shared/frozen.py` still reads them. |
 | `agents` | 2026-10-28 | an LLM analyst over the stored data, and `council`, the one strategy that asked it for a side. Retired on the product owner's call as part of the move to self-contained services ([ADR 0002](../../docs/adr/0002-services-are-self-contained.md)): it was the only service needing a paid credential, and the desk's measured record is that everything which survived a null predicts **size** and nothing predicts direction, so a panel of models voting on a side was paying for an answer the rest of the desk had already found it could not give. `trading/valuation.py`'s LLM valuer went with it - it had no caller in production. |
 | `mcfl` | 2026-10-11 | superseded by `structures/statespace`. A pattern detector over a few hundred alt coins, alert-only. The statespace family answers the same question - "is this instrument away from where it should be, and by how much" - as a **predictive distribution** with a likelihood that can be scored against a null, rather than as a pattern that either matched or did not. Retired to the record, not because it broke. |
 
@@ -84,3 +85,41 @@ Five things outlived the service. Four are flagged; the fifth had to be fixed.
 `docs/agents.md` moved here with the code, so `docs/README.md` no longer lists
 it. `docs/todo.md` keeps its references, which are history rather than
 instructions.
+
+## What models left behind
+
+* **`till_infinity/models/` is still a package, and holds only data.** The
+  `*.json` files are read by `shared/frozen.py` and by
+  `structures/vol/envelope.py` and `structures/learning/shocks.py`, so they
+  stay where `frozen.PACKAGED` looks for them. The package's `__init__.py` says
+  that nothing in the tree can produce a new one. When structures goes, these
+  go with it.
+* **`TI_MODELS_DIR` still works and nothing writes to it.** `frozen.py` prefers
+  a model found there over the shipped copy and re-reads a changed file within
+  five minutes, which is worth keeping - it is how a model gets replaced without
+  a deploy. But the thing that used to promote into it is here now, so a model
+  arrives by hand or not at all. Said plainly in `docs/environment.md` rather
+  than left to be discovered.
+* **`bridge.py` went even though it is useful.** It fetches up to 50,000 bars a
+  series from the terminal, synchronously and deep, which is exactly the shape
+  the tick ingest in [ADR 0003](../../docs/adr/0003-python-and-go.md) needs.
+  It is here rather than kept live because its only caller was `retrain.py`,
+  and a module with no caller sitting in the package is the same bug shape as a
+  topic with no subscriber. Resurrect it from here when the Go service wants
+  it, or read it as the reference for what the deep-history route costs.
+* **Four test files were split, not moved.** `test_envelope_model.py`,
+  `test_deriv_law.py`, `test_expansion.py` and `test_touches.py` each tested
+  both halves - training a replacement and reading the shipped model - and the
+  reading half is still live. 23 trainer tests came here as `*_trainers.py`;
+  34 reader tests stayed in the suite. **One was found by the test run rather
+  than by the split**: `test_the_retrain_contest_promotes_passing_cells`
+  imported the trainer inside its body instead of at module scope, so a scan of
+  module imports said the file was clean. The same shape as the `from .state
+  import` relative imports that a package-qualified grep missed.
+* `tests/test_envelope_model.py` kept the 50 tests that read the shipped model
+  and lost the ten that tested **promotion**: the gates, the contest, and the
+  trainer's own replay. Those are in `test_envelope_gates.py` here.
+  `test_the_metals_model_conformal_measured_would_not_ship` is the one worth
+  reading - the absolute gates were added on 2026-10-07 because the relative
+  ones alone would have shipped a metals model whose measured coverage was
+  wrong.

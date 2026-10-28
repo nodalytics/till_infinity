@@ -3,7 +3,6 @@
 #
 #   docker compose up -d                     all but agents and trading
 #   docker compose --profile trading up -d   adds the one that can lose money
-#   docker compose --profile models up -d    adds fortnightly retraining
 #
 # Config from .env; see .env.example.
 
@@ -54,13 +53,6 @@ services:
   # Writes .data/models/, which structures re-reads within five minutes. A run
   # holds a few million feature rows, so it is opt in and capped: never on a
   # box sized for the services alone. Needs the bridge (TRADING_MT5_URL).
-  models:
-    <<: *common
-    profiles: ["models"]
-    command: ["models", "retrain", "--every-days", "14", "--redis", "redis://redis:6379"]
-    cpus: 2
-    mem_limit: 6g
-
   # ── the record: one writer, which is why it is on the bus ─────────────────
   journal:
     <<: *common

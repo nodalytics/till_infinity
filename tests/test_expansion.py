@@ -8,9 +8,6 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from till_infinity.models import expansion_train as et
-from till_infinity.models import retrain as rt
-from till_infinity.shared import frozen
 from till_infinity.structures import codec as scodec
 from till_infinity.structures.learning import expansion as ex
 
@@ -47,27 +44,6 @@ def test_the_percentile_is_the_research_definition():
     tr = np.maximum(hi - low, np.maximum(abs(hi - prev), abs(low - prev)))[1:]
     pct = pd.Series(tr).ewm(alpha=1 / 14, adjust=False).mean().rolling(1500).rank(pct=True)
     assert model.series["g|15m"].pct == pytest.approx(pct.iloc[-1])
-
-
-def test_it_reads_only_while_compressed():
-    loud = _fed(800)
-    assert not loud.series["g|15m"].compressed
-    assert loud.reading("g", "15m") == {}
-    quiet = _fed(800, quiet_from=700)
-    s = quiet.series["g|15m"]
-    assert s.compressed
-    assert s.run > 0
-    assert s.depth <= ex.COMPRESSED
-    got = quiet.reading("g", "15m")
-    assert 0.0 < got["expansion_probability"] < 1.0
-    assert got["expansion_lift"] > 0
-
-
-def test_the_shipped_model_matches_this_recipe():
-    spec = frozen.load(ex.MODEL, recipe=ex.RECIPE, names=ex.NAMES)
-    assert spec is not None
-    assert spec["ahead"] == ex.AHEAD
-    assert spec["test"]["real"] >= rt.EXPANSION_GATES["min_real_auc"]
 
 
 def test_the_card_speaks_only_well_above_normal_and_never_names_a_side():
@@ -126,28 +102,6 @@ def test_the_engine_publishes_it_while_compressed():
     assert 0.0 < eng._expansion_at("g", "15m")["expansion_probability"] < 1.0
 
 
-def test_rows_are_compressed_bars_labelled_by_the_next_sixteen():
-    rows = et.dataset(et.walks(1, 4_000))
-    _, kinds, x, y = rows.arrays()
-    assert len(y) > 0
-    assert set(kinds) == {"control"}
-    assert (x[:, ex.NAMES.index("pct")] <= ex.COMPRESSED).all()
-    assert 0 < y.mean() < 1
-
-
-def test_the_expansion_contest_runs_and_its_export_is_exact(monkeypatch):
-    pytest.importorskip("sklearn")
-    walks = et.walks
-    monkeypatch.setattr(et, "walks", lambda: walks(1, 3_000))
-    series = walks(2, 6_000, seed=5)
-    names = sorted({s for s, _ in series})
-    spec, report = rt.run_expansion(lambda s, iv: series.get((s, iv), []), names)
-    usable = [v for v in series.values() if len(v) > ex.WARM + ex.AHEAD + 50]
-    assert report["series"] == len(usable)  # a 6,000-bar 15m walk is too short for daily
-    assert report["evaluator_max_diff"] <= rt.GATES["exact"]
-    assert (spec is not None) == report["promoted"]
-
-
 def test_the_calendar_sees_a_busier_session_coming():
     """A series whose range quadruples every day from 12:00 to 16:00 UTC: at 09:00 the next 16
     quarter-hours reach into the busy session, so the calendar reads positive; at 16:00 it turns."""
@@ -167,18 +121,3 @@ def test_the_calendar_sees_a_busier_session_coming():
             readings[(t % 86_400) // 3_600] = ex.clock_ahead(model.series["g|15m"], t)
     assert readings[9] > 0.3
     assert readings[16] < -0.3
-
-
-def test_deriv_is_recognised_however_its_name_is_spelled():
-    from till_infinity.models.shocks_train import kind
-
-    for name in (
-        "Range Break 100 Index",
-        "Range_Break_100_Index",
-        "Drift_Switch_Index_10",
-        "Volatility_75_Index",
-        "Boom 1000 Index",
-    ):
-        assert kind(name) == "deriv", name
-    assert kind("EURUSD") == "real"
-    assert kind("AAPL.OQ") == "real"

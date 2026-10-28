@@ -45,7 +45,6 @@ INFRASTRUCTURE = frozenset({"bus", "channels", "logging", "shared"})
 #: argument for the retirement in progress. It is listed rather than fixed
 #: because the package is leaving.
 DEBTS: dict[str, frozenset[str]] = {
-    "models": frozenset({"prices", "structures"}),
     "news": frozenset({"prices"}),
     "structures": frozenset({"journal", "prices", "trading"}),
     "trading": frozenset({"journal", "prices", "structures"}),
@@ -53,6 +52,10 @@ DEBTS: dict[str, frozenset[str]] = {
 
 #: Services retired into `research/retire/`, which must no longer be importable.
 RETIRED = ("agents",)
+
+#: `models` is still a package - it ships the `*.json` models that
+#: `shared/frozen.py` reads - but it holds no Python any more, so it owes
+#: nothing and is not in `RETIRED` either.
 
 
 def services() -> list[str]:
