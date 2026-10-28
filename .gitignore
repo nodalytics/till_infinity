@@ -73,3 +73,6 @@ NewClasses.plist
 till_infinity/models/*.report.jsonl
 till_infinity/models/retrain.last
 .playwright-mcp/
+
+# Go build output from services/
+/services/*/bin/
