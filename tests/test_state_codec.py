@@ -6,9 +6,9 @@ from dataclasses import dataclass, field
 
 import pytest
 
+from till_infinity.shared.state import Restorable
 from till_infinity.structures import store
 from till_infinity.structures.codec import TAG, key_for, pack, registry, unpack
-from till_infinity.structures.state import Restorable
 
 
 @dataclass(slots=True)

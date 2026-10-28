@@ -119,7 +119,7 @@ from pathlib import Path
 from typing import Any
 
 from ...logging import get_logger
-from ..state import Restorable
+from ...shared.state import Restorable
 
 log = get_logger(__name__)
 

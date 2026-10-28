@@ -35,6 +35,7 @@ from typing import Any, ClassVar
 
 from ..logging import get_logger
 from ..shared import effects
+from ..shared.state import Restorable
 from . import breaks as bk
 from . import conformal, reactions, shrinkage
 from . import cycles as cy
@@ -63,7 +64,6 @@ from .drawing import (
 from .learning import expansion, focus, patterns, regimes, shocks, touches
 from .learning.focus import Focus
 from .models import Shape, Signal
-from .state import Restorable
 from .vol import clock
 from .vol import envelope as ev
 from .vol import projection as pj

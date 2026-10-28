@@ -69,7 +69,7 @@ from dataclasses import dataclass, field
 from river import linear_model, optim, preprocessing
 
 from ...shared import effects
-from ..state import Restorable
+from ...shared.state import Restorable
 from . import stated
 
 #: On when the flag is, and it shipped once while reaching nothing - see

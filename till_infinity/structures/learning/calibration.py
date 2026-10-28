@@ -50,7 +50,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from ..state import Restorable
+from ...shared.state import Restorable
 
 #: How fast the two parameters move. Slow, because they are correcting a
 #: systematic bias rather than tracking a moving one - and because a

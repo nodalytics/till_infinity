@@ -18,7 +18,7 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from .state import Restorable
+from ..shared.state import Restorable
 
 #: Bound once at import: a dataclass field called `time` shadows the module
 #: inside the class body, so the second default would resolve against a Field.

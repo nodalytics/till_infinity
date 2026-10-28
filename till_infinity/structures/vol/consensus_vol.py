@@ -65,7 +65,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from ..state import Restorable
+from ...shared.state import Restorable
 
 #: Mean absolute deviation to standard deviation, for a normal. Applied in
 #: reverse to bring a standard-deviation estimator onto the mean-absolute

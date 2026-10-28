@@ -49,7 +49,7 @@ from dataclasses import dataclass, field
 
 from river import cluster, preprocessing
 
-from ..state import Restorable
+from ...shared.state import Restorable
 
 #: How many regimes to find. Four because the replay bucketed four and the
 #: comparison is worth keeping legible; the clustering is what decides where

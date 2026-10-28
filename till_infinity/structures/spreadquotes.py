@@ -45,7 +45,7 @@ from dataclasses import dataclass, field
 
 from ..logging import get_logger
 from ..shared import effects
-from .state import Restorable
+from ..shared.state import Restorable
 
 log = get_logger(__name__)
 

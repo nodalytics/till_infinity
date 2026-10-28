@@ -29,8 +29,8 @@ import statistics
 import time
 from dataclasses import dataclass, field
 
+from ..shared.state import Restorable
 from .models import Consensus
-from .state import Restorable
 
 #: Bound once at import: a dataclass field called `time` shadows the module
 #: inside the class body, so the second default would resolve against a Field.

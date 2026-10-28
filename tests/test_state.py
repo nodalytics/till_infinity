@@ -34,7 +34,7 @@ def test_a_strenum_field_comes_back_as_its_enum():
 def test_an_unknown_member_keeps_the_raw_value_rather_than_raising():
     """A member this build no longer has should be visible at the point of use,
     not cost the whole file."""
-    from till_infinity.structures.state import restore_enum
+    from till_infinity.shared.state import restore_enum
     from till_infinity.trading import service as svc
 
     assert restore_enum(svc.Untaken, "side", "sideways") == "sideways"

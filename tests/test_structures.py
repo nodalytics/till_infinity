@@ -1011,7 +1011,7 @@ def test_every_persisted_class_restores_a_field_it_predates():
 
     import till_infinity.structures as package
     from till_infinity.shared import codec
-    from till_infinity.structures.state import Restorable
+    from till_infinity.shared.state import Restorable
 
     checked = 0
     # `walk_packages`, not `iter_modules`: the package has subpackages since

@@ -75,7 +75,7 @@ from river import drift, linear_model, optim, preprocessing, stats
 
 from ..logging import get_logger
 from ..shared import effects
-from .state import Restorable
+from ..shared.state import Restorable
 from .zma import CAP, TEMPERATURE
 
 log = get_logger(__name__)

@@ -134,7 +134,7 @@ from river import preprocessing, tree
 
 from ...logging import get_logger
 from ...shared import effects
-from ..state import Restorable
+from ...shared.state import Restorable
 from .analogue import Analogue
 from .consensus_vol import MAD_TO_SIGMA, Score
 

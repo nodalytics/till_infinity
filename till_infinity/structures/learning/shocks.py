@@ -46,7 +46,7 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from ...shared import frozen
-from ..state import Restorable
+from ...shared.state import Restorable
 
 #: A shock is a bar this many times the trailing mean |return|. The anomalies study's threshold.
 SHOCK_MULTIPLE = 4.0

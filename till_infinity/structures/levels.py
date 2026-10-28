@@ -50,10 +50,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
+from ..shared.state import Restorable
 from .conformal import Zones
 from .drawing.pips import Point, Swing
 from .drawing.pips import structure as pips_structure
-from .state import Restorable
 from .vol.volatility import Volatility
 
 #: How wide a level's zone is, as a multiple of its own uncertainty. Two
