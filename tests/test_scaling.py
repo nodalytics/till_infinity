@@ -341,14 +341,6 @@ def test_each_ceiling_is_settable():
     assert _engine("level-scalp", max_hold=600.0).ceiling == 600.0
 
 
-def test_a_strategy_asking_for_longer_than_its_style_is_capped():
-    """That is what makes these ceilings rather than defaults. `council` asks
-    for 2,700s as a scalp and is held to 1,800."""
-    engine = _engine("council")
-    assert engine.hold_seconds > engine.ceiling
-    assert engine.hold_for("1h") == engine.ceiling
-
-
 def test_a_strategy_asking_for_less_keeps_what_it_asked_for():
     """`snap` wants 120 seconds and a ceiling must not lengthen a trade."""
     assert _engine("snap").hold_for("1h") == 120.0
@@ -490,16 +482,6 @@ def test_every_strategy_wants_context():
 
     for name, cls in td.STRATEGIES.items():
         assert cls.needs_context is True, name
-
-
-def test_a_strategy_naming_no_context_is_not_gated():
-    """`council` delegates to its members, which carry their own anchors.
-    Asking it for agreement it never declared would refuse every call."""
-    import till_infinity.trading as td
-
-    engine = td.STRATEGIES["council"](_scalp().settings)
-    assert engine.context == ()
-    assert engine.anchors == ()
 
 
 def test_the_gate_reads_both():

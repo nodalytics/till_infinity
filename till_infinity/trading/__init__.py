@@ -33,7 +33,6 @@ The pieces, in dependency order:
 | `strategy` | the port a strategy implements, and the register |
 | `scalper` | the four arithmetic level strategies |
 | `turning` | the cycle reading as an entry, gated on its own record |
-| `council` | agents that reason their own way to a trade, and discuss it |
 | `valuation` | asking an analyst what a thing is worth, rather than which way it goes |
 | `speeds` | three EWMAs and their agreement, for `momentum-scalp` |
 | `book` | the levels seen so far, for the ones that trade toward a level |
@@ -95,7 +94,6 @@ from .risk import Guard
 from .service import Trader, listen
 from .sizing import Sizing, lots, price_distance
 from .speeds import Speeds
-from .strategies.council import Council, CouncilStrategy, Opinion, Voice
 from .strategies.opportunity import PRESETS, Opportunity, Ride, Shape
 from .strategies.scalper import (
     ConfluenceScalp,
@@ -155,8 +153,6 @@ __all__ = [
     "BrokerError",
     "ConfluenceScalp",
     "Context",
-    "Council",
-    "CouncilStrategy",
     "CycleTurn",
     "CycleTurnScalp",
     "Exposure",
@@ -168,7 +164,6 @@ __all__ = [
     "MomentumScalp",
     "Move",
     "NotConnectedError",
-    "Opinion",
     "Opportunity",
     "Order",
     "OrderResult",
@@ -203,7 +198,6 @@ __all__ = [
     "TurnTally",
     "Valuation",
     "Verdict",
-    "Voice",
     "advance",
     "available",
     "build",

@@ -156,10 +156,9 @@ the moment it prints. That second announcement is usually the interesting one.
 | consumer | subscribes to | publishes |
 |---|---|---|
 | `structures watch` | `prices.quotes`, `prices.bars` | `structures.signals`, `alerts` |
-| `agents watch` | `prices.quotes`, `prices.bars`, `news.events`, `news.articles` | `alerts` |
 | `notify listen` | `alerts` | - |
 
-`structures` reaches `alerts` directly, bypassing `agents`, for findings that
+`structures` reaches `alerts` directly for findings that
 interpret themselves - a dead feed needs no model and no calendar, and should
 not depend on one being reachable. See [structures.md](structures.md).
 

@@ -16,7 +16,6 @@
 | [absorption.md](absorption.md) | **measured** - absorption and compression both fail to separate; three defects found on the way that matter more than the nulls |
 | [magnet.md](magnet.md) | **measured** - levels do not attract price; 44 of 45 estimates negative, and the negative is selection rather than repulsion |
 | [trading.md](trading.md) | trading the level calls - MT5 on Windows, a Wine bridge on Linux, paper unless armed; scalps and swings, session hours, origins, risk plans and the gates |
-| [agents.md](agents.md) | LLM analysis over the stored data - roles, tools, read-only access, watching |
 | [journal.md](journal.md) | the decision journal - reasoning, outcomes, exporting for training |
 | [edge.md](edge.md) | **measured** - the 0.08 alert gate sits in a flat region and should be 0.11; a rolling quantile is worse than a constant, and why |
 | [deployment.md](deployment.md) | running it - one process, compose, or CI to a server |

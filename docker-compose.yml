@@ -2,7 +2,6 @@
 # `till-infinity run` is the single-process shape - see docs/deployment.md.
 #
 #   docker compose up -d                     all but agents and trading
-#   docker compose --profile agents up -d    adds the paid one
 #   docker compose --profile trading up -d   adds the one that can lose money
 #   docker compose --profile models up -d    adds fortnightly retraining
 #
@@ -71,12 +70,6 @@ services:
   notifications:
     <<: *common
     command: ["notify", "listen", "--redis", "redis://redis:6379"]
-
-  # ── judgement: the only part that costs money, so opt in ──────────────────
-  agents:
-    <<: *common
-    profiles: ["agents"]
-    command: ["agents", "watch", "--redis", "redis://redis:6379"]
 
   # ── execution: the only part that can *lose* money, so opt in twice ───────
   # The profile starts it; TRADING_LIVE arms it. No terminal in this container

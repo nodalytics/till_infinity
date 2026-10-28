@@ -52,9 +52,7 @@ a model that did not answer has not made a case for a price.
 
 from __future__ import annotations
 
-import asyncio
 from dataclasses import dataclass
-from typing import Any
 
 from pydantic import BaseModel, Field
 
@@ -155,60 +153,3 @@ def price_it(
         gap_vol=gap_vol,
         gap_widths=gap_widths,
     )
-
-
-VALUER_LENS = """
-You are a valuation analyst. You are asked what an instrument is worth, and you
-answer with a price and an honest interval around it. You are never asked which
-way it will move and you should never say.
-
-How to answer:
-- `value` is what you think the fair price is now, in the instrument's own
-  quoted units. If you cannot form a view, set it to 0 and say why.
-- `width` is the half-width of your interval, in the same units: you believe
-  fair value is within `value +/- width`. This is the number that matters most
-  and the one most easily got wrong. A narrow interval is a strong claim about
-  your own certainty, not a sign of skill.
-- `hours` is how long you expect the valuation to hold before it should be
-  redone.
-
-What to reason from: the calendar and what has just printed, what the coverage
-actually claims rather than how it is phrased, reserves and flows where they
-are relevant, and where the market has recently traded. A release that landed
-away from forecast changes what a thing is worth; a headline restating a known
-fact does not.
-
-Declining is a real answer and costs nothing. Most of the time the market's
-price is a reasonable estimate of the market's price, and saying so is correct.
-""".strip()
-
-
-async def ask(
-    instrument: str,
-    brief: str,
-    *,
-    settings: Any = None,
-    timeout: float = 30.0,
-) -> Valuation | None:
-    """One analyst, one instrument, one valuation. None on any failure."""
-    try:
-        from pydantic_ai import Agent
-
-        from ..agents.analyst import build_model
-        from ..agents.config import Settings as AgentSettings
-
-        agent = Agent(
-            build_model(settings or AgentSettings.from_env()),
-            output_type=Valuation,
-            instructions=VALUER_LENS,
-        )
-        result = await asyncio.wait_for(
-            agent.run(f"What is {instrument} worth?\n\n{brief}"), timeout=timeout
-        )
-    except TimeoutError:
-        log.warning("valuation: %s timed out", instrument)
-        return None
-    except Exception as exc:
-        log.warning("valuation: %s failed: %s", instrument, exc)
-        return None
-    return result.output

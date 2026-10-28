@@ -23,7 +23,6 @@ coordinate, and the whole system in one log.
 ```bash
 cp .env.example .env
 docker compose up -d                    # collectors, levels, journal
-docker compose --profile agents up -d   # including the paid one
 ```
 
 This is the shape the bus was designed for: they scale and fail independently,
@@ -102,9 +101,8 @@ Two things follow for sizing:
 - **There is no swap**, so an overshoot is a kill rather than a slowdown. That
   does not improve on a larger machine; it just gets harder to reach.
 
-Nothing heavier than a read should run alongside it at this size. Both
-`till-infinity agents ask` and `till-infinity prices prune` - each a second
-Python process importing the whole application - killed the container outright.
+Nothing heavier than a read should run alongside it at this size. `till-infinity prices prune` - a second Python process importing the whole
+application - killed the container outright.
 
 Databases and model state live on a mounted volume. Without one they go when
 the container does, and for online models that means starting cold - no learned
@@ -116,10 +114,6 @@ Everything comes from the environment, documented in
 [`.env.example`](../.env.example) and, variable by variable, in
 [environment.md](environment.md). Real environment variables win over the
 file, so a deployment is never overridden by a stray `.env`.
-
-Agents are **off** unless `AGENTS_ENABLED=1`. They are the only part needing a
-paid credential, and the collectors and levels model should not be hostage to
-one.
 
 ## Retraining the offline models
 
@@ -359,9 +353,9 @@ output could tell that.
 
 **line 45**
 
-Agents are off: they need a paid credential, and this box has 908 MB of RAM,
-so the free path is the one that fits. Set AGENTS_ENABLED=1 and add a key to
-turn them on.
+Agents were off here: they needed a paid credential and this box has 908 MB of
+RAM, so the free path was the one that fit. The service was retired on
+2026-10-28.
 
 **line 61**
 

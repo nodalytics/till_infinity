@@ -10322,9 +10322,18 @@ class TestTheTransitionTopic:
         from till_infinity.statespace.service import Watcher
 
         bus = self.Fake()
+        # `signals` is named rather than inherited: its default went to False on
+        # 2026-10-28 when `agents`, the only consumer, was retired. The notice
+        # mechanism is still here and still tested - what changed is whether a
+        # deployment publishes it to nobody.
         watcher = Watcher(
             engine=Engine(
-                settings=Settings(intervals=("1h",), warm_bars=5, signal_quiet_hours=quiet_hours)
+                settings=Settings(
+                    intervals=("1h",),
+                    warm_bars=5,
+                    signal_quiet_hours=quiet_hours,
+                    signals=True,
+                )
             )
         )
 
@@ -10473,30 +10482,6 @@ class TestTheTransitionTopic:
         asyncio.run(drive())
         assert not [topic for topic, _ in bus.sent if topic == NOTICES]
         assert [topic for topic, _ in bus.sent if topic != NOTICES]
-
-    def test_agents_routes_it_through_the_same_loudest_rule(self):
-        """A notice competes with a level call for the same attention, so it
-        goes through the same rule rather than a parallel one - and the Trigger
-        is tagged with the topic it came from, not with `SIGNALS`."""
-        from till_infinity.agents.service import TOPICS, Settings, Window
-        from till_infinity.bus import STATESPACE_SIGNALS
-
-        assert STATESPACE_SIGNALS in TOPICS
-
-        analyst = Window(settings=Settings())
-        analyst._signal(
-            {"feed": "gold", "score": 4.2, "detail": "break at +4.20", "venue": "deriv"},
-            topic=STATESPACE_SIGNALS,
-        )
-        score, trigger = analyst.loudest["gold"]
-        assert score == 4.2
-        assert trigger.topic == STATESPACE_SIGNALS
-        assert "break at +4.20" in trigger.reason
-
-        # And a louder level call still wins the feed, which is the point of
-        # sharing the rule.
-        analyst._signal({"feed": "gold", "score": 9.0, "detail": "level swept"})
-        assert analyst.loudest["gold"][0] == 9.0
 
 
 class TestTheAnchoredFairValue:

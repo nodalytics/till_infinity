@@ -170,7 +170,6 @@ Six, in dependency order:
 | `prices` | one instrument from **many venues**, because the disagreement between feeds carries information no single feed does |
 | `structures` | arithmetic, not judgement - the online models that estimate fair value, and the **key levels** price keeps turning at, answered per approach side |
 | `news` | the calendar and the headlines on the same clock, because a move with a release behind it is a different animal |
-| `agents` | a model over the stored data, told plainly that "nothing is happening" is a correct answer. The only part needing a credential |
 | `trading` | the only part that can lose money, and the only one armed by a switch of its own - MT5 on Windows, the same code over a Wine bridge on Linux |
 | `journal` | what was decided, **why at that moment**, and what followed. Prices can be recomputed forever; the reasoning cannot be reconstructed once lost |
 
@@ -205,11 +204,7 @@ till infinity · in-process bus · journal, structures, prices, news
 00:33:22  structures  spread gold/SAXO 2.2x the group at 0.88bps
 ```
 
-**Agents are off by default** - they are the only part needing a paid
-credential, and the rest should not be hostage to it:
-
 ```bash
-AGENTS_ENABLED=1 uv run till-infinity run     # or --agents
 uv run till-infinity run --for 300 -s gold    # one instrument, five minutes
 uv run till-infinity run --once               # one collection pass, then stop
 ```
@@ -340,7 +335,6 @@ they should scale or fail independently:
 uv run till-infinity prices collect    --publish redis://localhost:6379 &
 uv run till-infinity news collect      --publish redis://localhost:6379 &
 uv run till-infinity structures watch  --redis   redis://localhost:6379 &
-uv run till-infinity agents watch      --redis   redis://localhost:6379 &
 uv run till-infinity journal listen    --redis   redis://localhost:6379 &
 uv run till-infinity notify listen     --redis   redis://localhost:6379 &
 ```

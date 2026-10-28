@@ -45,12 +45,14 @@ INFRASTRUCTURE = frozenset({"bus", "channels", "logging", "shared"})
 #: argument for the retirement in progress. It is listed rather than fixed
 #: because the package is leaving.
 DEBTS: dict[str, frozenset[str]] = {
-    "agents": frozenset({"journal", "news", "structures"}),
     "models": frozenset({"prices", "structures"}),
     "news": frozenset({"prices"}),
     "structures": frozenset({"journal", "prices", "trading"}),
-    "trading": frozenset({"agents", "journal", "prices", "structures"}),
+    "trading": frozenset({"journal", "prices", "structures"}),
 }
+
+#: Services retired into `research/retire/`, which must no longer be importable.
+RETIRED = ("agents",)
 
 
 def services() -> list[str]:
@@ -99,6 +101,24 @@ def test_a_paid_debt_is_deleted(service):
     """
     stale = sorted(DEBTS[service] - imports_of(service))
     assert not stale, f"{service} no longer imports {', '.join(stale)} - delete it from DEBTS."
+
+
+@pytest.mark.parametrize("name", RETIRED)
+def test_a_retired_package_is_not_importable(name):
+    """`research/retire/README.md`: "a retired service that still sits on the
+    import graph is not retired, it is dormant, and dormant code gets restarted
+    by accident."
+
+    **This caught a real one.** `git mv` moved every `.py` out of
+    `till_infinity/agents/` and left `__pycache__` behind - and Python treats a
+    bare directory as a namespace package, so `from till_infinity import agents`
+    still succeeded. `test_stack.py`'s entry-point check went on passing against
+    a package whose every module had been moved out from under it.
+    """
+    import importlib
+
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module(f"till_infinity.{name}")
 
 
 def test_statespace_owes_nothing():

@@ -7,20 +7,14 @@ so an end-to-end run is a single command.
 
     prices ──┬─▶ statespace ─┬─▶ statespace.proposals ─┬─▶ trading ─▶ broker
              │               └─────────────────────────┼─▶ alerts ─▶ notifications
-    news  ───┴───────────────────▶ agents ─────────────┘
+    news  ───┴──────────────────────────────────────────┘
                                       │
-        statespace, agents, trading ──┴─▶ journal ─▶ journal.db
+        statespace, trading ──────────┴─▶ journal ─▶ journal.db
 
 The levels service that used to sit where `statespace` sits was retired on
 2026-10-28; see `docs/adr/0002-services-are-self-contained.md`.
 
 ## What is optional, and why
-
-**Agents are off unless asked for.** They are the only part that needs a paid
-credential, and a stack that refuses to start without one would make the free
-path - collect, detect levels, alert on a dead feed - hostage to the expensive
-one. `AGENTS_ENABLED=1` turns them on; without a key they stay off however the
-flag is set, with a warning rather than a crash.
 
 **Notifications are off unless configured.** Same reasoning: no Telegram token
 is a reason to skip delivery, not to stop collecting.
@@ -49,7 +43,6 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from . import agents as ag
 from . import journal as jr
 from . import news as nw
 from . import notifications as nt
@@ -68,7 +61,6 @@ ORDER: tuple[str, ...] = (
     "journal",
     "notifications",
     "trading",
-    "agents",
     # After its consumer and before its producer, like everything else in this
     # tuple: it publishes `statespace.proposals` and `statespace.dispersion`,
     # which `trading` subscribes to, and consumes `prices.bars`.
@@ -116,8 +108,6 @@ class Plan:
     """Which services to run, and where their data lives."""
 
     redis_url: str | None = None
-    #: Off by default: the only part needing a paid credential.
-    agents: bool = False
     #: Off by default: the only part that can lose money. See the docstring.
     trading: bool = False
     notifications: bool = True
@@ -148,7 +138,6 @@ class Plan:
         intervals = os.environ.get("INTERVALS", "")
         return cls(
             redis_url=os.environ.get("TILL_REDIS_URL") or None,
-            agents=truthy("AGENTS_ENABLED"),
             trading=truthy("TRADING_ENABLED"),
             notifications=truthy("NOTIFICATIONS_ENABLED", "1"),
             statespace=truthy("STATESPACE_ENABLED", "1"),
@@ -265,10 +254,6 @@ def check(plan: Plan) -> dict[str, str]:
     rather than after a collector has been running for a minute.
     """
     reasons: dict[str, str] = {}
-    if plan.agents:
-        settings = ag.Settings.from_env()
-        if not settings.ready:
-            reasons["agents"] = ag.providers.missing(settings.model)
     if plan.notifications:
         settings = nt.Settings.from_env()
         if not nt.build_notifiers(None, settings):
@@ -668,9 +653,6 @@ class Stack:
 
     async def _run_notifications(self, _book) -> None:
         await nt.listen(self.bus)
-
-    async def _run_agents(self, book) -> None:
-        await ag.watch(self.bus, journal=book)
 
     async def _run_trading(self, book) -> None:
         await td.listen(self.bus, journal=book)

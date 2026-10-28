@@ -191,25 +191,10 @@ uv run till-infinity structures watch --redis redis://localhost:6379 &
 uv run till-infinity structures info    # what it has learned so far
 ```
 
-It publishes findings for an agent to weigh, and alerts you directly about the
-ones that interpret themselves - a feed that has stopped while the others move.
+It alerts you directly about the findings that interpret themselves - a feed that has stopped while the others move.
 Full guide: [structures.md](structures.md).
 
-## 10. Let something judge it for you
-
-With the collectors publishing, an analyst can consume the same stream, decide
-when something is worth a model call, and alert you:
-
-```bash
-export ANTHROPIC_API_KEY=sk-ant-...
-uv run till-infinity agents ask "is anyone quoting gold out of line?"
-uv run till-infinity agents watch --redis redis://localhost:6379 &
-```
-
-It reads the databases read-only and stays quiet unless the data says
-otherwise. Full guide: [agents.md](agents.md).
-
-## 11. Tune it
+## 10. Tune it
 
 Anything you pass repeatedly belongs in the environment:
 
