@@ -9482,6 +9482,7 @@ async def test_received_counts_signals_and_survives_the_day_restore(caplog):
     import logging
     import time
 
+    from till_infinity.bus import PROPOSALS
     from till_infinity.trading import service as svc
 
     trader = Trader(Bus(), settings=settings())
@@ -9490,6 +9491,11 @@ async def test_received_counts_signals_and_survives_the_day_restore(caplog):
     await trader.handle(Message(topic=SIGNALS, payload=signal()))
     await trader.handle(Message(topic=SIGNALS, payload=signal()))
     assert trader.received == 2, "handle must count every signal it is given"
+    # And a proposal is counted apart from them: two producers on one tally is
+    # how a dead one hides behind a live one.
+    await trader.handle(Message(topic=PROPOSALS, payload=proposal()))
+    assert trader.received == 2, "a proposal is not a structures signal"
+    assert trader.proposals == 1
 
     # A restored day must not touch it.
     trader.taken = 999
@@ -9501,7 +9507,7 @@ async def test_received_counts_signals_and_survives_the_day_restore(caplog):
         trader._say_what_it_is_doing()
     said = [r.getMessage() for r in caplog.records]
     line = next((m for m in said if "received this process" in m), "")
-    assert "2 signal(s) received this process" in line, said
+    assert "2 signal(s) and 1 proposal(s) received this process" in line, said
     assert len(line) < 120, f"must fit on one console line, got {len(line)}"
 
 
@@ -9518,7 +9524,7 @@ async def test_received_says_never_when_nothing_has_arrived(caplog):
     with caplog.at_level(logging.INFO, logger=svc.log.name):
         trader._say_what_it_is_doing()
     said = " ".join(r.getMessage() for r in caplog.records)
-    assert "0 signal(s) received this process, last never" in said, said
+    assert "0 signal(s) and 0 proposal(s) received this process, last never" in said, said
 
 
 class TestOneStoppedTradeMustNotStallEveryFeed:
