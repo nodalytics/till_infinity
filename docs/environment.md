@@ -52,7 +52,6 @@ To change a setting:
 |---|---|---|---|
 | `PRICES_ENABLED` | `1` | Whether `till-infinity run` starts the price collector. | restart |
 | `NEWS_ENABLED` | `1` | Whether `run` starts the news collector. | restart |
-| `STRUCTURES_ENABLED` | `1` | Whether `run` starts the levels / structures service. | restart |
 | `NOTIFICATIONS_ENABLED` | `1` | Whether `run` starts notification delivery. It exits quietly with no channel configured. | restart |
 | `JOURNAL` | `1` | Whether `run` starts the journal writer. | restart |
 | `AGENTS_ENABLED` | `0` | Whether `run` starts the agents. Off because they are the only part needing a paid credential. | restart |
