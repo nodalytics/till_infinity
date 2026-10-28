@@ -125,6 +125,13 @@ TOPICS: tuple[str, ...] = (
     RESOLUTIONS,
     DISPERSION,
     STATESPACE_SIGNALS,
+    # **Added 2026-10-28, having been published and consumed while undeclared.**
+    # `trading.service.TOPICS` is the subscriber list and this is the registry;
+    # the fix that gave proposals a consumer updated the first and not the
+    # second, so the one topic the desk now trades on was missing from the list
+    # of topics the desk has. `tests/test_bus_contracts.py` asserts every entry
+    # here has a schema or a recorded reason.
+    PROPOSALS,
     ALERTS,
     JOURNAL,
 )
