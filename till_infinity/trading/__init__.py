@@ -94,7 +94,6 @@ from .risk import Guard
 from .service import Trader, listen
 from .sizing import Sizing, lots, price_distance
 from .speeds import Speeds
-from .strategies.opportunity import PRESETS, Opportunity, Ride, Shape
 from .strategies.scalper import (
     ConfluenceScalp,
     LevelScalp,
@@ -131,7 +130,6 @@ __all__ = [
     "OPTIONAL_SYMBOLS",
     "PAPER",
     "PLANS",
-    "PRESETS",
     "RPYC",
     "STOPS",
     "STRATEGIES",
@@ -151,7 +149,6 @@ __all__ = [
     "MomentumScalp",
     "Move",
     "NotConnectedError",
-    "Opportunity",
     "Order",
     "OrderResult",
     "PaperBroker",
@@ -163,10 +160,8 @@ __all__ = [
     "Release",
     "Report",
     "Resolution",
-    "Ride",
     "Seen",
     "Settings",
-    "Shape",
     "Side",
     "Sizing",
     "Speeds",
