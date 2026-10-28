@@ -67,7 +67,7 @@ from statistics import median
 from typing import Any, ClassVar
 
 from .. import trading
-from ..bus import ALERTS, DISPERSION, EVENTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
+from ..bus import ALERTS, DISPERSION, EVENTS, PROPOSALS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 from ..logging import get_logger
 
@@ -190,7 +190,18 @@ ATTEMPT = "_attempt"
 #: ground truth - what the levels we traded actually did - which is consumed
 #: for the record rather than for a decision, and is the seam anything that
 #: learns from outcomes will attach to.
-TOPICS: tuple[str, ...] = (SIGNALS, QUOTES, EVENTS, RESOLUTIONS, DISPERSION)
+TOPICS: tuple[str, ...] = (SIGNALS, PROPOSALS, QUOTES, EVENTS, RESOLUTIONS, DISPERSION)
+
+#: The topics subscribed **before** the terminal attach, because a call
+#: published during the attach would otherwise go to nobody.
+#:
+#: Both producers of the signal contract are here, and proposals need it more
+#: than signals do: `listen` notes that the race does not bite structures
+#: because it warms slowly, roughly 6.5 minutes to its first call. Statespace
+#: warms by *replay* - it restores its folded state and arms on the first bars
+#: - and published its first proposal inside a minute of a restart, which is
+#: well inside the window an attach can take when the bridge is slow.
+EARLY: tuple[str, ...] = (SIGNALS, PROPOSALS)
 
 #: Bounds on `listen`'s intake. Signals, events and resolutions are rare and
 #: kept whole; quotes are a flood, kept in order, oldest shed on overflow.
@@ -562,6 +573,9 @@ class Trader:
         #: were put back print the same line. This one cannot be put back.
         self.received = 0
         self.received_at = 0.0
+        #: Statespace proposals, counted apart from structures' signals: two
+        #: producers on one tally is how a dead one hides behind a live one.
+        self.proposals = 0
         self._symbol_of: dict[str, str] = {}
         self._feed_of: dict[str, str] = {}
         #: The order just sent, waiting to be matched to the position it
@@ -967,6 +981,18 @@ class Trader:
             # Recorded only: nothing below reads what the shadowed gates plan. See `shadow.py`.
             feed = str(message.payload.get("feed") or "")
             self.gates.consider(message.payload, self._symbol_of.get(feed))
+            return await self.on_signal(message.payload)
+        if message.topic == PROPOSALS:
+            # **The second producer of the signal contract**, and it reaches
+            # the same `on_signal`: a proposal is the same shape of thing and
+            # `Strategy.wants` is what sorts them, by `shape`.
+            #
+            # It does **not** go through `gates.consider`, which shadows the
+            # level gates against a level payload. A statespace proposal has no
+            # `level`, no `break_probability` and no `origin_*` - that absence
+            # is the whole reason `dispersing.py` had to be written.
+            self.proposals += 1
+            self.received_at = time.time()
             return await self.on_signal(message.payload)
         return None
 
@@ -2708,7 +2734,12 @@ class Trader:
         # console's 200 columns and wraps, and this is the one number that
         # says whether any signal has reached trading at all this process.
         ago = f"{time.time() - self.received_at:.0f}s ago" if self.received_at else "never"
-        log.info("trading: %d signal(s) received this process, last %s", self.received, ago)
+        log.info(
+            "trading: %d signal(s) and %d proposal(s) received this process, last %s",
+            self.received,
+            self.proposals,
+            ago,
+        )
         if not self.passed_over and not self.taken:
             log.info(
                 "trading: nothing seen yet - %s on %s, %s",
@@ -4991,7 +5022,7 @@ async def listen(
     # test lost its call exactly this way. Quotes are left until after: they
     # are continuous and supersede each other, and subscribing them early
     # would queue a thousand stale ones on every restart and drop the rest.
-    early = {SIGNALS: bus.subscribe(SIGNALS, group="trading")}
+    early = {topic: bus.subscribe(topic, group="trading") for topic in EARLY}
     await _attach(trader)
 
     streams = {
