@@ -311,7 +311,7 @@ class Intent:
         # move money, and the band evidence behind the far-target reading is
         # weakened by `research/calibrating.md` - the monotone ordering arises in
         # 15.4% of null books - so this earns its place in the journal first.
-        from ..structures.levels import SECONDS
+        from ..shared.intervals import SECONDS
 
         span = SECONDS.get(self.interval, 0.0)
         if span > 0 and needs > 0 and self.hold > 0:

@@ -373,7 +373,7 @@ def test_every_swing_enters_strictly_below_the_frame_that_judges_it():
     at 1h, so a 1h entry would tie rather than clear.
     """
     import till_infinity.trading as td
-    from till_infinity.structures.levels import SECONDS
+    from till_infinity.shared.intervals import SECONDS
 
     for name, cls in td.STRATEGIES.items():
         if cls.style != "swing" or not cls.entries or not cls.context:
@@ -916,7 +916,7 @@ def test_an_untaken_intent_waits_exactly_as_long_as_a_real_resting_entry():
     withdrawn. That credited fills the live system would never have seen, to
     exactly the strategies that rest their entry furthest out of reach."""
     from till_infinity.bus import Bus
-    from till_infinity.structures.levels import SECONDS
+    from till_infinity.shared.intervals import SECONDS
     from till_infinity.trading.service import Trader
 
     trader = Trader(Bus(), settings=_scalp().settings)
@@ -1206,7 +1206,7 @@ def test_every_swing_analyses_slow_and_enters_fast():
     and which the old literal only happened to satisfy.
     """
     import till_infinity.trading as td
-    from till_infinity.structures.levels import SECONDS
+    from till_infinity.shared.intervals import SECONDS
     from till_infinity.trading.config import Settings
 
     made = Settings()

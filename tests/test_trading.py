@@ -22,8 +22,8 @@ import pytest
 from till_infinity import trading as td
 from till_infinity.bus import ALERTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from till_infinity.journal import Journal, read
+from till_infinity.shared.intervals import SECONDS
 from till_infinity.structures.context import cusum as td_cusum
-from till_infinity.structures.levels import SECONDS
 from till_infinity.trading import exposure as ex
 from till_infinity.trading import manage
 from till_infinity.trading import plans as tp

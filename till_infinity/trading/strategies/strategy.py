@@ -422,7 +422,7 @@ class Strategy(ABC):
         """
         import math
 
-        from ...structures.levels import SECONDS
+        from ...shared.intervals import SECONDS
 
         bars = SECONDS.get(interval, 0.0)
         if bars <= 0:
@@ -560,7 +560,7 @@ class Strategy(ABC):
         style knows which ceiling applies; a caller does not, and the ones that
         thought they did were wrong.
         """
-        from ...structures.levels import SECONDS
+        from ...shared.intervals import SECONDS
 
         seconds = SECONDS.get(interval, 0.0)
         limit = self.ceiling
@@ -577,7 +577,7 @@ class Strategy(ABC):
         the ceiling is fewer bars of noise, and pretending otherwise would size
         the stop for time the trade will not be given.
         """
-        from ...structures.levels import SECONDS
+        from ...shared.intervals import SECONDS
 
         seconds = SECONDS.get(interval, 0.0)
         if seconds <= 0:

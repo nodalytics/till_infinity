@@ -302,7 +302,7 @@ class CycleTurn(LevelStrategy):
         toward a faster one, or a 1h entry would end up with a tighter stop
         than a 15m entry of the same thesis.
         """
-        from ...structures.levels import SECONDS
+        from ...shared.intervals import SECONDS
 
         seconds = SECONDS.get(interval, 0.0)
         if seconds <= 0 or horizon <= seconds:
