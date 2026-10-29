@@ -434,6 +434,9 @@ def test_structures_does_not_import_the_state_space_package():
     import pathlib
 
     root = pathlib.Path(__file__).resolve().parent.parent / "till_infinity"
+    #: The only files that may reach into the package, and only from inside a
+    #: function. See the note at the import check below.
+    start_sites = {"stack.py", "cli.py"}
     offenders: list[str] = []
     nested: list[str] = []
     for path in root.rglob("*.py"):
@@ -466,15 +469,22 @@ def test_structures_does_not_import_the_state_space_package():
             if not any("statespace" in n.split(".") for n in names):
                 continue
             where = f"{path.relative_to(root)}:{node.lineno}"
-            # **The graduation site, and the shape it has to keep.** `stack.py`
-            # starts the service, which is what the docstring above calls
-            # leaving behind a flag - `STATESPACE_ENABLED` here rather than a
-            # structures engine flag. The import has to stay *inside* the
-            # runner: at module level a deleted directory takes the whole stack
-            # down where it is imported, and nested it fails in one supervised
-            # task while every other service carries on. That is the
-            # difference between deletable and load-bearing.
-            if path.name == "stack.py":
+            # **The graduation sites, and the shape they have to keep.**
+            # `stack.py` starts the service in the one-process shape, which is
+            # what the docstring above calls leaving behind a flag -
+            # `STATESPACE_ENABLED` here rather than a structures engine flag.
+            # `cli.py` starts it as its own process, which is what compose
+            # needs: `structures watch` used to stand in that slot and nothing
+            # replaced it when structures was retired, so a desk brought up
+            # from `docker-compose.yml` folded no bars at all.
+            #
+            # **The rule is the nesting, not the filename.** At module level a
+            # deleted directory takes down whatever imported it; nested, it
+            # fails in one supervised task or one subcommand while everything
+            # else carries on. That is the difference between deletable and
+            # load-bearing, and it is why adding a start site here is cheap
+            # while relaxing the nesting would not be.
+            if path.name in start_sites:
                 (nested if node.lineno in inside else offenders).append(where)
             else:
                 offenders.append(where)
@@ -484,9 +494,9 @@ def test_structures_does_not_import_the_state_space_package():
         "named null; see its __init__ docstring."
     )
     assert nested, (
-        "nothing starts the service. `stack.py` is meant to import it inside "
-        "`_run_statespace`; with no site at all this package is a library that "
-        "folds no bars and publishes to nobody."
+        f"nothing starts the service. One of {sorted(start_sites)} is meant to "
+        "import it inside a runner; with no site at all this package is a "
+        "library that folds no bars and publishes to nobody."
     )
     assert "STATESPACE_ENABLED" in (root / "stack.py").read_text(), (
         "the graduation has to be switchable"

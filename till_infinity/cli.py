@@ -1215,6 +1215,54 @@ def notify_listen(target, redis_url, group, verbose, quiet, log_file):
 
 
 @main.group()
+def statespace() -> None:
+    """The variance fold: what the distribution is doing, and what follows."""
+
+
+@statespace.command("watch")
+@click.option("--redis", "redis_url", metavar="URL", help="Redis. Default: TILL_REDIS_URL.")
+@click.option("-v", "--verbose", is_flag=True, help="Debug logging.")
+@click.option("-q", "--quiet", is_flag=True, help="Warnings and errors only.")
+@click.option("--log-file", type=click.Path(path_type=Path), help="Also write JSON-lines logs.")
+def statespace_watch(redis_url, verbose, quiet, log_file):
+    """Fold `prices.bars` into dispersion, and propose from it.
+
+    **This exists because `docker-compose.yml` had no way to start it.** The
+    file still described the structures-era topology: `structures watch` stood
+    here, and when that service was retired nothing replaced it - so a desk
+    brought up from compose ran no statespace at all, published no proposals,
+    and left trading with nothing to decide on. In the one-process `run` shape
+    the stack starts it directly, which is why the gap was invisible.
+    """
+    setup_logging(verbose=verbose, quiet=quiet, log_file=log_file)
+    # Imported here for the reason `stack.py` gives: this is a separate
+    # distribution now, and a top-level import would make the whole CLI
+    # unusable wherever it is not installed.
+    from statespace import config as ss_config
+    from statespace import service as ss_service
+
+    url = redis_url or os.environ.get("TILL_REDIS_URL") or None
+    bus = Bus(redis_url=url)
+    if url is None:
+        console.print(
+            "[yellow]no redis configured[/] - an in-process bus only hears "
+            "publishers inside this command. Set TILL_REDIS_URL or pass --redis."
+        )
+    console.print(f"folding bars from {bus.backend}, Ctrl-C to stop")
+
+    async def go() -> None:
+        try:
+            await ss_service.watch(bus, ss_config.Settings.from_env())
+        finally:
+            await bus.close()
+
+    try:
+        run(go())
+    except KeyboardInterrupt:
+        console.print("stopped")
+
+
+@main.group()
 def structures() -> None:
     """Online models over the price data - what is unusual, what has changed."""
 

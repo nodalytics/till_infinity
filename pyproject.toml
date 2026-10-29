@@ -85,15 +85,20 @@ build-backend = "uv_build"
 # **The workspace.** Each member builds and installs on its own; the desk and
 # the services depend on the packages rather than reaching into each other.
 #
-# `services/*` is a glob so a new Python service needs no edit here. A **Go**
-# service does: uv refuses a member with no `pyproject.toml` rather than
-# skipping it, so `services/ticks` is excluded by name. That is the cost of one
-# `services/` directory holding both languages, and it is a line in a config
-# file against a boundary that is otherwise invisible - worth it, but it has to
-# be remembered when the second Go service arrives.
+# `services/*` is a glob so a new Python service needs no edit here. Anything
+# that is **not** a Python distribution does need a line: uv refuses a member
+# with no `pyproject.toml` rather than skipping it, so each one is excluded by
+# name. `services/ticks` is Go; `services/redis` is a broker's config with no
+# code at all, which ADR 0002 puts under `services/` because `services/` is for
+# things that run.
+#
+# That is the cost of one directory holding more than one kind of thing, and it
+# is a line in a config file against a boundary that is otherwise invisible.
+# `test_the_go_service_is_excluded_rather_than_broken` is what makes a missing
+# line fail here rather than at the next `uv sync`.
 [tool.uv.workspace]
 members = ["packages/*", "services/*"]
-exclude = ["services/ticks"]
+exclude = ["services/ticks", "services/redis"]
 
 [tool.uv.sources]
 till-platform = { workspace = true }

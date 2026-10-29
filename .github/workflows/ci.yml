@@ -15,6 +15,22 @@ concurrency:
 jobs:
   check:
     runs-on: ubuntu-latest
+    # **The one exception to "no network in CI" below, and a deliberate one.**
+    # Everything else runs against fakes, which is exactly how three bugs in
+    # the Redis transport survived review and a green suite: a fake cannot
+    # tell you that `XADD` stores `False` as the string "False", or that a new
+    # consumer group replays the backlog. This is a container on the runner -
+    # no internet, no credentials - and the tests that use it skip cleanly
+    # where it is absent, which is why one of them fails if CI ever skips.
+    services:
+      redis:
+        image: redis:7-alpine
+        ports: ["6379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 3s
+          --health-retries 5
     steps:
       - uses: actions/checkout@v4
 
@@ -30,8 +46,13 @@ jobs:
       - name: Format
         run: uv run ruff format --check .
 
-      # No network in CI: every test runs against fakes and temp SQLite files.
+      # No network in CI: every test runs against fakes and temp SQLite files,
+      # with one exception - the Redis service container above, which is local
+      # to the runner. See the note on `services:`.
       - name: Tests
+        env:
+          TILL_TEST_REDIS_URL: redis://localhost:6379
+          CI: "1"
         run: uv run pytest -q
 
   # **A second toolchain, which ADR 0003 said this would cost.** Separate from

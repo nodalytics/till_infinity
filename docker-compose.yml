@@ -25,10 +25,13 @@ services:
   redis:
     image: redis:7-alpine
     restart: unless-stopped
-    # Append-only: collectors do not resend a dropped backlog.
-    command: ["redis-server", "--appendonly", "yes"]
+    # The settings live in `services/redis/redis.conf`, where each one can
+    # carry the reason it is not the default. `--appendonly yes` on the command
+    # line was the only one, and it is now the first line of that file.
+    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
     volumes:
       - redis:/data
+      - ./services/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
     healthcheck:
       test: ["CMD", "redis-cli", "ping"]
       interval: 10s
@@ -45,14 +48,13 @@ services:
     command: ["news", "collect", "--publish", "redis://redis:6379"]
 
   # ── the numeric layer: no credentials, always on ──────────────────────────
-  structures:
+  # `structures` stood here until 2026-10-29 and is retired. This file had been
+  # left describing the old topology: a desk started from it ran no statespace
+  # at all, so nothing proposed and trading had nothing to decide on.
+  statespace:
     <<: *common
-    command: ["structures", "watch", "--redis", "redis://redis:6379"]
+    command: ["statespace", "watch", "--redis", "redis://redis:6379"]
 
-  # ── the offline models: retrained fortnightly, promoted only on the gates ──
-  # Writes .data/models/, which structures re-reads within five minutes. A run
-  # holds a few million feature rows, so it is opt in and capped: never on a
-  # box sized for the services alone. Needs the bridge (TRADING_MT5_URL).
   # ── the record: one writer, which is why it is on the bus ─────────────────
   journal:
     <<: *common
