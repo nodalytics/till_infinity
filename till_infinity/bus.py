@@ -28,9 +28,8 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
-from till_platform.logging import get_logger
-
 from till_channels import ChannelClosed, ChannelFull, Receiver, Sender, bounded, redis_channel
+from till_platform.logging import get_logger
 
 log = get_logger(__name__)
 

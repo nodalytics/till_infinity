@@ -7,7 +7,6 @@ import os
 import tempfile
 
 import pytest
-
 from till_channels import (
     DeadLetterQueue,
     ExponentialBackoff,

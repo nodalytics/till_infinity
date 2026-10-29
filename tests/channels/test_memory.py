@@ -3,7 +3,6 @@
 import asyncio
 
 import pytest
-
 from till_channels import (
     ChannelClosed,
     ChannelEmpty,

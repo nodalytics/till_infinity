@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import re
+import tomllib
 from pathlib import Path
 
 import pytest
@@ -255,6 +256,29 @@ def desk_imports(root: Path) -> dict[str, list[str]]:
                 if name == "till_infinity" or name.startswith("till_infinity."):
                     found.setdefault(path.name, []).append(name)
     return found
+
+
+def test_every_lint_exemption_points_at_files_that_exist():
+    """A path-scoped ruff ignore stops applying when the path moves.
+
+    `per-file-ignores` kept an entry for `till_infinity/channels/*` after
+    channels left for `packages/`. That one failed loudly - the exemptions
+    stopped covering the code and `ruff check` reported four errors - which is
+    the lucky case. An exemption that goes dead over code nobody is currently
+    linting into would just sit there reading like a rule.
+
+    This is the fourth thing in one day to survive the move that should have
+    deleted it, after `INFRASTRUCTURE`, the boundary scan and two globs in
+    `test_statespace.py`. The pattern is a path written down in one place and
+    changed in another.
+    """
+    config = tomllib.loads((REPO / "pyproject.toml").read_text())
+    ignores = config["tool"]["ruff"]["lint"]["per-file-ignores"]
+    dead = [pattern for pattern in ignores if not any(REPO.glob(pattern))]
+    assert not dead, (
+        f"per-file-ignores matches nothing: {dead} - delete the entry, or "
+        f"point it at where the code went"
+    )
 
 
 def test_every_infrastructure_entry_is_real():
