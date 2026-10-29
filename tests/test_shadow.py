@@ -72,7 +72,12 @@ def _plan(name, bars, k0, level, side=1, feed="eurusd"):
 @pytest.fixture(scope="module")
 def harness():
     pytest.importorskip("sklearn")
-    sys.path.insert(0, str(Path(__file__).parents[1] / "research" / "harness"))
+    # **Appended, never inserted.** `confirm` imports its sibling as a bare
+    # `import indicators`, so this directory does have to be flat on the path -
+    # but at the *end*, so the 375 names it carries cannot outrank an installed
+    # distribution. See the note in `test_supervised.py` for what prepending
+    # did to the `statespace` service.
+    sys.path.append(str(Path(__file__).parents[1] / "research" / "harness"))
     import confirm
 
     return confirm

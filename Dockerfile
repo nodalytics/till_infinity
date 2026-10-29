@@ -11,11 +11,23 @@ WORKDIR /app
 
 # Lockfile first: keyed on the lock, not the source, so a code edit does not
 # reinstall river.
+# **The members' manifests come with the lockfile, not with the source.** This
+# is a uv workspace: `uv sync --frozen` resolves every member, so it needs each
+# `pyproject.toml` present at this step even though `--no-install-project`
+# means none of their code is installed yet. Copying only the root manifest
+# fails here with "workspace member is missing a pyproject.toml", which at
+# least fails loudly.
 COPY pyproject.toml uv.lock ./
+COPY packages/till-platform/pyproject.toml ./packages/till-platform/
+COPY services/statespace/pyproject.toml ./services/statespace/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --all-extras
 
 COPY till_infinity/ ./till_infinity/
+# The workspace members' code. `services/ticks` is Go and is not in this image:
+# it runs beside the terminal, not beside the desk.
+COPY packages/till-platform/ ./packages/till-platform/
+COPY services/statespace/ ./services/statespace/
 # **The contracts, which are not inside the package.** `shared/contracts/` is
 # JSON and Markdown at the repository root because a Go service reads the same
 # files - see `docs/adr/0002-services-are-self-contained.md`. Left out of the

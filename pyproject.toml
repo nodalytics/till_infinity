@@ -27,6 +27,12 @@ dependencies = [
     # dependency manifest while importing the desk - see
     # `packages/till-platform/README.md`.
     "till-platform",
+    # **A dependency, not an inlined package.** `services/statespace` has its
+    # own manifest and installs without the desk - that is what makes it
+    # separable. The desk depends on it so `stack.py` can still run it in the
+    # one process, which ADR 0002 keeps as the default until a service earns
+    # its own: the layout is a source-tree decision, not a deployment one.
+    "statespace",
 ]
 
 [project.optional-dependencies]
@@ -86,6 +92,7 @@ exclude = ["services/ticks"]
 
 [tool.uv.sources]
 till-platform = { workspace = true }
+statespace = { workspace = true }
 
 [tool.uv.build-backend]
 module-root = ""

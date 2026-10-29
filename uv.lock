@@ -15,6 +15,7 @@ resolution-markers = [
 
 [manifest]
 members = [
+    "statespace",
     "till-infinity",
     "till-platform",
 ]
@@ -3706,6 +3707,17 @@ wheels = [
 ]
 
 [[package]]
+name = "statespace"
+version = "0.1.0"
+source = { editable = "services/statespace" }
+dependencies = [
+    { name = "till-platform" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "till-platform", editable = "packages/till-platform" }]
+
+[[package]]
 name = "tenacity"
 version = "9.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -3793,6 +3805,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "river", extra = ["pandas"] },
+    { name = "statespace" },
     { name = "tenacity" },
     { name = "till-platform" },
     { name = "yfinance" },
@@ -3866,6 +3879,7 @@ requires-dist = [
     { name = "river", extras = ["pandas"], specifier = ">=0.25.0" },
     { name = "rpyc", marker = "extra == 'rpyc'", specifier = ">=6.0.0" },
     { name = "scikit-learn", marker = "extra == 'train'", specifier = ">=1.5.0" },
+    { name = "statespace", editable = "services/statespace" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "till-platform", editable = "packages/till-platform" },
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'speed'", specifier = ">=0.21.0" },

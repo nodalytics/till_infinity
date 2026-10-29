@@ -1,0 +1,29 @@
+[project]
+name = "statespace"
+version = "0.1.0"
+description = "Folds one observation at a time into a predictive distribution over log variance."
+requires-python = ">=3.11"
+# **No third-party runtime dependency, and that is measured rather than
+# aspirational**: 21,000 lines across 58 modules with no numpy, no scipy, no
+# pandas. The filters are written out in plain Python because the service folds
+# one observation at a time rather than a matrix, and a per-observation call
+# into a vectorised library costs more than it saves.
+dependencies = [
+    # `Restorable` and `restore_enum` for the state file, and four environment
+    # coercions. The whole external surface of this service.
+    "till-platform",
+]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"
+
+# A flat layout, matching the desk and `till-platform`. uv's default is `src/`
+# and that is the better default in general - it stops a stray import finding
+# the package from the working directory - but one convention across three
+# packages is worth more here than the better one in a third of them.
+[tool.uv.build-backend]
+module-root = ""
+
+[tool.uv.sources]
+till-platform = { workspace = true }
