@@ -138,6 +138,8 @@ TOPICS: tuple[str, ...] = (
 
 DEFAULT_CAPACITY = 1_000
 DEFAULT_GROUP = "default"
+#: The send-only group `publish` uses over Redis. Never read from.
+PUBLISHER = "__publisher__"
 
 
 @dataclass(frozen=True, slots=True)
@@ -220,13 +222,26 @@ class Bus:
         return pair
 
     def groups(self, topic: str) -> list[str]:
-        return [g for (t, g) in self._channels if t == topic]
+        """The subscriber groups this process reads. Not the publisher's own.
+
+        `PUBLISHER` is a send-only channel over Redis; counting it here would
+        make `publish` deliver to itself on the in-process bus and would make
+        `unheard` undercount.
+        """
+        return [g for (t, g) in self._channels if t == topic and g != PUBLISHER]
 
     async def publish(self, topic: str, payload: dict[str, Any], *, source: str = "") -> int:
-        """Announce something. Returns how many subscriber groups received it."""
+        """Announce something.
+
+        Returns how many destinations took it: one per local subscriber group
+        in process, or 1 over Redis, where a single write to the stream is
+        what every group reads.
+        """
         if self._closed:
             return 0
         message = Message(topic=topic, payload=payload, source=source)
+        if self.redis_url:
+            return await self._publish_to_stream(topic, message)
         sent = 0
         for group in self.groups(topic):
             sender, _ = self._channel(topic, group)
@@ -243,6 +258,38 @@ class Bus:
         if not sent:
             self._note_unheard(topic)
         return sent
+
+    async def _publish_to_stream(self, topic: str, message: Message) -> int:
+        """One write per topic, because the readers own their groups.
+
+        **The per-group loop is in-process semantics, and over Redis it
+        silently did nothing.** `groups()` lists the channels *this* process
+        opened, and a collector subscribes to nothing it publishes - so the
+        list was empty, the loop body never ran, no message reached Redis, and
+        `_note_unheard` logged that nobody was listening. The compose
+        topology could not have worked: `prices collect --publish` would have
+        filled its log with "nobody subscribed" while `journal listen` waited
+        on an empty stream.
+
+        A stream needs no fan-out. One `XADD` is read by every consumer group,
+        including groups that do not exist yet, so the publisher does not have
+        to know who is listening - which is the property that lets a service
+        in another language join at all.
+
+        `PUBLISHER` is a group this process never reads. Creating it costs a
+        name and a last-delivered-id; it accumulates no pending entries
+        because nothing is ever delivered to it.
+        """
+        sender, _ = self._channel(topic, PUBLISHER)
+        try:
+            sender.try_send(message.to_dict())
+        except ChannelFull:
+            self._note_drop(topic, PUBLISHER)
+            return 0
+        except Exception as exc:
+            log.warning("bus: publish to %s failed: %s", topic, exc)
+            return 0
+        return 1
 
     def _note_unheard(self, topic: str) -> None:
         """Count a message nobody was listening for, and say so occasionally.

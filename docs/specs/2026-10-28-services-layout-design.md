@@ -128,7 +128,7 @@ Dated 2026-10-29, after slices 1, 3 and 4 and the first half of slice 2.
 | 2 Move each service | part | `statespace/` moved first and whole, with its own manifest and env. The rest are still `till_infinity/<name>/`, and `test_service_boundaries.py` records each one's debts as data so the list can only shrink. |
 | 3 Shrink `shared/` | done, differently | `shared/` did not shrink to contracts - it became `packages/till-platform`, because the thing needing an owner turned out to need an *installer*. `shared/contracts/` stays where the spec put it. |
 | 4 Declare the schemas | done | Six JSON Schemas under `shared/contracts/bus/`, validated in CI against payloads from the real producers rather than hand-written examples. |
-| 5 Redis in production | not started | |
+| 5 Redis in production | transport fixed; not deployed | The flip was described here as "one variable", and the variable was real - `TILL_REDIS_URL`, wired through `stack.py`, the CLI, compose and the docs. Nothing under it had ever run. Three bugs, below. |
 | 6 Neutral state | not started | |
 | 7 Go tick ingest | part | `services/ticks/` backfills the 14 FX feeds to Parquet, 11 tests, excluded from the uv workspace by name so a missing Python manifest is a deliberate exclusion rather than a break. |
 
@@ -137,6 +137,50 @@ are what makes a service movable: statespace could leave because its output was
 already a declared shape rather than whatever its producer happened to emit.
 Moving services first and declaring the shapes afterwards would have meant
 moving each one twice.
+
+## What "supported already" was worth
+
+Slice 5 was written as a one-variable change, and that sentence survived two
+restatements because the variable existed and was plumbed end to end. The code
+under it had never been executed: the only test naming Redis constructed a
+`Bus` and asserted on `backend` and `key`, and the `redis` client was not
+installed in the dev environment. Running it against a real Redis found three
+bugs, each of which would have broken the desk on the day of the flip.
+
+**The codec destroyed types.** `_encode` wrote every primitive with `str()`
+and `_decode` handed the string back. Nine of fifteen representative values
+came back wrong, and the damaging part was truthiness: `False` became
+`"False"`, `0` became `"0"`, `0.0` became `"0.0"` - all truthy. A guard
+written `if payload["armed"]:` read one way in process and the other over
+Redis. Numbers arrived as strings, so messages also failed the
+`"type": "number"` contracts declared in slice 4.
+
+**`publish` wrote nothing without a local subscriber.** It looped the groups
+*this process* had opened, and a collector subscribes to nothing it publishes,
+so the loop body never ran. `prices collect --publish` would have filled its
+log with "nobody subscribed" while `journal listen` waited on an empty stream.
+The compose topology could not have worked.
+
+**A new consumer group replayed the whole backlog.** `xgroup_create(id="0")`
+starts at the beginning of the stream. Here a message is a *notice* and not
+the data - `prices` says so itself - so a service deployed into a running desk
+would have folded ten thousand stale bars as though they were live.
+
+Fixing the third introduced a fourth, which is the part worth remembering.
+Anchoring a new group at `$` is only correct if the group exists before
+anything is published, and group creation was lazy - it happened on the first
+send or receive. A subscriber that registered and then waited had no group in
+Redis, so `$` was evaluated at its first *read* and everything published in
+between was lost. The symptom was a test that hung rather than failed.
+`ensure_group()` now anchors the group when the channel is constructed.
+
+Each of the three fixes was then reverted in turn to confirm the new tests
+fail without it.
+
+**The lesson for the remaining slices** is that "already supported" is a claim
+about code that has run. A flag that is plumbed through four files says
+nothing about the transport under it, and a fake cannot tell you that `XADD`
+stores `False` as `"False"`.
 
 **The ordering claim in the next section held, with one correction.** Slice 1
 being subtraction did make everything after it easier. But slice 1 is *also*
