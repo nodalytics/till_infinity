@@ -180,6 +180,70 @@ async def test_two_buses_are_one_bus_over_redis(url):
         await subscriber.close()
 
 
+async def test_one_process_closing_does_not_stop_another(url, key):
+    """A shutdown is not a broadcast.
+
+    `close()` used to write a close marker **into the shared stream**, and the
+    reader that saw it re-published it "so siblings also see it" - so one
+    process going away ended every reader in every other process, permanently,
+    because the marker stayed in the stream for anyone who joined later.
+
+    It became reachable when `publish` started opening a send-only channel so
+    a collector could write to a stream it does not subscribe to: before that,
+    a publish-only process held no channels and `Bus.close` closed nothing.
+    The collector is the process most likely to restart, and every other
+    service subscribes to what it publishes.
+    """
+    from till_channels import redis_channel
+
+    writer, _ = redis_channel(f"till:{key}", group="writer", url=url)
+    _, reader = redis_channel(f"till:{key}", group="reader", url=url)
+
+    await writer.send({"n": 1})
+    assert (await reader.recv())["n"] == 1
+
+    # The publisher shuts down.
+    await writer.close()
+
+    # A different process keeps publishing, and the reader must still work.
+    survivor, _ = redis_channel(f"till:{key}", group="writer2", url=url)
+    await survivor.send({"n": 2})
+    assert (await reader.recv())["n"] == 2, (
+        "a reader in another process stopped because a publisher closed"
+    )
+
+    # And a subscriber that joins afterwards is not born dead.
+    _, newcomer = redis_channel(f"till:{key}", group="newcomer", url=url)
+    await survivor.send({"n": 3})
+    assert (await newcomer.recv())["n"] == 3, "the stream stayed fatal to new readers"
+
+
+async def test_closing_a_channel_stops_its_own_receiver(url, key):
+    """The other half: a local close must still wake a local blocked reader.
+
+    This is what the stream marker was for, and it is why removing it needs a
+    test on this side too - `recv` has to notice the flag itself rather than
+    being told over the wire.
+    """
+    import asyncio
+
+    from till_channels import ChannelClosed, redis_channel
+
+    # Closed through the sender, because that is the path `Bus.close` takes -
+    # and both halves of `split()` share one channel, so the flag the receiver
+    # checks is the one the sender sets.
+    sender, receiver = redis_channel(f"till:{key}", group="self", url=url)
+
+    async def read() -> None:
+        await receiver.recv()
+
+    task = asyncio.create_task(read())
+    await asyncio.sleep(0.2)  # let it block on an empty stream
+    await sender.close()
+    with pytest.raises(ChannelClosed):
+        await asyncio.wait_for(task, timeout=10)
+
+
 @pytest.mark.skipif(not os.environ.get("CI"), reason="only meaningful in CI")
 def test_the_live_tests_are_not_skipped_in_ci():
     """A skip that becomes permanent is a deleted test with extra steps."""

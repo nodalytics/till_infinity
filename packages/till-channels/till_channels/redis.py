@@ -166,6 +166,12 @@ class RedisChannel(Channel[T], Generic[T]):
     async def recv(self) -> T:
         client = await self._ensure_async()
         while True:
+            # Checked here as well as on an idle stream, so closing this
+            # channel is honoured promptly rather than only once the stream
+            # goes quiet. A busy topic would otherwise keep a closed receiver
+            # delivering indefinitely.
+            if self._closed:
+                raise ChannelClosed("channel closed")
             entries = await client.xreadgroup(
                 self.group,
                 self.consumer,
@@ -181,15 +187,13 @@ class RedisChannel(Channel[T], Generic[T]):
                 for msg_id, fields in messages:
                     await client.xack(self.key, self.group, msg_id)
                     if fields.get("__ctrl__") == _CLOSED_SENTINEL:
-                        self._closed = True
-                        # Re-publish so siblings also see it
-                        await client.xadd(
-                            self.key,
-                            {"__ctrl__": _CLOSED_SENTINEL},
-                            maxlen=self.maxlen,
-                            approximate=True,
-                        )
-                        raise ChannelClosed("channel closed")
+                        # **Skipped, not obeyed.** See `close()`: a sentinel in
+                        # a shared stream let one process stop every reader in
+                        # every other one, and re-publishing it made that
+                        # permanent. Tolerated on read so a stream written by
+                        # an older build does not poison a current reader.
+                        logger.debug("channels: ignoring a close marker on %s", self.key)
+                        continue
                     return self._decode(fields)
 
     def try_recv(self) -> T:
@@ -201,37 +205,55 @@ class RedisChannel(Channel[T], Generic[T]):
             count=1,
             block=0,
         )
+        if self._closed:
+            raise ChannelClosed("channel closed")
         if not entries:
-            if self._closed:
-                raise ChannelClosed("channel closed and empty")
             raise ChannelEmpty("no messages available")
         for _stream, messages in entries:
             for msg_id, fields in messages:
                 client.xack(self.key, self.group, msg_id)
                 if fields.get("__ctrl__") == _CLOSED_SENTINEL:
-                    self._closed = True
-                    client.xadd(
-                        self.key,
-                        {"__ctrl__": _CLOSED_SENTINEL},
-                        maxlen=self.maxlen,
-                        approximate=True,
-                    )
-                    raise ChannelClosed("channel closed")
+                    logger.debug("channels: ignoring a close marker on %s", self.key)
+                    continue
                 return self._decode(fields)
         raise ChannelEmpty("no messages available")
 
     # ──── close ────
     async def close(self) -> None:
+        """Close **this** channel. Nothing is written to the stream.
+
+        **It used to publish a close marker, and that let one process stop
+        every reader in every other one.** A Redis stream is shared by
+        definition: a marker written by a shutting-down collector was read by
+        each consumer group in turn, and the reader that saw it re-published it
+        "so siblings also see it" - which made the stream permanently fatal to
+        anyone who joined later.
+
+        It became reachable when `publish` started opening a send-only channel
+        so a collector could write to a stream it does not subscribe to.
+        Before that a publish-only process held no channels and `Bus.close`
+        closed nothing, so the marker was never written in the one topology
+        that would have been destroyed by it.
+
+        No marker is needed. `recv` blocks for two seconds at a time and
+        checks this flag on every pass, so a local receiver wakes with
+        `ChannelClosed` on its own. "This process is going away" is not the
+        same statement as "everybody stop", and only the first one is this
+        method's to make.
+        """
         if self._closed:
             return
+        # **The flag, and nothing else.** Tearing the client down here instead
+        # looked tidier and broke the very thing this method is for: a reader
+        # blocked in `xreadgroup(block=2000)` holds that connection, so closing
+        # it surfaces `redis.ConnectionError` rather than `ChannelClosed` -
+        # which a caller iterating a subscription does not catch. The reader
+        # notices this flag within one block interval and raises properly.
+        #
+        # The sockets go when the object does. A service calling this is on its
+        # way out, and an orderly wake-up for its readers is worth more than
+        # returning a connection a moment sooner.
         self._closed = True
-        client = await self._ensure_async()
-        await client.xadd(
-            self.key,
-            {"__ctrl__": _CLOSED_SENTINEL},
-            maxlen=self.maxlen,
-            approximate=True,
-        )
 
     @property
     def is_closed(self) -> bool:
