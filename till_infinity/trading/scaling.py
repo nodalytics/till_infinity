@@ -37,7 +37,8 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
-from ..shared import effects
+from till_platform import effects
+
 from . import exposure as ex
 
 #: **Halving into a likely large bar.** Declared off here and re-declared by the

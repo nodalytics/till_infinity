@@ -31,8 +31,9 @@ import time
 from collections.abc import Callable
 from typing import Any
 
+from till_platform.logging import get_logger
+
 from ..bus import JOURNAL, Bus
-from ..logging import get_logger
 from .models import Entry, Kind
 from .store import Journal
 

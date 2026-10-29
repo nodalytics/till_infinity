@@ -52,7 +52,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: How fast the weights move. Small, because the alternative to converging
 #: slowly here is a model whose reported score is mostly its own thrashing.

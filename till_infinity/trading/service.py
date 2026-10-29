@@ -66,20 +66,21 @@ from pathlib import Path
 from statistics import median
 from typing import Any, ClassVar
 
+from till_platform import effects
+from till_platform.codec import pack, registry, unpack
+from till_platform.intervals import SECONDS
+from till_platform.logging import get_logger
+from till_platform.state import Restorable
+
 from .. import trading
 from ..bus import ALERTS, DISPERSION, EVENTS, PROPOSALS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
-from ..logging import get_logger
 
 # The wire name `prices` gives its own broker connection's quotes, as opposed to
 # the six venues it scrapes through TradingView. Imported rather than repeated:
 # `trading.config` already depends on `prices.models`, so the direction is settled,
 # and a duplicated string would drift silently.
 from ..prices.config import BROKER as BROKER_SOURCE
-from ..shared import effects
-from ..shared.codec import pack, registry, unpack
-from ..shared.intervals import SECONDS
-from ..shared.state import Restorable
 from ..structures.context.cusum import Cusum, Ensemble, adaptive_threshold
 from ..structures.context.holds import Book as HoldBook
 from ..structures.context.reach import Reaches

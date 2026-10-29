@@ -68,7 +68,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: Effective number of firings the short window averages over. Small enough to move
 #: within days on an active series, large enough that a handful of events cannot trip it.

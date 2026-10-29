@@ -72,10 +72,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from river import drift, linear_model, optim, preprocessing, stats
+from till_platform import effects
+from till_platform.logging import get_logger
+from till_platform.state import Restorable
 
-from ..logging import get_logger
-from ..shared import effects
-from ..shared.state import Restorable
 from .zma import CAP, TEMPERATURE
 
 log = get_logger(__name__)

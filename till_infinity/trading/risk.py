@@ -32,8 +32,9 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from ..logging import get_logger
-from ..shared import effects
+from till_platform import effects
+from till_platform.logging import get_logger
+
 from ..structures import rollover
 from . import exposure as ex
 from . import swap

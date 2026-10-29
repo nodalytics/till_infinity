@@ -37,7 +37,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
+
 from .config import Settings
 from .models import Intent, Position, Side, SymbolSpec
 from .sizing import price_distance

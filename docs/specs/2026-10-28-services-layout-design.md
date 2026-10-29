@@ -66,18 +66,27 @@ itself when `trading` was caught importing another service's persistence layer.
 ## Target layout
 
 ```
-services/
+packages/         installable libraries. Nothing here runs.
+  till-platform/  logging, env, Restorable, the codec, the contract reader
+services/         things that run, in whatever language suits them
   trading/        the authority: gates, sizing, orders. Owns rollover, cusum,
                   trend, focus, envelope, holds, reach - its own consumers.
   statespace/     folds variance, publishes measurements only
   prices/         feeds, bars, quotes, ticks
   ticks/          Go. Ingest and store.
   agents/ notifications/ news/ journal/
+  redis/ | nats/  a broker's config, when one is chosen. Config, no code.
 shared/
   contracts/      topic names, message schemas, state formats. No utilities.
 docs/adr/         decisions, with their history
 research/         Python, permanently. retire/ is where structures goes.
 ```
+
+`packages/` is an amendment, dated 2026-10-29 and recorded in ADR 0002. The
+spec as written had every service carry its own manifest, and a manifest cannot
+name the desk as a dependency without making the service a leaf of the thing it
+was meant to leave. What every service needs is therefore a library, and a
+library is not a service: `services/` is for things that *run*.
 
 ## Slices
 
@@ -108,6 +117,32 @@ Each is a PR that leaves both ruff checks and the suite green.
 6. **Neutral state serialisation** for whichever service is ported first -
    which for ticks is nearly nothing, by design.
 7. **Go tick ingest**, and the CI job that builds it.
+
+## As built
+
+Dated 2026-10-29, after slices 1, 3 and 4 and the first half of slice 2.
+
+| Slice | State | What actually happened |
+| --- | --- | --- |
+| 1 Retire structures | part | The 16 level strategies and the service are retired, `STRUCTURES_ENABLED=0` is live and the desk trades one strategy. The `structures/` package itself, the level machinery in `trading/service.py` and the CLI group are still in place. |
+| 2 Move each service | part | `statespace/` moved first and whole, with its own manifest and env. The rest are still `till_infinity/<name>/`, and `test_service_boundaries.py` records each one's debts as data so the list can only shrink. |
+| 3 Shrink `shared/` | done, differently | `shared/` did not shrink to contracts - it became `packages/till-platform`, because the thing needing an owner turned out to need an *installer*. `shared/contracts/` stays where the spec put it. |
+| 4 Declare the schemas | done | Six JSON Schemas under `shared/contracts/bus/`, validated in CI against payloads from the real producers rather than hand-written examples. |
+| 5 Redis in production | not started | |
+| 6 Neutral state | not started | |
+| 7 Go tick ingest | part | `services/ticks/` backfills the 14 FX feeds to Parquet, 11 tests, excluded from the uv workspace by name so a missing Python manifest is a deliberate exclusion rather than a break. |
+
+**Slice 4 moved ahead of the rest of slice 2, and that was right.** The schemas
+are what makes a service movable: statespace could leave because its output was
+already a declared shape rather than whatever its producer happened to emit.
+Moving services first and declaring the shapes afterwards would have meant
+moving each one twice.
+
+**The ordering claim in the next section held, with one correction.** Slice 1
+being subtraction did make everything after it easier. But slice 1 is *also*
+the slice that is still unfinished, because the level machinery in
+`trading/service.py` is entangled with the gates that stay - and subtraction
+whose remainder has to keep working is not cheap just because it removes code.
 
 ## Order, and why this one
 

@@ -41,8 +41,9 @@ from collections import deque
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 
-from ...shared import frozen
-from ...shared.state import Restorable
+from till_platform import frozen
+from till_platform.state import Restorable
+
 from .. import rollover as ro
 from ..context import trend
 

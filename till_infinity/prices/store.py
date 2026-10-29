@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Self
 
 import orjson
+from till_platform import db as shared_db
 
-from ..shared import db as shared_db
 from .config import FEEDS
 from .models import (
     Bar,

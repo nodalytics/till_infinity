@@ -31,9 +31,9 @@ from typing import Any, Self
 import httpx
 import orjson
 from httpx_ws import aconnect_ws
+from till_platform.logging import get_logger
 
 from ..bus import QUOTES, Bus
-from ..logging import get_logger
 from .config import BROKER, TRADINGVIEW, YAHOO, Feed, Settings
 from .models import Quote, QuoteKey, Symbol, WriteResult
 from .tradingview import MAX_MESSAGE_BYTES, decode, encode, message, session_id

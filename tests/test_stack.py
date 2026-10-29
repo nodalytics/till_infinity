@@ -71,8 +71,8 @@ def test_the_entry_points_each_service_calls_exist():
     assert callable(nw.collect)
     assert callable(td.listen)
 
-    from till_infinity.statespace import config as ss_config
-    from till_infinity.statespace import service as ss_service
+    from statespace import config as ss_config
+    from statespace import service as ss_service
 
     assert callable(ss_service.watch)
     assert callable(ss_config.Settings.from_env)

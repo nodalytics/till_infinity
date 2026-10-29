@@ -54,7 +54,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: Resolutions a signal needs before it is allowed any weight in the ensemble.
 #:

@@ -999,7 +999,7 @@ def test_a_price_restored_as_text_comes_back_as_a_number():
     """
     from dataclasses import dataclass
 
-    from till_infinity.shared.state import Restorable, restore_number
+    from till_platform.state import Restorable, restore_number
 
     @dataclass(slots=True)
     class _Priced(Restorable):
@@ -1023,7 +1023,7 @@ def test_a_price_restored_as_text_comes_back_as_a_number():
 def test_setstate_coerces_a_numeric_field_restored_as_text():
     from dataclasses import dataclass
 
-    from till_infinity.shared.state import Restorable
+    from till_platform.state import Restorable
 
     @dataclass(slots=True)
     class _Order(Restorable):

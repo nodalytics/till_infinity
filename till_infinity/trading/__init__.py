@@ -94,13 +94,6 @@ from .risk import Guard
 from .service import Trader, listen
 from .sizing import Sizing, lots, price_distance
 from .speeds import Speeds
-from .strategies.scalper import (
-    ConfluenceScalp,
-    LevelScalp,
-    LevelStrategy,
-    MomentumScalp,
-    SweepAware,
-)
 from .strategies.strategy import STRATEGIES, Strategy, catalogue
 from .turning import TurnExit, TurnOutcome, TurnTally
 from .valuation import Priced, Valuation, price_it
@@ -139,14 +132,10 @@ __all__ = [
     "Book",
     "Broker",
     "BrokerError",
-    "ConfluenceScalp",
     "Context",
     "Exposure",
     "Guard",
     "Intent",
-    "LevelScalp",
-    "LevelStrategy",
-    "MomentumScalp",
     "Move",
     "NotConnectedError",
     "Order",
@@ -166,7 +155,6 @@ __all__ = [
     "Sizing",
     "Speeds",
     "Strategy",
-    "SweepAware",
     "SymbolSpec",
     "Tick",
     "Trade",

@@ -49,6 +49,21 @@ rule.
 - **`shared/` holds contracts, not utilities.** Topic names, message schemas
   and state formats - things that must be identical on both sides of a
   boundary. It does not hold code that happens to be useful twice.
+- **Infrastructure with many consumers is a package, in `packages/`.**
+  Amended 2026-10-29. The rule above was written against a drawer of
+  utilities and it still is: code with one consumer travels to that consumer.
+  But a service cannot carry its own dependency manifest while importing the
+  desk, so what *every* service needs has to be installable on its own -
+  `packages/till-platform/` holds the logger, environment parsing,
+  `Restorable`, the persistence codec and the contract reader.
+
+  The test is whether removing it would leave two services wanting the same
+  thing. A volatility envelope used only by trading fails it. `Restorable`
+  passes absolutely: `codec` keys persisted state on `basename.ClassName`, so
+  two copies would collide - it cannot be duplicated even in principle.
+
+  Libraries live in `packages/` rather than `services/` because `services/`
+  is for things that *run*, and a transport nothing starts is not one.
 - **Code with one consumer travels to that consumer.** The 1,894 lines of
   `rollover`, `cusum`, `trend`, `focus`, `envelope`, `holds` and `reach` are
   imported by exactly one service, `trading`. They looked shared only because
@@ -59,6 +74,36 @@ rule.
   runtime's memory each and turns a function call into a network hop. A service
   gets its own process when it has a reason - measured CPU, or a different
   language - and not before.
+
+## What this looked like in practice
+
+`services/statespace/` was the first Python service to leave, on 2026-10-29. It
+installs and imports with no reference to the desk -
+`uv run --project services/statespace` proves it - and the desk depends on it as
+a workspace member so `stack.py` still runs it in one process. Separable
+without being separated, which is the whole point of the last bullet above.
+
+Its manifest names exactly one dependency, `till-platform`, for 21,000 lines
+across 58 modules with no third-party runtime requirement at all.
+
+**Two things cost more than expected, and both are worth knowing before the
+next service moves.**
+
+A `__file__`-relative path is a hidden dependency on a module's *position*.
+`frozen.py` resolved the shipped models as `Path(__file__).parent.parent /
+"models"`, which was the desk's own directory while it lived inside the desk
+and a non-existent one afterwards - and an absent directory read as "no model
+found" rather than as an error, so seven tests failed saying nothing about a
+path. Whoever ships files now declares where they are.
+
+A guard goes quiet when its subject moves. `test_service_boundaries.py` kept
+passing after statespace left, because the scan looked in `till_infinity/`,
+found no directory and returned an empty set - so the test that says statespace
+owes nothing passed by asking nothing. Two tests in `test_statespace.py` had
+been vacuous for longer, globbing a path that stopped existing when the package
+left `structures/`. Services are now named in a registry the tests assert
+against, rather than discovered by a scan that cannot tell absence from
+innocence.
 
 ## Consequences
 

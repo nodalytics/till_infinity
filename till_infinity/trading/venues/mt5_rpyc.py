@@ -48,7 +48,8 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from ...logging import get_logger
+from till_platform.logging import get_logger
+
 from ..config import Settings
 from ..models import Account
 from .broker import NotConnectedError

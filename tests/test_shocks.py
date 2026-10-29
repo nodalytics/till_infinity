@@ -9,8 +9,8 @@ import os
 import random
 
 import pytest
+from till_platform import frozen
 
-from till_infinity.shared import frozen
 from till_infinity.structures import codec as scodec
 from till_infinity.structures.learning import shocks as sh
 

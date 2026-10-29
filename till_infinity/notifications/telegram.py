@@ -30,7 +30,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
+
 from .config import TELEGRAM_API, TELEGRAM_TEXT_LIMIT
 from .models import Channel, Delivery, Notification
 from .notifier import NotConfiguredError, Notifier, NotifierError, PermanentError

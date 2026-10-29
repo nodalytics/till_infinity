@@ -40,7 +40,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
+
 from ..learning.online import Linear
 
 #: The inputs, named so the fitted weights can be read. Every one is either

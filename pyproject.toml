@@ -21,6 +21,18 @@ dependencies = [
     "river[pandas]>=0.25.0",
     "tenacity>=9.1.4",
     "yfinance>=1.5.2",
+    # The logger, environment parsing, `Restorable`, the persistence codec and
+    # the bus-contract reader. A workspace member rather than a `shared/`
+    # directory inside this package, because a service cannot carry its own
+    # dependency manifest while importing the desk - see
+    # `packages/till-platform/README.md`.
+    "till-platform",
+    # **A dependency, not an inlined package.** `services/statespace` has its
+    # own manifest and installs without the desk - that is what makes it
+    # separable. The desk depends on it so `stack.py` can still run it in the
+    # one process, which ADR 0002 keeps as the default until a service earns
+    # its own: the layout is a source-tree decision, not a deployment one.
+    "statespace",
 ]
 
 [project.optional-dependencies]
@@ -64,6 +76,23 @@ till-infinity = "till_infinity.cli:main"
 [build-system]
 requires = ["uv_build>=0.9.24,<0.10.0"]
 build-backend = "uv_build"
+
+# **The workspace.** Each member builds and installs on its own; the desk and
+# the services depend on the packages rather than reaching into each other.
+#
+# `services/*` is a glob so a new Python service needs no edit here. A **Go**
+# service does: uv refuses a member with no `pyproject.toml` rather than
+# skipping it, so `services/ticks` is excluded by name. That is the cost of one
+# `services/` directory holding both languages, and it is a line in a config
+# file against a boundary that is otherwise invisible - worth it, but it has to
+# be remembered when the second Go service arrives.
+[tool.uv.workspace]
+members = ["packages/*", "services/*"]
+exclude = ["services/ticks"]
+
+[tool.uv.sources]
+till-platform = { workspace = true }
+statespace = { workspace = true }
 
 [tool.uv.build-backend]
 module-root = ""

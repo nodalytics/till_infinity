@@ -33,9 +33,10 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, ClassVar
 
-from ..logging import get_logger
-from ..shared import effects
-from ..shared.state import Restorable
+from till_platform import effects
+from till_platform.logging import get_logger
+from till_platform.state import Restorable
+
 from . import breaks as bk
 from . import conformal, reactions, shrinkage
 from . import cycles as cy

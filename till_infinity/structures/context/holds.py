@@ -42,7 +42,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: Observations before an estimate is offered at all.
 FEWEST = 8

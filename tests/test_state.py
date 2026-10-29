@@ -34,7 +34,8 @@ def test_a_strenum_field_comes_back_as_its_enum():
 def test_an_unknown_member_keeps_the_raw_value_rather_than_raising():
     """A member this build no longer has should be visible at the point of use,
     not cost the whole file."""
-    from till_infinity.shared.state import restore_enum
+    from till_platform.state import restore_enum
+
     from till_infinity.trading import service as svc
 
     assert restore_enum(svc.Untaken, "side", "sideways") == "sideways"
@@ -68,7 +69,8 @@ def test_restoring_does_not_build_unrelated_factories():
     """Reading a `maxlen` means calling a `default_factory`, and `Learned._model`
     builds a river pipeline. Introspection must not pay for that, so the lookup
     is gated on the annotation naming a deque."""
-    from till_infinity.shared.state import _deque_bounds
+    from till_platform.state import _deque_bounds
+
     from till_infinity.structures.vol.learned import Learned
 
     bounds = _deque_bounds(Learned)
@@ -82,7 +84,8 @@ def test_every_bounded_deque_field_survives_a_list_state():
     import dataclasses
     from collections import deque
 
-    from till_infinity.shared.state import _deque_bounds, restore_deque
+    from till_platform.state import _deque_bounds, restore_deque
+
     from till_infinity.structures.context import cusum, reach, trend
     from till_infinity.structures.vol import har, learned
 

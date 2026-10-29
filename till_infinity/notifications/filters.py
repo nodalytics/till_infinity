@@ -31,7 +31,7 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
 
 log = get_logger(__name__)
 
@@ -182,7 +182,7 @@ class Filter:
         """
         if not self.floor:
             return ""
-        from ..shared.intervals import SECONDS
+        from till_platform.intervals import SECONDS
 
         want = SECONDS.get(self.floor, 0.0)
         if want <= 0:

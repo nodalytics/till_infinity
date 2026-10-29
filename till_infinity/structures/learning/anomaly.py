@@ -32,8 +32,8 @@ from math import erf, sqrt
 
 from river import anomaly as river_anomaly
 from river import preprocessing
+from till_platform.logging import get_logger
 
-from ...logging import get_logger
 from ..features import Books
 from ..models import Shape, Signal
 

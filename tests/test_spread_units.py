@@ -9,15 +9,13 @@ Production is not affected: its spreads are ask minus bid (`Tick.spread`).
 from __future__ import annotations
 
 import json
-import sys
-from pathlib import Path
 
 import numpy as np
 import pytest
 
-sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "research" / "harness"))
-import seqlab
-
+# By package path: see the note in `test_supervised.py`. `seqlab` imports its
+# own sibling as `from research.harness import feed`, so it needs no flat path.
+from research.harness import seqlab
 from till_infinity.trading.models import Tick
 
 #: What the broker's symbol info said on 2026-09-30.

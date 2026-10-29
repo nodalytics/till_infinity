@@ -60,9 +60,9 @@ from collections import deque
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..logging import get_logger
-from ..shared import effects
-from ..shared.state import Restorable
+from till_platform import effects
+from till_platform.logging import get_logger
+from till_platform.state import Restorable
 
 #: Recorded and surfaced always; it costs one array pass a bar.
 ENABLED = os.environ.get("STRUCTURES_ZMA", "1") not in ("0", "false", "no")

@@ -12,8 +12,7 @@ function that decides what ships.
 import inspect
 
 import pytest
-
-from till_infinity.shared.replay import walk
+from till_platform.replay import walk
 
 #: `(ts, open, high, low, close)` - the open is load-bearing, see `test_a_bar_...`
 FLAT = [(float(i), 100.0, 100.0, 100.0, 100.0) for i in range(50)]
@@ -239,7 +238,7 @@ def test_an_ambiguous_bar_can_return_the_expected_r_instead_of_a_guess():
 def test_a_bar_opening_midway_between_the_barriers_is_a_coin():
     """The property that makes this a refusal rather than a different guess: it
     cannot manufacture a direction the bar does not contain."""
-    from till_infinity.shared.replay import _first_target
+    from till_platform.replay import _first_target
 
     assert _first_target(100.0, 99.0, 101.0, 101.5, 98.5) == pytest.approx(0.5)
     # And an open sitting on one barrier leans towards it.
@@ -286,7 +285,8 @@ def test_a_fresh_entry_is_never_ambiguous_at_the_default_target():
 def test_the_shift_here_is_the_one_trading_derives():
     """`shared` sits under `trading` and must not import upwards, so the constant
     is duplicated. This is what stops the copies drifting apart."""
-    from till_infinity.shared import replay as shared_replay
+    from till_platform import replay as shared_replay
+
     from till_infinity.trading import barriers
 
     assert shared_replay.SHIFT == barriers.SHIFT

@@ -11,6 +11,7 @@ from __future__ import annotations
 import inspect
 import pickle
 
+import mechanics
 import pytest
 
 from till_infinity.structures.vol.volatility import Volatility
@@ -127,14 +128,14 @@ ARGS = {
 def test_risk_scale_halves_in_the_loud_window():
     settings = Settings()
     settings.spike_above = 0.8
-    engine = build(["level-scalp"], settings)[0]
+    engine = build([mechanics.NAME], settings)[0]
     quiet = engine.risk_scale(features={"tr_percentile": 0.3}, **ARGS)
     loud = engine.risk_scale(features={"tr_percentile": 0.9}, **ARGS)
     assert loud == pytest.approx(quiet * 0.5)
 
 
 def test_risk_scale_ignores_it_when_off():
-    engine = build(["level-scalp"], Settings())[0]
+    engine = build([mechanics.NAME], Settings())[0]
     quiet = engine.risk_scale(features={"tr_percentile": 0.3}, **ARGS)
     loud = engine.risk_scale(features={"tr_percentile": 0.99}, **ARGS)
     assert quiet == loud

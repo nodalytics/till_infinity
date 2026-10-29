@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..shared import env as shared_env
+from till_platform import env as shared_env
 
 #: RSS feeds. Macro/FX first, then crypto - the mix the gold/BTC/FX book needs.
 RSS_FEEDS: dict[str, str] = {

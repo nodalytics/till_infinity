@@ -65,8 +65,9 @@ import time
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ...logging import get_logger
-from ...shared.state import Restorable
+from till_platform.logging import get_logger
+from till_platform.state import Restorable
+
 from .macro import currencies
 
 log = get_logger(__name__)

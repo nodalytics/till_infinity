@@ -16,8 +16,9 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+from till_platform.logging import get_logger
+
 from ..bus import Bus
-from ..logging import get_logger
 from . import bus as journal_bus
 from .models import Entry, Kind
 from .store import DEFAULT_DB, Journal, get

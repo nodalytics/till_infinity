@@ -167,7 +167,8 @@ import math
 import os
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
+
 from . import stated
 
 #: Off until measured live, like every other new member on this book.

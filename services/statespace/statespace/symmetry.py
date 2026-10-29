@@ -69,7 +69,7 @@ import statistics
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from till_infinity.statespace.displacements import Relation
+from statespace.displacements import Relation
 
 HOUR = 3600.0
 TAU = 2.0 * math.pi

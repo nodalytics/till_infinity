@@ -43,14 +43,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from till_platform import effects
+from till_platform.logging import get_logger
+
 from . import journal as jr
 from . import news as nw
 from . import notifications as nt
 from . import prices as px
 from . import trading as td
 from .bus import Bus
-from .logging import get_logger
-from .shared import effects
 
 log = get_logger(__name__)
 
@@ -658,14 +659,16 @@ class Stack:
         await td.listen(self.bus, journal=book)
 
     async def _run_statespace(self, _book) -> None:
-        # Imported here rather than at the top because this package is meant
-        # to lift out in one move - `TestVendoredCusum` asserts it imports
-        # nothing from outside itself but `shared`, and a top-level import
+        # Imported here rather than at the top because this package **did**
+        # lift out in one move: it is `services/statespace/` with its own
+        # manifest as of 2026-10-29, and a workspace dependency rather than a
+        # subpackage. `TestVendoredCusum` asserts it imports nothing from
+        # outside itself but `till_platform`, and a top-level import
         # here would make a stack that cannot start without it. The seam is
         # the bus: `watch` takes a carrier and the topics are named on both
         # sides, with a test asserting the two names match.
-        from .statespace import config as ss_config
-        from .statespace import service as ss_service
+        from statespace import config as ss_config
+        from statespace import service as ss_service
 
         await ss_service.watch(self.bus, ss_config.Settings.from_env())
 

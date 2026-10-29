@@ -52,7 +52,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from itertools import pairwise
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
+
 from ..drawing.pips import Point
 from ..vol.volatility import Volatility
 

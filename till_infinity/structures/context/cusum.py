@@ -47,7 +47,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: Crossings kept per filter. Only the newest is ever read - `Ensemble.bias`
 #: takes `events[-1].side`, and nothing else looks at the list - but it was an

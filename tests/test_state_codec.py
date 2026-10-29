@@ -5,8 +5,8 @@ from collections import deque
 from dataclasses import dataclass, field
 
 import pytest
+from till_platform.state import Restorable
 
-from till_infinity.shared.state import Restorable
 from till_infinity.structures import store
 from till_infinity.structures.codec import TAG, key_for, pack, registry, unpack
 
@@ -220,7 +220,7 @@ def test_the_save_buffer_is_small_against_the_state_it_writes():
     """`CHUNK` is the whole memory argument: the streaming save's extra cost is
     one buffer, so a buffer that grew to state-sized would give back exactly
     what this change bought. 4MB is ~2% of the live file."""
-    from till_infinity.shared import codec
+    from till_platform import codec
 
     assert codec.CHUNK <= 8 << 20
 

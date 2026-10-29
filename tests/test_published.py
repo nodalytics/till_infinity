@@ -75,8 +75,7 @@ from collections.abc import Iterator, Sequence
 from pathlib import Path
 
 import pytest
-
-from till_infinity.shared import liveness
+from till_platform import liveness
 
 # ----------------------------------------------------------------- the book
 

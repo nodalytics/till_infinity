@@ -21,9 +21,9 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential_jitter,
 )
+from till_platform.logging import get_logger
 
 from ..bus import BARS, Bus
-from ..logging import get_logger
 from .broker import BrokerSource
 from .config import DEFAULT_SOURCES, Feed, Settings
 from .crypto import CcxtSource

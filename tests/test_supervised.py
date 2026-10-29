@@ -25,8 +25,20 @@ import numpy as np
 import pytest
 
 ROOT = Path(__file__).resolve().parent.parent
-sys.path.insert(0, str(ROOT / "research" / "training"))
-sys.path.insert(0, str(ROOT / "research" / "harness"))
+
+# **Appended, never inserted at the front.** These modules import each other by
+# bare name - `candles.py` does `import labels` inside a function, 389 lines
+# down - so the directories do have to be flat on the path. The position is
+# what matters: `sys.path.insert(0, ...)` is global and permanent for the
+# session, and it put 375 single-word names from `research/harness` ahead of
+# every installed distribution for every file collected after this one. One of
+# them is `statespace`, now a service rather than a submodule of the desk, so
+# `from statespace import ...` elsewhere in the suite got a 968-line research
+# harness in whichever order pytest happened to collect. Appending leaves
+# installed packages first, which is the only ordering that does not depend on
+# collection order.
+sys.path.append(str(ROOT / "research" / "training"))
+sys.path.append(str(ROOT / "research" / "harness"))
 
 candles = pytest.importorskip("candles")
 labels = pytest.importorskip("labels")

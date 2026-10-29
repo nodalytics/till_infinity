@@ -21,8 +21,9 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from ..logging import get_logger
-from ..shared import db as shared_db
+from till_platform import db as shared_db
+from till_platform.logging import get_logger
+
 from .models import Entry, Kind
 
 log = get_logger(__name__)

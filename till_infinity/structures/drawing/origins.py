@@ -66,7 +66,8 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field, replace
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
+
 from ..learning.focus import Focus
 
 #: How many origins are kept per feed and timeframe. Origins are rare - the

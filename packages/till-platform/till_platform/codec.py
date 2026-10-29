@@ -57,7 +57,7 @@ from collections import deque
 from functools import cache
 from typing import Any
 
-from ..logging import get_logger
+from .logging import get_logger
 from .state import Restorable, restore_enum, restore_number
 
 log = get_logger(__name__)
@@ -338,13 +338,25 @@ def _homes() -> dict[str, str]:
 
     See `shared-codec.md` in research/docs.
     """
+    import importlib
     import pkgutil
 
-    from .. import structures
+    # **The one place this package reaches for a service, and it does so
+    # defensively.** The relocation exists for blobs written when a module
+    # lived somewhere else, and `_Relocating.HOME` names `structures`
+    # specifically. A platform package cannot import the desk - that is
+    # circular, and the point of being a package is to install without it - so
+    # the walk is attempted and an absent package means there is nothing to
+    # relocate, which is also true once `structures` is retired.
+    try:
+        home = importlib.import_module(_Relocating.HOME)
+    except Exception:
+        log.debug("codec: %s is not importable, so nothing is relocated", _Relocating.HOME)
+        return {}
 
     return {
         info.name.rsplit(".", 1)[-1]: info.name
-        for info in pkgutil.walk_packages(structures.__path__, prefix=f"{structures.__name__}.")
+        for info in pkgutil.walk_packages(home.__path__, prefix=f"{home.__name__}.")
     }
 
 

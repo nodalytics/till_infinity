@@ -42,7 +42,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ..shared.state import Restorable
+from till_platform.state import Restorable
+
 from .drawing.pips import Point, Structure, Swing
 from .drawing.pips import structure as label_structure
 

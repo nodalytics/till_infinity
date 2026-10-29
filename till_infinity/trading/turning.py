@@ -41,7 +41,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from ..shared import effects
+from till_platform import effects
+
 from .models import Side
 
 #: **A close that actually carried a comparison.** Always on, because this is a

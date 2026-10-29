@@ -18,7 +18,8 @@ from collections.abc import Sequence
 from datetime import UTC, datetime, timedelta
 from typing import TYPE_CHECKING, Any, Self
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
+
 from .models import Bar, Interval, WriteResult
 from .source import BarSink, Job, PermanentError, Source, TransientError
 

@@ -8,8 +8,8 @@ import random
 from statistics import NormalDist
 
 import pytest
+from till_platform import frozen
 
-from till_infinity.shared import frozen
 from till_infinity.structures.learning import touches as tc
 from till_infinity.structures.vol import envelope as ev
 
@@ -428,7 +428,7 @@ def test_a_model_trained_before_activity_still_loads(tmp_path):
 
 def test_vector_passes_a_matching_order_through_untouched():
     """The common case costs nothing: same names, same order, same list."""
-    from till_infinity.shared import frozen
+    from till_platform import frozen
 
     names = ("a", "b", "c")
     spec = {"names": list(names)}
@@ -445,7 +445,7 @@ def test_vector_reorders_when_the_recipe_has_gained_a_feature():
     `activity` becoming the fifteenth envelope feature on 2026-10-09 is the real
     case: the shipped files have fourteen names.
     """
-    from till_infinity.shared import frozen
+    from till_platform import frozen
 
     code = ("lvol", "r1", "r5", "activity")
     trained_on = ["lvol", "r1", "r5"]
@@ -461,7 +461,7 @@ def test_vector_reorders_when_the_recipe_has_gained_a_feature():
 
 def test_vector_refuses_a_model_wanting_a_feature_we_cannot_supply():
     """The one genuinely unsafe case, and the only one that returns None."""
-    from till_infinity.shared import frozen
+    from till_platform import frozen
 
     assert frozen.vector({"names": ["a", "zzz"]}, ("a", "b"), [1.0, 2.0]) is None
 

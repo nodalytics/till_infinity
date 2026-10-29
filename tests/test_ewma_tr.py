@@ -10,6 +10,8 @@ from __future__ import annotations
 
 import math
 
+import mechanics
+
 from till_infinity.structures.vol.ranges import MIN_VOL_BPS, TR_ALPHA, Ranges
 
 
@@ -84,7 +86,7 @@ class TestSizingReadsIt:
 
         settings = Settings()
         settings.volatility_target_bps = 10.0
-        engine = build(["level-scalp"], settings)[0]
+        engine = build([mechanics.NAME], settings)[0]
         args = {
             "feed": "gold",
             "positions": (),
@@ -105,7 +107,7 @@ class TestSizingReadsIt:
 
         settings = Settings()
         settings.volatility_target_bps = 10.0
-        engine = build(["level-scalp"], settings)[0]
+        engine = build([mechanics.NAME], settings)[0]
         args = {
             "feed": "gold",
             "positions": (),

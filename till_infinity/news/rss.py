@@ -12,7 +12,8 @@ from __future__ import annotations
 import asyncio
 import xml.etree.ElementTree as ET
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
+
 from .config import RSS_FEEDS, Settings
 from .models import Article, Batch, clean, digest, parse_time
 from .source import PermanentError, Source, TransientError

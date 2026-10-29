@@ -67,9 +67,9 @@ from collections import deque
 from dataclasses import dataclass, field
 
 from river import linear_model, optim, preprocessing
+from till_platform import effects
+from till_platform.state import Restorable
 
-from ...shared import effects
-from ...shared.state import Restorable
 from . import stated
 
 #: On when the flag is, and it shipped once while reaching nothing - see

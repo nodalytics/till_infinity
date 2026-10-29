@@ -24,6 +24,7 @@ import asyncio
 import tempfile
 from pathlib import Path
 
+import mechanics
 import pytest
 
 from till_infinity import trading as td
@@ -40,7 +41,7 @@ FEED = "gold"
 def trading_settings(**over):
     made = td.Settings(symbols=(FEED,), account_equity=10_000.0, paper_equity=10_000.0)
     made.live = False
-    made.strategies = ("level-scalp",)
+    made.strategies = (mechanics.NAME,)
     # The spread-against-risk gate is calibrated from production and this
     # fixture's synthetic quotes do not resemble it; every other test file
     # turns it off for the same reason.

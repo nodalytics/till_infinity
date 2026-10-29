@@ -28,7 +28,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
+
 from ..levels import Kalman, Level
 from ..vol.volatility import Volatility
 

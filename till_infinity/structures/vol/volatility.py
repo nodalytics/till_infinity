@@ -22,8 +22,8 @@ import math
 from dataclasses import dataclass, field
 
 from river import stats
+from till_platform.state import Restorable
 
-from ...shared.state import Restorable
 from . import stated
 from .consensus_vol import MAD_TO_SIGMA, Ensemble
 from .garch import Garch

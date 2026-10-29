@@ -76,9 +76,8 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 
 from river import drift as river_drift
-
-from ...logging import get_logger
-from ...shared.state import Restorable
+from till_platform.logging import get_logger
+from till_platform.state import Restorable
 
 log = get_logger(__name__)
 

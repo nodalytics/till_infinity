@@ -21,9 +21,9 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential_jitter,
 )
+from till_platform.logging import get_logger
 
 from ..bus import ARTICLES, EVENTS, MACRO, Bus
-from ..logging import get_logger
 from .calendar import ForexFactoryCalendar, TradingViewCalendar
 from .config import DEFAULT_SOURCES, Settings
 from .cot import CotSource

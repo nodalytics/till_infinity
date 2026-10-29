@@ -52,7 +52,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: Bars before the mean is trusted. Below this the share is reported as 1.0,
 #: because a ratio against two observations is not a ratio against anything.

@@ -17,10 +17,12 @@ So this file does three things:
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import pytest
+from till_platform import contracts
 
 from till_infinity import bus as bus_module
-from till_infinity.shared import contracts
 
 #: Topics with no schema yet, and why.
 #:
@@ -205,3 +207,25 @@ def test_an_alert_with_no_title_is_refused_by_the_schema_as_well_as_the_consumer
     assert from_message({"body": "no title"}) is None
     with pytest.raises(jsonschema.ValidationError):
         contracts.check("alerts", {"body": "no title"})
+
+
+def test_the_contracts_are_found_and_shipped():
+    """**Two ways the schemas go missing, and neither raises.**
+
+    `contracts.declared()` returns an empty tuple when its directory is absent,
+    so a wrong path and a container that does not ship the files look the same
+    from inside the process: a caller asking what the bus carries is told
+    "nothing".
+
+    The second was real. `shared/contracts/` is at the repository root rather
+    than inside the package, because a Go service reads the same files - and the
+    Dockerfile copied `till_infinity/` and not `shared/`, so every image built
+    after the schemas landed shipped without them. Nothing called it in
+    production yet, which is why it was invisible.
+    """
+    assert contracts.declared(), f"no schemas found under {contracts.HOME}"
+
+    dockerfile = (Path(__file__).resolve().parent.parent / "Dockerfile").read_text()
+    assert "COPY shared/" in dockerfile, (
+        "the image does not ship shared/contracts/, so declared() is empty inside it"
+    )

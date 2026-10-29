@@ -73,7 +73,8 @@ import sqlite3
 from collections.abc import Iterable, Sequence
 from dataclasses import dataclass, field
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
+
 from .config import FEEDS, Feed
 from .models import Bar, Symbol
 

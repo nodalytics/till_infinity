@@ -71,8 +71,9 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 
-from ...logging import get_logger
-from ...shared.state import Restorable
+from till_platform.logging import get_logger
+from till_platform.state import Restorable
+
 from .online import Logistic
 
 log = get_logger(__name__)

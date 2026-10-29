@@ -55,7 +55,8 @@ import io
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
+
 from .models import Batch, Observation
 from .source import Source, TransientError
 

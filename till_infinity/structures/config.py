@@ -11,9 +11,9 @@ import os
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..shared.env import number as _float
-from ..shared.env import whole as _int
-from ..shared.state import Restorable
+from till_platform.env import number as _float
+from till_platform.env import whole as _int
+from till_platform.state import Restorable
 
 DEFAULT_STATE_DIR = ".data/structures"
 DEFAULT_JOURNAL_DB = ".data/journal/journal.db"

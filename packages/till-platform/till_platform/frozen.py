@@ -34,8 +34,37 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-#: The shipped models, inside the package.
-PACKAGED = Path(__file__).resolve().parent.parent / "models"
+#: Where the shipped models live, or `None` until something says.
+#:
+#: **Not guessed from this file's location, which is how it broke.** This read
+#: `Path(__file__).parent.parent / "models"` while it lived in
+#: `till_infinity/shared/`, where that happened to be the desk's own `models/`
+#: directory. When this became a package on 2026-10-29 the same expression
+#: pointed at `packages/till-platform/models`, which does not exist - so every
+#: shipped model silently stopped being found and seven tests failed with "the
+#: model is not found" rather than with anything about a path.
+#:
+#: A platform package does not know where a service keeps its data. Whoever
+#: ships the files says so: `till_infinity/__init__.py` calls `ship()`.
+PACKAGED: Path | None = None
+
+
+def ship(directory: Path) -> None:
+    """Name the directory holding the shipped models.
+
+    Idempotent and last-call-wins, because the alternative - refusing a second
+    call - would make an import order a hard error for no benefit.
+
+    **A module attribute, rather than a container this rebinds into.** Ruff
+    dislikes the `global` and it is right in general, but three tests reach for
+    `monkeypatch.setattr(frozen, "PACKAGED", ...)` to ask what happens when the
+    shipped copy is absent - and monkeypatch restores an attribute while a
+    mutated container would leak that state into the next test. Test isolation
+    is worth more here than the style rule.
+    """
+    global PACKAGED  # noqa: PLW0603 - patchable by monkeypatch; see above
+    PACKAGED = Path(directory)
+
 
 #: Seconds between checks for a changed model file.
 RECHECK = 300.0
@@ -49,7 +78,11 @@ _cache: dict[str, tuple[float, float, str, dict[str, Any] | None]] = {}
 
 
 def _source(name: str) -> Path | None:
+    # `PACKAGED` is `None` when nothing has shipped any, which is a real state
+    # for a service installed on its own rather than an error.
     for base in (models_dir(), PACKAGED):
+        if base is None:
+            continue
         path = base / f"{name}.json"
         if path.is_file():
             return path
