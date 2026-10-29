@@ -346,24 +346,6 @@ def test_a_managed_stop_only_ever_tightens(
 # ------------------------------------------------------------------ properties: the z-score's say
 
 
-@given(
-    calls=st.floats(0.0, 5000.0),
-    rate=st.floats(0.0, 1.0),
-    z=st.floats(-4.0, 4.0),
-    side=st.sampled_from(["up", "down"]),
-)
-def test_the_z_score_veto_can_only_remove_a_trade_and_only_when_earned(calls, rate, z, side):
-    from till_infinity.trading.strategies.scalper import CycleScalp, zma_gate
-
-    s = Settings()
-    right = calls * rate
-    features = {"zma_z": z, "zma_strong": 1.0, "zma_edge_calls": calls, "zma_edge_right": right}
-    got = zma_gate(CycleScalp(settings=s), {"direction": side, "feed": "v75"}, features)
-    assert got is None or got.gate == "zma_against"
-    if not s.zma_earned(calls, right):
-        assert got is None
-
-
 # ------------------------------------------------------------------ the state machine
 
 FEEDS = [

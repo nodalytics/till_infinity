@@ -830,7 +830,6 @@ def build(names: Sequence[str] | None, settings: Settings) -> list[Strategy]:
     two is only noticed by the trades that never happened.
     """
     from . import dispersing as _disp  # noqa: F401 - registers `statespace-surprise`
-    from . import scalper as _  # noqa: F401 - registers the built-ins
 
     chosen = tuple(names) if names else settings.strategies
     unknown = [n for n in chosen if n not in STRATEGIES]
@@ -873,6 +872,5 @@ def by_style(engines: list[Strategy], style: str) -> tuple[list[Strategy], list[
 
 def catalogue() -> dict[str, str]:
     """name -> what it does, for `trading strategies`."""
-    from . import scalper as _  # noqa: F401
 
     return {name: cls.description for name, cls in sorted(STRATEGIES.items())}

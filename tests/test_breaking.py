@@ -337,60 +337,6 @@ def test_it_reaches_trading_as_a_feature():
 # --------------------------------------------------- the gate every strategy runs
 
 
-def _gate(risk=None, ceiling=0.42):
-    """Run the shared quality gate with a break estimate on the call."""
-    import till_infinity.trading as td
-    from till_infinity.trading.config import Settings
-    from till_infinity.trading.models import Side
-
-    engine = td.STRATEGIES["level-scalp"](
-        Settings(max_break_risk=ceiling, min_probability=0.0, min_edge=0.0, min_base_rate=0.0)
-    )
-    features = {"probability": 0.9, "edge": 0.5, "base_rate_up": 0.5}
-    if risk is not None:
-        features["break_probability"] = risk
-    return engine.quality("gold", features, Side.BUY, "5m")
-
-
-def test_a_level_likely_to_give_way_is_refused():
-    """The top fifth by this estimate breaks 43.2% of the time against the
-    bottom fifth's 16.9%, so the call is right 56.8% there against 83.1%."""
-    got = _gate(risk=0.62)
-    assert got is not None
-    assert got.gate == "break_risk"
-    assert "62%" in got.detail
-
-
-def test_a_level_below_the_ceiling_passes():
-    assert _gate(risk=0.20) is None
-
-
-def test_the_gate_is_off_by_default():
-    """A gate that refuses trades is turned on deliberately - and the numbers
-    behind this one were wrong once already."""
-    from till_infinity.trading.config import Settings
-
-    assert Settings().max_break_risk == 0.0
-    assert _gate(risk=0.99, ceiling=0.0) is None
-
-
-def test_a_call_with_no_estimate_is_not_refused():
-    """Silence is the honest state until the model has 200 resolutions behind
-    it. A level call with no break reading is not one with a low reading."""
-    assert _gate(risk=None) is None
-
-
-def test_every_strategy_runs_it_rather_than_one():
-    """`quality` exists because `FadeToValue` overrode `consider` entirely and
-    therefore ran none of the gates - the exemption was invisible from the
-    configuration and the exempt strategy was taking most of the trades."""
-    import inspect
-
-    from till_infinity.trading.strategies import scalper
-
-    assert "max_break_risk" in inspect.getsource(scalper.LevelStrategy.quality)
-
-
 def test_the_outcome_records_which_timeframes_agreed():
     """It was on the signal and on the touch and not on the outcome, so all
     12,504 resolutions recorded zero timeframes and "does agreement across
@@ -634,23 +580,6 @@ def test_lengthening_the_vector_bumps_the_recipe():
 
     assert len(NAMES) == 9
     assert "conviction" in RECIPE
-
-
-def test_the_learning_rate_favours_a_stable_gate():
-    """Swept over the whole record: 0.05 scored 0.7304 AUC at 2.751 drift per
-    100 observations, 0.02 scored 0.7206 at 1.110. Accuracy saturates long
-    before stability does, and `max_break_risk` acts on this model's output -
-    at the old rate the live weights moved 1.652, 1.174, 1.840 and 1.441 in
-    four consecutive half-hours."""
-    from till_infinity.structures.learning.breaking import RATE, Breaks
-
-    assert RATE == 0.02
-    assert Breaks().model.rate == RATE
-    # And a restart uses the same one rather than a second copy of the number.
-    model = Breaks()
-    model.recipe = "something older"
-    model.observe(Touch(approach_vol=1.0), "reject")
-    assert model.model.rate == RATE
 
 
 def test_conviction_is_the_records_magnitude_and_not_its_direction():

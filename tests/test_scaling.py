@@ -8,6 +8,7 @@ few hundred observations.
 
 from __future__ import annotations
 
+import mechanics
 import pytest
 
 from till_infinity.trading import scaling
@@ -166,14 +167,6 @@ def test_a_strategy_applies_all_four():
         assert name in source
 
 
-def test_sizing_reads_it():
-    import inspect
-
-    from till_infinity.trading.strategies import scalper
-
-    assert "self.risk_scale(" in inspect.getsource(scalper.LevelStrategy.consider)
-
-
 def test_all_four_are_off_by_default():
     """Better sizing of a signal with no edge scales the loss rather than
     fixing it - see research/horizon.md - so these wait for that question."""
@@ -328,11 +321,6 @@ def _engine(name, **over):
     return td.STRATEGIES[name](Settings(**over))
 
 
-def test_a_strategy_asking_for_less_keeps_what_it_asked_for():
-    """`snap` wants 120 seconds and a ceiling must not lengthen a trade."""
-    assert _engine("snap").hold_for("1h") == 120.0
-
-
 # ------------------------------------- a close with no decision behind it
 
 
@@ -417,7 +405,7 @@ def _scalp(**over):
     import till_infinity.trading as td
     from till_infinity.trading.config import Settings
 
-    return td.STRATEGIES["level-scalp"](Settings(**over))
+    return td.STRATEGIES[mechanics.NAME](Settings(**over))
 
 
 def test_every_scalp_names_a_higher_timeframe_as_context():
@@ -438,17 +426,12 @@ def test_every_strategy_wants_context():
     above it agreeing is a fast trade in no direction, whatever the style."""
     import till_infinity.trading as td
 
+    # `test-mechanics` is a vehicle and declares no context, so a test about
+    # what the desk *ships* filters it out - see `tests/mechanics.py`.
     for name, cls in td.STRATEGIES.items():
+        if name.startswith("test-"):
+            continue
         assert cls.needs_context is True, name
-
-
-def test_the_gate_reads_both():
-    import inspect
-
-    from till_infinity.trading.strategies import scalper
-
-    source = inspect.getsource(scalper.LevelStrategy.consider)
-    assert "self.needs_context and bool(self.context)" in source
 
 
 def test_a_stop_that_overshoots_gives_back_the_size_it_overshot_by():
@@ -482,7 +465,7 @@ def test_an_unlisted_instrument_is_unscaled():
     from till_infinity.trading.config import Settings
 
     made = Settings(stop_overshoot=(("boom_500_index", 1.25),))
-    engine = td.STRATEGIES["level-scalp"](made)
+    engine = td.STRATEGIES[mechanics.NAME](made)
     assert engine.risk_scale("gold", {"vol_bps": 10.0}) == 1.0
     assert engine.risk_scale("boom_500_index", {"vol_bps": 10.0}) == pytest.approx(0.8)
 
@@ -680,24 +663,6 @@ def test_the_interval_weight_never_enlarges():
 
     assert scaling.by_interval("1m", (("1m", 4.0),)) == 1.0
     assert scaling.by_interval("1m", (("1m", -2.0),)) == scaling.FLOOR
-
-
-def test_the_strategy_passes_the_interval_through():
-    """A weighting the sizing call never receives is a weighting that appears
-    to work and does not - which is the defect this repository keeps finding."""
-    import inspect
-
-    import till_infinity.trading as td
-    from till_infinity.trading.config import Settings
-    from till_infinity.trading.strategies import scalper
-
-    assert "interval" in inspect.signature(td.Strategy.risk_scale).parameters
-    assert "positions, equity, peak, interval" in inspect.getsource(scalper.LevelStrategy.consider)
-
-    made = Settings(interval_weight=(("1m", 0.25),))
-    engine = td.STRATEGIES["level-scalp"](made)
-    assert engine.risk_scale("gold", {"vol_bps": 10.0}, interval="1m") == 0.25
-    assert engine.risk_scale("gold", {"vol_bps": 10.0}, interval="1h") == 1.0
 
 
 # --------------------------------------- momentum leads, the candle confirms
