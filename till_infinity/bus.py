@@ -9,7 +9,7 @@ message costs latency rather than history.
               ├──▶ bus ──▶ agents ──▶ bus
     news    ──┘
 
-Backed by `till_infinity.channels`: in-memory by default, Redis Streams when a
+Backed by `till_channels`: in-memory by default, Redis Streams when a
 URL is set - the same in-process-or-shared choice `--store` offers.
 
 **Publishing fans out per subscriber group.** A channel's `recv()` is
@@ -28,9 +28,8 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
+from till_channels import ChannelClosed, ChannelFull, Receiver, Sender, bounded, redis_channel
 from till_platform.logging import get_logger
-
-from .channels import ChannelClosed, ChannelFull, Receiver, Sender, bounded, redis_channel
 
 log = get_logger(__name__)
 

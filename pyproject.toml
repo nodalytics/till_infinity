@@ -27,6 +27,11 @@ dependencies = [
     # dependency manifest while importing the desk - see
     # `packages/till-platform/README.md`.
     "till-platform",
+    # The transport `bus.py` is built on. Its own package rather than part of
+    # till-platform because it carries a dependency the platform does not:
+    # `redis`, which would otherwise land in the manifest of every service
+    # that only ever logs. See `packages/till-channels/README.md`.
+    "till-channels",
     # **A dependency, not an inlined package.** `services/statespace` has its
     # own manifest and installs without the desk - that is what makes it
     # separable. The desk depends on it so `stack.py` can still run it in the
@@ -92,6 +97,7 @@ exclude = ["services/ticks"]
 
 [tool.uv.sources]
 till-platform = { workspace = true }
+till-channels = { workspace = true }
 statespace = { workspace = true }
 
 [tool.uv.build-backend]
@@ -156,7 +162,7 @@ max-returns = 8
 # exemptions are for deliberate API choices, not defects: renaming ChannelFull
 # to ChannelFullError would break every caller to satisfy a convention, and the
 # `timed` decorator is lowercase because decorators read as verbs.
-"till_infinity/channels/*" = [
+"packages/till-channels/till_channels/*" = [
     "N818",    # ChannelClosed / ChannelFull / ChannelEmpty are the public names
     "N801",    # `timed` is a decorator, not a class you instantiate
     "ARG002",  # backoff strategies share a signature; some ignore `attempt`
@@ -169,22 +175,10 @@ max-returns = 8
 "till_infinity/trading/venues/broker.py" = ["ARG002", "B027"]
 "till_infinity/trading/strategies/strategy.py" = ["B027"]
 "till_infinity/trading/venues/paper.py" = ["ARG002"]
-# The gate chain in `LevelStrategy.consider` is one return per refusal, which
-# is the design: each gate names itself and stops. Collapsing fifteen reasons
-# into fewer exits would trade a readable refusal for a lint score.
-"till_infinity/trading/strategies/scalper.py" = ["ARG002", "PLR0911", "PLR0912"]
 # `codec.unpack` is one return per wire type. Collapsing eight tagged
 # shapes into a table would put the mapping somewhere other than beside
 # the code that reads it, for no gain but a lint score.
 "till_infinity/structures/codec.py" = ["PLR0911"]
-# The swing strategies moved out of scalper.py and brought its exemptions:
-# `FadeToValue.consider` overrides the whole chain and returns a refusal at
-# each stage, which is the shape, not a smell.
-"till_infinity/trading/strategies/swing.py" = ["ARG002", "PLR0911", "PLR0912"]
-# Same shape again: one return per refusal, each naming its own gate. And the
-# synchronous `consider` exists only to refuse - the council is async, so it
-# takes the port's arguments and uses none of them.
-"till_infinity/trading/strategies/council.py" = ["ARG002", "PLR0911"]
 # `Parse.kind` is a dispatch table written as code: one return per event kind,
 # beside the cached parse step it reads.
 # `Guard.allows` is the same shape: one return per gate, each naming itself.

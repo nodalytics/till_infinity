@@ -2,7 +2,7 @@
 
 Modules never configure anything - they just do::
 
-    from till_infinity.logging import get_logger
+    from till_platform.logging import get_logger
 
     log = get_logger(__name__)
     log.debug("resolved %s", symbol)

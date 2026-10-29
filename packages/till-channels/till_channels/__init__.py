@@ -5,7 +5,7 @@ Pluggable backends: in-memory (default) and Redis Streams.
 
 Quickstart:
 
-    from channels import bounded, unbounded
+    from till_channels import bounded, unbounded
 
     tx, rx = bounded(32)
     await tx.send({"event": "tick", "price": 1.2345})
@@ -13,7 +13,7 @@ Quickstart:
 
 Redis backbone (durable, cross-process):
 
-    from channels import redis_channel
+    from till_channels import redis_channel
 
     tx, rx = redis_channel("market:ticks", group="analyzer")
     await tx.send({"symbol": "EURUSD", "price": 1.2})

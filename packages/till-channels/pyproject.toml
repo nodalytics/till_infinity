@@ -1,0 +1,19 @@
+[project]
+name = "till-channels"
+version = "0.1.0"
+description = "The transport the bus runs on: typed send/receive channels, in memory or over Redis, with an outbox for durability."
+requires-python = ">=3.11"
+# **Nothing required.** The in-memory channel is asyncio and the outbox is
+# sqlite3, both stdlib. `redis` is imported inside the functions that need it,
+# so a service that never names a Redis URL never needs the extra.
+dependencies = []
+
+[project.optional-dependencies]
+redis = ["redis>=5.0.0"]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""

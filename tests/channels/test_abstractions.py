@@ -7,8 +7,7 @@ import os
 import tempfile
 
 import pytest
-
-from till_infinity.channels import (
+from till_channels import (
     DeadLetterQueue,
     ExponentialBackoff,
     FixedBackoff,
