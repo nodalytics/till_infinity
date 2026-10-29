@@ -49,7 +49,7 @@ from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: How many prior level prices define the context.
 WINDOW = 12

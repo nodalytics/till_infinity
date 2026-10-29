@@ -43,7 +43,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: How many observations a series keeps.
 WINDOW = 200

@@ -33,8 +33,9 @@ from bisect import bisect_left, bisect_right, insort
 from collections import deque
 from dataclasses import dataclass, field
 
-from ...shared import frozen
-from ...shared.state import Restorable
+from till_platform import frozen
+from till_platform.state import Restorable
+
 from .shocks import _log, _z
 
 MODEL = "expansion"

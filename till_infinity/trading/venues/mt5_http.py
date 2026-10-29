@@ -63,8 +63,8 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential_jitter,
 )
+from till_platform.logging import get_logger
 
-from ...logging import get_logger
 from ..candles import Bar
 from ..config import Settings, ours
 from ..models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick

@@ -5,8 +5,7 @@ from __future__ import annotations
 import sqlite3
 
 import pytest
-
-from till_infinity.shared import db, env
+from till_platform import db, env
 
 # ------------------------------------------------------------------ readers
 

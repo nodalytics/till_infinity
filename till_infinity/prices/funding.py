@@ -45,7 +45,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
 
 log = get_logger(__name__)
 

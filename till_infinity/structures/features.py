@@ -29,7 +29,8 @@ import statistics
 import time
 from dataclasses import dataclass, field
 
-from ..shared.state import Restorable
+from till_platform.state import Restorable
+
 from .models import Consensus
 
 #: Bound once at import: a dataclass field called `time` shadows the module

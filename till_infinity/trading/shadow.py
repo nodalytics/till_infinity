@@ -55,7 +55,8 @@ from dataclasses import dataclass, field
 from itertools import pairwise
 from typing import Any
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
+
 from ..structures import rollover
 from . import candles
 from .sizing import price_distance

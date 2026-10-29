@@ -15,7 +15,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ..shared.codec import (
+from till_platform.codec import (
     ALIASES,
     RAW,
     TAG,
@@ -26,8 +26,8 @@ from ..shared.codec import (
     pack,
     pack_into,
 )
-from ..shared.codec import registry as _registry
-from ..shared.codec import unpack as _unpack
+from till_platform.codec import registry as _registry
+from till_platform.codec import unpack as _unpack
 
 # `_homes`, `_Relocating` and `_unpickle` are private and re-exported anyway:
 # the relocation they implement is *this* package's history - the day it was

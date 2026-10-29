@@ -1082,8 +1082,9 @@ def test_the_package_is_not_in_the_state_files_persistence_schema():
     route and the tempting fix - making these classes `Restorable` - would have
     declared them persistable, which is false.
     """
+    from till_platform import codec
+
     import till_infinity.structures as pkg
-    from till_infinity.shared import codec
 
     schema = codec.registry(pkg)
     assert schema, "the registry should still find the real persisted classes"

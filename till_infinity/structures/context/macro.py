@@ -70,8 +70,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple
 
-from ...logging import get_logger
-from ...shared.state import Restorable
+from till_platform.logging import get_logger
+from till_platform.state import Restorable
+
 from ..models import Shape, Signal
 
 log = get_logger(__name__)

@@ -18,8 +18,8 @@ from pathlib import Path
 from typing import Self
 
 import orjson
+from till_platform import db as shared_db
 
-from ..shared import db as shared_db
 from .models import Article, Event, FeedInfo, Observation, WriteResult
 
 SCHEMA = """

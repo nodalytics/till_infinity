@@ -50,7 +50,8 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 
-from ..shared.state import Restorable
+from till_platform.state import Restorable
+
 from .conformal import Zones
 from .drawing.pips import Point, Swing
 from .drawing.pips import structure as pips_structure
@@ -274,7 +275,7 @@ CONFIDENT_TOUCHES = 5
 #: own research docs cite `levels.SECONDS`. Evidence decays in *time* while a
 #: level lives on a timeframe, so the conversion is still needed here - it is
 #: just no longer owned here.
-from ..shared.intervals import SECONDS  # noqa: E402
+from till_platform.intervals import SECONDS  # noqa: E402
 
 #: Bars of evidence half-life. Anchored to the window a level is formed from
 #: (500 bars), so evidence halves over roughly half the history the timeframe

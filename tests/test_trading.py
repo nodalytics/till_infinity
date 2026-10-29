@@ -5576,8 +5576,9 @@ def test_a_slotted_dataclass_is_coerced_despite_its_generated_setstate():
     That is why the fix then did not hold: `restore_number` was added to both
     paths and the early return shadowed one of them.
     """
-    from till_infinity.shared.codec import registry, unpack
-    from till_infinity.shared.state import Restorable
+    from till_platform.codec import registry, unpack
+    from till_platform.state import Restorable
+
     from till_infinity.trading.models import Intent
 
     assert not isinstance(Intent.__new__(Intent), Restorable), "the premise"
@@ -5650,9 +5651,9 @@ def test_the_codec_already_coerces_a_level_it_restores():
     test failing would mean the door reopened.
     """
     import msgpack
+    from till_platform.codec import pack, registry, unpack
 
     from till_infinity import structures, trading
-    from till_infinity.shared.codec import pack, registry, unpack
     from till_infinity.trading.book import Book, Seen
 
     stale = Seen.__new__(Seen)

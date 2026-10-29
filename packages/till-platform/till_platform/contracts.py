@@ -22,10 +22,11 @@ from functools import cache
 from pathlib import Path
 from typing import Any
 
-#: Where the JSON lives, relative to this file: `till_infinity/shared/` ->
-#: repository root -> `shared/contracts/bus`. Resolved rather than assumed, so
+#: Where the JSON lives, relative to this file:
+#: `packages/till-platform/till_platform/` -> repository root ->
+#: `shared/contracts/bus`. Resolved rather than assumed, so
 #: a wrong answer is an error here rather than a silently empty schema set.
-HOME = Path(__file__).resolve().parents[2] / "shared" / "contracts" / "bus"
+HOME = Path(__file__).resolve().parents[3] / "shared" / "contracts" / "bus"
 
 
 class NoSuchContractError(KeyError):

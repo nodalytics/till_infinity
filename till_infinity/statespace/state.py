@@ -36,7 +36,7 @@ from collections import deque
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..shared.state import Restorable, restore_enum
+from till_platform.state import Restorable, restore_enum
 
 __all__ = ["Progress", "Restorable", "Seen", "restore_enum", "snapshot"]
 

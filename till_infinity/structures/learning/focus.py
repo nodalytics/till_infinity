@@ -50,7 +50,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: The statistic is a log likelihood ratio, so a threshold is "how many nats of
 #: evidence before this is worth saying". Chosen to be conservative rather than

@@ -56,7 +56,7 @@ import math
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: Starting weight per feature, so the model begins as the kNN it is being
 #: compared against rather than somewhere arbitrary. A comparison that starts

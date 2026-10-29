@@ -59,7 +59,7 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: `a + b`. The persistence of a shock, and the one number that separates this
 #: from an exponentially weighted mean, which sits at exactly 1.

@@ -18,8 +18,7 @@ from __future__ import annotations
 import time
 
 import pytest
-
-from till_infinity.shared import effects
+from till_platform import effects
 
 
 @pytest.fixture(autouse=True)

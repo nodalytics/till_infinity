@@ -19,7 +19,8 @@ from __future__ import annotations
 
 import datetime as dt
 
-from till_infinity.shared import effects
+from till_platform import effects
+
 from till_infinity.trading import Settings
 from till_infinity.trading.context import Context
 from till_infinity.trading.models import Intent, Side

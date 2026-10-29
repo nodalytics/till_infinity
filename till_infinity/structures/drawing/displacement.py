@@ -63,7 +63,8 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
+
 from ..learning.touches import PUSH_BODY, PUSH_N
 from ..vol.volatility import Volatility
 from .pips import Point, Swing

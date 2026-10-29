@@ -27,11 +27,12 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from till_platform.env import env as _env
+from till_platform.env import flag as _flag
+from till_platform.env import number as _float
+from till_platform.env import whole as _int
+
 from ..prices.models import slugify
-from ..shared.env import env as _env
-from ..shared.env import flag as _flag
-from ..shared.env import number as _float
-from ..shared.env import whole as _int
 from ..structures.drawing import confluence
 
 #: Broker names for each instrument the price side tracks, best first.

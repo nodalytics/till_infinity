@@ -606,8 +606,9 @@ def test_an_untaken_intent_waits_exactly_as_long_as_a_real_resting_entry():
     resting entry gets `pullback_bars` bars of its own interval and is
     withdrawn. That credited fills the live system would never have seen, to
     exactly the strategies that rest their entry furthest out of reach."""
+    from till_platform.intervals import SECONDS
+
     from till_infinity.bus import Bus
-    from till_infinity.shared.intervals import SECONDS
     from till_infinity.trading.service import Trader
 
     trader = Trader(Bus(), settings=_scalp().settings)

@@ -6,8 +6,7 @@ that weight them. Nothing noticed until somebody cut by them by hand.
 """
 
 import pytest
-
-from till_infinity.shared.liveness import assert_alive, survey
+from till_platform.liveness import assert_alive, survey
 
 
 def rows(**columns):
@@ -98,7 +97,7 @@ def test_a_slow_field_is_not_a_dead_one():
 
     `macro_us_core_inflation` is genuinely one value across 23,721 decisions,
     because core inflation is published **monthly**. That is correct behaviour."""
-    from till_infinity.shared.liveness import SLOW_SAVES, report, stuck, survey
+    from till_platform.liveness import SLOW_SAVES, report, stuck, survey
 
     at, runs = {}, {}
 
@@ -120,7 +119,7 @@ def test_a_slow_field_is_not_a_dead_one():
 def test_a_field_that_starts_moving_again_loses_its_run():
     """Otherwise a field is condemned once and never pardoned, and the tally
     becomes a list of historical grievances rather than a reading of now."""
-    from till_infinity.shared.liveness import stuck, survey
+    from till_platform.liveness import stuck, survey
 
     at, runs = {}, {}
     for _ in range(20):

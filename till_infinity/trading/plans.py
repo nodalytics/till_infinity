@@ -34,7 +34,8 @@ import os
 from collections.abc import Mapping
 from dataclasses import dataclass, fields
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
+
 from .config import Settings
 
 log = get_logger(__name__)

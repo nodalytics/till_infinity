@@ -13,6 +13,12 @@ resolution-markers = [
     "python_full_version < '3.12' and sys_platform != 'emscripten' and sys_platform != 'win32'",
 ]
 
+[manifest]
+members = [
+    "till-infinity",
+    "till-platform",
+]
+
 [[package]]
 name = "aiohappyeyeballs"
 version = "2.7.1"
@@ -3788,6 +3794,7 @@ dependencies = [
     { name = "rich" },
     { name = "river", extra = ["pandas"] },
     { name = "tenacity" },
+    { name = "till-platform" },
     { name = "yfinance" },
 ]
 
@@ -3860,6 +3867,7 @@ requires-dist = [
     { name = "rpyc", marker = "extra == 'rpyc'", specifier = ">=6.0.0" },
     { name = "scikit-learn", marker = "extra == 'train'", specifier = ">=1.5.0" },
     { name = "tenacity", specifier = ">=9.1.4" },
+    { name = "till-platform", editable = "packages/till-platform" },
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'speed'", specifier = ">=0.21.0" },
     { name = "yfinance", specifier = ">=1.5.2" },
 ]
@@ -3874,6 +3882,17 @@ dev = [
     { name = "pytest-cov", specifier = ">=6.0.0" },
     { name = "ruff", specifier = ">=0.9.0" },
 ]
+
+[[package]]
+name = "till-platform"
+version = "0.1.0"
+source = { editable = "packages/till-platform" }
+dependencies = [
+    { name = "orjson" },
+]
+
+[package.metadata]
+requires-dist = [{ name = "orjson", specifier = ">=3.10" }]
 
 [[package]]
 name = "tomli"

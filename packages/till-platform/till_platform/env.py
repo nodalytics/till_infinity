@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import os
 
-from ..logging import get_logger
+from .logging import get_logger
 
 log = get_logger(__name__)
 

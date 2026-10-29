@@ -12,8 +12,13 @@ Anything carrying a decision belongs to the service that made it.
 
 Nothing is re-exported from here, deliberately. `env.py` holds a function
 called `env`, so a package-level re-export would shadow the module it came
-from and `from ..shared import env` would hand back the function - which it
-did, and the test written to prove the module worked was the thing that
-tripped on it. Import the module (`from ..shared import env`) or the function
-(`from ..shared.env import env`), and let the import say which.
+from and `from till_platform import env` would hand back the function - which
+it did, and the test written to prove the module worked was the thing that
+tripped on it. Import the module (`from till_platform import env`) or the
+function (`from till_platform.env import env`), and let the import say which.
+
+**This was `till_infinity/shared/` until 2026-10-29.** It became a package when
+`services/statespace` had to stand on its own: a service cannot carry its own
+dependency manifest while importing the desk it is meant to be separable from.
+The JSON contracts stay at the repository root, because Go reads them.
 """

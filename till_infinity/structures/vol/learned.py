@@ -131,10 +131,10 @@ from dataclasses import dataclass, field
 
 from river import anomaly as river_anomaly
 from river import preprocessing, tree
+from till_platform import effects
+from till_platform.logging import get_logger
+from till_platform.state import Restorable
 
-from ...logging import get_logger
-from ...shared import effects
-from ...shared.state import Restorable
 from .analogue import Analogue
 from .consensus_vol import MAD_TO_SIGMA, Score
 

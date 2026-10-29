@@ -16,6 +16,13 @@ RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-project --all-extras
 
 COPY till_infinity/ ./till_infinity/
+# **The contracts, which are not inside the package.** `shared/contracts/` is
+# JSON and Markdown at the repository root because a Go service reads the same
+# files - see `docs/adr/0002-services-are-self-contained.md`. Left out of the
+# image, `shared.contracts.HOME` does not exist and `declared()` returns an
+# empty tuple rather than raising, so a caller asking what the bus carries is
+# told "nothing" by a container that simply does not ship the answer.
+COPY shared/ ./shared/
 COPY README.md ./
 # **`--reinstall-package`, and the check below is not belt-and-braces.**
 # `uv sync --no-editable` builds the project into a wheel and caches it, and the

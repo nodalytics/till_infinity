@@ -43,14 +43,15 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
+from till_platform import effects
+from till_platform.logging import get_logger
+
 from . import journal as jr
 from . import news as nw
 from . import notifications as nt
 from . import prices as px
 from . import trading as td
 from .bus import Bus
-from .logging import get_logger
-from .shared import effects
 
 log = get_logger(__name__)
 

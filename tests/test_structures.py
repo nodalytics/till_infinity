@@ -1008,9 +1008,10 @@ def test_every_persisted_class_restores_a_field_it_predates():
     import pickle
     import pkgutil
 
+    from till_platform import codec
+    from till_platform.state import Restorable
+
     import till_infinity.structures as package
-    from till_infinity.shared import codec
-    from till_infinity.shared.state import Restorable
 
     checked = 0
     # `walk_packages`, not `iter_modules`: the package has subpackages since
@@ -2669,7 +2670,8 @@ def test_the_learner_survives_a_restore():
     """A learner that resets on every deploy has learned nothing. This is the
     fourth instance of that bug class here - see `trading.Speeds`,
     `Drift._agreement`, `Live.ref` and the intent interval."""
-    from till_infinity.shared import codec
+    from till_platform import codec
+
     from till_infinity.structures.vol.learned import Learned
 
     model = Learned(warmup=5)

@@ -27,7 +27,8 @@ import asyncio
 import xml.etree.ElementTree as ET
 from datetime import UTC, datetime
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
+
 from .config import (
     IMF_BASE_URL,
     IMF_FLOW,

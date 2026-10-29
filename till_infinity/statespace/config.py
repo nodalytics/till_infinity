@@ -28,11 +28,11 @@ from __future__ import annotations
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..shared.env import flag as _flag
-from ..shared.env import names as _names
-from ..shared.env import number as _float
-from ..shared.env import whole as _int
-from ..shared.state import Restorable
+from till_platform.env import flag as _flag
+from till_platform.env import names as _names
+from till_platform.env import number as _float
+from till_platform.env import whole as _int
+from till_platform.state import Restorable
 
 DEFAULT_STATE_DIR = ".data/statespace"
 

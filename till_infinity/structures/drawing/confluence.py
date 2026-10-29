@@ -42,7 +42,8 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
+
 from ..levels import Level, Side, SideStats, State
 from ..vol.volatility import Volatility
 

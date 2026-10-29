@@ -30,7 +30,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from ..shared import effects
+from till_platform import effects
+
 from .models import Side, SymbolSpec
 
 #: **A trade refused because the minimum lot breaches the budget.** The runtime

@@ -10,8 +10,9 @@ from collections.abc import Mapping, Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from ..logging import get_logger
-from ..shared import env as shared_env
+from till_platform import env as shared_env
+from till_platform.logging import get_logger
+
 from .models import Symbol, slugify
 
 log = get_logger(__name__)

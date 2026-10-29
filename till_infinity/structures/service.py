@@ -35,11 +35,12 @@ from dataclasses import replace
 from datetime import UTC, datetime
 from pathlib import Path
 
+from till_platform import liveness
+from till_platform.logging import get_logger
+
 from ..bus import ALERTS, BARS, MACRO, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
-from ..logging import get_logger
 from ..prices import config as prices_config
-from ..shared import liveness
 from . import engine, store
 from . import spreadquotes as sq
 from . import zma as zm

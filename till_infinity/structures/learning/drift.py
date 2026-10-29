@@ -87,8 +87,8 @@ import math
 import time
 
 from river import drift as river_drift
+from till_platform.logging import get_logger
 
-from ...logging import get_logger
 from ..drawing.confluence import rank
 from ..models import Shape, Signal
 

@@ -25,7 +25,8 @@ from __future__ import annotations
 import asyncio
 from typing import Any, ClassVar
 
-from ...logging import get_logger
+from till_platform.logging import get_logger
+
 from ..config import Settings, ours
 from ..models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick
 from .broker import Broker, NotConnectedError, RejectedError

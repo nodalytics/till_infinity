@@ -54,7 +54,7 @@ import random
 from collections import deque
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: Rows kept. Bounded so the cost is fixed: a scan is `MEMORY` distances, and
 #: at 4,000 that is about a millisecond, against roughly 1.3 bar closes a

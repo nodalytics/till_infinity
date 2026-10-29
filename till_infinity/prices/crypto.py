@@ -42,7 +42,8 @@ from contextlib import suppress
 from dataclasses import dataclass, replace
 from typing import Any, ClassVar, Self
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
+
 from .models import Bar, Interval, Symbol
 from .source import Job, PermanentError, Source, TransientError
 

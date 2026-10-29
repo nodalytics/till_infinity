@@ -52,8 +52,9 @@ from collections import OrderedDict
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from ...logging import get_logger
-from ...shared.state import Restorable
+from till_platform.logging import get_logger
+from till_platform.state import Restorable
+
 from ..drawing.pips import Point
 
 log = get_logger(__name__)

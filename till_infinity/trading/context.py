@@ -39,7 +39,8 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from ..logging import get_logger
+from till_platform.logging import get_logger
+
 from . import exposure as ex
 from .models import Tick
 from .spreads import Spreads, hour_of

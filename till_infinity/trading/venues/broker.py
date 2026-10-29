@@ -52,7 +52,8 @@ from collections.abc import Sequence
 from importlib.util import find_spec
 from typing import Any, ClassVar, Self
 
-from ...logging import get_logger
+from till_platform.logging import get_logger
+
 from ..config import BACKENDS, HTTP, NATIVE, PAPER, RPYC, Settings
 from ..models import Account, Order, OrderResult, Position, SymbolSpec, Tick
 

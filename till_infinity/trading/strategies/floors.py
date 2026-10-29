@@ -47,7 +47,7 @@ from __future__ import annotations
 from collections import deque
 from dataclasses import dataclass, field
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: Calls per direction before a percentile means anything. Below it the floor
 #: falls back to whatever absolute number was configured, because a quantile of

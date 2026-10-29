@@ -39,8 +39,7 @@ from pathlib import Path
 from typing import Any
 
 import river
-
-from ..logging import get_logger
+from till_platform.logging import get_logger
 
 log = get_logger(__name__)
 

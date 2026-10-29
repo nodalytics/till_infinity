@@ -7,9 +7,9 @@ import math
 import random
 
 import pytest
+from till_platform import frozen
 
 from till_infinity.prices.models import Bar
-from till_infinity.shared import frozen
 from till_infinity.structures.learning import touches as tc
 from till_infinity.structures.vol import envelope as ev
 

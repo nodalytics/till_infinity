@@ -1,0 +1,16 @@
+[project]
+name = "till-platform"
+version = "0.1.0"
+description = "Infrastructure every service on the desk needs: logging, state, env, the persistence codec, and the bus contracts."
+requires-python = ">=3.11"
+dependencies = [
+    # The logger writes JSON lines. Nothing else here needs a third party.
+    "orjson>=3.10",
+]
+
+[build-system]
+requires = ["uv_build>=0.9,<0.10"]
+build-backend = "uv_build"
+
+[tool.uv.build-backend]
+module-root = ""

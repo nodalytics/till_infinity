@@ -60,7 +60,7 @@ import math
 from dataclasses import dataclass, field
 from itertools import pairwise
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
 
 #: Bars before a range estimate is trusted. Lower than the close-to-close
 #: warmup precisely because that is the point: each bar carries more.

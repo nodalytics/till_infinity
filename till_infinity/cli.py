@@ -19,6 +19,7 @@ import click
 from rich.markup import escape
 from rich.progress import BarColumn, Progress, TaskProgressColumn, TextColumn, TimeRemainingColumn
 from rich.table import Table
+from till_platform.logging import console, get_logger, setup_logging
 
 from . import journal as jr
 from . import news as nw
@@ -28,7 +29,6 @@ from . import stack as st
 from . import structures as sx
 from . import trading as td
 from .bus import Bus
-from .logging import console, get_logger, setup_logging
 from .prices.config import BROKER
 from .structures import cycles as cyc
 from .structures import zma as zm

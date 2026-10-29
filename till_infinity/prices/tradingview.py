@@ -30,8 +30,8 @@ from typing import Any, Self
 import httpx
 import orjson
 from httpx_ws import AsyncWebSocketSession, aconnect_ws
+from till_platform.logging import get_logger
 
-from ..logging import get_logger
 from .config import Settings
 from .models import Bar, Interval, WriteResult
 from .source import BarSink, Job, PermanentError, Source, TransientError, first_cause

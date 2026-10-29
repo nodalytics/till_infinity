@@ -108,7 +108,8 @@ from collections.abc import Callable, Mapping, Sequence
 from dataclasses import dataclass, field
 from statistics import NormalDist
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
+
 from . import projection as pj
 from .ranges import Ranges
 
@@ -274,12 +275,12 @@ def model_quantiles(
     if spec is None:
         if (family, horizon) not in MODELS:
             return None
-        from ...shared import frozen
+        from till_platform import frozen
 
         spec = frozen.load(MODELS[(family, horizon)], recipe=MODEL_RECIPES, names=MODEL_NAMES)
         if spec is None:
             return None
-    from ...shared.frozen import Quantiles
+    from till_platform.frozen import Quantiles
 
     # **The spec's own names, in the spec's order.** A model is fed what it was
     # trained on, not what this module currently believes the recipe to be -
@@ -368,7 +369,7 @@ def own_law(feed: str, interval: str, horizon: int) -> list[float] | None:
     if not own_law_family(feed):
         return None
     try:
-        from ...shared import frozen
+        from till_platform import frozen
 
         spec = frozen.load(LAW_MODEL, recipe=LAW_RECIPE, names=LAW_NAMES)
     except Exception:  # a published extra must never stop a bar

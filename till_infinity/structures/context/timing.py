@@ -60,7 +60,8 @@ import math
 from dataclasses import dataclass
 from statistics import NormalDist
 
-from ...shared.state import Restorable
+from till_platform.state import Restorable
+
 from ..levels import SECONDS, Level, Side
 from ..vol.volatility import Volatility
 
