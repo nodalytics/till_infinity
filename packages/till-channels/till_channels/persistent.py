@@ -21,7 +21,7 @@ durability underneath, so a restart or transient outage doesn't drop
 messages.
 
 Usage:
-    from channels import redis_channel
+    from till_channels import redis_channel
     tx, rx = redis_channel("market:ticks", persistent_path="/var/lib/terminal/outbox.db")
 
 The persistent_path parameter on redis_channel()

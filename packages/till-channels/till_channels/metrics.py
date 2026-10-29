@@ -5,7 +5,7 @@ wire up Prometheus, StatsD, or any custom sink without touching the
 channel code itself. The default is NoOpMetrics (zero overhead).
 
 Usage:
-    from channels.metrics import InMemoryMetrics, set_default_metrics
+    from till_channels.metrics import InMemoryMetrics, set_default_metrics
     metrics = InMemoryMetrics()
     set_default_metrics(metrics)
 

@@ -20,6 +20,7 @@ rather than being a model the package depends on". This generalises it.
 
 from __future__ import annotations
 
+import ast
 import re
 from pathlib import Path
 
@@ -40,11 +41,28 @@ STANDALONE = {"statespace": "statespace"}
 
 #: Imported freely, because none of it is a service.
 #:
-#: `bus` is the link ADR 0002 names and `channels` is its transport, so
-#: importing them is how a service stays decoupled rather than a way around it.
-#: `logging` is a logger factory. `shared` holds contracts and travels with
-#: each package.
-INFRASTRUCTURE = frozenset({"bus", "channels", "logging", "shared"})
+#: `bus` is the link ADR 0002 names, so importing it is how a service stays
+#: decoupled rather than a way around it.
+#:
+#: **This list used to have four entries and three of them had gone dead.**
+#: `logging` and `shared` left for `packages/till-platform` and `channels` for
+#: `packages/till-channels`, and an allowance for a module that no longer
+#: exists permits nothing while reading as though it does - the same shape as
+#: the vacuous scan described on `STANDALONE`, and the third instance of it in
+#: one day. `test_every_infrastructure_entry_is_real` is what makes the next
+#: one fail instead of lingering.
+INFRASTRUCTURE = frozenset({"bus"})
+
+#: Libraries in `packages/`, as distribution name -> import name.
+#:
+#: **Prefixed on purpose.** `channels` is Django Channels on PyPI and
+#: `statespace` collided with one of the 375 single-word modules in
+#: `research/harness/` the day it became a top-level name. A bare name is a
+#: name anyone can take, so these carry the `till_` prefix and
+#: `test_a_package_owns_its_import_name` checks where the import *resolved*
+#: rather than that it resolved - a bare `import channels` would have passed
+#: on Django's.
+PACKAGES = {"till-platform": "till_platform", "till-channels": "till_channels"}
 
 #: What each service imports from another service **today**, and nothing more.
 #:
@@ -159,14 +177,7 @@ def test_a_standalone_service_does_not_import_the_desk(name):
     `uv run --project services/<name>` proves and this keeps true.
     """
     package = REPO / "services" / name / STANDALONE[name]
-    offenders = {}
-    for path in sorted(package.rglob("*.py")):
-        for line in path.read_text().splitlines():
-            stripped = line.strip()
-            if not stripped.startswith(("import ", "from ")):
-                continue
-            if re.match(r"(from|import) till_infinity\b", stripped):
-                offenders.setdefault(path.name, []).append(stripped)
+    offenders = desk_imports(package)
     assert not offenders, f"{name} imports the desk: {offenders}"
 
 
@@ -220,6 +231,97 @@ def test_no_test_puts_a_research_directory_ahead_of_installed_packages():
         f"prepend a research directory: {offenders} - use sys.path.append, or "
         f"import by package path (research.harness.x)"
     )
+
+
+def desk_imports(root: Path) -> dict[str, list[str]]:
+    """Every real import of `till_infinity` under `root`, by file.
+
+    **Parsed, not matched.** The line form of this check read
+    `from till_infinity.logging import get_logger` out of a *docstring* in
+    `till-platform` and called it a breach. A docstring that shows an import
+    is not an import, and only a parser knows the difference.
+    """
+    found: dict[str, list[str]] = {}
+    for path in sorted(root.rglob("*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""]
+            else:
+                continue
+            for name in names:
+                if name == "till_infinity" or name.startswith("till_infinity."):
+                    found.setdefault(path.name, []).append(name)
+    return found
+
+
+def test_every_infrastructure_entry_is_real():
+    """An allowance for a module that does not exist is not an allowance.
+
+    It reads as a rule and enforces nothing, and it survives exactly the event
+    that should have deleted it: the module moving somewhere else.
+    """
+    missing = [
+        name
+        for name in sorted(INFRASTRUCTURE)
+        if not (ROOT / name).is_dir() and not (ROOT / f"{name}.py").is_file()
+    ]
+    assert not missing, (
+        f"INFRASTRUCTURE names modules that are not in till_infinity/: {missing} - "
+        f"delete the entry, or the import it permits is unchecked"
+    )
+
+
+@pytest.mark.parametrize("dist", sorted(PACKAGES))
+def test_a_package_is_where_it_says_it_is(dist):
+    """A library in `packages/` carries its own manifest, like a service."""
+    home = REPO / "packages" / dist
+    assert (home / PACKAGES[dist]).is_dir(), f"{dist} has no {PACKAGES[dist]}/ in {home}"
+    assert (home / "pyproject.toml").is_file(), (
+        f"{dist} has no manifest, so it does not install on its own"
+    )
+
+
+@pytest.mark.parametrize("dist", sorted(PACKAGES))
+def test_a_package_owns_its_import_name(dist):
+    """Where the import resolved, not merely that it resolved."""
+    module = __import__(PACKAGES[dist])
+    origin = Path(module.__file__).resolve()
+    expected = REPO / "packages" / dist / PACKAGES[dist]
+    assert origin.parent == expected, (
+        f"`import {PACKAGES[dist]}` resolved to {origin}, not {expected} - "
+        f"something is ahead of it on sys.path"
+    )
+
+
+@pytest.mark.parametrize("dist", sorted(PACKAGES))
+def test_a_package_does_not_import_the_desk(dist):
+    """A library the desk depends on cannot depend on the desk."""
+    home = REPO / "packages" / dist / PACKAGES[dist]
+    offenders = desk_imports(home)
+    assert not offenders, f"{dist} imports the desk: {offenders}"
+
+
+@pytest.mark.parametrize("dist", sorted(PACKAGES))
+def test_a_package_declares_the_siblings_it_imports(dist):
+    """Importing a sibling package without naming it in the manifest resolves
+    here, because the workspace installs them all, and fails wherever the
+    package is installed on its own."""
+    home = REPO / "packages" / dist
+    manifest = (home / "pyproject.toml").read_text()
+    siblings = {PACKAGES[other]: other for other in PACKAGES if other != dist}
+    undeclared = {}
+    for path in sorted((home / PACKAGES[dist]).rglob("*.py")):
+        for line in path.read_text().splitlines():
+            for module, other in siblings.items():
+                if (
+                    re.match(rf"\s*(from {module}\b|import {module}\b)", line)
+                    and other not in manifest
+                ):
+                    undeclared.setdefault(other, []).append(path.name)
+    assert not undeclared, f"{dist} imports but does not declare: {undeclared}"
 
 
 def test_statespace_owes_nothing():

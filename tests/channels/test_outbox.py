@@ -7,7 +7,7 @@ import tempfile
 
 import pytest
 
-from till_infinity.channels import DurableSender, Outbox
+from till_channels import DurableSender, Outbox
 
 
 @pytest.fixture

@@ -27,6 +27,11 @@ dependencies = [
     # dependency manifest while importing the desk - see
     # `packages/till-platform/README.md`.
     "till-platform",
+    # The transport `bus.py` is built on. Its own package rather than part of
+    # till-platform because it carries a dependency the platform does not:
+    # `redis`, which would otherwise land in the manifest of every service
+    # that only ever logs. See `packages/till-channels/README.md`.
+    "till-channels",
     # **A dependency, not an inlined package.** `services/statespace` has its
     # own manifest and installs without the desk - that is what makes it
     # separable. The desk depends on it so `stack.py` can still run it in the
@@ -92,6 +97,7 @@ exclude = ["services/ticks"]
 
 [tool.uv.sources]
 till-platform = { workspace = true }
+till-channels = { workspace = true }
 statespace = { workspace = true }
 
 [tool.uv.build-backend]
