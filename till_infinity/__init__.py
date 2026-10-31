@@ -12,6 +12,12 @@ __version__ = "0.1.0"
 # model silently stopped being found. The desk ships them, so the desk says so,
 # and it happens here because importing anything under `till_infinity` imports
 # this first.
-frozen.ship(Path(__file__).resolve().parent / "models")
+# **The trained artefacts live with the scripts that produced them**, in
+# `research/retire/models/`, since every loader is in the retired
+# `structures/` package and `STRUCTURES_ENABLED=0` in production. `ship()`
+# tolerates an absent directory, which is what the image has - and that is
+# correct rather than unfortunate: an image that carries models nothing loads
+# is 1.7MB of confusion.
+frozen.ship(Path(__file__).resolve().parents[1] / "research" / "retire" / "models" / "artefacts")
 
 __all__ = ["__version__"]

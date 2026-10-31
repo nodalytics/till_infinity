@@ -1,0 +1,125 @@
+"""Is the market trending through here, or oscillating inside it?
+
+Measured 2026-08-27 over 54,143 resolutions, this separates outcomes better
+than anything else this repository has tried - and not in the direction the
+obvious reading suggests:
+
+| efficiency | break share | R with the level |
+| --- | ---: | ---: |
+| 0.017-0.096 (chop) | 11.3% | 0.807 |
+| 0.985-1.000 (trend) | **1.4%** | **1.149** |
+
+**A trend does not run levels over.** Breaks are *rarest* in the most trending
+decile - 1.4% against 11.3% in the chop. What a trend does is make a level hold
+harder and pay more. So this is a pullback-in-trend effect, and the obvious
+implementation of "trade the trend" would have the sign backwards.
+
+0.34R between the extremes, monotonic across the top three deciles, holding
+inside every interval and strengthening as the timeframe slows: +0.081 on 1m
+against +0.245 on 15m. For scale, every direction gate measured the same day
+spread 0.09 to 0.15 across its whole range, and all three were switched off.
+
+## The measure
+
+    efficiency = |net displacement| / sum of absolute steps
+
+over the last `WINDOW` level prices seen on one feed and interval. One means
+every step went the same way; zero means they cancelled. It is the standard
+efficiency ratio, and it is the first of the momentum detectors
+[todo](../../docs/todo.md) 0m says are missing.
+
+**Only prior levels count.** The level currently being decided is never in its
+own window - that is what keeps this a prediction rather than a restatement,
+and it is the trap `push_vol` fell into, where a quantity signed by the outcome
+was scored against the outcome.
+
+## What is still a guess
+
+`WINDOW` is twelve because twelve worked, not because anything was compared
+against it. The efficiency ratio is one trend measure among several and was
+picked first for being cheap to compute. And the measurement behind all of it
+is a fixed stop-and-target rule over touch resolutions, not the trades the book
+actually took.
+"""
+
+from __future__ import annotations
+
+import itertools
+from collections import deque
+from collections.abc import Sequence
+from dataclasses import dataclass, field
+
+from till_platform.state import Restorable
+
+#: How many prior level prices define the context.
+WINDOW = 12
+#: Below this many, no opinion is offered. Two points is one step, which is
+#: trivially perfectly efficient and says nothing.
+FEWEST = 3
+
+
+def ratio(prices: Sequence[float]) -> float | None:
+    """How much of the distance travelled went somewhere. Kaufman's ratio.
+
+        |last - first| / sum(|step|)
+
+    One is a move that went straight there; zero is ground covered to no end.
+    Bounded in `[0, 1]` by the triangle inequality, which is why it needs no
+    scaling and compares across instruments as it stands. `None` where there
+    was no path to measure - which is not the same answer as zero, and the
+    callers want to tell them apart.
+
+    **A module-level function because two things ask it of two different
+    series.** `Trend` asks it of recent *level prices*, to scale sizing;
+    `touches.base` asks it of recent *bar closes*, as a model feature. Same
+    statistic, different input, and one copy - the second copy was written and
+    deleted before it shipped.
+    """
+    xs = list(prices)
+    if len(xs) < 2:
+        return None
+    travelled = sum(abs(b - a) for a, b in itertools.pairwise(xs))
+    return abs(xs[-1] - xs[0]) / travelled if travelled > 0 else None
+
+
+@dataclass(slots=True)
+class Trend(Restorable):
+    """Efficiency of recent level prices on one feed and interval."""
+
+    window: int = WINDOW
+    seen: deque[float] = field(default_factory=lambda: deque(maxlen=WINDOW))
+
+    def __post_init__(self) -> None:
+        """Give the deque the window it was actually asked for.
+
+        `default_factory` cannot see the instance, so it always built a
+        twelve-deep window whatever `window` said - the parameter existed, was
+        accepted, and did nothing. A caller asking for twenty-four got twelve
+        and no error, which is the shape of bug that survives because every
+        test that would catch it passes for the wrong reason.
+        """
+        if self.seen.maxlen != self.window:
+            self.seen = deque(self.seen, maxlen=max(1, self.window))
+
+    def observe(self, level: float) -> None:
+        """Fold in a level. Call *after* reading, never before."""
+        self.seen.append(float(level))
+
+    @property
+    def efficiency(self) -> float | None:
+        """0 ranges, 1 trends, None when there is not enough to say."""
+        if len(self.seen) < FEWEST:
+            return None
+        return ratio(self.seen)
+
+    def scale(self, span: float) -> float:
+        """A sizing multiplier from the trend context, centred on 1.
+
+        See `structures-context-trend.md` in research/docs.
+        """
+        if span <= 0:
+            return 1.0
+        ratio = self.efficiency
+        if ratio is None:
+            return 1.0
+        return 1.0 + span * (2.0 * ratio - 1.0)

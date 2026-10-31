@@ -35,9 +35,8 @@ from zoneinfo import ZoneInfo
 from till_platform import effects
 from till_platform.logging import get_logger
 
-from ..structures import rollover
 from . import exposure as ex
-from . import swap
+from . import rollover, swap
 from .config import Settings
 from .context import Context
 from .models import Intent, Position, Refusal, SymbolSpec, Tick, money

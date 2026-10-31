@@ -25,7 +25,8 @@ from tenacity import (
 from till_platform import effects
 from till_platform.logging import get_logger
 
-from ..bus import ALERTS, Bus
+from ..carrier import Carrier
+from ..topics import ALERTS
 from .config import DEFAULT_TARGETS, Settings
 from .discord import DiscordNotifier
 from .filters import Filter
@@ -182,7 +183,7 @@ def _image(raw: Any) -> tuple[bytes | None, str]:
 
 
 async def listen(
-    bus: Bus,
+    bus: Carrier,
     *,
     settings: Settings | None = None,
     targets: Sequence[str] | None = None,

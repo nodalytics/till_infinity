@@ -131,3 +131,24 @@ def run(configs) -> list:
     """Run them, having checked this is a host allowed to."""
     where()
     return BacktestNode(configs=list(configs)).run()
+
+
+def main() -> None:
+    """Report what this box would allow, since a bare run has nothing to run.
+
+    A backtest needs actors and strategies named, and naming them on a command
+    line was what the retired CLI did. Run as a module it says whether a sweep
+    is permitted here and what it would cost - which is the question worth
+    answering before anything else.
+    """
+    from .sizing import describe
+    from .windows import budget
+
+    print(f"host: {where()}")
+    print(f"sizing: {describe()}")
+    print(f"catalogue: {catalogue()}")
+    print(budget(per_day=50, candidates=20))
+
+
+if __name__ == "__main__":
+    main()

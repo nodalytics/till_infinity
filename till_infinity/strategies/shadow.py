@@ -57,8 +57,7 @@ from typing import Any
 
 from till_platform.logging import get_logger
 
-from ..structures import rollover
-from . import candles
+from . import candles, rollover
 from .sizing import price_distance
 
 log = get_logger(__name__)

@@ -32,8 +32,7 @@ from till_platform.env import flag as _flag
 from till_platform.env import number as _float
 from till_platform.env import whole as _int
 
-from ..prices.models import slugify
-from ..structures.drawing import confluence
+from ..utils import slugify
 
 #: Broker names for each instrument the price side tracks, best first.
 #:
@@ -221,7 +220,15 @@ BACKENDS: tuple[str, ...] = (NATIVE, RPYC, HTTP, PAPER)
 #: Every timeframe `structures` forms levels on. Imported rather than copied:
 #: a second list would go stale the first time a timeframe was added, and the
 #: symptom would be calls silently ignored.
-TIMEFRAMES: tuple[str, ...] = confluence.TIMEFRAMES
+#: The timeframes a confluence was computed across.
+#:
+#: **Inlined when `structures/` was retired on 2026-10-31.** It was
+#: `confluence.TIMEFRAMES`, and the engine that gave it meaning is in
+#: `research/retire/structures/`. Kept because the names are still how a
+#: strategy's intervals are spelled, and `topology-restates-volatility` is why
+#: the engine went: levels, ranges and shapes were all null once the strata
+#: sweep was kept.
+TIMEFRAMES: tuple[str, ...] = ("1m", "5m", "15m", "30m", "1h", "4h", "1d")
 
 DEFAULT_TRADING_DIR = ".data/trading"
 DEFAULT_API_PATH = "/api/v1"

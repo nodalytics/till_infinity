@@ -23,7 +23,8 @@ from tenacity import (
 )
 from till_platform.logging import get_logger
 
-from ..bus import ARTICLES, EVENTS, MACRO, Bus
+from ..carrier import Carrier
+from ..topics import ARTICLES, EVENTS, MACRO
 from .calendar import ForexFactoryCalendar, TradingViewCalendar
 from .config import DEFAULT_SOURCES, Settings
 from .cot import CotSource
@@ -88,7 +89,7 @@ class Announcer:
     collector left running for a week must not grow one forever.
     """
 
-    def __init__(self, bus: Bus, limit: int = 5_000) -> None:
+    def __init__(self, bus: Carrier, limit: int = 5_000) -> None:
         self.bus = bus
         self.limit = limit
         self._seen: OrderedDict[tuple[str, ...], None] = OrderedDict()
@@ -220,7 +221,7 @@ async def collect(
     sources: Sequence[str] | None = None,
     cycles: int | None = None,
     on_cycle: Callable[[int, Summary], None] | None = None,
-    bus: Bus | None = None,
+    bus: Carrier | None = None,
 ) -> None:
     """Poll forever (or `cycles` times), each source on its own clock."""
     announcer = Announcer(bus) if bus is not None else None

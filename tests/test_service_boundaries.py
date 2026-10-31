@@ -99,7 +99,10 @@ LAYERS: dict[str, frozenset[str]] = {
 #: `test_a_package_owns_its_import_name` checks where the import *resolved*
 #: rather than that it resolved - a bare `import channels` would have passed
 #: on Django's.
-PACKAGES = {"till-platform": "till_platform", "till-channels": "till_channels"}
+#:  left on 2026-10-31, retired to `research/retire/` because
+#: Nautilus owns the bus. `bus.py` carries a small in-process queue instead,
+#: which is all the legacy single-process path ever needed.
+PACKAGES = {"till-platform": "till_platform"}
 
 #: What each service imports from another service **today**, and nothing more.
 #:

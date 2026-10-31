@@ -15,7 +15,6 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "till-channels",
     "till-infinity",
     "till-platform",
 ]
@@ -3474,11 +3473,6 @@ wheels = [
 ]
 
 [[package]]
-name = "till-channels"
-version = "0.1.0"
-source = { editable = "packages/till-channels" }
-
-[[package]]
 name = "till-infinity"
 version = "0.1.0"
 source = { editable = "." }
@@ -3498,7 +3492,6 @@ dependencies = [
     { name = "rich" },
     { name = "river", extra = ["pandas"] },
     { name = "tenacity" },
-    { name = "till-channels" },
     { name = "till-platform" },
     { name = "yfinance" },
 ]
@@ -3553,7 +3546,6 @@ requires-dist = [
     { name = "rpyc", marker = "extra == 'rpyc'", specifier = ">=6.0.0" },
     { name = "scikit-learn", marker = "extra == 'train'", specifier = ">=1.5.0" },
     { name = "tenacity", specifier = ">=9.1.4" },
-    { name = "till-channels", editable = "packages/till-channels" },
     { name = "till-platform", editable = "packages/till-platform" },
     { name = "uvloop", marker = "sys_platform != 'win32' and extra == 'speed'", specifier = ">=0.21.0" },
     { name = "yfinance", specifier = ">=1.5.2" },

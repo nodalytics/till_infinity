@@ -9,7 +9,7 @@ message costs latency rather than history.
               ├──▶ bus ──▶ agents ──▶ bus
     news    ──┘
 
-Backed by `till_channels`: in-memory by default, Redis Streams when a
+Backed by `queues`, in process only: Nautilus owns the bus, and this
 URL is set - the same in-process-or-shared choice `--store` offers.
 
 **Publishing fans out per subscriber group.** A channel's `recv()` is
@@ -28,8 +28,9 @@ from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
 
-from till_channels import ChannelClosed, ChannelFull, Receiver, Sender, bounded, redis_channel
 from till_platform.logging import get_logger
+
+from .queues import ChannelClosed, ChannelFull, Receiver, Sender, bounded
 
 log = get_logger(__name__)
 
@@ -213,11 +214,13 @@ class Bus:
         existing = self._channels.get((topic, group))
         if existing is not None:
             return existing
-        if self.redis_url:
-            # Redis consumer groups already fan out: one group per subscriber.
-            pair = redis_channel(self.key(topic), group=group, url=self.redis_url)
-        else:
-            pair = bounded(self.capacity)
+        # **In process only, since 2026-10-31.** `till-channels` carried a
+        # Redis transport and is retired to `research/retire/`: Nautilus owns
+        # the bus now, with its own Rust message bus and optional Redis
+        # backing. What is left here serves the legacy single-process path
+        # until `stack.py` and the `prices` CLI group go, and that path has
+        # never needed more than a queue.
+        pair = bounded(self.capacity)
         self._channels[(topic, group)] = pair
         return pair
 

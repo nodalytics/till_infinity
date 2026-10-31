@@ -33,7 +33,8 @@ from typing import Any
 
 from till_platform.logging import get_logger
 
-from ..bus import JOURNAL, Bus
+from ..carrier import Carrier
+from ..topics import JOURNAL
 from .models import Entry, Kind
 from .store import Journal
 
@@ -77,7 +78,7 @@ def from_message(payload: Any) -> Entry | None:
     )
 
 
-async def publish(bus: Bus | None, entry: Entry) -> bool:
+async def publish(bus: Carrier | None, entry: Entry) -> bool:
     """Send one entry to whichever process is writing the journal.
 
     Returns False when there is no bus, so a caller can fall back to writing
@@ -94,7 +95,7 @@ async def publish(bus: Bus | None, entry: Entry) -> bool:
 
 
 async def listen(
-    bus: Bus,
+    bus: Carrier,
     journal: Journal,
     *,
     group: str = DEFAULT_GROUP,

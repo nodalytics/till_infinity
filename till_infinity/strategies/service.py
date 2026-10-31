@@ -58,6 +58,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import dataclasses
+import math
 import re
 import time
 from collections import Counter, deque
@@ -72,31 +73,27 @@ from till_platform.intervals import SECONDS
 from till_platform.logging import get_logger
 from till_platform.state import Restorable
 
-from ..bus import ALERTS, DISPERSION, EVENTS, PROPOSALS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
+from ..carrier import Carrier, Message
 from ..journal import Journal, decide, observe, outcome
 
 # The wire name `prices` gives its own broker connection's quotes, as opposed to
 # the six venues it scrapes through TradingView. Imported rather than repeated:
 # `trading.config` already depends on `prices.models`, so the direction is settled,
 # and a duplicated string would drift silently.
-from ..prices.config import BROKER as BROKER_SOURCE
-from ..structures.context.cusum import Cusum, Ensemble, adaptive_threshold
-from ..structures.context.holds import Book as HoldBook
-from ..structures.context.reach import Reaches
-from ..structures.context.registry import clock_odds
-from ..structures.context.trend import Trend
-from ..structures.learning import expansion, shocks
-from ..structures.learning.focus import Focus
-from ..structures.vol import envelope
+from ..topics import ALERTS, DISPERSION, EVENTS, PROPOSALS, QUOTES, RESOLUTIONS, SIGNALS
 from . import manage, plans, turning
 from .candles import confirms, rejection_wick
 from .config import Settings, magic_for, strategy_for
 from .context import Context
+from .cusum import Cusum, Ensemble, adaptive_threshold
+from .focus import Focus
+from .holds import Book as HoldBook
 from .impulse import card_line as impulse_card
 from .impulse import features as impulse_features
 from .manage import Move, Take
 from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from .models import money as money  # noqa: PLC0414
+from .reach import Reaches
 from .regression import SPANS as TREND_SPANS
 from .regression import card_line as trend_card
 from .regression import features_across as trend_features
@@ -106,10 +103,50 @@ from .shadow import ShadowGates
 from .sizing import lots, price_distance, respects_stops_level
 from .strategies import strategy
 from .strategies.strategy import Strategy
+from .trend import Trend
 from .venues import replicate
 from .venues import symbols as sym
 from .venues.broker import Broker, BrokerError, build
 from .venues.paper import PaperBroker
+
+#: The source name a broker-originated quote carries.
+#:
+#: Inlined when `prices/` was retired on 2026-10-31. It is a string on a
+#: message, compared in one place, and importing a retired package for it
+#: would be the tail wagging the dog.
+BROKER_SOURCE = "broker"
+
+#: The smallest edge worth an order.
+#:
+#: Inlined from `structures/reactions.py` on 2026-10-31 - one constant in
+#: 1,887 lines, which is not a dependency worth keeping a package for.
+MIN_EDGE = 0.10
+
+#: P(this level breaks | the touch is still open after this many of its own bars).
+#:
+#: **Inlined from `structures/context/registry.py` on 2026-10-31**, where it
+#: was one function in 358 lines and had one caller here. The constants are
+#: its measurements, not tuning: 14.4% at open, 22.4% at two minutes, 54.7% at
+#: five, 77.8% at ten on 1m, and the same shape on 3m, 5m, 15m and 30m once
+#: time is counted in the level's own bars.
+#:
+#: The one conditional here that costs nothing to observe: "resolution took at
+#: least t" and "still open at t" are the same event, so a table built on
+#: finished touches is one a live timer can act on.
+_CLOCK_FLOOR = 0.144
+_CLOCK_BARS = 5.0
+_CLOCK_SHARPNESS = 1.6
+
+
+def _clock_odds(age_bars: float) -> float:
+    """A logistic in log-age, lifted onto the floor so a fresh touch reads its
+    unconditional rate rather than zero, and which cannot leave [0, 1] however
+    long a touch stays open."""
+    if age_bars <= 0.0:
+        return _CLOCK_FLOOR
+    z = _CLOCK_SHARPNESS * math.log(age_bars / _CLOCK_BARS)
+    return _CLOCK_FLOOR + (1.0 - _CLOCK_FLOOR) / (1.0 + math.exp(-z))
+
 
 log = get_logger(__name__)
 
@@ -474,7 +511,7 @@ class Trader:
 
     def __init__(  # noqa: PLR0915 - one assignment per piece of state; a trader has that much
         self,
-        bus: Bus,
+        bus: Carrier,
         *,
         settings: Settings | None = None,
         journal: Journal | None = None,
@@ -612,7 +649,7 @@ class Trader:
         self._holds = HoldBook()
         #: How far price reaches into a level, and against a trade once in it.
         #: The two distances behind an entry and a stop. See
-        #: `structures/reach.py`.
+        #: `strategies/reach.py`.
         self._reaches = Reaches()
         #: When each feed last quoted. A market in its daily break keeps its
         #: last quote and refuses every order, which is a different thing from
@@ -895,7 +932,6 @@ class Trader:
 
         See `trading-service.md` in research/docs.
         """
-        from ..structures.reactions import MIN_EDGE
 
         if 0 < self.settings.min_edge <= MIN_EDGE:
             log.warning(
@@ -2257,7 +2293,7 @@ class Trader:
         if span <= 0.0 or not isinstance(started, (int, float)) or now <= started:
             return
         bars = (float(now) - float(started)) / span
-        moved = clock_odds(bars)
+        moved = _clock_odds(bars)
         if moved <= current:
             # Never *lower* the risk on a wake. The clock is monotone in age, so a fall here
             # would mean the inputs are wrong, and a gate that loosens while a setup ages is
@@ -4505,11 +4541,13 @@ class Trader:
             if self.equity
             else f"💰 risking {self.money(intent.risk_money, signed=False)}",
             f"📝 {intent.reason}" if intent.reason else "",
-            # Where price can be five bars from here, from the signal's own features - the same
-            # lines the level alert prints. Read, never acted on. See `structures/vol/envelope.py`.
-            *envelope.card_lines(intent.features, _money_price),
-            *shocks.card_line(intent.features),
-            *expansion.card_line(intent.features),
+            # **Three card lines left with `structures/` on 2026-10-31.** They
+            # printed an envelope, a shock probability and an expansion state
+            # from the signal's features - 1,477 lines of model loading for
+            # text that this file's own comment described as "read, never
+            # acted on". The models they read are retired to
+            # `research/retire/models/artefacts/` with the scripts that
+            # trained them.
             # Which way the line price is on points, and how well it fits.
             # Renders nothing until something publishes the fit, which is
             # deliberate: see `trading/regression.py` on why it gates nothing yet.
@@ -4849,7 +4887,7 @@ class _Intake:
 
 
 async def listen(
-    bus: Bus,
+    bus: Carrier,
     *,
     settings: Settings | None = None,
     journal: Journal | None = None,

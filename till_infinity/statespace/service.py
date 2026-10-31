@@ -22,7 +22,7 @@ traffic.
 
 `TestVendoredCusum` asserts that this package imports nothing from outside
 itself but `shared`, because "isolation is the point: this package is meant to
-lift out in one move". `from ..bus import Bus` would break that, and the first
+lift out in one move". `from ..carrier import Carrier` would break that, and the first
 version of this file did.
 
 So `Carrier` is a protocol rather than an import: anything with `publish` and
