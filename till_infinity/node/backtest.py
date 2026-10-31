@@ -69,7 +69,9 @@ def catalogue() -> Path:
     return Path(os.environ.get("CORPUS_DIR", Path.home() / "till-data" / "catalog"))
 
 
-def venue(starting: float = 10_000.0, currency: str = "USD") -> BacktestVenueConfig:
+def venue(
+    starting: float = 10_000.0, currency: str = "USD", name: str = MT5
+) -> BacktestVenueConfig:
     """The venue as the broker actually behaves.
 
     `NETTING`, because the Deriv account is netting and not hedging: a second
@@ -82,7 +84,12 @@ def venue(starting: float = 10_000.0, currency: str = "USD") -> BacktestVenueCon
     fills is the specific way this desk has already been misled.
     """
     return BacktestVenueConfig(
-        name=MT5,
+        # **Named, not hardcoded.** It was fixed at `MT5` while the desks were
+        # built from the instrument's own venue, so a backtest on
+        # `EURUSD.SIM` got a venue called MT5 and the instrument would never
+        # have resolved - a run that fails at load, or worse, loads nothing
+        # and reports a result computed from no trades.
+        name=name,
         oms_type="NETTING",
         account_type="MARGIN",
         base_currency=currency,
@@ -110,8 +117,13 @@ def run_config(
     strategies=(),
     start: str | None = None,
     end: str | None = None,
+    venue_name: str | None = None,
 ) -> BacktestRunConfig:
-    """One run, with the same actors and strategies the live node takes."""
+    """One run, with the same actors and strategies the live node takes.
+
+    `venue_name` defaults to the instrument's own, so the venue the engine
+    builds and the venue the instrument belongs to cannot disagree.
+    """
     return BacktestRunConfig(
         engine=BacktestEngineConfig(
             trader_id="BACKTEST-001",
@@ -122,7 +134,7 @@ def run_config(
             actors=list(actors),
             strategies=list(strategies),
         ),
-        venues=[venue()],
+        venues=[venue(name=venue_name or instrument_id.rsplit(".", 1)[-1])],
         data=[data(instrument_id, bar_spec, start, end)],
     )
 
@@ -131,6 +143,47 @@ def run(configs) -> list:
     """Run them, having checked this is a host allowed to."""
     where()
     return BacktestNode(configs=list(configs)).run()
+
+
+def desk_config(
+    instrument_id: str,
+    bar_spec: str = "15-MINUTE-LAST-EXTERNAL",
+    *,
+    start: str | None = None,
+    end: str | None = None,
+    limit: int | None = None,
+) -> BacktestRunConfig:
+    """One run, with **the desks the live node would build**.
+
+    The whole argument for the move, in one function: `node/desks.py` derives
+    the set from the same environment for both, so a measurement and a
+    deployment are the same desks rather than two sets that agree until they
+    do not. `test_desks.py` asserts the two name the same ones.
+
+    The venue is taken from the instrument, so a backtest on `EURUSD.SIM` runs
+    simulated desks and one on `EURUSD.MT5` runs the deployed ones against
+    stored data.
+    """
+    from . import desks
+
+    venue_name = instrument_id.rsplit(".", 1)[-1]
+    strategies, clipped = desks.importable(venue_name, limit=limit)
+    if not strategies:
+        raise ValueError(
+            f"no desks for {instrument_id}: TRADING_SYMBOLS names no "
+            f"instrument, so this backtest would run nothing and report a "
+            f"result computed from no trades."
+        )
+    if clipped:
+        print(f"clipped {len(clipped)} desk(s) for the ceiling: {', '.join(clipped)}")
+    return run_config(
+        instrument_id,
+        bar_spec,
+        actors=desks.importable_actors(venue_name),
+        strategies=strategies,
+        start=start,
+        end=end,
+    )
 
 
 def main() -> None:

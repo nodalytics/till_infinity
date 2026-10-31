@@ -16,12 +16,13 @@ from __future__ import annotations
 
 import os
 
+from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import (
     CacheConfig,
     LiveDataEngineConfig,
     LiveExecEngineConfig,
+    LiveRiskEngineConfig,
     LoggingConfig,
-    RiskEngineConfig,
     TradingNodeConfig,
 )
 from nautilus_trader.live.node import TradingNode
@@ -33,11 +34,17 @@ from till_infinity.adapters.mt5 import (
     MT5LiveDataClientFactory,
     MT5LiveExecClientFactory,
 )
+from till_infinity.node import desks
+from till_infinity.statespace.actor import StatespaceActor, StatespaceConfig
 
-#: The desk's magic. Append-only and positional: a strategy without a slot
-#: stamps a hashed magic with no inverse, which empties `Live.by` and stops
-#: every attribution rule matching. Being off by one relabels every strategy
-#: as its neighbour.
+#: The venue's magic, and **no longer how a strategy is identified.**
+#:
+#: It was both, and that was the bug: append-only and positional, a strategy
+#: without a slot stamped a hashed magic with no inverse, and being off by one
+#: relabelled every strategy as its neighbour. Attribution is now Nautilus's
+#: `strategy_id`, assigned by the framework and carried on every order, fill
+#: and position - so this is one number the bridge stamps on the desk's orders
+#: to tell them from a human's, which is all a magic was ever good for.
 DEFAULT_MAGIC = 777_701
 
 
@@ -56,7 +63,13 @@ def settings() -> TradingNodeConfig:
         # engine owns order rate and notional caps and the HALTED/REDUCING
         # states; what stays ours is the sizing rule, because that is an input
         # to an order rather than a limit on one.
-        risk_engine=RiskEngineConfig(
+        # **`LiveRiskEngineConfig`, not `RiskEngineConfig`.** The plain one
+        # raises `Cannot use RiskEngineConfig in a 'live' environment` from the
+        # kernel's constructor, so this node could never be built - and nothing
+        # caught it, because nothing constructed one. The same shape as the
+        # three deploys that were built, tagged, health-checked and ran none of
+        # the code they claimed: every check read our own side of the wire.
+        risk_engine=LiveRiskEngineConfig(
             bypass=False,
             max_order_submit_rate=os.environ.get("RISK_ORDER_RATE", "10/00:00:01"),
         ),
@@ -96,12 +109,71 @@ def settings() -> TradingNodeConfig:
 
 
 def build() -> TradingNode:
-    """A node with the venue registered, built but not running."""
+    """A node with the venue registered and the desks on it, not yet running.
+
+    **Strategies are added before `node.build()`**, because that is when
+    Nautilus wires each one to the cache, the clock and the message bus. Added
+    after, they exist and are never registered - which is a node that reports
+    up and trades nothing, the failure three deploys on 2026-10-09 already
+    produced by a different route.
+    """
     node = TradingNode(config=settings())
     node.add_data_client_factory(MT5, MT5LiveDataClientFactory)
     node.add_exec_client_factory(MT5, MT5LiveExecClientFactory)
+
+    strategies, clipped = desks.build(MT5)
+    if clipped:
+        # **Said out loud, never silent.** A set smaller than the one asked for
+        # is the shape of bug this desk has paid for repeatedly: a min-events
+        # guard once dropped 141 of 146 feeds and made 0.9 sigma look like 4.8.
+        node.kernel.log.warning(
+            f"{len(clipped)} desk(s) clipped for the machine's ceiling of "
+            f"{desks.ceiling()}: {', '.join(clipped)}"
+        )
+    if not strategies:
+        # Refused rather than started empty. A live node with no strategies
+        # connects, reconciles, reports healthy and trades nothing, and every
+        # check that would notice reads our own side of the wire.
+        raise ValueError(
+            "no desks to run: TRADING_SYMBOLS names no instrument, so this "
+            "node would connect, reconcile, report healthy and trade nothing."
+        )
+    for strategy in strategies:
+        node.trader.add_strategy(strategy)
+    for actor in _actors():
+        node.trader.add_actor(actor)
+
     node.build()
     return node
+
+
+def _actors() -> list[Actor]:
+    """The actors: the basket watcher, and statespace where it is configured.
+
+    `STATESPACE_BARS` names the bar types it folds. Absent, it is not added -
+    a node may trade without it, and an actor subscribed to nothing is a fold
+    that never runs pretending to be a model that does.
+    """
+    found: list[Actor] = list(desks.actors(MT5))
+    bars = tuple(
+        part for part in (os.environ.get("STATESPACE_BARS") or "").replace(",", " ").split() if part
+    )
+    if bars:
+        found.append(
+            StatespaceActor(
+                StatespaceConfig(
+                    bar_types=bars,
+                    indicators=tuple(
+                        part
+                        for part in (os.environ.get("STATESPACE_INDICATORS") or "")
+                        .replace(",", " ")
+                        .split()
+                        if part
+                    ),
+                )
+            )
+        )
+    return found
 
 
 def main() -> None:
