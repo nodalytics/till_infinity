@@ -13,16 +13,33 @@ WORKDIR /app
 # reinstall river.
 # **The members' manifests come with the lockfile, not with the source.** This
 # is a uv workspace: `uv sync --frozen` resolves every member, so it needs each
-# `pyproject.toml` present at this step even though `--no-install-project`
-# means none of their code is installed yet. Copying only the root manifest
-# fails here with "workspace member is missing a pyproject.toml", which at
-# least fails loudly.
+# `pyproject.toml` present at this step even though none of their code is
+# installed yet. Copying only the root manifest fails here with "workspace
+# member is missing a pyproject.toml", which at least fails loudly.
+#
+# **`--no-install-workspace`, not `--no-install-project`.** This is the flag
+# the workspace made necessary and it took three failed deploys to find.
+# `--no-install-project` skips only the desk, so uv still *builds* every member
+# the desk depends on - and at this layer a member is one `pyproject.toml` with
+# no module beside it:
+#
+#     × Failed to build `till-platform @ file:///app/packages/till-platform`
+#     ╰─▶ Expected a Python module at:
+#         packages/till-platform/till_platform/__init__.py
+#
+# `--no-install-workspace` skips the members too, which is what this layer is
+# for: external dependencies, keyed on the lockfile so a code edit does not
+# reinstall river. The members are installed below, once their source is here.
+#
+# The suite could not catch this. `test_the_image_carries_every_python_workspace_member`
+# checks that each member is copied, and it was - on the line after the one
+# that needed it. A COPY list says nothing about order.
 COPY pyproject.toml uv.lock ./
 COPY packages/till-platform/pyproject.toml ./packages/till-platform/
 COPY packages/till-channels/pyproject.toml ./packages/till-channels/
 COPY services/statespace/pyproject.toml ./services/statespace/
 RUN --mount=type=cache,target=/root/.cache/uv \
-    uv sync --frozen --no-install-project --all-extras
+    uv sync --frozen --no-install-workspace --all-extras
 
 COPY till_infinity/ ./till_infinity/
 # The workspace members' code. `services/ticks` is Go and is not in this image:
@@ -38,6 +55,10 @@ COPY services/statespace/ ./services/statespace/
 # told "nothing" by a container that simply does not ship the answer.
 COPY shared/ ./shared/
 COPY README.md ./
+# Whoever ships the files says where they are. The search in
+# `till_platform.contracts._find` would reach them from WORKDIR anyway; this
+# makes it a statement rather than a coincidence.
+ENV TILL_CONTRACTS_DIR=/app/shared/contracts/bus
 # **`--reinstall-package`, and the check below is not belt-and-braces.**
 # `uv sync --no-editable` builds the project into a wheel and caches it, and the
 # cache key does not include the source: the version in pyproject.toml never
@@ -75,6 +96,28 @@ RUN set -eu; \
         exit 1; \
     fi; \
     echo "installed package matches source: $nb files, digest $a"
+
+# **The contracts have to be findable from the installed package, not just
+# present.** They were present and unfindable for the whole of this image's
+# life: `till_platform.contracts` counted parent directories from its own
+# `__file__`, which is `site-packages/till_platform/` once installed, so it
+# looked in `/app/.venv/lib/shared/contracts/bus` while the files sat in
+# `/app/shared/contracts/bus`. `declared()` answered `()` and nothing asked
+# again - a container reporting that the bus declares nothing.
+#
+# Run from `/` with the venv's own interpreter, because from WORKDIR /app a
+# `python -c` imports the source tree and would find the files by accident -
+# the same blind spot that let three stale deploys pass their checks.
+# Both branches are *expressions*: `raise X if c else None` parses as
+# `raise (X if c else None)` and raises `None` on the healthy path, which is
+# how the first version of this check failed a build that was fine.
+RUN set -eu; \
+    cd /; \
+    /app/.venv/bin/python -c "import sys; \
+from till_platform import contracts; \
+why = contracts.missing(); \
+sys.exit('FATAL: ' + why) if why \
+else print('contracts:', len(contracts.declared()), 'declared at', contracts.HOME)"
 
 
 FROM python:3.11-slim-bookworm AS runtime

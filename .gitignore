@@ -62,7 +62,11 @@ __pycache__/
 .venv-research/
 
 # Recorded option surfaces. Market data, never committed.
-options-data/
+research/options-data/
+# Was `options-data/` at the root until 2026-10-30. Recorded surfaces are
+# research inputs, so they live beside the harness that reads them. The
+# recorder takes `--out`, and the paths in docs/ point at `~/options-data` on
+# the lab box, so neither follows this move.
 
 # A PyObjC artifact - a dump of Apple Foundation/AppKit class metadata that lands
 # in the working directory when PyObjC scans Objective-C frameworks. Nothing here

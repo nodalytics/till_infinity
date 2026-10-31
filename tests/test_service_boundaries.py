@@ -392,6 +392,57 @@ def test_the_image_carries_every_python_workspace_member():
         assert f"COPY {rel}/ " in dockerfile, f"{rel}'s code is not copied into the image"
 
 
+def test_the_dependency_layer_does_not_try_to_build_the_members():
+    """`--no-install-project` is not enough once there is a workspace.
+
+    **Three deploys failed on this and the suite was green for all of them.**
+    The test above asserts that each member is copied, and each was - on the
+    line *after* the one that needed it. A copy list says nothing about order.
+
+    `--no-install-project` skips only the root project, so uv still builds
+    every member the root depends on; at the lockfile layer a member is a
+    `pyproject.toml` with no module beside it, and the build stops with
+    "Expected a Python module at: packages/till-platform/till_platform/
+    __init__.py". `--no-install-workspace` skips the members too, which is
+    what that layer is for: third-party wheels, keyed on the lock.
+
+    Asserted on the text because building the image takes minutes and this
+    takes none. The build itself remains the real check; this is the one that
+    fails in the pull request instead of after the merge.
+    """
+    dockerfile = (REPO / "Dockerfile").read_text()
+    caching = [
+        line for line in dockerfile.splitlines() if "uv sync" in line and "--no-install" in line
+    ]
+    assert caching, "no dependency-only `uv sync` layer in the Dockerfile"
+    for line in caching:
+        assert "--no-install-workspace" in line, (
+            f"{line.strip()!r} would build the workspace members at a layer that "
+            f"has only their manifests - use --no-install-workspace"
+        )
+
+
+def test_the_image_says_where_the_contracts_are():
+    """The contracts were shipped and unfindable for this image's whole life.
+
+    `till_platform.contracts` counted parent directories from its own
+    `__file__`. Installed, that is `site-packages/till_platform/`, so it
+    looked in `/app/.venv/lib/shared/contracts/bus` while the files sat in
+    `/app/shared/contracts/bus` - and `declared()` returned `()`, so the
+    container reported that the bus declares nothing rather than failing.
+
+    Two things keep it fixed, and the second is the one that would have caught
+    it: the image declares the directory, and the build asks the *installed*
+    package whether it found the schemas, from `/` so that WORKDIR cannot
+    answer by accident.
+    """
+    dockerfile = (REPO / "Dockerfile").read_text()
+    assert "ENV TILL_CONTRACTS_DIR=" in dockerfile, "the image does not say where the contracts are"
+    assert "contracts.missing()" in dockerfile, (
+        "the build does not ask the installed package whether it found the schemas"
+    )
+
+
 def test_the_go_service_is_excluded_rather_than_broken():
     """uv refuses a glob member with no manifest, so the Go service is named.
 
