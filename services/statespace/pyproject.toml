@@ -3,16 +3,30 @@ name = "statespace"
 version = "0.1.0"
 description = "Folds one observation at a time into a predictive distribution over log variance."
 requires-python = ">=3.11"
-# **No third-party runtime dependency, and that is measured rather than
-# aspirational**: 21,000 lines across 58 modules with no numpy, no scipy, no
-# pandas. The filters are written out in plain Python because the service folds
-# one observation at a time rather than a matrix, and a per-observation call
-# into a vectorised library costs more than it saves.
+# **The fold needs no vectorised library, and that is measured rather than
+# aspirational**: the filters are written out in plain Python because the
+# service folds one observation at a time rather than a matrix, and a
+# per-observation call into a vectorised library costs more than it saves.
+#
+# numpy *is* imported by five modules - `behaving`, `diagnostics`, `spectrum`,
+# `relating`, `swarm` - and every one of those imports is inside a function.
+# `engine` reaches `behaving` through `facade`, so numpy is in the module
+# graph; it is not on the execution path of `observe_bar`. Hence an extra
+# rather than a dependency, and a spike that folds 2,000 bars with numpy
+# absent is what says so rather than a reading of the imports.
 dependencies = [
     # `Restorable` and `restore_enum` for the state file, and four environment
-    # coercions. The whole external surface of this service.
+    # coercions.
     "till-platform",
+    # `store.py` imports msgpack inside the two functions that use it, which
+    # is about import cost rather than optionality: without it the engine
+    # cannot save or restore, and that is not an optional part of its job.
+    "msgpack>=1.0",
 ]
+
+[project.optional-dependencies]
+# The analysis entry points, not the fold. See the note above.
+analysis = ["numpy>=1.26"]
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]

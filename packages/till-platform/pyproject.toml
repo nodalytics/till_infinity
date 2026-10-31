@@ -4,9 +4,21 @@ version = "0.1.0"
 description = "Infrastructure every service on the desk needs: logging, state, env, the persistence codec, and the bus contracts."
 requires-python = ">=3.11"
 dependencies = [
-    # The logger writes JSON lines. Nothing else here needs a third party.
+    # The logger writes JSON lines, and renders to a terminal through rich -
+    # imported at module level in `logging.py`, so it is not optional.
     "orjson>=3.10",
+    "rich>=13.0",
+    # `codec.pack`/`unpack` imports msgpack inside the function, for import
+    # cost rather than optionality: every `Restorable` on the desk persists
+    # through it, so a package without it cannot save state.
+    "msgpack>=1.0",
 ]
+
+[project.optional-dependencies]
+# `contracts.check` is the only thing that needs a validator, and it imports
+# it inside the function on purpose - the Go side needs the schema files, and
+# a caller asking what is declared should not pay for jsonschema.
+contracts = ["jsonschema>=4.0"]
 
 [build-system]
 requires = ["uv_build>=0.9,<0.10"]

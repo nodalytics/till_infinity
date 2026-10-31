@@ -8,12 +8,10 @@ authors = [
     { name = "Samuel Ojietohamen", email = "seekersoftec@gmail.com" }
 ]
 dependencies = [
-    "anthropic>=0.121.0",
     "click>=8.4.2",
     "httpx>=0.28.1",
     "httpx-ws>=0.9.0",
     "orjson>=3.11.9",
-    "pydantic-ai-slim[anthropic,groq]>=2.28.0",
     "python-dotenv>=1.2.2",
     "rich>=15.0.0",
     "ccxt>=4.4.0",
@@ -42,13 +40,16 @@ dependencies = [
 
 [project.optional-dependencies]
 speed = ["uvloop>=0.21.0; sys_platform != 'win32'"]
-# Agents run on Claude out of the box. These add the clients for other
-# providers - `openai` also covers xAI's Grok, DeepSeek and OpenRouter, which
-# all speak the OpenAI wire format.
-openai = ["pydantic-ai-slim[openai]>=2.28.0"]
-google = ["pydantic-ai-slim[google]>=2.28.0"]
-groq = ["pydantic-ai-slim[groq]>=2.28.0"]
-redis = ["redis>=5.0.0"]
+# **The agent providers and the Redis backend left on 2026-10-31**, with the
+# move to Nautilus. The agents were retired to `research/retire/agents/`,
+# which is the only place `pydantic_ai` and `anthropic` are still named, and
+# Nautilus brings its own message bus - with its own optional Redis backing -
+# so `till-channels` stops being the transport. `research/baseline/` holds the
+# implementations these belonged to.
+#
+# `river` stays. Its ten imports are all inside the retired `structures/`,
+# but online learning is the direction and it is the library for it: the whole
+# reason `statespace` folds one observation at a time rather than a matrix.
 # The native MT5 binding. Marked win32 because it is not a package that has
 # merely been neglected on other platforms - it is an in-process call into a
 # running Windows terminal, with no Linux wheel to build against. The marker
@@ -73,7 +74,7 @@ train = ["scikit-learn>=1.5.0"]
 # this repository produced: a dependency that happens to be present is not one
 # the project has.
 contracts = ["jsonschema>=4.20.0"]
-corpus = ["pyarrow>=16.0.0"]
+
 
 [project.scripts]
 till-infinity = "till_infinity.cli:main"
