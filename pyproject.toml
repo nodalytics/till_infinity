@@ -15,6 +15,14 @@ dependencies = [
     "python-dotenv>=1.2.2",
     "rich>=15.0.0",
     "ccxt>=4.4.0",
+    # **The engine.** Rust core with Python bindings: the message bus, the
+    # cache, order and position management, the risk engine, and backtest/live
+    # parity on one code path - which is the reason for the move rather than
+    # the feature list. Pinned to a minor, because the current docs describe a
+    # rename this version has not shipped: 1.221 has `LiveMarketDataClient`,
+    # `LiveExecutionClient` and `TradingNode`, where the docs call those v1
+    # names for `MarketDataClient`, `ExecutionClient` and `LiveNode`.
+    "nautilus_trader>=1.221,<1.230",
     "msgpack>=1.1.0",
     # **Both of these were transitive until 2026-10-31**, and removing an
     # unrelated package is what exposed them. `pydantic` arrived with
@@ -173,6 +181,13 @@ max-returns = 8
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG"]  # fakes accept arguments they have no reason to use
+# A Nautilus adapter implements signatures the framework defines, and some of
+# their arguments do not apply to this venue: `filters` on
+# `InstrumentProvider` (the bridge lists what the terminal lists, and there is
+# nothing to filter on) and `command` on the reconciliation hooks, which here
+# always report everything carrying the desk's magic. Dropping either would
+# change the signature and break the override.
+"till_infinity/adapters/*/*.py" = ["ARG002"]
 # channels/ is a general-purpose transport library with its own naming. These
 # exemptions are for deliberate API choices, not defects: renaming ChannelFull
 # to ChannelFullError would break every caller to satisfy a convention, and the

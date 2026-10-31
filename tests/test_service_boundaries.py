@@ -55,6 +55,28 @@ STANDALONE = {"statespace": "statespace"}
 #: one fail instead of lingering.
 INFRASTRUCTURE = frozenset({"bus"})
 
+#: The Nautilus layers, and what each is allowed to import.
+#:
+#: **These are not debts and must not go in `DEBTS`.** That table exists to
+#: shrink: every entry is coupling we intend to remove. A node importing an
+#: adapter and an actor is not coupling to be paid off, it is what a node *is*.
+#:
+#: The direction is the rule, and it is worth asserting because the wrong
+#: direction is easy to write and hard to see: an adapter that imports a
+#: strategy has made the venue depend on what trades on it, which is how a
+#: second venue becomes impossible.
+#:
+#:     node     -> everything below it
+#:     actors   -> adapters (for conversion constants), never strategies
+#:     strategies -> adapters, actors
+#:     adapters -> nothing above them
+LAYERS: dict[str, frozenset[str]] = {
+    "node": frozenset({"adapters", "actors", "strategies", "trading"}),
+    "actors": frozenset({"adapters"}),
+    "strategies": frozenset({"adapters", "actors"}),
+    "adapters": frozenset(),
+}
+
 #: Libraries in `packages/`, as distribution name -> import name.
 #:
 #: **Prefixed on purpose.** `channels` is Django Channels on PyPI and
@@ -117,7 +139,7 @@ def imports_of(service: str) -> set[str]:
 @pytest.mark.parametrize("service", services())
 def test_no_service_gains_a_new_cross_service_import(service):
     """A new reach into another service fails here, not in a later audit."""
-    allowed = INFRASTRUCTURE | DEBTS.get(service, frozenset())
+    allowed = INFRASTRUCTURE | DEBTS.get(service, frozenset()) | LAYERS.get(service, frozenset())
     gained = sorted(imports_of(service) - allowed)
     assert not gained, (
         f"{service} imports {', '.join(gained)}. ADR 0002: a service talks over the bus. "
@@ -345,6 +367,25 @@ def test_every_third_party_import_is_declared():
     assert not undeclared, (
         f"imported but not declared: {undeclared} - add it to pyproject.toml, or "
         f"to PROVIDED_BY if the distribution is named differently"
+    )
+
+
+@pytest.mark.parametrize("layer", sorted(LAYERS))
+def test_a_layer_only_imports_what_is_below_it(layer):
+    """The direction, which is the whole content of the rule.
+
+    An adapter that imports a strategy makes the venue depend on what trades
+    on it. The symptom arrives much later, when a second venue is wanted and
+    cannot be added without the first one's strategies coming too.
+    """
+    home = ROOT / layer
+    if not home.is_dir():
+        pytest.skip(f"{layer} does not exist yet")
+    reaching = imports_of(layer) - INFRASTRUCTURE - {layer}
+    forbidden = {name for name in reaching if name in LAYERS and name not in LAYERS[layer]}
+    assert not forbidden, (
+        f"{layer} imports {sorted(forbidden)}, which is not below it. Allowed: "
+        f"{sorted(LAYERS[layer]) or 'nothing'}"
     )
 
 
