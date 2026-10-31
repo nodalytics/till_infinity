@@ -166,6 +166,40 @@ def required_sharpe(window: Window, per_day: float, kurtosis: float = 20.0) -> f
     return z / denom**0.5
 
 
+def affordable(window: Window, candidates: int, target_sharpe: float = 1.5) -> tuple[bool, str]:
+    """Can this window's history support a sweep of this width?
+
+    **The hard constraint on fast discovery, and it is arithmetic.** MinBTL
+    says a search of N trials needs about `2 ln N / target^2` years before its
+    winner means anything. Two years at a target Sharpe of 1.5 supports about
+    *nine* trials; a twelve-window sweep over twenty candidates is 240 and
+    wants nearly five years.
+
+    That does not forbid a one-month window. It says what a one-month window
+    can be spent on: a handful of pre-registered candidates rather than a
+    fan-out. The deflated Sharpe charges for the width either way, so the
+    choice is between a narrow search that can be believed and a wide one that
+    cannot.
+    """
+    from .multiple import minimum_backtest_length, supportable_trials
+
+    trials = max(1, len(sweep(per_day=1.0)) * candidates) if candidates else 1
+    trials = max(1, candidates)
+    years = window.months / 12.0
+    needed = minimum_backtest_length(trials, target_sharpe)
+    can_support = supportable_trials(years, target_sharpe)
+    if needed <= years:
+        return True, (
+            f"{window.months}mo supports {trials} trials at a target Sharpe of "
+            f"{target_sharpe:g} (needs {needed * 12:.1f}mo)"
+        )
+    return False, (
+        f"{window.months}mo cannot support {trials} trials at a target Sharpe of "
+        f"{target_sharpe:g}: MinBTL wants {needed * 12:.1f}mo. This window supports "
+        f"about {can_support:.0f} trials - narrow the search or lengthen the window"
+    )
+
+
 def budget(per_day: float, candidates: int) -> str:
     """One line on what a sweep costs, before it is run.
 
@@ -181,10 +215,13 @@ def budget(per_day: float, candidates: int) -> str:
             f"is unmeasurable on this frequency, which is cheaper to know now"
         )
     shortest_window = windows[0]
+    ok, why = affordable(shortest_window, trials)
     return (
         f"{len(windows)} usable windows ({shortest_window.months}-{windows[-1].months}mo) "
         f"x {candidates} candidates = {trials} trials; the shortest needs a per-period "
-        f"Sharpe near {required_sharpe(shortest_window, per_day):.3f}"
+        f"Sharpe near {required_sharpe(shortest_window, per_day):.3f}. "
+        + ("affordable: " if ok else "NOT affordable: ")
+        + why
     )
 
 

@@ -394,3 +394,167 @@ def hardest(arms: Sequence[Surrogate]) -> Surrogate | None:
     """
     useful = [a for a in arms if not a.uninformative]
     return min(useful, key=lambda a: a.percentile) if useful else None
+
+
+# ─────────────────────────── the two shape nulls ───────────────────────────
+#
+# **A geometric claim and a topological one need different nulls, and using
+# one for the other is how a geometric confound passes a topological test.**
+# That is not a hypothetical: the displacement origin's 82% return rate was
+# geometry, and only a distance-matched placebo showed it.
+#
+#   geometric   - distances, sizes, depths, angles. Scale-dependent.
+#                 Null: keep the data and the distances, move the anchors.
+#   topological - connectivity, ordering, enclosure, higher-highs. Scale-free.
+#                 Null: run the *same detector* over a walk whose bars have
+#                 the same geometry, so whatever the detector produces
+#                 mechanically appears in the null too.
+
+
+@dataclass(frozen=True, slots=True)
+class Episode:
+    """One detection: where it started and how far it was asked to travel.
+
+    `distance` is what a geometric null has to match. An unmatched placebo
+    loses for a reason that has nothing to do with the shape, because a longer
+    horizon reaches a target more often.
+    """
+
+    start: int
+    distance: int
+    direction: int = 1
+
+
+def geometric_null(
+    length: int,
+    episodes: Sequence[Episode],
+    score: Callable[[Sequence[Episode]], float],
+    *,
+    draws: int = 200,
+    seed: int = 0,
+) -> Surrogate:
+    """Score a geometric claim against distance-matched placebo anchors.
+
+    The data is untouched and every episode keeps its own distance and
+    direction; only the starting point moves. What remains to be tested is
+    whether the detector's *choice* of start mattered - which is the whole
+    content of a geometric shape claim.
+    """
+    observed = score(episodes)
+    distances = [e.distance for e in episodes]
+    directions = [e.direction for e in episodes]
+    values: list[float] = []
+    for i in range(draws):
+        rng = random.Random(seed * 15_485_863 + i)
+        placebo = [
+            Episode(start=start, distance=span, direction=directions[k])
+            for k, (start, end) in enumerate(distance_matched(length, distances, rng=rng))
+            for span in (end - start,)
+        ]
+        if not placebo:
+            continue
+        try:
+            values.append(score(placebo))
+        except (ValueError, ZeroDivisionError):
+            continue
+    return Surrogate(
+        name="distance-matched placebo (the anchor, not the geometry)",
+        observed=observed,
+        draws=tuple(values),
+    )
+
+
+def walk_with_bar_geometry(
+    bars: Sequence[tuple[float, float, float, float]],
+    *,
+    rng: random.Random | None = None,
+) -> list[tuple[float, float, float, float]]:
+    """A random walk whose bars look like these ones.
+
+    Closes follow a walk with the same step distribution; each bar's *shape* -
+    its range and its wick-to-body proportions, normalised - is resampled from
+    the real bars. So the synthetic series has this market's wickiness and bar
+    geometry and none of its path structure.
+
+    **That is what makes it the right null for a topological claim.** Running
+    the detector over this tells you what the detector produces from bar
+    geometry alone, and `how-markets-differ-from-every-simple-process` is why
+    a generated process will not do: markets have fewer imbalances, wickier
+    bars, kurtosis 47 to 74 and size autocorrelation 0.21, and no simple
+    family is closer than 210.
+    """
+    r = rng or random.Random()
+    if len(bars) < 2:
+        return list(bars)
+    steps = [bars[i][3] - bars[i - 1][3] for i in range(1, len(bars))]
+    # Each real bar as proportions of its own range, so the shape travels and
+    # the scale does not.
+    shapes = []
+    for open_, high, low, close in bars:
+        span = high - low
+        if span <= 0:
+            shapes.append((0.5, 0.5))
+            continue
+        shapes.append(((open_ - low) / span, (close - low) / span))
+    spans = [high - low for _open, high, low, _close in bars]
+
+    out: list[tuple[float, float, float, float]] = []
+    price = bars[0][3]
+    for _ in bars:
+        price += r.choice(steps)
+        span = r.choice(spans)
+        open_frac, close_frac = r.choice(shapes)
+        low = price - close_frac * span
+        high = low + span
+        out.append((low + open_frac * span, high, low, price))
+    return out
+
+
+def topological_null(
+    bars: Sequence[tuple[float, float, float, float]],
+    detect: Callable[[Sequence[tuple[float, float, float, float]]], float],
+    *,
+    draws: int = 200,
+    seed: int = 0,
+) -> Surrogate:
+    """Score a topological claim by running the detector over matched walks.
+
+    `detect` takes bars and returns the statistic - so the detector itself
+    runs on the null data, which is the point. A definitional effect shows up
+    on both sides and cancels; `let-the-shuffled-twin-name-the-mechanical-
+    observables` is the habit, because overshoot at an extreme is definitional
+    and will appear in any arm that runs the same detector.
+
+    **Sweep the reach and test both sides.** A one-sided topological claim is
+    half a claim, and a fixed reach is a parameter that was chosen.
+    """
+    observed = detect(bars)
+    values: list[float] = []
+    for i in range(draws):
+        rng = random.Random(seed * 32_452_843 + i)
+        try:
+            values.append(detect(walk_with_bar_geometry(bars, rng=rng)))
+        except (ValueError, ZeroDivisionError):
+            continue
+    return Surrogate(
+        name="walk through the same detector (same bar geometry)",
+        observed=observed,
+        draws=tuple(values),
+    )
+
+
+def for_shape(kind: str) -> str:
+    """Which of the two to use, with the reason, for a report or an error."""
+    if kind == "geometric":
+        return (
+            "geometric_null: keep the data and every episode's distance, move only "
+            "the anchors. A return rate is geometry - the origin's 82% was matched "
+            "by a distance-matched placebo on every class, and a walk reads 0.825."
+        )
+    if kind == "topological":
+        return (
+            "topological_null: run the same detector over walks with this market's "
+            "bar geometry. Connectivity and ordering are scale-free, so the null has "
+            "to reproduce the sequence structure rather than the distances."
+        )
+    raise ValueError(f"kind must be geometric or topological, got {kind!r}")
