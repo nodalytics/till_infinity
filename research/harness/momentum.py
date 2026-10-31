@@ -27,7 +27,7 @@ import sqlite3
 import statistics as st
 import time
 
-from till_infinity.strategies.speeds import Speeds
+from till_infinity.indicators.momentum import Speeds
 
 DB = "/app/.data/journal/journal.db"
 DAYS = float(os.environ.get("DAYS", "14"))

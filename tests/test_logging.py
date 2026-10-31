@@ -137,17 +137,8 @@ def test_a_real_terminal_keeps_its_own_width():
     assert console.width != FALLBACK_WIDTH or console.width == 200
 
 
-def test_the_volatility_scoreboard_fits_in_one_line():
-    """It compares four forecasters, and the comparison is the whole content -
-    so it is the part a truncation removes first."""
-    from till_infinity.structures.vol.learned import Learned
-
-    model = Learned(warmup=1)
-    for i in range(40):
-        row = model.features("eurusd|5m", ew_bps=2.0, open_=100, high=101, low=99, close=100.5)
-        model.observe("eurusd|5m", 2.0 + (i % 3), row, ew_bps=2.0)
-
-    standings = model.standings()
-    rendered = ", ".join(f"{name} {value:.3f}" for name, value in standings)
-    line = f"structures: vol model: {model._seen} pair(s), accuracy {rendered} - beating naive"
-    assert len(line) < FALLBACK_WIDTH, (len(line), line)
+# **`test_the_volatility_scoreboard_fits_in_one_line` left with its
+# subject.** It built a `structures.vol.learned.Learned` to check the
+# four-forecaster comparison fits a terminal line, and `structures/` is
+# retired. The console-width behaviour it leaned on is covered by the tests
+# above it; what went is the scoreboard, not the width handling.

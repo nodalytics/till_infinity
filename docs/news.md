@@ -1,17 +1,25 @@
 # News
 
-`till_infinity.news` collects headlines and the economic calendar around them -
-the event-proximity context a vol or regime model needs to know *why* a price
-moved.
+`till_infinity/adapters/news/` collects headlines and the economic calendar
+around them - the event-proximity context a vol or regime model needs to know
+*why* a price moved.
 
-```bash
-uv run till-infinity news collect          # poll forever
-uv run till-infinity news collect --once   # a single pass
-uv run till-infinity news upcoming --high  # next high-impact releases
-uv run till-infinity news latest           # most recent headlines
-uv run till-infinity news info             # what is stored
-uv run till-infinity news sources          # the configured feeds
-```
+**It is a Nautilus data adapter and not a service, and the reason is backtest
+parity.** A `NewsDataClient` polls the sources into its own SQLite store and
+publishes `CalendarEvent` on the engine's bus; its `_request` serves that store
+back - both `CalendarEvent` and `MacroObservation` - so a backtest replays the
+calendar *as it stood* instead of calling a live API and getting today's. A calendar entry is
+published twice - `SCHEDULED` when it became known, `RELEASED` at its release
+time - because a stored row replayed at its scheduled time carries the actual,
+which is the number everybody is waiting for.
+
+    sources/   one module per provider: fetch, parse, return values
+    store.py   the SQLite the live half writes and the history half reads
+    client.py  the poll loop, the subscriptions and `_request`
+    data.py    `CalendarEvent` and `MacroObservation`, and the lookahead guard
+
+The bus service this replaced is in `research/retire/news/`, and **there is no
+CLI**: the node is the entry point, as it is for everything else here.
 
 ## Sources
 
@@ -98,7 +106,8 @@ Surprise (actual − forecast) is computed on the `Event` model rather than
 stored, since both fields are kept raw:
 
 ```python
-from till_infinity.news import SqliteStore, Settings
+from till_infinity.adapters.news import SqliteStore
+from till_infinity.adapters.news.sources import Settings
 
 async with SqliteStore(Settings.from_env().database) as store:
     for event in await store.upcoming(min_importance=2):

@@ -76,7 +76,7 @@ from till_infinity.structures.vol.volatility import (  # noqa: E402
     MIN_VOL_BPS,
     Volatility,
 )
-from till_infinity.strategies.candles import Bar, engulfing  # noqa: E402
+from till_infinity.indicators.candles import Bar, engulfing  # noqa: E402
 
 FRAME = "1h"
 #: The horizon `origin-return-rates.md` measured the return rate over.

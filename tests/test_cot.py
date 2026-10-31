@@ -11,7 +11,7 @@ from __future__ import annotations
 
 import pytest
 
-from till_infinity.news.cot import INVERTED, MARKETS, direction, parse
+from till_infinity.adapters.news.sources.cot import INVERTED, MARKETS, direction, parse
 
 # One real row per market, trimmed to the columns the parser reads. Taken from
 # the live file on 2026-08-31 so the layout under test is the layout served.
@@ -135,6 +135,6 @@ def test_the_reported_date_is_used_not_the_fetch_time():
 
 def test_the_source_is_registered():
     """A source the service cannot build is a source that does not exist."""
-    from till_infinity.news.service import SOURCES
+    from till_infinity.adapters.news.sources import SOURCES
 
     assert "cot" in SOURCES

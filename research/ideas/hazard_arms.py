@@ -71,7 +71,7 @@ from dispersion_ml import LIMIT, SIZE, _design, parkinson  # noqa: E402
 from dispersion_changepoint import _lags  # noqa: E402
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
-from till_infinity.statespace.changepoint import HAZARD, Changepoint  # noqa: E402
+from till_infinity.indicators.changepoint import HAZARD, Changepoint  # noqa: E402
 
 FRAMES = ("1h",)
 TRADED = ("fx_major", "fx_cross", "metal")

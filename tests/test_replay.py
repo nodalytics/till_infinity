@@ -286,7 +286,7 @@ def test_a_fresh_entry_is_never_ambiguous_at_the_default_target():
 def test_the_shift_here_is_the_one_trading_derives():
     """`shared` sits under `trading` and must not import upwards, so the constant
     is duplicated. This is what stops the copies drifting apart."""
-    from till_infinity.strategies import barriers
+    from till_infinity.domain import barriers
     from till_infinity.utils import replay as shared_replay
 
     assert shared_replay.SHIFT == barriers.SHIFT

@@ -6,8 +6,8 @@ import math
 
 import pytest
 
-from till_infinity.strategies.candles import Bar
-from till_infinity.strategies.impulse import (
+from till_infinity.indicators.candles import Bar
+from till_infinity.indicators.levels import (
     MIN_GAP_VOL,
     SPAN,
     card_line,

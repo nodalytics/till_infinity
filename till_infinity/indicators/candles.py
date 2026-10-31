@@ -48,7 +48,11 @@ for dropping the live one.
 
 from __future__ import annotations
 
+from collections import deque
 from dataclasses import dataclass
+
+from nautilus_trader.indicators.base import Indicator
+from nautilus_trader.model.data import Bar as NautilusBar
 
 #: The share of the bar's range the rejection wick must be. Half means the
 #: tail is the larger part of everything that happened.
@@ -199,3 +203,136 @@ def _shape(previous: Bar, bar: Bar, want_up: bool) -> str:
     if shooting_star(bar):
         return "shooting-star"
     return "engulfing" if engulfing(previous, bar) == "down" else ""
+
+
+# ==========================================================================
+# the engine's view
+# ==========================================================================
+
+
+class Candles(Indicator):
+    """Candle patterns on **confirmed** bars, with the shapes this module knows.
+
+    Registered with `Actor.register_indicator_for_bars` or the identical method
+    on `Strategy`.
+
+    ## Waiting for the confirmed bar, which is the whole point of the gate
+
+    The Bjorgum script carries this as an input - *"Wait For Confirmed Bar"*,
+    `repaint`, defaulting to **true**, with the tooltip "False will show
+    potential patterns forming before they are confirmed". That is the honest
+    description: a hammer half way through its bar is not a hammer, it is a bar
+    that currently looks like one, and by the close it may be a marubozu. A
+    pattern read off a forming bar is read off a measurement that has not
+    finished.
+
+    Nautilus marks that case itself: `Bar.is_revision` is true for a bar that
+    revises one already emitted, which is what a forming bar's updates are. So
+    `confirm=True` drops revisions and `confirm=False` admits them, and the
+    second is for watching a shape build rather than for deciding on one.
+
+    Two further layers already protect this and neither replaces the gate. The
+    MT5 adapter drops forming bars at the source, by comparing the bar's open
+    time against the clock - but that is one venue, and a crypto feed
+    aggregating internally will revise. An EXTERNAL bar type delivers closed
+    bars only - but an INTERNAL one aggregating from ticks need not. The gate
+    costs one boolean and covers both.
+
+    ## Nautilus has the graded primitives
+
+    `indicators.fuzzy_candlesticks` grades body, size and wicks into categories
+    against a rolling window, which is a better size judgement than this
+    module's fixed fractions - `TAIL_SHARE`, `STUB_SHARE`, `BODY_THIRD`. What
+    it has no notion of is a **level**, and `confirms(bars, level, want_up)` is
+    the question this desk asks. Use both: theirs for how big, this for where.
+    """
+
+    def __init__(self, *, confirm: bool = True, kept: int = 3) -> None:
+        if kept < 2:
+            raise ValueError(
+                f"kept={kept} cannot see a two-bar pattern: engulfing and the "
+                f"tweezers each need the bar before."
+            )
+        super().__init__([confirm, kept])
+        #: Drop revisions. The script's `repaint`, and its default.
+        self.confirm = bool(confirm)
+        self.kept = int(kept)
+        self._bars: deque[Bar] = deque(maxlen=self.kept)
+        self.skipped = 0
+
+    # ------------------------------------------------------------- the engine
+
+    def handle_bar(self, bar: NautilusBar) -> None:
+        """Nautilus's entry point. A revision is counted and dropped."""
+        if self.confirm and bar.is_revision:
+            self.skipped += 1
+            return
+        self._bars.append(_of(bar))
+        self._set_has_inputs(True)
+        if not self.initialized and len(self._bars) >= 2:
+            self._set_initialized(True)
+
+    def reset(self) -> None:
+        """Nautilus's reset: as if this had never seen a bar."""
+        self._bars.clear()
+        self.skipped = 0
+        self._set_has_inputs(False)
+        self._set_initialized(False)
+
+    # ------------------------------------------------------------ the reading
+
+    @property
+    def bars(self) -> list[Bar]:
+        """The confirmed bars held, oldest first."""
+        return list(self._bars)
+
+    @property
+    def last(self) -> Bar | None:
+        return self._bars[-1] if self._bars else None
+
+    @property
+    def hammer(self) -> bool:
+        """A long lower tail with the body at the top. None of these is a
+        signal: they are shapes, and a shape at a level is the question."""
+        return bool(self._bars) and hammer(self._bars[-1])
+
+    @property
+    def shooting_star(self) -> bool:
+        return bool(self._bars) and shooting_star(self._bars[-1])
+
+    @property
+    def engulfing(self) -> str:
+        """ "up", "down" or "" - the two-bar shape, or nothing."""
+        if len(self._bars) < 2:
+            return ""
+        return engulfing(self._bars[-2], self._bars[-1])
+
+    def confirms(self, level: float, want_up: bool, tolerance: float = 0.0) -> str:
+        """Did the auction reach `level`, get rejected, and close away from it?
+
+        The level-relative question, which is the one worth asking of a shape.
+        """
+        if len(self._bars) < 2:
+            return ""
+        return confirms(list(self._bars), level, want_up, tolerance)
+
+    def rejection_wick(self, want_up: bool) -> float:
+        """The wick that rejected, as a share of the bar's range."""
+        if not self._bars:
+            return 0.0
+        return rejection_wick(list(self._bars), want_up)
+
+
+def _of(bar: NautilusBar) -> Bar:
+    """This module's lightweight bar from the engine's.
+
+    Nautilus's `Price` is fixed-precision, so `float()` here is already the
+    truncated number: an instrument declared at two decimals has had its wicks
+    rounded before any shape test sees them.
+    """
+    return Bar(
+        open=float(bar.open),
+        high=float(bar.high),
+        low=float(bar.low),
+        close=float(bar.close),
+    )

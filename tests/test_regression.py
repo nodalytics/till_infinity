@@ -6,8 +6,8 @@ import math
 
 import pytest
 
-from till_infinity.strategies.candles import Bar
-from till_infinity.strategies.regression import (
+from till_infinity.indicators.candles import Bar
+from till_infinity.indicators.trend import (
     FALLING,
     FALLING_FAST,
     FLAT,

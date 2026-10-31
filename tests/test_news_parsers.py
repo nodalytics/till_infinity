@@ -2,12 +2,19 @@ from datetime import UTC, datetime
 
 import pytest
 
-from till_infinity.news import HIGH, LOW, MEDIUM, parse_importance, parse_number, parse_time
-from till_infinity.news.calendar import parse_forexfactory, parse_tradingview
-from till_infinity.news.headlines import category_for, parse_headlines
-from till_infinity.news.models import Event, clean, digest
-from till_infinity.news.rss import parse_feed
-from till_infinity.news.source import PermanentError
+from till_infinity.adapters.news.sources import (
+    HIGH,
+    LOW,
+    MEDIUM,
+    parse_importance,
+    parse_number,
+    parse_time,
+)
+from till_infinity.adapters.news.sources.calendar import parse_forexfactory, parse_tradingview
+from till_infinity.adapters.news.sources.headlines import category_for, parse_headlines
+from till_infinity.adapters.news.sources.models import Event, clean, digest
+from till_infinity.adapters.news.sources.rss import parse_feed
+from till_infinity.adapters.news.sources.source import PermanentError
 
 RSS = b"""<?xml version="1.0"?>
 <rss version="2.0"><channel>
@@ -252,7 +259,7 @@ IMF_XML = b"""<?xml version='1.0' encoding='UTF-8'?>
 
 
 def test_imf_dataset_becomes_observations():
-    from till_infinity.news.imf import parse_dataset
+    from till_infinity.adapters.news.sources.imf import parse_dataset
 
     rows = parse_dataset(IMF_XML)
     assert len(rows) == 2  # the empty observation is dropped
@@ -267,7 +274,7 @@ def test_imf_dataset_becomes_observations():
 def test_imf_values_are_not_rescaled():
     """SCALE=6 is provenance, not a multiplier - US reserves are $252.7bn, and
     applying the exponent would report $252.7 quadrillion."""
-    from till_infinity.news.imf import parse_dataset
+    from till_infinity.adapters.news.sources.imf import parse_dataset
 
     latest = parse_dataset(IMF_XML)[-1]
     assert latest.scale == 6
@@ -277,7 +284,7 @@ def test_imf_values_are_not_rescaled():
 
 
 def test_imf_malformed_body_is_permanent():
-    from till_infinity.news.imf import parse_dataset
+    from till_infinity.adapters.news.sources.imf import parse_dataset
 
     with pytest.raises(PermanentError, match="malformed"):
         parse_dataset(b"<not xml")
@@ -285,8 +292,8 @@ def test_imf_malformed_body_is_permanent():
 
 def test_imf_key_uses_iso3_with_open_middle_dimensions():
     """`US...M` returns a valid but empty document; only `USA...M` has data."""
-    from till_infinity.news import Settings
-    from till_infinity.news.imf import ImfSource
+    from till_infinity.adapters.news.sources import Settings
+    from till_infinity.adapters.news.sources.imf import ImfSource
 
     source = ImfSource(Settings(data_dir="/tmp"), countries=("USA",))
     assert source.key("USA") == "USA...M"
@@ -302,13 +309,13 @@ def test_imf_key_uses_iso3_with_open_middle_dimensions():
     ],
 )
 def test_sdmx_periods_map_to_the_start_of_the_period(period, expected):
-    from till_infinity.news import parse_period
+    from till_infinity.adapters.news.sources import parse_period
 
     assert parse_period(period) == expected.timestamp()
 
 
 def test_imf_start_period_counts_months_back():
-    from till_infinity.news.imf import start_period
+    from till_infinity.adapters.news.sources.imf import start_period
 
     assert start_period(0, now=datetime(2026, 8, 12, tzinfo=UTC)) == "2026-08"
     assert start_period(1, now=datetime(2026, 1, 12, tzinfo=UTC)) == "2025-12"

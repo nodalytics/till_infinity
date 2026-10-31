@@ -2,20 +2,18 @@ import time
 
 import pytest
 
-from till_infinity.news import (
+from till_infinity.adapters.news.client import fetch_into
+from till_infinity.adapters.news.sources import (
     HIGH,
     LOW,
     Article,
     Batch,
     Event,
-    JsonlStore,
     Settings,
-    SqliteStore,
     build_sources,
-    open_store,
-    poll_once,
 )
-from till_infinity.news.source import Source, TransientError
+from till_infinity.adapters.news.sources.source import Source, TransientError
+from till_infinity.adapters.news.store import JsonlStore, SqliteStore, open_store
 
 
 def article(ident: str, source: str = "forexlive", **kw) -> Article:
@@ -157,14 +155,14 @@ class FakeSource(Source):
 
 
 @pytest.mark.asyncio
-async def test_poll_once_persists_every_source(tmp_path):
+async def test_fetching_persists_every_source(tmp_path):
     settings = Settings(data_dir=tmp_path)
     sources = [
         FakeSource(settings, Batch(articles=[article("a")])),
         FakeSource(settings, Batch(events=[event("e")])),
     ]
     async with SqliteStore(tmp_path / "n.db") as store:
-        summary = await poll_once(settings=settings, store=store, sources=sources)
+        summary = await fetch_into(store, sources, retries=settings.retries)
     assert summary.articles.inserted == 1
     assert summary.events.inserted == 1
     assert summary.failed == 0
@@ -176,7 +174,7 @@ async def test_a_failing_source_is_retried_then_counted(tmp_path):
     bad = FakeSource(settings, fail=True)
     good = FakeSource(settings, Batch(articles=[article("a")]))
     async with SqliteStore(tmp_path / "n.db") as store:
-        summary = await poll_once(settings=settings, store=store, sources=[bad, good])
+        summary = await fetch_into(store, [bad, good], retries=settings.retries)
     assert bad.polls == 2  # retried
     assert summary.failed == 1
     assert summary.articles.inserted == 1  # the healthy source still landed

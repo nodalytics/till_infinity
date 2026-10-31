@@ -69,7 +69,7 @@ STANDALONE: dict[str, str] = {}
 #: callers and no home, which ADR 0002 admits on the same terms as
 #: `till-platform` - and which is where that package's remnants landed when it
 #: too was retired.
-INFRASTRUCTURE = frozenset({"carrier", "topics", "utils"})
+INFRASTRUCTURE = frozenset({"carrier", "topics", "utils", "domain"})
 
 #: The Nautilus layers, and what each is allowed to import.
 #:
@@ -90,12 +90,46 @@ INFRASTRUCTURE = frozenset({"carrier", "topics", "utils"})
 #: as what the desk does.
 #:
 #:     node       -> everything below it
-#:     strategies -> adapters, and the capability packages
+#:     strategies -> adapters, risk, and the capability packages
+#:     risk       -> domain only; it must not know about a strategy
 #:     adapters   -> nothing above them; a venue cannot know what trades on it
+#:
+#: **`risk` not importing `strategies` is the rule, not a preference.** Risk
+#: applies across strategies, so a second strategy package could not share it
+#: from inside the first - and when `guard.py` was briefly placed in `risk/`,
+#: the import it needed was the symptom that told us the placement was wrong.
+#: It is a per-trade gate and went back to `strategies/`.
+#:
+#: `domain` is in `INFRASTRUCTURE` above rather than here, because it is below
+#: everything: the shapes an order and a holding take, plus rollover and swap,
+#: which are properties of a contract and a venue rather than anybody's logic.
+#: **`indicators` is a leaf and everything above may read it.** It holds the
+#: computations - a detector, a shape, a reading off a bar - with no policy in
+#: any of them, which is what lets `strategies` and `statespace` share one
+#: implementation instead of carrying a copy each. `statespace/accruing.py` was
+#: that copy: a field-for-field duplicate of FOCuS, vendored because the
+#: package was required to import nothing outside itself, and caught by a
+#: persistence collision rather than by review. The allowance below is what
+#: replaced it, and `test_indicators_import_nothing_but_utils` is what keeps it
+#: safe - statespace stays extractable because taking `indicators` with it is
+#: one more directory, not a dependency on the live desk.
 LAYERS: dict[str, frozenset[str]] = {
-    "node": frozenset({"adapters", "strategies", "statespace", "notifications", "journal"}),
-    "strategies": frozenset({"adapters", "statespace"}),
+    "node": frozenset(
+        {
+            "adapters",
+            "strategies",
+            "risk",
+            "statespace",
+            "indicators",
+            "notifications",
+            "journal",
+        }
+    ),
+    "strategies": frozenset({"adapters", "risk", "statespace", "indicators"}),
+    "statespace": frozenset({"indicators"}),
+    "risk": frozenset(),
     "adapters": frozenset(),
+    "indicators": frozenset(),
 }
 
 #: Libraries in `packages/`, as distribution name -> import name.
@@ -144,7 +178,16 @@ DEBTS: dict[str, frozenset[str]] = {
 }
 
 #: Services retired into `research/retire/`, which must no longer be importable.
-RETIRED = ("agents",)
+#:
+#: **`news` is a partial retirement, and the distinction matters.** Only
+#: `service.py` went to `research/retire/news/`: the bus orchestration, which
+#: Nautilus replaces. Everything that fetches - the six sources, the store and
+#: their plumbing - moved *into* `adapters/news/`, so the name
+#: `till_infinity.news` must stop resolving while none of the code it held is
+#: gone. A directory left behind would be a namespace package and
+#: `from till_infinity import news` would still succeed, which is the failure
+#: this test caught for `agents`.
+RETIRED = ("agents", "news")
 
 #: `models` is still a package - it ships the `*.json` models that
 #: `shared/frozen.py` reads - but it holds no Python any more, so it owes
@@ -184,6 +227,26 @@ def test_no_service_gains_a_new_cross_service_import(service):
     assert not gained, (
         f"{service} imports {', '.join(gained)}. ADR 0002: a service talks over the bus. "
         f"If this is deliberate, add it to DEBTS with the reason."
+    )
+
+
+def test_indicators_import_nothing_but_utils():
+    """The leaf stays a leaf, which is what makes everything above able to read it.
+
+    `indicators` is allowed into `strategies`, `statespace` and `node` without
+    being a debt, and that is only sound while it depends on nothing of theirs.
+    An indicator that imported a strategy would put policy under a computation
+    and make the one shared implementation un-shareable - which is how
+    `statespace` ended up vendoring its own copy of FOCuS in the first place.
+
+    `utils` is permitted because `Restorable` lives there, and nothing else is.
+    """
+    reached = sorted(imports_of("indicators") - {"utils", "indicators"})
+    assert not reached, (
+        f"indicators imports {', '.join(reached)}. It is the leaf every layer "
+        f"reads, so it may depend on `utils` and nothing else of the desk's - "
+        f"otherwise statespace is no longer extractable by taking one more "
+        f"directory, and the allowance in LAYERS stops being safe."
     )
 
 
@@ -543,69 +606,6 @@ def test_the_statespace_fold_imports_nothing_above_it():
     )
 
 
-def test_the_image_carries_every_python_workspace_member():
-    """A member the Dockerfile forgets is missing from production only.
-
-    This is the shape that hid `shared/contracts/` for a day: the tests pass
-    because the files are on disk here, and the container is built from a
-    narrower copy list. So the copy list is asserted rather than trusted -
-    twice over, because a uv workspace needs each member's manifest at the
-    lockfile step *and* its code later, and forgetting the first fails the
-    build loudly while forgetting the second ships an image that imports the
-    desk and then cannot find a service.
-    """
-    import tomllib
-
-    root = tomllib.loads((REPO / "pyproject.toml").read_text())
-    workspace = root["tool"]["uv"]["workspace"]
-    excluded = set(workspace.get("exclude", []))
-
-    members = []
-    for pattern in workspace["members"]:
-        for path in sorted(REPO.glob(pattern)):
-            rel = path.relative_to(REPO).as_posix()
-            if path.is_dir() and rel not in excluded:
-                members.append(rel)
-    assert members, "the workspace declares no members"
-
-    dockerfile = (REPO / "Dockerfile").read_text()
-    for rel in members:
-        assert f"COPY {rel}/pyproject.toml" in dockerfile, (
-            f"{rel}'s manifest is not copied before `uv sync --frozen`, which resolves it"
-        )
-        assert f"COPY {rel}/ " in dockerfile, f"{rel}'s code is not copied into the image"
-
-
-def test_the_dependency_layer_does_not_try_to_build_the_members():
-    """`--no-install-project` is not enough once there is a workspace.
-
-    **Three deploys failed on this and the suite was green for all of them.**
-    The test above asserts that each member is copied, and each was - on the
-    line *after* the one that needed it. A copy list says nothing about order.
-
-    `--no-install-project` skips only the root project, so uv still builds
-    every member the root depends on; at the lockfile layer a member is a
-    `pyproject.toml` with no module beside it, and the build stops with
-    "Expected a Python module at: packages/till-platform/till_platform/
-    __init__.py". `--no-install-workspace` skips the members too, which is
-    what that layer is for: third-party wheels, keyed on the lock.
-
-    Asserted on the text because building the image takes minutes and this
-    takes none. The build itself remains the real check; this is the one that
-    fails in the pull request instead of after the merge.
-    """
-    dockerfile = (REPO / "Dockerfile").read_text()
-    caching = [
-        line for line in dockerfile.splitlines() if "uv sync" in line and "--no-install" in line
-    ]
-    assert caching, "no dependency-only `uv sync` layer in the Dockerfile"
-    for line in caching:
-        assert "--no-install-workspace" in line, (
-            f"{line.strip()!r} would build the workspace members at a layer that "
-            f"has only their manifests - use --no-install-workspace"
-        )
-
-
 def test_the_image_says_where_the_contracts_are():
     """The contracts were shipped and unfindable for this image's whole life.
 
@@ -627,20 +627,22 @@ def test_the_image_says_where_the_contracts_are():
     )
 
 
-def test_the_go_service_is_excluded_rather_than_broken():
-    """uv refuses a glob member with no manifest, so the Go service is named.
-
-    Asserted because the exclusion is easy to delete and the failure it
-    prevents - `uv sync` refusing to resolve at all - would look like a
-    lockfile problem rather than a layout one.
-    """
-    import tomllib
-
-    root = tomllib.loads((REPO / "pyproject.toml").read_text())
-    excluded = root["tool"]["uv"]["workspace"].get("exclude", [])
-    for rel in excluded:
-        path = REPO / rel
-        assert path.is_dir(), f"{rel} is excluded but does not exist"
-        assert not (path / "pyproject.toml").is_file(), (
-            f"{rel} has a manifest now, so it should be a member rather than excluded"
-        )
+# **Three tests left with their subjects on 2026-10-31**, and the reason each
+# went is worth more than the test was.
+#
+# `test_the_image_carries_every_python_workspace_member` and
+# `test_the_dependency_layer_does_not_try_to_build_the_members` were about a uv
+# workspace. There is no longer one - `packages/` is retired and
+# `till_infinity` is a single distribution - so both had nothing left to check.
+# The second of them caught three failed deploys, where
+# `--no-install-project` still built every member at a layer that had only
+# their manifests. If a workspace ever returns, that is the test to write
+# first.
+#
+# `test_the_go_service_is_excluded_rather_than_broken` was about `services/`,
+# retired to `research/retire/services/` because Nautilus's
+# `ParquetDataCatalog` is the corpus and its Rust core is the polyglot story.
+# It is also what found that directory had gone missing, by failing with
+# "services/ticks is excluded but does not exist" - a guard written for one
+# reason catching another, which is the best argument for keeping guards
+# cheap and specific.

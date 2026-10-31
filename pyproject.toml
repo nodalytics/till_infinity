@@ -192,7 +192,6 @@ max-returns = 8
 # `Parse.kind` is a dispatch table written as code: one return per event kind,
 # beside the cached parse step it reads.
 # `Guard.allows` is the same shape: one return per gate, each naming itself.
-"till_infinity/strategies/risk.py" = ["PLR0911"]
 # `Tracker.update` advances one touch through its states - first contact, wick,
 # origin, break, trap window, resolution - and the branch count is one per
 # transition. Splitting it would put half a state machine in another method and

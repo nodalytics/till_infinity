@@ -76,6 +76,15 @@ from till_infinity.utils.state import Restorable
 from ..carrier import Carrier, Message
 from ..domain.models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
 from ..domain.models import money as money  # noqa: PLC0414
+from ..indicators.candles import confirms, rejection_wick
+from ..indicators.changepoint import Focus
+from ..indicators.levels import card_line as impulse_card
+from ..indicators.levels import features as impulse_features
+from ..indicators.momentum import Cusum, Ensemble, adaptive_threshold
+from ..indicators.trend import SPANS as TREND_SPANS
+from ..indicators.trend import Trend
+from ..indicators.trend import card_line as trend_card
+from ..indicators.trend import features_across as trend_features
 from ..journal import Journal, decide, observe, outcome
 
 # The wire name `prices` gives its own broker connection's quotes, as opposed to
@@ -84,26 +93,17 @@ from ..journal import Journal, decide, observe, outcome
 # and a duplicated string would drift silently.
 from ..topics import ALERTS, DISPERSION, EVENTS, PROPOSALS, QUOTES, RESOLUTIONS, SIGNALS
 from . import manage, plans, turning
-from .candles import confirms, rejection_wick
 from .config import Settings, magic_for, strategy_for
 from .context import Context
-from .cusum import Cusum, Ensemble, adaptive_threshold
-from .focus import Focus
 from .guard import Guard
 from .holds import Book as HoldBook
-from .impulse import card_line as impulse_card
-from .impulse import features as impulse_features
 from .manage import Move, Take
 from .reach import Reaches
-from .regression import SPANS as TREND_SPANS
-from .regression import card_line as trend_card
-from .regression import features_across as trend_features
 from .sessions import Sessions
 from .shadow import ShadowGates
 from .sizing import lots, price_distance, respects_stops_level
 from .strategies import strategy
 from .strategies.strategy import Strategy
-from .trend import Trend
 from .venues import replicate
 from .venues import symbols as sym
 from .venues.broker import Broker, BrokerError, build

@@ -56,6 +56,7 @@ from ..domain.models import (
     Tick,
     Verdict,
 )
+from ..indicators.momentum import Speeds
 from . import report, strategies, venues
 from .affordable import (
     CATASTROPHIC,
@@ -93,7 +94,6 @@ from .plans import PLANS, Plan
 from .report import Report, Trade
 from .service import Trader, listen
 from .sizing import Sizing, lots, price_distance
-from .speeds import Speeds
 from .strategies.strategy import STRATEGIES, Strategy, catalogue
 from .turning import TurnExit, TurnOutcome, TurnTally
 from .valuation import Priced, Valuation, price_it

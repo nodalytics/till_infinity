@@ -280,9 +280,9 @@ class TestTheBookReadings:
         """A per-position reading would call a hedged book alarming from both
         sides at once."""
         from fake_carrier import FakeCarrier as Bus
-        from till_infinity.structures.context.cusum import Cusum
 
         from till_infinity.domain.models import Intent, Position, Side
+        from till_infinity.indicators.momentum import Cusum
         from till_infinity.strategies.service import Live, Trader
 
         trader = Trader(Bus(), settings=Settings(live=False))

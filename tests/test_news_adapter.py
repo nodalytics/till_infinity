@@ -135,6 +135,9 @@ class TestHistoryIsServedPointInTime:
         client._cfg = NewsDataClientConfig(db_path=str(path), minimum_importance="low")
         client._floor = Importance.LOW
         client._published = set()
+        # The real client resolves one path in `__init__` - the config's, or
+        # `NEWS_DB` - and both reads and writes go through it.
+        client._db = str(path)
         # The real client always has one; a bare instance does not, and the
         # error *handler* uses it - so without this the test exercising "a
         # missing store does not raise" raised in the handler itself.
@@ -222,3 +225,145 @@ class TestHistoryIsServedPointInTime:
 
         window = type("W", (), {"start": None, "end": None, "limit": 10})()
         assert read_rows(None, "events", window) == ([], "")
+
+
+class TestTheSweepPublishesEachStageOnceAndOnlyWhenKnowable:
+    """The live half of the same guard `_stages` carries.
+
+    A sweep that published every entry it could still see would make an
+    embargo fire continuously - the failure shape of an alert per touched bar
+    - and one that published a stage before its time would be the lookahead
+    `_stages` exists to prevent, reintroduced by the loop around it.
+    """
+
+    NOW = 1_700_000_100.0
+
+    def _client(self, rows: list[dict]):
+        """`Component._clock` is read-only, which is why `_sweep` takes the
+        time as an argument - the same reason `read_rows` is a function."""
+        history = TestHistoryIsServedPointInTime()
+        client = history._client(history._store(rows))
+        published: list[CalendarEvent] = []
+        client._handle_data = published.append
+        return client, published
+
+    def _row(self, **over) -> dict:
+        return TestHistoryIsServedPointInTime()._row(**over)
+
+    async def test_a_released_entry_publishes_both_stages(self):
+        client, published = self._client([self._row()])
+        await client._sweep(self.NOW)
+        assert [e.stage for e in published] == [Stage.SCHEDULED, Stage.RELEASED]
+
+    async def test_an_unreleased_entry_publishes_only_its_announcement(self):
+        """The forecast is knowable; the number is not, and will not be until
+        the release."""
+        ahead = self._row(actual=None, time=self.NOW + 86_400, announced=self.NOW - 86_400)
+        client, published = self._client([ahead])
+        await client._sweep(self.NOW)
+        assert [e.stage for e in published] == [Stage.SCHEDULED]
+
+    async def test_an_entry_announced_in_the_future_publishes_nothing(self):
+        """Not yet knowable at all. The row is in the store because we poll a
+        forward window, not because anybody could have traded it."""
+        later = self._row(announced=self.NOW + 60, time=self.NOW + 120)
+        client, published = self._client([later])
+        await client._sweep(self.NOW)
+        assert published == []
+
+    async def test_a_second_sweep_publishes_nothing_again(self):
+        client, published = self._client([self._row()])
+        await client._sweep(self.NOW)
+        await client._sweep(self.NOW)
+        assert len(published) == 2
+
+
+class TestCollectingWritesWhatTheProvidersReturned:
+    """`fetch_into` is a function for the same reason `read_rows` is one: a
+    store and a list of sources, not a client, so the collecting half runs
+    against a fake provider and a temporary file instead of a kernel."""
+
+    async def test_a_dead_provider_is_counted_and_the_others_still_land(self, tmp_path):
+        from till_infinity.adapters.news.client import fetch_into
+        from till_infinity.adapters.news.sources import Batch, Event, Settings, Source
+        from till_infinity.adapters.news.sources.source import PermanentError
+        from till_infinity.adapters.news.store import SqliteStore
+
+        class Fake(Source):
+            name = "fake"
+
+            def __init__(self, settings, batch=None, fail=False):
+                super().__init__(settings)
+                self.batch, self.fail = batch or Batch(), fail
+
+            async def __aenter__(self):
+                return self
+
+            async def __aexit__(self, *exc):
+                return None
+
+            async def poll(self):
+                if self.fail:
+                    raise PermanentError("404")
+                return self.batch
+
+        settings = Settings(data_dir=tmp_path)
+        event = Event(source="cal", id="cpi", title="CPI m/m", country="US", time=1.0)
+        async with SqliteStore(tmp_path / "news.db") as store:
+            harvest = await fetch_into(
+                store,
+                [Fake(settings, fail=True), Fake(settings, Batch(events=[event]))],
+                retries=1,
+            )
+            assert harvest.failed == 1
+            assert harvest.events.inserted == 1
+            # Re-serving the same window writes nothing: the store dedups, so
+            # a provider that repeats itself costs one no-op write.
+            again = await fetch_into(store, [Fake(settings, Batch(events=[event]))])
+            assert again.events.touched == 0
+
+
+class TestTheStoreTheClientWritesIsTheStoreItReads:
+    """The join between the two halves, and it was broken when they met.
+
+    `read_rows` bounded an observation window on a `published` column and
+    `store.py` has none - it records the *period* a figure describes. SQLite
+    answered "no such column", the client logged a warning and served an empty
+    history, which looks exactly like a store with no macro rows in it. The
+    window is now bounded on a column the table actually has.
+    """
+
+    async def test_macro_written_by_the_store_comes_back_out(self, tmp_path):
+        from till_infinity.adapters.news.client import (
+            NewsDataClient,
+            NewsDataClientConfig,
+            read_rows,
+        )
+        from till_infinity.adapters.news.sources import Observation
+        from till_infinity.adapters.news.store import SqliteStore
+
+        at = 1_700_000_000.0
+        async with SqliteStore(tmp_path / "news.db") as store:
+            await store.write_observations(
+                [
+                    Observation(
+                        source="imf",
+                        series="USA..M",
+                        time=at,
+                        value=253e9,
+                        period="2026-M07",
+                    )
+                ]
+            )
+        window = type("W", (), {"start": at - 86_400, "end": at + 86_400, "limit": 10})()
+        rows, error = read_rows(str(tmp_path / "news.db"), "observations", window)
+        assert not error
+        assert [r["series"] for r in rows] == ["USA..M"]
+
+        client = NewsDataClient.__new__(NewsDataClient)
+        client._cfg = NewsDataClientConfig(db_path=str(tmp_path / "news.db"))
+        client._db = str(tmp_path / "news.db")
+        (observation,) = client._macro_history(window)
+        assert observation.value == pytest.approx(253e9)
+        assert observation.period == "2026-M07"
+        assert observation.ts_event == int(at * 1e9)

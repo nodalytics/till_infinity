@@ -290,7 +290,7 @@ def turns_of(series, threshold: float = THRESHOLD):
     """
     import numpy as np
 
-    from till_infinity.statespace.accruing import OneSided
+    from till_infinity.indicators.changepoint import Focus
 
     # **The level's deviation from a trailing mean, not the increment.** A
     # volatility turn is a shift in the *level* of log-volatility; its
@@ -307,8 +307,8 @@ def turns_of(series, threshold: float = THRESHOLD):
         return []
     steps = (steps - steps.mean()) / spread
 
-    up = OneSided(threshold=threshold, up=True)
-    down = OneSided(threshold=threshold, up=False)
+    up = Focus(threshold=threshold, up=True)
+    down = Focus(threshold=threshold, up=False)
     found = []
     for i, step in enumerate(steps):
         rose = up.update(float(step), 1.0)

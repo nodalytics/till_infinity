@@ -58,7 +58,7 @@ from typing import Any
 from till_infinity.utils.logging import get_logger
 
 from ..domain import rollover
-from . import candles
+from ..indicators import candles
 from .sizing import price_distance
 
 log = get_logger(__name__)

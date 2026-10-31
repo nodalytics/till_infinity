@@ -69,7 +69,7 @@ for q in (HERE, HERE.parent, HERE.parents[1]):
 from dispersion_ml import LAGS, LIMIT, RIDGES, _apply, _design, _r2, _ridge, parkinson  # noqa: E402
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
-from till_infinity.statespace.changepoint import Changepoint  # noqa: E402
+from till_infinity.indicators.changepoint import Changepoint  # noqa: E402
 
 FRAMES = ("1h", "4h")
 TRADED = ("fx_major", "fx_cross", "metal")

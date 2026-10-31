@@ -95,13 +95,13 @@ def test_an_instrument_without_a_symbol_keeps_the_plain_icon():
     assert odd.mark == "📊"
 
 
-def test_every_tracked_instrument_has_a_symbol():
-    """The map has to keep up with the feeds, or new instruments go unmarked."""
-    from till_infinity.prices import DEFAULT_SYMBOLS
-
-    from till_infinity.notifications.models import INSTRUMENTS
-
-    assert not set(DEFAULT_SYMBOLS) - set(INSTRUMENTS)
+# **`test_every_tracked_instrument_has_a_symbol` left with its subject.**
+# It checked `notifications.models.INSTRUMENTS` against
+# `prices.DEFAULT_SYMBOLS`, and `prices/` is retired to `research/retire/`.
+# The instrument list now comes from the terminal itself through
+# `adapters/mt5/providers.py`, which builds each one from its own `digits` and
+# `volume_step` - so the assertion worth having is that the provider and the
+# map agree, and it belongs beside the provider once the alert path is ported.
 
 
 def test_symbols_tell_the_instruments_apart():

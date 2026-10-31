@@ -68,10 +68,28 @@ TAG = "~"
 RAW = "raw"
 
 
-#: Keys that used to name a class whose file has since been renamed. Empty
-#: today; the alternative to keeping this is invalidating everything a rename
-#: touches, which for a 58MB state is a warm-up nobody chose.
-ALIASES: dict[str, str] = {}
+#: Keys that used to name a class whose file has since been renamed. The
+#: alternative to keeping this is invalidating everything a rename touches,
+#: which for a 58MB state is a warm-up nobody chose.
+#:
+#: **2026-10-31: the indicators were grouped the way Nautilus groups its own.**
+#: `cusum.py`, `speeds.py` and `ticks.py` became `indicators/momentum.py`, and
+#: `focus.py` folded into `indicators/changepoint.py`. The key is the module
+#: *basename*, so moving a file between packages costs nothing and renaming
+#: one costs exactly these four lines. Every class here is `Restorable` and
+#: holds live filter state - `Cusum`'s accumulators, `Focus`'s pruned hull -
+#: so without the aliases a restored desk would silently start those detectors
+#: from zero, which reads as a quiet market rather than as a failure.
+ALIASES: dict[str, str] = {
+    "cusum.Cusum": "momentum.Cusum",
+    "cusum.Event": "momentum.Event",
+    "cusum.Ensemble": "momentum.Ensemble",
+    "focus.Focus": "changepoint.Focus",
+    # The level detectors were grouped into one module on the same day: a
+    # Bjorgum zone, a displacement origin, a supply/demand zone and a PIP turn
+    # are the same object under four names, so they belong in one file.
+    "pips.Point": "levels.Point",
+}
 
 
 def key_for(cls: type) -> str:

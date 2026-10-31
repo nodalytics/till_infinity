@@ -36,9 +36,12 @@ from __future__ import annotations
 
 from collections import deque
 from statistics import median
+from typing import Any
+
+from nautilus_trader.indicators.base import Indicator
 
 
-class RollingSpread:
+class RollingSpread(Indicator):
     """Mean, median and extremes of the spread over the last `capacity` quotes.
 
     The median is here because the mean is the wrong summary for this quantity:
@@ -46,13 +49,17 @@ class RollingSpread:
     drags a mean far more than it changes what a strategy will actually pay.
     """
 
-    __slots__ = ("_spreads", "capacity")
+    __slots__ = ("_spreads", "capacity", "crossed")
 
     def __init__(self, capacity: int = 100) -> None:
         if capacity <= 0:
             raise ValueError(f"capacity must be positive, got {capacity}")
+        super().__init__([capacity])
         self.capacity = capacity
         self._spreads: deque[float] = deque(maxlen=capacity)
+        #: Bad ticks dropped by `handle_quote_tick`. A venue that sends many
+        #: is a data problem, and a silent drop would hide it.
+        self.crossed = 0
 
     def update(self, bid: float, ask: float) -> None:
         """Record one quote. A crossed or zero quote is refused, not averaged.
@@ -66,9 +73,28 @@ class RollingSpread:
             raise ValueError(f"crossed quote: bid {bid} above ask {ask}")
         self._spreads.append(spread)
 
-    def update_quote(self, tick: object) -> None:
-        """Record a Nautilus `QuoteTick`."""
-        self.update(float(tick.bid_price), float(tick.ask_price))  # type: ignore[attr-defined]
+    def handle_quote_tick(self, tick: Any) -> None:
+        """Nautilus's entry point, once registered for quote ticks.
+
+        `Actor.register_indicator_for_quote_ticks` drives this, so a bad tick
+        arriving from a venue would raise inside the engine's handler. The
+        refusal in `update` is the right behaviour for a caller that can see
+        the quote; here it would stop the feed, so a crossed quote is counted
+        and dropped instead and `crossed` says how many.
+        """
+        bid, ask = float(tick.bid_price), float(tick.ask_price)
+        if ask < bid:
+            self.crossed += 1
+            return
+        self.update(bid, ask)
+        self._set_has_inputs(True)
+        if not self.initialized and len(self._spreads) >= self.capacity:
+            self._set_initialized(True)
+
+    def update_quote(self, tick: Any) -> None:
+        """Record a Nautilus `QuoteTick`. The name Nautilus calls is
+        `handle_quote_tick`; this is kept for callers that drive it directly."""
+        self.handle_quote_tick(tick)
 
     @property
     def count(self) -> int:
@@ -111,4 +137,8 @@ class RollingSpread:
         return None if summary is None else (2.0 * summary) >= edge
 
     def reset(self) -> None:
+        """Nautilus's reset: as if this had never seen a quote."""
         self._spreads.clear()
+        self.crossed = 0
+        self._set_has_inputs(False)
+        self._set_initialized(False)

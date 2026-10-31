@@ -87,16 +87,42 @@ class StatespaceConfig(ActorConfig, frozen=True):
     #: Map a Nautilus symbol to the feed name `statespace` keys state on, where
     #: they differ. An unmapped symbol is lowercased.
     feeds: dict[str, str] | None = None
+    #: Detectors from `till_infinity.indicators` to register against every bar
+    #: type, as `name` or `name:source` - the keys of
+    #: `indicators.BAR_DETECTORS` and the `Reading` each one reads.
+    #:
+    #: Empty by default. An indicator that nothing reads still costs a fold per
+    #: bar, and this actor's job is the dispersion reading; the detectors are
+    #: here because a *discovery* run wants to sweep them over the same stream
+    #: the model sees, not because the fold needs them.
+    indicators: tuple[str, ...] = ()
 
 
 class StatespaceActor(Actor):
-    """Folds bars into a dispersion reading and publishes it."""
+    """Folds bars into a dispersion reading and publishes it.
+
+    Also the place indicators get registered, when asked for. **`Actor` carries
+    the whole indicator API** - `register_indicator_for_bars`,
+    `register_indicator_for_quote_ticks`, `register_indicator_for_trade_ticks`,
+    `registered_indicators` and `indicators_initialized` - identically to
+    `Strategy`, which adds nothing to it. So an actor can hold detectors
+    without pretending to be a strategy, and the engine feeds them: no handler
+    here calls `handle_bar`, and `on_bar` runs *after* Nautilus has updated
+    every registered indicator for that bar.
+
+    That is what makes this the right home for a discovery sweep. The sweep
+    reads the same bars the model folded, through detectors the engine warmed,
+    with no second copy of the stream to drift from the first.
+    """
 
     def __init__(self, config: StatespaceConfig) -> None:
         super().__init__(config)
         self._cfg = config
         self._engine: Any = None
         self._seconds: dict[str, float] = {}
+        #: `(bar type, detector name, source)` -> the indicator, so a reader
+        #: can find one without matching on `registered_indicators` order.
+        self.detectors: dict[tuple[str, str, str], Any] = {}
 
     def on_start(self) -> None:
         # Imported here, not at module scope: `statespace` is a separate
@@ -113,8 +139,39 @@ class StatespaceActor(Actor):
         for raw in self._cfg.bar_types:
             bar_type = BarType.from_str(raw)
             self._seconds[str(bar_type)] = _seconds(bar_type)
+            self._register(bar_type)
             self.subscribe_bars(bar_type)
             self.log.info(f"folding {bar_type}")
+
+    def _register(self, bar_type: BarType) -> None:
+        """Build the configured detectors and hand them to Nautilus.
+
+        Registration happens **before** `subscribe_bars`, so an indicator
+        cannot miss the first bar of the subscription. The two orders are
+        indistinguishable on a live feed, which arrives milliseconds later, and
+        differ on a backtest, which delivers the first bar immediately.
+
+        An unknown name raises here rather than being skipped. A detector the
+        config asked for and the actor quietly did not build is a sweep that
+        reports a null for a question it never asked.
+        """
+        from till_infinity.indicators import BAR_DETECTORS, build_detector
+
+        for entry in self._cfg.indicators:
+            name, _, wanted = entry.partition(":")
+            if name not in BAR_DETECTORS:
+                raise ValueError(
+                    f"{entry!r} is not a known detector. "
+                    f"`indicators.BAR_DETECTORS` has {sorted(BAR_DETECTORS)}."
+                )
+            # `build_detector` picks the unit that matches the source's
+            # dimension, so a config naming a source cannot produce a
+            # miscalibrated detector.
+            indicator = build_detector(name, wanted or None)
+            source = indicator.source
+            self.register_indicator_for_bars(bar_type, indicator)
+            self.detectors[str(bar_type), name, str(source)] = indicator
+            self.log.info(f"registered {name} on {source} for {bar_type}")
 
     def on_stop(self) -> None:
         """Cancellation saves.

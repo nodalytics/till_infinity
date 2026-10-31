@@ -19,13 +19,13 @@ So the pairing is the answer rather than the choice, and `Paired` is it.
 
 ## This module used to contain a second FOCuS, and that was the bug
 
-`structures/learning/focus.py` already implements it - the same statistic, the
+`indicators/focus.py` already implements it - the same statistic, the
 same convex-hull pruning, and **tested against an O(n^2) brute-force reference
 on every step**, which is a stronger guarantee than anything written here was
 going to carry. Writing another one was duplication, and it was caught the way
 duplication usually is here: not by review but by a *collision*. The
 persistence registry keys classes by module basename and class name
-(`shared/codec.py`), so two modules called `focus` holding two classes called
+(`utils/codec.py`), so two modules called `focus` holding two classes called
 `Focus` both resolve to `focus.Focus`, one silently shadowed the other, and
 restoring the origins detectors tried to build this class for the other one's
 saved state. Two tests caught it in CI.
@@ -77,7 +77,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from .accruing import THRESHOLD, OneSided
+from ..indicators.changepoint import THRESHOLD, Focus
 
 HOUR = 3600.0
 
@@ -103,8 +103,8 @@ class Paired:
     _member: object = field(default=None, repr=False)
     #: Two one-sided detectors. The innovations are signed, and a member that
     #: has started reading high is a different failure from one reading low.
-    _up: OneSided = field(default=None, repr=False)
-    _down: OneSided = field(default=None, repr=False)
+    _up: Focus = field(default=None, repr=False)
+    _down: Focus = field(default=None, repr=False)
     #: Statistic from the last reading, and how many times it has fired.
     statistic: float = 0.0
     detections: int = 0
@@ -119,9 +119,9 @@ class Paired:
         if self._member is None:
             self._member = self.build()
         if self._up is None:
-            self._up = OneSided(threshold=self.threshold, up=True)
+            self._up = Focus(threshold=self.threshold, up=True)
         if self._down is None:
-            self._down = OneSided(threshold=self.threshold, up=False)
+            self._down = Focus(threshold=self.threshold, up=False)
 
     # ----------------------------------------------------- the member's view
 

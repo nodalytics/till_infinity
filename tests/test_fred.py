@@ -4,10 +4,10 @@ import datetime as dt
 
 import pytest
 
-from till_infinity.news.config import Settings
-from till_infinity.news.fred import CURRENCY, SERIES, FredSource, parse
-from till_infinity.news.service import SOURCES
-from till_infinity.news.source import PermanentError
+from till_infinity.adapters.news.sources import SOURCES
+from till_infinity.adapters.news.sources.config import Settings
+from till_infinity.adapters.news.sources.fred import CURRENCY, SERIES, FredSource, parse
+from till_infinity.adapters.news.sources.source import PermanentError
 
 
 def payload(rows):
@@ -101,11 +101,10 @@ def test_the_source_list_is_reachable_from_settings():
         assert Settings.from_env().sources == ("rss", "imf", "fred")
 
 
-def test_the_stack_hands_the_source_list_to_collect():
-    """The setting existing is not the same as it arriving."""
-    import inspect
-
-    from till_infinity import stack
-
-    source = inspect.getsource(stack.Stack._run_news)
-    assert "sources=settings.sources or None" in source
+# **`test_the_stack_hands_the_source_list_to_collect` left with its
+# subject.** It read the source of `stack.Stack._run_news` to confirm the
+# setting reached `collect`, and `stack.py` is retired: the node starts
+# services now, and news is an adapter whose `countries` and
+# `minimum_importance` are config on the client rather than arguments threaded
+# through a supervisor. The equivalent assertion is that the adapter's config
+# reaches its `_rows` filter, which `test_news_adapter.py` makes.

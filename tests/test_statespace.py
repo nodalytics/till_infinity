@@ -421,93 +421,12 @@ class TestSubjects:
 # ---------------------------------------------------- the rule that keeps it separable
 
 
-def test_structures_does_not_import_the_state_space_package():
-    """**The rule, asserted rather than trusted.**
-
-    The import direction is one-way: this package may read `structures`, and
-    `structures` may not read this. That is what makes the whole directory
-    deletable if the thesis loses, and it is the thing a well-meaning edit breaks
-    first. When something graduates, it leaves by being called from `engine.py`
-    behind a flag - and this test is where that gets noticed and argued about,
-    which is the point.
-    """
-    import ast
-    import pathlib
-
-    root = pathlib.Path(__file__).resolve().parent.parent / "till_infinity"
-    #: The only files that may reach into the package, and only from inside a
-    #: function. See the note at the import check below.
-    #: **Both earlier start sites are retired.** `stack.py` and `cli.py` went
-    #: to `research/retire/bus/` on 2026-10-31; what starts the fold now is
-    #: `actor.py`, inside the package, and the node that registers it. The
-    #: rule is unchanged and is the only thing that matters: the import stays
-    #: *inside* a runner, so a deleted directory fails one task rather than
-    #: the whole node.
-    start_sites = {"actor.py", "live.py"}
-    offenders: list[str] = []
-    nested: list[str] = []
-    for path in root.rglob("*.py"):
-        if "statespace" in path.parts:
-            continue
-        inside: set[int] = set()
-        try:
-            tree = ast.parse(path.read_text())
-        except SyntaxError:  # pragma: no cover - a file that will not parse
-            continue
-        for scope in ast.walk(tree):
-            if isinstance(scope, ast.FunctionDef | ast.AsyncFunctionDef):
-                inside.update(
-                    node.lineno
-                    for node in ast.walk(scope)
-                    if isinstance(node, ast.Import | ast.ImportFrom)
-                )
-        # **Real imports, parsed - not the string anywhere in the file.** The
-        # first version grepped, and `shared/codec.py` names this package in the
-        # comment explaining why it opts out of the persistence schema. Prose
-        # about a package is not a dependency on it, and a test that cannot tell
-        # the difference gets switched off the first time it is wrong.
-        for node in ast.walk(tree):
-            if isinstance(node, ast.Import):
-                names = [a.name for a in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                names = [node.module or "", *(a.name for a in node.names)]
-            else:
-                continue
-            if not any("statespace" in n.split(".") for n in names):
-                continue
-            where = f"{path.relative_to(root)}:{node.lineno}"
-            # **The graduation sites, and the shape they have to keep.**
-            # `stack.py` starts the service in the one-process shape, which is
-            # what the docstring above calls leaving behind a flag -
-            # `STATESPACE_ENABLED` here rather than a structures engine flag.
-            # `cli.py` starts it as its own process, which is what compose
-            # needs: `structures watch` used to stand in that slot and nothing
-            # replaced it when structures was retired, so a desk brought up
-            # from `docker-compose.yml` folded no bars at all.
-            #
-            # **The rule is the nesting, not the filename.** At module level a
-            # deleted directory takes down whatever imported it; nested, it
-            # fails in one supervised task or one subcommand while everything
-            # else carries on. That is the difference between deletable and
-            # load-bearing, and it is why adding a start site here is cheap
-            # while relaxing the nesting would not be.
-            if path.name in start_sites:
-                (nested if node.lineno in inside else offenders).append(where)
-            else:
-                offenders.append(where)
-    assert not offenders, (
-        "statespace is imported from outside itself: "
-        f"{offenders}. Nothing in this package publishes until it has beaten a "
-        "named null; see its __init__ docstring."
-    )
-    assert nested, (
-        f"nothing starts the service. One of {sorted(start_sites)} is meant to "
-        "import it inside a runner; with no site at all this package is a "
-        "library that folds no bars and publishes to nobody."
-    )
-    assert "STATESPACE_ENABLED" in (root / "stack.py").read_text(), (
-        "the graduation has to be switchable"
-    )
+# **Left with `structures/`.** It enforced the one-way import - this package
+# could read `structures`, and `structures` could not read it - which is what
+# made the whole directory deletable if the thesis lost. The thesis lost: the
+# package is in `research/retire/structures/`, so the rule has no second party.
+# What survives is `test_the_statespace_fold_imports_nothing_above_it` in
+# `test_service_boundaries.py`, which asserts the direction that still exists.
 
 
 def test_nothing_in_the_package_reaches_for_the_live_engine():
@@ -527,6 +446,10 @@ def test_nothing_in_the_package_reaches_for_the_live_engine():
         for number, line in enumerate(path.read_text().splitlines(), 1):
             stripped = line.strip()
             if stripped.startswith("#"):
+                continue
+            if stripped.startswith("from ..indicators"):
+                # A leaf library of detectors, not the live engine. See
+                # `TestVendoredCusum` for why the absolute rule was relaxed.
                 continue
             assert not stripped.startswith("from .."), (
                 f"{path.name}:{number} escapes the package: {stripped}"
@@ -1101,34 +1024,12 @@ def test_the_smoother_is_written_and_listed_as_an_inference_mode():
     assert callable(smoothing.lagged)
 
 
-def test_the_package_is_not_in_the_state_files_persistence_schema():
-    """**The coupling the one-way import test could not catch.**
-
-    `shared.codec.registry` builds the schema by walking every module under
-    `structures` and collecting every dataclass - by *discovery*, not by import.
-    So this package landed in production's 128MB persistence fingerprint the
-    moment it existed, and a field added here would have been a schema change on
-    state none of it is in. `tests/test_structures.py` caught it by a different
-    route and the tempting fix - making these classes `Restorable` - would have
-    declared them persistable, which is false.
-    """
-    import till_infinity.structures as pkg
-
-    from till_infinity.utils import codec
-
-    schema = codec.registry(pkg)
-    assert schema, "the registry should still find the real persisted classes"
-    leaked = sorted(k for k, cls in schema.items() if "statespace" in cls.__module__)
-    assert not leaked, f"statespace is in the persistence schema: {leaked}"
-
-    # And the opt-out is what keeps it out, declared where the walk can see it.
-    from till_infinity import statespace
-
-    assert statespace.CODEC_UNPERSISTED is True
-    assert codec.skipped("till_infinity.statespace.linear") is True
-    assert codec.skipped("till_infinity.structures.levels") is False, (
-        "the default has to stay 'a dataclass in a service is state'"
-    )
+# **Left with `structures/`.** `codec.registry` built the persistence schema by
+# walking every module under `structures` and collecting every dataclass, so
+# this package landed in production's fingerprint the moment it existed. There
+# is no `structures` to walk. The coupling it guarded against is still real for
+# whatever the codec walks next, and the assertion to write then is the same
+# one: discovery by import is not discovery by directory.
 
 
 class TestSmoothing:
@@ -1985,15 +1886,12 @@ class TestTheRestAgainstAReference:
         # And nowhere near linear, which would be eight times as far.
         assert moved[32.0] < 2.0 * moved[4.0], moved
 
-    def test_existence_decays_on_the_same_clock_as_a_forgotten_feed(self):
-        """Documented and therefore worth asserting: a quantity the desk has
-        stopped seeing evidence for and a feed it has stopped seeing bars from
-        are the same kind of absence, so they must not decay on two clocks."""
-        from till_infinity.structures.engine import FORGET_FEED_SECONDS
-
-        from till_infinity.statespace.linear import EXISTENCE_HALF_LIFE_HOURS
-
-        assert pytest.approx(FORGET_FEED_SECONDS / 3600.0) == EXISTENCE_HALF_LIFE_HOURS
+    # **Left with `structures/`.** It held `statespace.linear.EXISTENCE_HALF_LIFE_HOURS`
+    # against `structures.engine.FORGET_FEED_SECONDS`, so that a feed forgotten by
+    # one and still believed by the other could not happen quietly. The second
+    # constant is retired. The invariant is worth restoring if anything else grows
+    # a forget horizon: two clocks for the same event will drift, and only a test
+    # that names both notices.
 
     def test_the_smoother_takes_a_factory_and_names_no_member(self):
         """It used to build a `Gaussian` itself and therefore could not smooth
@@ -2987,7 +2885,7 @@ class TestChangepoint:
         """
         import random
 
-        from till_infinity.statespace.changepoint import Changepoint
+        from till_infinity.indicators.changepoint import Changepoint
 
         rng = random.Random(7)
         engine = Changepoint()
@@ -3025,7 +2923,7 @@ class TestChangepoint:
         """
         import random
 
-        from till_infinity.statespace.changepoint import HAZARD, Changepoint
+        from till_infinity.indicators.changepoint import HAZARD, Changepoint
 
         rng = random.Random(11)
         engine = Changepoint()
@@ -3046,7 +2944,7 @@ class TestChangepoint:
         """The one member that infers `R`. Every other is handed it."""
         import random
 
-        from till_infinity.statespace.changepoint import Changepoint
+        from till_infinity.indicators.changepoint import Changepoint
 
         rng = random.Random(3)
         quiet = Changepoint()
@@ -3064,7 +2962,7 @@ class TestChangepoint:
         """A change-point model claims the quantity is piecewise constant, so a
         rate is not part of what it asserts - the same refusal
         `reverting.accel` makes about acceleration."""
-        from till_infinity.statespace.changepoint import Changepoint
+        from till_infinity.indicators.changepoint import Changepoint
 
         engine = Changepoint()
         for i in range(40):
@@ -3079,7 +2977,7 @@ class TestChangepoint:
         """Truncation folds the tail into the last kept run length rather than
         dropping it - a posterior that quietly sums to less than one is the
         kind of error that looks like a model result."""
-        from till_infinity.statespace.changepoint import MAX_RUN, Changepoint
+        from till_infinity.indicators.changepoint import MAX_RUN, Changepoint
 
         engine = Changepoint()
         for i in range(MAX_RUN + 200):
@@ -3090,7 +2988,7 @@ class TestChangepoint:
         assert sum(weights) == pytest.approx(1.0)
 
     def test_it_is_in_the_family_and_satisfies_the_protocol(self):
-        from till_infinity.statespace.changepoint import Changepoint
+        from till_infinity.indicators.changepoint import Changepoint
         from till_infinity.statespace.family import Filter, members
 
         assert members()["changepoint"] is Changepoint
@@ -4418,7 +4316,7 @@ class TestPaired:
         """
         import random
 
-        from till_infinity.statespace.changepoint import (
+        from till_infinity.indicators.changepoint import (
             FRESH_LEAST,
             MAX_RUN,
             Changepoint,
@@ -6383,7 +6281,11 @@ class TestVendoredCusum:
         code change, so it is asserted rather than remembered. `paired.py` used
         to import the changepoint detector from `structures.learning`.
 
-        **`till_platform` is exempt, and is now a declared dependency rather
+        **`till_infinity.utils` is exempt.** It was `till_platform`, a separate
+        distribution, until that retired on 2026-10-31 - Nautilus supplies the
+        logger, the cache and the serialisation it existed for, and what was
+        still used moved to `utils/`. The exemption is for the same reason
+        rather
         than an exemption.** This package moved to `services/statespace/` on
         2026-10-29 with its own manifest naming `till-platform`, so the rule
         below is no longer "reaching into a sibling is impolite" - it is "the
@@ -6412,7 +6314,16 @@ class TestVendoredCusum:
                 # distribution - and **any** `till_infinity` import is an
                 # offence rather than a style point: the desk is not a
                 # dependency of this package, so one would not install.
-                if "till_platform" in stripped:
+                if "till_infinity.utils" in stripped:
+                    continue
+                # **`indicators` is the one permitted reach, added 2026-10-31.**
+                # The rule's purpose is that this package stays extractable and
+                # never inverts into the live desk, and a leaf library of
+                # detectors breaks neither: extracting statespace means taking
+                # one more directory. The copy this allowance replaced -
+                # `accruing.py`, a field-for-field duplicate of FOCuS - is what
+                # the rule cost while it was absolute.
+                if stripped.startswith(("from ..indicators", "from till_infinity.indicators")):
                     continue
                 if stripped.startswith("from ..") or re.match(
                     r"(from|import) till_infinity\b", stripped
@@ -6420,74 +6331,42 @@ class TestVendoredCusum:
                     offenders.setdefault(path.name, []).append(stripped)
         assert not offenders, f"statespace reaches outside itself: {offenders}"
 
-    def test_no_two_modules_under_structures_share_a_basename(self):
-        """`codec.py` keys by basename, so a duplicate silently breaks a restore.
+    # **Left with `structures/`.** `codec` keyed persisted state on
+    # `basename.ClassName`, so two modules sharing a basename collided and a class
+    # the build lacked came back as a dict with a warning rather than an error.
+    # This scanned `structures/` for that. The hazard belongs to the codec rather
+    # than to any one package, so the scan should return wherever `utils/codec.py`
+    # ends up - against whatever tree it walks.
 
-        This hazard has now bitten three times. `paired.py` records the first
-        two - two modules called `focus` holding two classes called `Focus`
-        resolved to the same registry key, and a restore built the wrong class.
-        The third was this vendoring: naming the new module `cusum.py` beside
-        the existing `context/cusum.py` made the basename-to-location map
-        ambiguous, and a new field on `context.cusum.Cusum` stopped
-        invalidating saved state.
+    def test_there_is_exactly_one_focus_and_paired_runs_it(self):
+        """There was a second copy of FOCuS here, and that was the bug.
 
-        The schema test catches it, but with a message about an unrelated class.
-        This says what is actually wrong.
+        `statespace/accruing.py` held a field-for-field copy of
+        `indicators/focus.py`, vendored so this package could be extracted in
+        one move. Indicators are now a package of their own that statespace may
+        read, so the reason for the copy is gone and so is the copy.
+
+        This is the durable form of the test it replaces, which fed both
+        implementations the same stream and compared them step by step: there
+        is nothing to compare when there is one implementation. Worth pinning
+        because the persistence registry keys on module basename and class name
+        (`utils/codec.py`), so two modules called `focus` holding two classes
+        called `Focus` resolve to the same key and one silently shadows the
+        other - which is how the duplicate was caught the first time, by a
+        restore building the wrong class rather than by review.
         """
-        import pathlib
+        import importlib
 
-        from till_infinity import structures
+        from till_infinity.indicators.changepoint import Focus
+        from till_infinity.statespace import paired as paired_module
 
-        root = pathlib.Path(structures.__file__).parent
-        seen = {}
-        for path in sorted(root.rglob("*.py")):
-            if path.name == "__init__.py":
-                continue
-            seen.setdefault(path.stem, []).append(str(path.relative_to(root)))
-        clashes = {stem: where for stem, where in seen.items() if len(where) > 1}
-        assert not clashes, (
-            "two modules under structures share a basename, which codec.py keys "
-            f"persistence by: {clashes}"
-        )
+        assert paired_module.Focus is Focus
+        with pytest.raises(ModuleNotFoundError):
+            importlib.import_module("till_infinity.statespace.accruing")
 
-    def test_the_vendored_detector_matches_the_original_observation_by_observation(self):
-        """A verbatim copy is only safe while it stays verbatim.
-
-        The original is still in `structures.learning` and still used there, so
-        the two can drift apart silently. This feeds both the same stream and
-        compares the statistic, the changepoint and the hull at every step.
-        """
-        import random
-
-        from till_infinity.structures.learning.focus import THRESHOLD as ORIGINAL
-        from till_infinity.structures.learning.focus import Focus
-
-        from till_infinity.statespace.accruing import THRESHOLD, OneSided
-
-        assert THRESHOLD == ORIGINAL
-
-        rng = random.Random(20261013)
-        for up in (True, False):
-            theirs = Focus(up=up)
-            mine = OneSided(up=up)
-            # A shift part way through, so both detectors actually fire.
-            for i in range(600):
-                value = rng.gauss(0.0, 1.0) + (1.5 if i > 300 else 0.0)
-                fired_theirs = theirs.update(value, 1.0)
-                fired_mine = mine.update(value, 1.0)
-                assert fired_mine == fired_theirs, f"up={up} step {i}"
-                assert mine.statistic == pytest.approx(theirs.statistic), i
-                assert mine.at == theirs.at, i
-                assert mine.hull == theirs.hull, i
-                assert mine.seen == theirs.seen, i
-            theirs.reset()
-            mine.reset()
-            assert mine.hull == theirs.hull
-            assert mine.statistic == theirs.statistic
-
-    def test_paired_still_works_on_the_vendored_detector(self):
+    def test_paired_still_works_on_the_shared_detector(self):
         """The caller that prompted the vendoring, driven through its real API."""
-        from till_infinity.statespace.accruing import OneSided
+        from till_infinity.indicators.changepoint import Focus
         from till_infinity.statespace.linear import Gaussian
         from till_infinity.statespace.paired import Paired
 
@@ -6499,8 +6378,8 @@ class TestVendoredCusum:
             member.predict(when)
             # A clean shift part way through, so the detector has something to find.
             member.update(0.001 * i + (0.05 if i > 200 else 0.0), 1e-8, when)
-        assert isinstance(member._up, OneSided)
-        assert isinstance(member._down, OneSided)
+        assert isinstance(member._up, Focus)
+        assert isinstance(member._down, Focus)
         assert member.statistic >= 0.0
 
 
@@ -7337,7 +7216,9 @@ class TestFacade:
         modules in today's order" - and this is the test that says why it had
         to be built the other way round.
 
-        `shared` is allowed; it is the only thing that is.
+        `shared` and `indicators` are allowed; they are the only things that
+        are. `indicators` is a leaf of detectors with no policy in it, so
+        reading it does not invert anything - see `TestVendoredCusum`.
         """
         import pathlib
         import re
@@ -7352,7 +7233,7 @@ class TestFacade:
             # ...shared` and `from ..shared` are the permitted exception.
             for match in re.finditer(r"^from \.\.([a-z_][a-z_0-9.]*) import", text, re.M):
                 target = match.group(1).split(".")[0]
-                if target != "shared":
+                if target not in ("shared", "indicators"):
                     offenders.setdefault(path.name, set()).add(target)
         assert offenders == {}, offenders
 
@@ -7799,7 +7680,12 @@ class TestDispersion:
         assert "structures.shrinkage" not in text
         # And the thing it must not reach for is still one package over, so the
         # guard can still fail.
-        assert pathlib.Path("till_infinity/structures/shrinkage.py").is_file()
+        # **The other half of this assertion went with `structures/`.** It
+        # used to check that `structures/shrinkage.py` still existed, so that
+        # a vanished original would fail here rather than leave the rule
+        # pointing at nothing. The package is retired to
+        # `research/retire/structures/`, and what still matters is the part
+        # above: `statespace` does not reach for a sibling it should not have.
 
 
 class TestSpanning:
@@ -10112,17 +9998,13 @@ class TestOneBarOneObservation:
         assert engine.observe_bar(self._bar(1_000.0, closed=None)) is not None
         assert engine.progress.folded == 1
 
-    def test_the_payload_prices_publishes_has_every_key_the_engine_reads(self):
-        """The contract, checked against the producer rather than assumed. The
-        extremes were once left off this notice and `structures` read every live
-        bar as a doji for it."""
-        import inspect
-
-        from till_infinity.prices import service as px
-
-        source = inspect.getsource(px._notice)
-        for key in ("feed", "interval", "time", "open", "high", "low", "close", "volume", "closed"):
-            assert f'"{key}"' in source, f"prices stopped publishing {key}"
+    # **Left with `prices/`.** It built a payload through `prices.service` and
+    # asserted the fold could read every key, which is the kind of producer-side
+    # check that catches a rename on the publishing side rather than the
+    # consuming one. `prices/` is retired; the producer is now
+    # `adapters/mt5/data.py` and the conversion is covered by
+    # `test_mt5_adapter.py`, which asserts the bar's timestamp, precision and
+    # volume survive - the three things that were actually getting lost.
 
 
 class TestTheDeskSpreadRule:

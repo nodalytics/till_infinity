@@ -67,7 +67,7 @@ from tenacity import (
 from till_infinity.utils.logging import get_logger
 
 from ...domain.models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick
-from ..candles import Bar
+from ...indicators.candles import Bar
 from ..config import Settings, ours
 from .broker import Broker, BrokerError, NotConnectedError, RejectedError, TransientError
 

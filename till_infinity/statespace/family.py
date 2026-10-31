@@ -319,7 +319,7 @@ class Filter(Protocol):
 def members() -> dict[str, type]:
     """The family members that exist here. Imported lazily to keep this module
     importable while the rest of the package is still being written."""
-    from .changepoint import Changepoint
+    from ..indicators.changepoint import Changepoint
     from .diagonal import Diagonal
     from .landau import Landau
     from .linear import Gaussian

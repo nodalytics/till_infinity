@@ -63,7 +63,7 @@ def spike_scale(features: object, settings: object) -> float:
     """The risk switch for one signal's features. One function so the three places
     that size a trade - `risk_scale`, the consensus path and parallel mode - cannot
     disagree about it. See `scaling.by_spike`."""
-    from .. import scaling
+    from ...risk import scaling
 
     readings = features if isinstance(features, dict) else {}
     found = readings.get("tr_percentile")
@@ -472,7 +472,7 @@ class Strategy(ABC):
 
         See `trading-strategies-strategy.md` in research/docs.
         """
-        from .. import scaling
+        from ...risk import scaling
 
         settings = self.settings
         return scaling.combined(

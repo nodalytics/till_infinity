@@ -1,84 +1,44 @@
-"""Bayesian online change-point detection: a posterior over *how long this has held*.
+"""Changepoint detection: has the regime changed, and when did this one start?
 
-Adams and MacKay's BOCPD, with the Normal-Inverse-Gamma conjugate model that
-makes the one-step predictive a Student-t. Added 2026-10-11 after reading
-Tsaknaki, Lillo and Mazzarisi (arXiv:2307.02375), whose application - order flow
-and market impact - needs signed trades and a book that this desk does not have,
-and whose *method* transfers directly.
+Two detectors that answer that from opposite directions, and Nautilus has
+neither.
 
-## Why this and not `hmm`
+**`Changepoint` is Bayesian and online** - Adams and MacKay's BOCPD with a
+Normal-Inverse-Gamma conjugate model, so the one-step predictive is a
+Student-t. It carries a posterior over *how long this has held*, which means
+it answers `value`, `sd` and `run_hours` as well as "did something change": a
+predictive distribution, which is what lets it be scored on held-out
+likelihood against a filter.
 
-`family.PENDING` records the objection to a hidden Markov member: "a discrete
-state is a different claim about the world, not a better fit", and it needs the
-number of states chosen before it can be fitted. BOCPD keeps a posterior over
-the **run length** - how many observations since the last change - which
+**`Focus` is frequentist and exact** - Romano, Eckley, Fearnhead and Rigaill's
+functional pruning CUSUM. It maximises a likelihood ratio over *every*
+candidate change location and *every* magnitude at once, exactly rather than
+approximately, and it comes with a threshold - so the false-alarm rate is a
+choice rather than an emergent property of a hazard prior nobody fitted. It
+yields a *statistic* and not a density, so it can never be a filter member.
 
-* **does not require a regime count.** It is the change-point formulation of the
-  unbounded-mixture idea `dpm` is listed for, and cheaper: a distribution over
-  one integer rather than a mixture over partitions.
-* **is online by construction.** `hmm` as usually fitted needs the series. This
-  updates per observation, which is the only form a desk can run - the same
-  constraint that made `smooth` unusable live and `lagged` necessary.
-
-## The two outputs nothing else here has
-
-Every other member answers *where is it* and *how sure*. This one also answers:
-
-* **`changepoint`** - the posterior probability that the run length is zero,
-  which is "the thing I am tracking just changed". A level that has stopped
-  being the level is the event the desk's `existence` decays toward and never
-  detects; this names it on the observation it happens.
-* **`run_length`** - the expected number of observations since that change, so
-  "how established is this" is a number rather than a feeling.
-
-## It infers its measurement variance, which no other member does
-
-`noise` on the `Filter` contract is the measurement **variance**, and every
-other member is *told* it. This one is told a prior and **learns it**: the
-Normal-Inverse-Gamma posterior carries the variance as well as the mean, so
-`noise` here sets `beta0/alpha0` and is then updated by the data.
-
-That is a real difference and it cuts both ways. It is the honest answer to
-`README.md`'s improvements 1 and 2 - a time-varying `R` without either an
-external forecaster or a score-driven rule, because the variance is simply part
-of the posterior. And it means this member cannot be handed a volatility
-forecast, so the comparison against one is a comparison of two mechanisms.
-
-## What it does not claim
-
-**There is no rate here, and `rate` returns zero.** A change-point model asserts
-the quantity is *piecewise constant*: the claim is that it holds, then changes,
-not that it drifts. A rate read off this member would be inventing a trend the
-model does not have, which is the pattern `reverting.accel` already refuses - it
-reports `-theta * rate` because that is where the rate is heading, and a
-consumer wanting the acceleration's own uncertainty is sent to `linear`.
-
-So on a trending series this member is **wrong on purpose**, and `linear` or
-`reverting` is the one to use. Its claim is about a level that sits still until
-it does not.
-
-## Cost
-
-`O(R)` an observation, where `R` is the truncated run-length support. The
-posterior is capped at `MAX_RUN` and renormalised, which is standard practice
-and bounds both time and memory - without it the support grows with the series
-and this would be `O(n)` per step.
-
-## Nothing here publishes
-
-Same rule as the rest of the package: reachable from tests and research
-harnesses only, until a named null has been beaten on held-out data. **The null
-is `linear` and `reverting` on held-out one-step likelihood**, and the paper's
-own claim is the bar: regime information improved its online predictions over
-models without it.
+They do different jobs and the pairing is the answer rather than the choice,
+which is what `statespace/paired.py` is built on.
 """
 
 from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Any, ClassVar
 
-from .linear import EXISTENCE_HALF_LIFE_HOURS
+from nautilus_trader.indicators.base import Indicator
+from nautilus_trader.model.data import Bar
+
+from till_infinity.utils.state import Restorable
+
+from .bars import NANOS, Reading, bar_input, check_feed, check_scale, reset_state, tick_input
+
+# ==========================================================================
+# from changepoint.py
+# ==========================================================================
+
+EXISTENCE_HALF_LIFE_HOURS = 7 * 24.0
 
 HOUR = 3600.0
 
@@ -157,7 +117,7 @@ def _log_student_t(x: float, mu: float, kappa: float, alpha: float, beta: float)
 
 
 @dataclass(slots=True)
-class Changepoint:
+class Changepoint(Indicator):
     """BOCPD over a piecewise-constant quantity, with a Student-t predictive.
 
     The state is a posterior over run lengths; `value` and `sd` are that
@@ -207,6 +167,115 @@ class Changepoint:
 
     NAMES: tuple[str, ...] = ("value",)
     OUTPUTS: tuple[str, ...] = ("value",)
+
+    # ---------------------------------------------------- the engine's path
+    #: Which float of a bar this reads when the Nautilus engine feeds it.
+    #: Unused when a caller drives `update` directly. See `bars.Reading`.
+    source: Reading = Reading.LOG_RETURN
+    #: One volatility unit in price, fixed. Zero takes the unit off each bar
+    #: through `unit_from` instead, which is the default.
+    unit: float = 0.0
+    #: Where a per-bar unit comes from. The **relative** range, because the
+    #: source is a return and a return is dimensionless: scaling it by a price
+    #: range would be wrong by a factor of the price. The range-based estimator
+    #: beats close-to-close as a volatility driver by a ratio of 0.648 within
+    #: strata on FX and on 371 of 392 equities, and the advantage grows as the
+    #: window shortens - which is the regime a one-bar unit is in.
+    unit_from: Reading | None = Reading.RELATIVE_RANGE
+    #: EWMA half-life in bars for `unit_from`. Zero uses each bar's own
+    #: reading.
+    unit_span: int = 0
+    _bar_prev: float | None = field(default=None, repr=False)
+    _bar_scale: float = field(default=0.0, repr=False)
+
+    # ------------------------------------------------------ the tick path
+    #: EWMA half-life in **ticks** for the tick-path scale. A tick has no
+    #: range, so the unit is an average of how far the reading moves between
+    #: prints.
+    tick_span: int = 200
+    _tick_prev: float | None = field(default=None, repr=False)
+    _tick_scale: float = field(default=0.0, repr=False)
+    #: Which feed has fed this instance. See `bars.check_feed`.
+    _fed: str = field(default="", repr=False)
+
+    #: The fields a reset keeps. Everything else is state.
+    _CONFIG: ClassVar[frozenset[str]] = frozenset(
+        {
+            "hazard",
+            "tick_span",
+            "kappa0",
+            "alpha0",
+            "beta0",
+            "burn",
+            "NAMES",
+            "OUTPUTS",
+            "source",
+            "unit",
+            "unit_from",
+            "unit_span",
+        }
+    )
+
+    def __post_init__(self) -> None:
+        """Hand Nautilus its parameters, and refuse an unset scale."""
+        Indicator.__init__(self, [self.hazard, self.kappa0, self.alpha0, self.beta0])
+        check_scale(type(self).__name__, self.source, self.unit, self.unit_from)
+
+    def handle_bar(self, bar: Bar) -> None:
+        """Nautilus's entry point, once registered for a bar type.
+
+        `update` takes the reading's noise as a **variance**, which is the one
+        place here where passing the obvious thing is wrong: the unit computed
+        from the bar is a standard deviation, so it is squared on the way in.
+        An sd passed as a variance is a prior four orders of magnitude too
+        tight on a 0.01 unit, and the posterior does not come out looking
+        wrong - it comes out looking confident.
+        """
+        check_feed(self, "bars")
+        value, scale = bar_input(self, bar)
+        if value is None or scale <= 0.0:
+            return
+        self._fold_reading(value, scale, bar.ts_event / NANOS)
+
+    def handle_quote_tick(self, tick: Any) -> None:
+        """Nautilus's entry point for quotes, on the **mid**.
+
+        Fed the tick-to-tick log change, not the price: BOCPD over a level
+        would report a changepoint every time price moved, because the mean of
+        a price series does shift whenever price does. `bars.tick_input` with
+        `relative=True` is what keeps the reading and its scale in the same
+        units the bar path checks.
+        """
+        self._on_tick(tick)
+
+    def handle_trade_tick(self, tick: Any) -> None:
+        """Nautilus's entry point for trades, on the traded price."""
+        self._on_tick(tick)
+
+    def _on_tick(self, tick: Any) -> None:
+        check_feed(self, "ticks")
+        value, scale = tick_input(self, tick, relative=True)
+        if value is None or scale <= 0.0:
+            return
+        self._fold_reading(value, scale, tick.ts_event / NANOS)
+
+    def _fold_reading(self, value: float, scale: float, when: float) -> None:
+        """One reading from either feed. `scale` is an sd; `update` wants a
+        variance, which is the one place passing the obvious thing is wrong."""
+        self._set_has_inputs(True)
+        self.update(value, scale * scale, when)
+        if not self.initialized and self.seen > self.burn:
+            self._set_initialized(True)
+
+    def reset(self) -> None:
+        """Nautilus's reset: as if this had never seen a reading.
+
+        Called when the engine rewinds. Every field outside `_CONFIG` goes
+        back to its initial value - see `bars.reset_state`.
+        """
+        reset_state(self, self._CONFIG)
+        self._set_has_inputs(False)
+        self._set_initialized(False)
 
     # ------------------------------------------------------------- posterior
 
@@ -564,3 +633,209 @@ class Changepoint:
     def transition(self, dt: float) -> tuple[tuple[float, ...], ...]:  # noqa: ARG002
         """Identity. The mean does not move between observations, by assumption."""
         return ((1.0,),)
+
+
+# ==========================================================================
+# from focus.py
+# ==========================================================================
+
+THRESHOLD = 12.0
+
+
+@dataclass(slots=True)
+class Focus(Indicator, Restorable):
+    """Exact CUSUM likelihood ratio over all changepoints, with pruning.
+
+    Stateful across calls like `Cusum`, so it can be fed a stream one
+    observation at a time.
+    """
+
+    threshold: float = THRESHOLD
+    #: Look for an increase in the mean. See the module docstring.
+    up: bool = True
+    #: How the stream is scaled. Observations are divided by this before the
+    #: Gaussian statistic is applied, so a threshold means the same thing on
+    #: gold and on BTC - the same argument volatility units make everywhere.
+    scale: float = 1.0
+    seen: int = 0
+    total: float = 0.0
+    #: The pruned candidate set: `(index, cumulative sum)` on the hull.
+    hull: list[tuple[int, float]] = field(default_factory=list)
+    #: The statistic at the last observation, and where it says the change was.
+    statistic: float = 0.0
+    at: int = 0
+    #: Whether the last observation cleared the threshold. `update` returns
+    #: this; the engine's `handle_bar` has nowhere to return it to.
+    fired: bool = False
+
+    # ---------------------------------------------------- the engine's path
+    #: Which float of a bar this reads when the Nautilus engine feeds it.
+    #: Unused when a caller drives `update` directly. See `bars.Reading`.
+    source: Reading = Reading.LOG_RETURN
+    #: One volatility unit in price, fixed. Zero takes the unit off each bar
+    #: through `unit_from` instead, which is the default.
+    unit: float = 0.0
+    #: Where a per-bar unit comes from. The **relative** range, because the
+    #: source is a return and a return is dimensionless: scaling it by a price
+    #: range would be wrong by a factor of the price. The range-based estimator
+    #: beats close-to-close as a volatility driver by a ratio of 0.648 within
+    #: strata on FX and on 371 of 392 equities, and the advantage grows as the
+    #: window shortens - which is the regime a one-bar unit is in.
+    unit_from: Reading | None = Reading.RELATIVE_RANGE
+    #: EWMA half-life in bars for `unit_from`. Zero uses each bar's own
+    #: reading, which is noisier but carries no warmup.
+    unit_span: int = 0
+    _bar_prev: float | None = field(default=None, repr=False)
+    _bar_scale: float = field(default=0.0, repr=False)
+
+    # ------------------------------------------------------ the tick path
+    #: EWMA half-life in **ticks** for the tick-path scale.
+    tick_span: int = 200
+    _tick_prev: float | None = field(default=None, repr=False)
+    _tick_scale: float = field(default=0.0, repr=False)
+    #: Which feed has fed this instance. See `bars.check_feed`.
+    _fed: str = field(default="", repr=False)
+
+    #: The fields a reset keeps. Everything else is state.
+    _CONFIG: ClassVar[frozenset[str]] = frozenset(
+        {
+            "threshold",
+            "up",
+            "scale",
+            "source",
+            "unit",
+            "unit_from",
+            "unit_span",
+            "tick_span",
+        }
+    )
+
+    def __post_init__(self) -> None:
+        """Hand Nautilus its parameters, and refuse an unset scale."""
+        Indicator.__init__(self, [self.threshold, self.up, self.source])
+        check_scale(type(self).__name__, self.source, self.unit, self.unit_from)
+
+    def reset(self) -> None:
+        """Nautilus's reset: as if this had never seen an observation.
+
+        Called when the engine rewinds. Not `restart`, which keeps `seen` and
+        `total` because the stream did not restart. Every field outside `_CONFIG`
+        goes back to its initial value - see `bars.reset_state`.
+        """
+        reset_state(self, self._CONFIG)
+        self._set_has_inputs(False)
+        self._set_initialized(False)
+
+    def handle_bar(self, bar: Bar) -> None:
+        """Nautilus's entry point, once registered for a bar type.
+
+        `ts_event` is the bar's **close**, so a reading taken here is causal.
+        """
+        check_feed(self, "bars")
+        value, scale = bar_input(self, bar)
+        if value is None or scale <= 0.0:
+            return
+        self._fold_reading(value, scale)
+
+    def handle_quote_tick(self, tick: Any) -> None:
+        """Nautilus's entry point for quotes, on the **mid**.
+
+        Fed the tick-to-tick log change, not the price. FOCuS tests for a shift
+        in the mean of what it is fed, and the mean of a price level shifts
+        every time price moves - so on levels it fires on movement rather than
+        on a change in the movement.
+        """
+        self._on_tick(tick)
+
+    def handle_trade_tick(self, tick: Any) -> None:
+        """Nautilus's entry point for trades, on the traded price."""
+        self._on_tick(tick)
+
+    def _on_tick(self, tick: Any) -> None:
+        check_feed(self, "ticks")
+        value, scale = tick_input(self, tick, relative=True)
+        if value is None or scale <= 0.0:
+            return
+        self._fold_reading(value, scale)
+
+    def _fold_reading(self, value: float, scale: float) -> None:
+        """One reading from either feed."""
+        self._set_has_inputs(True)
+        self.update(value, scale)
+        if not self.initialized:
+            self._set_initialized(True)
+
+    def restart(self) -> None:
+        """Start again from here, after a change has been acted on.
+
+        Keeps `seen` and `total`: the accumulation restarts, the stream does
+        not. `reset` is Nautilus's, and means the other thing.
+        """
+        self.hull = [(self.seen, self.total)]
+        self.statistic = 0.0
+        self.at = 0
+
+    def update(self, value: float, scale: float = 0.0) -> bool:
+        """Feed one observation. True when the evidence clears the threshold.
+
+        `scale` overrides the stored one for this observation, because
+        volatility moves and a detector calibrated to last week's is measuring
+        the wrong thing this week - the same argument `Cusum.push` makes.
+        """
+        unit = scale or self.scale
+        if unit <= 0:
+            self.fired = False
+            return False
+        if not self.hull:
+            self.hull = [(self.seen, self.total)]
+
+        self.total += float(value) / unit
+        self.seen += 1
+        here = (self.seen, self.total)
+
+        # The maximum over the surviving candidates. One-sided: a candidate
+        # whose sum is above the current one is evidence of a *fall* and is not
+        # what this instance is looking for.
+        best, where = 0.0, 0
+        for tau, s in self.hull:
+            gap = self.seen - tau
+            if gap <= 0:
+                continue
+            diff = self.total - s if self.up else s - self.total
+            if diff <= 0:
+                continue
+            score = diff * diff / (2.0 * gap)
+            if score > best:
+                best, where = score, tau
+        self.statistic, self.at = best, where
+
+        # Prune, then add. A candidate sitting above the chord between its
+        # neighbour and the new point can never be the argmax again, whatever
+        # arrives next, so it is dropped once rather than re-tested for ever.
+        while len(self.hull) >= 2 and _inside(self.hull[-2], self.hull[-1], here, self.up):
+            self.hull.pop()
+        self.hull.append(here)
+        return best >= self.threshold
+
+    def reading(self) -> dict[str, float]:
+        """The statistic and what it costs to hold, for a journal entry."""
+        return {
+            "focus_statistic": round(self.statistic, 4),
+            "focus_at": float(self.at),
+            "focus_candidates": float(len(self.hull)),
+            "focus_seen": float(self.seen),
+        }
+
+
+def _inside(
+    left: tuple[int, float], middle: tuple[int, float], right: tuple[int, float], up: bool
+) -> bool:
+    """Whether `middle` can be dropped: it is never the best candidate again.
+
+    The cross product of the two chords. For an increase the surviving
+    candidates are those with the *smallest* partial sums for their index -
+    the lower hull - because the statistic rewards a large rise from `tau`.
+    """
+    (x1, y1), (x2, y2), (x3, y3) = left, middle, right
+    cross = (x2 - x1) * (y3 - y1) - (x3 - x1) * (y2 - y1)
+    return cross <= 0 if up else cross >= 0

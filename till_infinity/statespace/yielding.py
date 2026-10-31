@@ -117,7 +117,7 @@ class Yielding:
             )
         self._base = float(getattr(self._member, self.lever))
         if self._detector is None:
-            from .changepoint import Changepoint
+            from ..indicators.changepoint import Changepoint
 
             self._detector = Changepoint()
 

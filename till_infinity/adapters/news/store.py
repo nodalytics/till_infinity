@@ -1,5 +1,14 @@
 """Where headlines and events land: SQLite by default, JSONL alongside it.
 
+**Beside the client rather than under `sources/`, because the store is the
+client's and not a provider's.** A source fetches and parses and nothing else
+(see `sources/__init__.py`), so putting the database under it would give every
+parser a dependency on where its output goes - and the parsers' whole value is
+that they run against a captured response with nothing else present. The
+client is the one thing here that both writes (the poll loop) and reads
+(`_request`, which is what makes a point-in-time backtest possible), so the
+file lives at its level.
+
 The two tables behave differently on purpose. A headline is written once and
 never touched again - `INSERT OR IGNORE` is the whole story. A calendar event
 is the opposite: it sits there as a forecast for days, and when the print lands
@@ -21,7 +30,7 @@ import orjson
 
 from till_infinity.utils import db as shared_db
 
-from .models import Article, Event, FeedInfo, Observation, WriteResult
+from .sources.models import Article, Event, FeedInfo, Observation, WriteResult
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS articles (

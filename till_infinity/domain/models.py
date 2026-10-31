@@ -273,7 +273,7 @@ class Intent:
 
         See `trading-models.md` in research/docs.
         """
-        from . import barriers
+        from ..domain import barriers
 
         vol_bps = float(self.features.get("vol_bps") or 0.0)
         up = barriers.units_for(self.reward, self.entry, vol_bps)
