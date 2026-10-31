@@ -18,15 +18,68 @@ same failure `tests/test_service_boundaries.py` guards against for imports.
 from __future__ import annotations
 
 import json
+import os
 from functools import cache
 from pathlib import Path
 from typing import Any
 
-#: Where the JSON lives, relative to this file:
-#: `packages/till-platform/till_platform/` -> repository root ->
-#: `shared/contracts/bus`. Resolved rather than assumed, so
-#: a wrong answer is an error here rather than a silently empty schema set.
-HOME = Path(__file__).resolve().parents[3] / "shared" / "contracts" / "bus"
+#: The environment variable that settles it, for whoever ships the files.
+CONTRACTS_DIR = "TILL_CONTRACTS_DIR"
+
+#: Where to look, relative to a starting directory.
+_UNDER = Path("shared") / "contracts" / "bus"
+
+
+def _find() -> Path:
+    """Locate `shared/contracts/bus`, by searching rather than by arithmetic.
+
+    **This was `Path(__file__).resolve().parents[3] / "shared" / ...` and it
+    worked only in the repository.** Counting parents encodes this module's
+    position in a tree, and the position changed the moment the package became
+    installable: from
+    `.venv/lib/python3.11/site-packages/till_platform/contracts.py`, three
+    parents up is `.venv/lib`, so the image looked for
+    `/app/.venv/lib/shared/contracts/bus` while the files sat in
+    `/app/shared/contracts/bus`. The container shipped the contracts and could
+    not find them, and `declared()` answered "nothing is declared" - the exact
+    failure the docstring on that line claimed it prevented. It is the same
+    mistake `frozen.ship()` was changed to avoid, in the same package, and the
+    lesson is written down in ADR 0002.
+
+    The order is: what the environment says, then up from this file, then up
+    from the working directory. The first two cover the repository and a
+    deployment that declares itself; the third covers a container whose
+    WORKDIR is the tree root.
+    """
+    told = os.environ.get(CONTRACTS_DIR)
+    if told:
+        return Path(told)
+    for start in (Path(__file__).resolve(), Path.cwd().resolve() / "_"):
+        for parent in start.parents:
+            candidate = parent / _UNDER
+            if candidate.is_dir():
+                return candidate
+    # Nothing found. Returned rather than raised, because importing this module
+    # must not fail - `missing()` is how a caller asks whether it worked.
+    return Path(__file__).resolve().parents[3] / _UNDER
+
+
+HOME = _find()
+
+
+def missing() -> str:
+    """Why there are no contracts, or an empty string if there are.
+
+    **`declared()` returning `()` is indistinguishable from a bus that
+    declares nothing**, which is how an image that could not find its own
+    schemas reported success. Anything that needs the contracts to exist asks
+    this first, and the image build does exactly that.
+    """
+    if not HOME.is_dir():
+        return f"{HOME} is not a directory - set {CONTRACTS_DIR} to where the schemas are"
+    if not declared():
+        return f"{HOME} holds no *.json schemas"
+    return ""
 
 
 class NoSuchContractError(KeyError):
