@@ -581,7 +581,7 @@ def tail_features(rows: list[dict], policy: str, split: int) -> None:
 
 
 def main() -> None:
-    from till_infinity.trading.config import Settings
+    from till_infinity.strategies.config import Settings
 
     settings = Settings.from_env()
     jn = sqlite3.connect(f"file:{JOURNAL}?mode=ro", uri=True, timeout=300.0)

@@ -166,8 +166,15 @@ class Bar:
             # Returned early: every comparison below is false against a NaN,
             # so a bar with one would otherwise be reported as sound.
             return ("not a number",)
-        if any(v <= 0.0 for v in values):
-            out.append("non-positive price")
+        # **Positivity is not a bar invariant.** It was checked here and that
+        # was wrong: oil settled negative in April 2020, calendar spreads are
+        # routinely negative, and Nautilus's `Price` is signed for exactly
+        # those. The checks below are *relational* - high above low, open and
+        # close inside the range - and they hold whatever the sign or scale.
+        #
+        # `statespace.observe_bar` does require `close > 0`, because it takes
+        # logs. That is a requirement of a log-based estimator and belongs
+        # with the estimator, not with the bar.
         if self.high < self.low:
             out.append("high below low")
         if self.open > self.high or self.open < self.low:

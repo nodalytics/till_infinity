@@ -5653,7 +5653,8 @@ def test_the_codec_already_coerces_a_level_it_restores():
     import msgpack
     from till_platform.codec import pack, registry, unpack
 
-    from till_infinity import structures, trading
+    from till_infinity import strategies as trading
+    from till_infinity import structures
     from till_infinity.strategies.book import Book, Seen
 
     stale = Seen.__new__(Seen)

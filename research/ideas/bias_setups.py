@@ -77,7 +77,7 @@ from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 from till_infinity.statespace.pivoting import pivots  # noqa: E402
 from till_infinity.structures.drawing.displacement import displacements  # noqa: E402
 from till_infinity.structures.vol.volatility import Volatility  # noqa: E402
-from till_infinity.trading.candles import Bar, engulfing  # noqa: E402
+from till_infinity.strategies.candles import Bar, engulfing  # noqa: E402
 
 FRAME = "1h"
 #: The higher timeframe, for bias. Multi-timeframe is the first thing a

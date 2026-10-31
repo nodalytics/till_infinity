@@ -31,7 +31,7 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "harness"))
 
 from mt5fill import TIMEFRAMES, rows_of, stamp, when_ms  # noqa: E402
 
-from till_infinity.trading.venues.mt5_http import _spec_from  # noqa: E402
+from till_infinity.strategies.venues.mt5_http import _spec_from  # noqa: E402
 
 DB = os.environ.get("MT5BT_DB", os.path.expanduser("~/till_infinity/data/mt5bt.db"))
 BASE = os.environ.get("TRADING_MT5_URL", "http://127.0.0.1:8000").rstrip("/") + "/api/v1"

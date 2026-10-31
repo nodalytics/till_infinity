@@ -121,7 +121,7 @@ def _cost_of(client: httpx.Client, symbol: str) -> float | None:
 
 
 def main() -> None:
-    from till_infinity.trading.config import INSTRUMENTS
+    from till_infinity.strategies.config import INSTRUMENTS
 
     found = touches()
     headers = {"Accept": "application/json"}

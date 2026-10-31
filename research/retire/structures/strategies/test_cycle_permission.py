@@ -8,8 +8,8 @@ which is why `cycle-turn` had never traded.
 
 @given(calls=st.floats(0.0, 5000.0), rate=st.floats(0.0, 1.0))
 def test_a_cycle_permission_needs_an_earned_record(calls, rate):
-    from till_infinity.trading.strategies.stretching import CycleTurnScalp
-    from till_infinity.trading.strategies.turning import CycleTurn
+    from till_infinity.strategies.strategies.stretching import CycleTurnScalp
+    from till_infinity.strategies.strategies.turning import CycleTurn
 
     s = Settings()
     right = calls * rate

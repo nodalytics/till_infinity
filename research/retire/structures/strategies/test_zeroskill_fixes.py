@@ -10,8 +10,8 @@ import pytest
 
 from till_infinity.bus import Bus
 from till_infinity.structures import cycles as cy
-from till_infinity.trading.strategies import policy as pol
-from till_infinity.trading.strategies.policy import DECAY, MARGIN_Z, PRIOR_SD, Policy, Score
+from till_infinity.strategies.strategies import policy as pol
+from till_infinity.strategies.strategies.policy import DECAY, MARGIN_Z, PRIOR_SD, Policy, Score
 
 # ------------------------------------------------------------------ the policy
 
@@ -88,7 +88,7 @@ def test_a_score_restored_without_its_spread_assumes_the_measured_one():
 
 def test_a_restored_ledger_learns_at_the_current_decay(tmp_path):
     from tests.test_trading import settings
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.service import Trader
 
     made = settings(state_dir=tmp_path)
     trader = Trader(Bus(), settings=made)
@@ -103,7 +103,7 @@ def test_a_restored_ledger_learns_at_the_current_decay(tmp_path):
 
 def test_a_counterfactual_default_credits_the_shape_ledger_only(tmp_path):
     from tests.test_trading import settings
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.service import Trader
 
     trader = Trader(Bus(), settings=settings(state_dir=tmp_path))
     fallback = trader.policy.fallback.named()
@@ -142,9 +142,9 @@ def test_skill_equal_to_the_walks_does_not_earn_the_cap(monkeypatch):
 
 
 def test_scoring_the_default_leaves_the_engine_as_the_policy_set_it(monkeypatch, tmp_path):
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
     from tests.test_trading import settings
-    from till_infinity.trading.strategies.opportunity import Opportunity
+    from till_infinity.strategies.strategies.opportunity import Opportunity
 
     engine = td.STRATEGIES["opportunity"](settings(state_dir=tmp_path))
     policy = Policy()
@@ -162,9 +162,9 @@ def test_scoring_the_default_leaves_the_engine_as_the_policy_set_it(monkeypatch,
 
 
 def test_no_counterfactual_where_the_policy_already_chose_the_default(tmp_path):
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
     from tests.test_trading import settings
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.service import Trader
 
     made = settings(state_dir=tmp_path)
     trader = Trader(Bus(), settings=made)

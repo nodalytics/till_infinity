@@ -14,8 +14,8 @@ def test_opportunity_is_registered_and_attributable():
     """A strategy without a slot in MAGIC_ORDER stamps a hashed magic with no
     inverse, so every position it opens closes as "unattributed" and it cannot
     be scored. Two strategies have already run live that way."""
-    import till_infinity.trading as td
-    from till_infinity.trading.config import MAGIC_ORDER, magic_for
+    import till_infinity.strategies as td
+    from till_infinity.strategies.config import MAGIC_ORDER, magic_for
 
     assert "opportunity" in td.STRATEGIES
     assert "opportunity" in MAGIC_ORDER
@@ -27,7 +27,7 @@ def test_opportunity_has_no_clock_of_its_own():
     """91 closes ended on the clock rather than a barrier, and replaying them
     without it turned -10.58R into -0.91R. `hold_seconds` 0 means the
     deployment ceiling and nothing tighter."""
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     engine = td.STRATEGIES["opportunity"](_scalp().settings)
     assert engine.hold_seconds == 0.0
@@ -49,8 +49,8 @@ def test_opportunity_triggers_across_the_fast_band_but_not_at_the_hour():
     What still holds: the trigger stays below the hour, because 1h is where
     this strategy's analysis frame starts.
     """
-    import till_infinity.trading as td
-    from till_infinity.trading.config import Settings
+    import till_infinity.strategies as td
+    from till_infinity.strategies.config import Settings
 
     made = Settings(intervals=("1m", "5m", "15m", "30m", "1h", "1d"))
     engine = td.STRATEGIES["opportunity"](made)
@@ -74,8 +74,8 @@ def test_the_presets_recover_the_named_strategies():
     `strategies/opportunity.py` and goes when that does - see
     `docs/specs/2026-10-28-services-layout-design.md`.
     """
-    import till_infinity.trading as td
-    from till_infinity.trading.config import Settings
+    import till_infinity.strategies as td
+    from till_infinity.strategies.config import Settings
 
     made = Settings()
     live = {n: s for n, s in td.PRESETS.items() if n in td.STRATEGIES}
@@ -97,7 +97,7 @@ def test_two_named_strategies_share_an_entry_and_differ_only_in_the_exit():
     +0.556R a trade over 30,875 paired replays with spread charged - so the
     pair now differs in exactly the dimensions that measurement moved, and in
     no others."""
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     plain, swept = td.PRESETS["level-scalp"], td.PRESETS["sweep-aware"]
     ride = td.PRESETS["ride"]
@@ -111,7 +111,7 @@ def test_two_named_strategies_share_an_entry_and_differ_only_in_the_exit():
 
 def test_the_shape_matches_the_class_it_configures():
     """`shape_of` and the ClassVars are two statements of one thing."""
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     cls = td.STRATEGIES["opportunity"]
     shape = cls.shape_of
@@ -127,7 +127,7 @@ def test_the_cap_is_sized_for_a_day_long_hold():
     """`opportunity` holds to the 24h ceiling and roughly sixteen intents an
     hour arrive per busy feed, so a cap of 60 would evict most of them - and
     evict the slow ones, which biases every mean it feeds."""
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.service import Trader
 
     assert Trader.MAX_UNTAKEN >= 384
 
@@ -135,7 +135,7 @@ def test_the_cap_is_sized_for_a_day_long_hold():
 def test_a_cold_policy_returns_the_measured_default_not_a_guess():
     """A policy that acts on four observations is how a five-stop sample became
     an instrument-wide sizing rule."""
-    from till_infinity.trading.strategies.policy import Policy
+    from till_infinity.strategies.strategies.policy import Policy
 
     policy = Policy()
     shape, why = policy.pick("gold", "5m")
@@ -144,7 +144,7 @@ def test_a_cold_policy_returns_the_measured_default_not_a_guess():
 
 
 def test_an_arm_cannot_win_until_it_has_been_seen_enough():
-    from till_infinity.trading.strategies.policy import Policy
+    from till_infinity.strategies.strategies.policy import Policy
 
     policy = Policy()
     fallback = policy.fallback.named()
@@ -161,7 +161,7 @@ def test_an_arm_cannot_win_until_it_has_been_seen_enough():
 def test_context_backs_off_rather_than_deciding_on_three_observations():
     """A thin cell falls back to the broader one. The family split is the one
     research/failing.md measures as actually separating."""
-    from till_infinity.trading.strategies.policy import Policy, context_of
+    from till_infinity.strategies.strategies.policy import Policy, context_of
 
     assert context_of("boom_500_index", "5m") == ("boom|5m", "boom", "")
     assert context_of("gold", "1h")[1] == "metals/oil"
@@ -183,7 +183,7 @@ def test_context_backs_off_rather_than_deciding_on_three_observations():
 def test_a_malformed_reward_cannot_own_the_policy():
     """Five intents of 1,757 carried an implied RR up to 30,338, and one of
     them touching produced +23R a trade across the whole book."""
-    from till_infinity.trading.strategies.policy import CLIP, Policy
+    from till_infinity.strategies.strategies.policy import CLIP, Policy
 
     policy = Policy()
     arm = next(iter(policy.arms))
@@ -203,8 +203,8 @@ def test_each_distinct_point_is_its_own_arm():
     a price: it is now a distinct arm and starts cold, so the learner knows
     nothing about it until it has its own thirty observations. That is a real
     cost of the change and it is asserted here rather than discovered later."""
-    import till_infinity.trading as td
-    from till_infinity.trading.strategies.policy import Policy
+    import till_infinity.strategies as td
+    from till_infinity.strategies.strategies.policy import Policy
 
     policy = Policy()
     plain, swept = td.PRESETS["level-scalp"].named(), td.PRESETS["sweep-aware"].named()
@@ -217,8 +217,8 @@ def test_each_distinct_point_is_its_own_arm():
 def test_opportunity_wears_the_shape_it_was_given():
     """And only the dimensions the engine reads - varying one nothing honours
     is a policy that appears to work and does not."""
-    import till_infinity.trading as td
-    from till_infinity.trading.strategies.opportunity import Shape
+    import till_infinity.strategies as td
+    from till_infinity.strategies.strategies.opportunity import Shape
 
     engine = td.STRATEGIES["opportunity"](_scalp().settings)
     engine._wear(Shape(stop=2.0, target=1.25, trail=0.5, protect=0.25, hold=99.0, pullback=0.0))
@@ -232,8 +232,8 @@ def test_opportunity_wears_the_shape_it_was_given():
 
 def test_the_service_hands_its_policy_to_whatever_reads_one():
     from till_infinity.bus import Bus
-    from till_infinity.trading.config import Settings
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.config import Settings
+    from till_infinity.strategies.service import Trader
 
     made = Settings(symbols=("gold",), strategies=("thesis-only", "opportunity"))
     trader = Trader(Bus(), settings=made)
@@ -254,8 +254,8 @@ def test_it_now_carries_a_measured_default_that_brakes_without_blocking():
     a different policy, and a biased one, since it lands on exactly the marginal
     trades and skews the sample the brake exists to protect.
     """
-    from till_infinity.trading.config import Settings
-    from till_infinity.trading.scaling import by_interval
+    from till_infinity.strategies.config import Settings
+    from till_infinity.strategies.scaling import by_interval
 
     weights = Settings().interval_weight
     assert weights, "the default was emptied without a note"
@@ -277,8 +277,8 @@ def test_the_chosen_arm_is_written_onto_the_decision():
     import inspect
 
     from till_infinity.bus import Bus
-    from till_infinity.trading.config import Settings
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.config import Settings
+    from till_infinity.strategies.service import Trader
 
     source = inspect.getsource(Trader)
     assert '"arm": self._arm_of(by)' in source
@@ -298,8 +298,8 @@ def test_ride_is_opportunity_with_the_target_out_of_reach():
     exit differs. Measured on 31,820 replayed touches before it was written -
     trail 0.5v with no target scored +0.404R against -0.041R for the best fixed
     target, and every fixed target lost."""
-    import till_infinity.trading as td
-    from till_infinity.trading.config import Settings
+    import till_infinity.strategies as td
+    from till_infinity.strategies.config import Settings
 
     made = Settings()
     ride = td.STRATEGIES["ride"](made)
@@ -319,7 +319,7 @@ def test_ride_is_opportunity_with_the_target_out_of_reach():
 def test_the_target_is_moved_rather_than_removed():
     """`lots` and the reward-to-risk gate both need a target to exist: a trade
     with no stated objective cannot be sized or refused."""
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     assert td.STRATEGIES["ride"].target_multiple > 0
 
@@ -327,8 +327,8 @@ def test_the_target_is_moved_rather_than_removed():
 def test_ride_is_attributable_and_is_an_arm():
     """A strategy without a MAGIC_ORDER slot closes every position as
     "unattributed" and cannot be scored - two have run live that way."""
-    import till_infinity.trading as td
-    from till_infinity.trading.config import MAGIC_ORDER, magic_for
+    import till_infinity.strategies as td
+    from till_infinity.strategies.config import MAGIC_ORDER, magic_for
 
     assert "ride" in MAGIC_ORDER
     magics = {n: magic_for(777700, n) for n in td.STRATEGIES}
@@ -341,7 +341,7 @@ def test_ride_is_attributable_and_is_an_arm():
 def test_both_exits_are_scored_on_the_same_signals():
     """`_also_wanted` scores every strategy that did not take a signal, so
     listing them together is what makes the comparison settle itself."""
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     assert {"opportunity", "ride"} <= set(td.STRATEGIES)
 
@@ -406,7 +406,7 @@ def test_a_stop_floor_no_longer_leaves_the_target_behind():
     reward to risk - a geometry needing a 73% win rate, taken by a strategy
     winning 46%.
     """
-    from till_infinity.trading.strategies.opportunity import PRESETS
+    from till_infinity.strategies.strategies.opportunity import PRESETS
 
     shape = PRESETS["thesis-only"]
 
@@ -416,7 +416,7 @@ def test_a_stop_floor_no_longer_leaves_the_target_behind():
 
 def test_shapes_without_a_reward_floor_are_unchanged():
     """Every other preset must place exactly what it placed before."""
-    from till_infinity.trading.strategies.opportunity import PRESETS
+    from till_infinity.strategies.strategies.opportunity import PRESETS
 
     for name, shape in PRESETS.items():
         if name == "thesis-only":
@@ -427,7 +427,7 @@ def test_shapes_without_a_reward_floor_are_unchanged():
 def test_the_shape_name_only_changes_for_shapes_that_use_the_floor():
     """These names land in the journal; one that changes for everyone breaks
     every comparison against what came before."""
-    from till_infinity.trading.strategies.opportunity import PRESETS
+    from till_infinity.strategies.strategies.opportunity import PRESETS
 
     plain = PRESETS["level-scalp"].named()
     floored = PRESETS["thesis-only"].named()
@@ -443,7 +443,7 @@ def test_sweep_aware_carries_rides_exit_and_its_own_entry():
     held constant, and changing them would make it a different trade rather
     than the same trade with a better exit.
     """
-    from till_infinity.trading.strategies.opportunity import PRESETS
+    from till_infinity.strategies.strategies.opportunity import PRESETS
 
     sweep, ride = PRESETS["sweep-aware"], PRESETS["ride"]
 

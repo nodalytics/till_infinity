@@ -63,7 +63,7 @@ sys.path.insert(0, str(ROOT))
 
 from research.harness.sweepregimes import ENTRIES, bars_for, candidates, spreads  # noqa: E402
 from till_infinity.shared.replay import walk  # noqa: E402
-from till_infinity.trading.strategies.policy import family_of  # noqa: E402
+from till_infinity.strategies.strategies.policy import family_of  # noqa: E402
 
 JOURNAL = os.path.expanduser(os.environ.get("JOURNAL", "~/till_infinity/data/journal.db"))
 BARS = os.path.expanduser(os.environ.get("BARS", "~/till_infinity/data/research.db"))
@@ -386,7 +386,7 @@ def report(df: pd.DataFrame, live: pd.DataFrame) -> None:
 
 
 def run() -> None:
-    from till_infinity.trading.config import Settings
+    from till_infinity.strategies.config import Settings
 
     settings = Settings.from_env()
     jn = sqlite3.connect(f"file:{JOURNAL}?mode=ro", uri=True, timeout=300.0)

@@ -54,16 +54,16 @@ MAX_BARS = int(os.environ.get("MAX_BARS", "0"))  # smoke tests only
 
 def patch_clock():
     F.patch_clock()
-    import till_infinity.trading.strategies.scalper as sc
-    import till_infinity.trading.strategies.strategy as stg
+    import till_infinity.strategies.strategies.scalper as sc
+    import till_infinity.strategies.strategies.strategy as stg
     for mod in (sc, stg):
         if hasattr(mod, "time"):
             mod.time = F.Clock()
 
 
 def strategies():
-    from till_infinity import trading as td
-    from till_infinity.trading.strategies import strategy as stg
+    from till_infinity import strategies as td
+    from till_infinity.strategies.strategies import strategy as stg
     stg.build(("fade-to-value",), td.Settings(symbols=("x",)))  # registers everything
     made = td.Settings(symbols=("x",), account_equity=1e9, paper_equity=1e9)
     made.max_spread_risk_fraction = 0.0
@@ -102,7 +102,7 @@ def replay(feed, df15, spread_px):
     from till_infinity.structures import zma as zm
     from till_infinity.structures.drawing import confluence as cf
     from till_infinity.structures.engine import Engine
-    from till_infinity.trading.models import Intent, Side, Tick
+    from till_infinity.strategies.models import Intent, Side, Tick
     patch_clock()
     frames = {"15m": df15}
     for iv in F.IVS[1:]:

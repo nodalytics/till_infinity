@@ -114,8 +114,8 @@ def drawdown(x):
 
 def score():
     sys.path.insert(0, str(Path(__file__).resolve().parents[2]))
-    from till_infinity.trading.config import Settings
-    from till_infinity.trading.context import Context
+    from till_infinity.strategies.config import Settings
+    from till_infinity.strategies.context import Context
 
     t = pd.DataFrame(json.loads(TRADES.read_text()))
     t = t.sort_values("entry_time").reset_index(drop=True)
@@ -147,8 +147,8 @@ def score():
 
     t["release"] = [coming(f, h, e) for f, h, e in zip(t.feed, t.hold, t.entry_time)]
     t["loud"] = t.tr_percentile >= 0.8
-    t["currencies"] = [bool(__import__("till_infinity.trading.exposure", fromlist=["legs"]).legs(f)[0]
-                            or __import__("till_infinity.trading.exposure", fromlist=["legs"]).legs(f)[1]) for f in t.feed]
+    t["currencies"] = [bool(__import__("till_infinity.strategies.exposure", fromlist=["legs"]).legs(f)[0]
+                            or __import__("till_infinity.strategies.exposure", fromlist=["legs"]).legs(f)[1]) for f in t.feed]
 
     n = len(t)
     print(f"{n} closed live trades, {pd.to_datetime(t.entry_time.min(), unit='s').date()} to "

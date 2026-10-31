@@ -365,7 +365,7 @@ def show(title, got, order=None):
 
 
 def run():  # noqa: PLR0915 - one linear report, splitting it would hide the order
-    from till_infinity.trading.config import Settings
+    from till_infinity.strategies.config import Settings
 
     settings = Settings.from_env()
     print(f"journal: {JOURNAL}\nbars:    {BARS}")

@@ -44,8 +44,13 @@ class TestEachWayABarCanContradictItself:
             (bar(1.15, 1.10, 1.00, 1.05), ("open outside the range",)),
             (bar(0.95, 1.10, 1.00, 1.05), ("open outside the range",)),
             (bar(1.05, 1.10, 1.00, 1.08, -1.0), ("negative volume",)),
-            (bar(0.0, 1.10, 1.00, 1.08), ("non-positive price", "open outside the range")),
-            (bar(-1.0, 1.10, 1.00, 1.08), ("non-positive price", "open outside the range")),
+            # Zero and negative prices are *not* defects. The relational
+            # checks still apply: these two have an open outside their range.
+            (bar(0.0, 1.10, 1.00, 1.08), ("open outside the range",)),
+            (bar(-1.0, 1.10, 1.00, 1.08), ("open outside the range",)),
+            # And a wholly negative bar that holds together is sound - oil in
+            # April 2020, and any calendar spread.
+            (bar(-2.0, -1.5, -2.5, -1.8), ()),
         ],
     )
     def test_the_defects_are_named(self, candidate, expected):

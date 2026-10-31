@@ -16,7 +16,7 @@ is the trading-side gate that read it.
 def test_sizing_reads_it():
     import inspect
 
-    from till_infinity.trading.strategies import scalper
+    from till_infinity.strategies.strategies import scalper
 
     assert "self.risk_scale(" in inspect.getsource(scalper.LevelStrategy.consider)
 
@@ -24,7 +24,7 @@ def test_sizing_reads_it():
 def test_the_gate_reads_both():
     import inspect
 
-    from till_infinity.trading.strategies import scalper
+    from till_infinity.strategies.strategies import scalper
 
     source = inspect.getsource(scalper.LevelStrategy.consider)
     assert "self.needs_context and bool(self.context)" in source
@@ -35,9 +35,9 @@ def test_the_strategy_passes_the_interval_through():
     to work and does not - which is the defect this repository keeps finding."""
     import inspect
 
-    import till_infinity.trading as td
-    from till_infinity.trading.config import Settings
-    from till_infinity.trading.strategies import scalper
+    import till_infinity.strategies as td
+    from till_infinity.strategies.config import Settings
+    from till_infinity.strategies.strategies import scalper
 
     assert "interval" in inspect.signature(td.Strategy.risk_scale).parameters
     assert "positions, equity, peak, interval" in inspect.getsource(scalper.LevelStrategy.consider)
@@ -54,9 +54,9 @@ def test_the_strategy_passes_the_interval_through():
 
 def _gate(risk=None, ceiling=0.42):
     """Run the shared quality gate with a break estimate on the call."""
-    import till_infinity.trading as td
-    from till_infinity.trading.config import Settings
-    from till_infinity.trading.models import Side
+    import till_infinity.strategies as td
+    from till_infinity.strategies.config import Settings
+    from till_infinity.strategies.models import Side
 
     engine = td.STRATEGIES["level-scalp"](
         Settings(max_break_risk=ceiling, min_probability=0.0, min_edge=0.0, min_base_rate=0.0)
@@ -70,7 +70,7 @@ def _gate(risk=None, ceiling=0.42):
 def test_the_gate_is_off_by_default():
     """A gate that refuses trades is turned on deliberately - and the numbers
     behind this one were wrong once already."""
-    from till_infinity.trading.config import Settings
+    from till_infinity.strategies.config import Settings
 
     assert Settings().max_break_risk == 0.0
     assert _gate(risk=0.99, ceiling=0.0) is None
@@ -82,7 +82,7 @@ def test_every_strategy_runs_it_rather_than_one():
     configuration and the exempt strategy was taking most of the trades."""
     import inspect
 
-    from till_infinity.trading.strategies import scalper
+    from till_infinity.strategies.strategies import scalper
 
     assert "max_break_risk" in inspect.getsource(scalper.LevelStrategy.quality)
 
@@ -109,7 +109,7 @@ def test_the_learning_rate_favours_a_stable_gate():
 # From tests/test_invariants.py: the zma gate on cycle-scalp
 
 def test_the_z_score_veto_can_only_remove_a_trade_and_only_when_earned(calls, rate, z, side):
-    from till_infinity.trading.strategies.scalper import CycleScalp, zma_gate
+    from till_infinity.strategies.strategies.scalper import CycleScalp, zma_gate
 
     s = Settings()
     right = calls * rate

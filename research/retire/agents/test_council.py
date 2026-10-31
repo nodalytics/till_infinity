@@ -2,7 +2,7 @@
 
 Moved out of `tests/test_trading.py` with the strategy. `research/retire/README.md`:
 the claim "it worked when it was removed" stays checkable, but out of the suite
-that gates CI. These import `till_infinity.trading.strategies.council`, which now
+that gates CI. These import `till_infinity.strategies.strategies.council`, which now
 lives beside this file, so they do not run as they stand.
 """
 
@@ -10,7 +10,7 @@ lives beside this file, so they do not run as they stand.
 
 
 def opinion(side="buy", conviction=0.7, stop=1.0, target=1.6, because="because"):
-    from till_infinity.trading.strategies.council import Opinion
+    from till_infinity.strategies.strategies.council import Opinion
 
     return Opinion(
         side=side, conviction=conviction, stop_vol=stop, target_vol=target, because=because
@@ -18,7 +18,7 @@ def opinion(side="buy", conviction=0.7, stop=1.0, target=1.6, because="because")
 
 
 def council(**over):
-    from till_infinity.trading.strategies.council import Council
+    from till_infinity.strategies.strategies.council import Council
 
     return Council(**over)
 
@@ -73,7 +73,7 @@ def test_weak_conviction_is_not_worth_the_spread():
 
 def test_an_absurd_stop_is_clamped_rather_than_obeyed():
     """A model asking for a forty-unit stop is failing, not being bold."""
-    from till_infinity.trading.strategies.council import MAX_STOP_VOL, MAX_TARGET_VOL, MIN_STOP_VOL
+    from till_infinity.strategies.strategies.council import MAX_STOP_VOL, MAX_TARGET_VOL, MIN_STOP_VOL
 
     side, stop, target, _ = council(quorum=2).resolve(
         {
@@ -93,7 +93,7 @@ def test_an_absurd_stop_is_clamped_rather_than_obeyed():
 
 def test_the_evidence_pack_is_the_same_for_every_voice_and_carries_no_free_text():
     """Deterministic, and nothing for a headline to smuggle an instruction through."""
-    from till_infinity.trading.strategies.council import evidence
+    from till_infinity.strategies.strategies.council import evidence
 
     pack = evidence(signal(), Tick("XAUUSD", bid=4399.5, ask=4400.5), GOLD, "gold")
     assert "gold (XAUUSD)" in pack
@@ -111,7 +111,7 @@ async def test_a_voice_that_fails_reads_as_an_abstention():
     try/except it was meant to prove - and passed for the wrong reason until
     the exception escaped `deliberate`.
     """
-    from till_infinity.trading.strategies.council import Council, Voice
+    from till_infinity.strategies.strategies.council import Council, Voice
 
     panel = Council(voices=(Voice("a", "x"), Voice("b", "y")), quorum=1, discuss=False)
 
@@ -128,7 +128,7 @@ async def test_a_voice_that_fails_reads_as_an_abstention():
 async def test_a_voice_that_times_out_reads_as_an_abstention():
     import asyncio as aio
 
-    from till_infinity.trading.strategies.council import Council, Voice
+    from till_infinity.strategies.strategies.council import Council, Voice
 
     panel = Council(voices=(Voice("a", "x"),), quorum=1, discuss=False, timeout=0.05)
 
@@ -142,7 +142,7 @@ async def test_a_voice_that_times_out_reads_as_an_abstention():
 
 
 async def test_the_desk_discusses_once_and_may_change_its_mind():
-    from till_infinity.trading.strategies.council import Council, Voice
+    from till_infinity.strategies.strategies.council import Council, Voice
 
     panel = Council(voices=(Voice("a", "x"), Voice("b", "y")), quorum=1, discuss=True)
     seen = []
@@ -165,7 +165,7 @@ async def test_the_desk_discusses_once_and_may_change_its_mind():
 
 async def test_a_voice_failing_the_second_round_keeps_its_first_answer():
     """A timeout is not a retraction."""
-    from till_infinity.trading.strategies.council import Council, Voice
+    from till_infinity.strategies.strategies.council import Council, Voice
 
     panel = Council(voices=(Voice("a", "x"),), quorum=1, discuss=True)
     calls = []
@@ -181,7 +181,7 @@ async def test_a_voice_failing_the_second_round_keeps_its_first_answer():
 
 
 async def test_the_council_produces_a_sized_intent():
-    from till_infinity.trading.strategies.council import CouncilStrategy
+    from till_infinity.strategies.strategies.council import CouncilStrategy
 
     engine = CouncilStrategy(settings(strategies=("council",)))
 
@@ -199,7 +199,7 @@ async def test_the_council_produces_a_sized_intent():
 
 
 async def test_the_council_respects_its_daily_call_ceiling():
-    from till_infinity.trading.strategies.council import CouncilStrategy
+    from till_infinity.strategies.strategies.council import CouncilStrategy
 
     engine = CouncilStrategy(settings(council_daily_calls=4))
     engine.calls = 4
@@ -217,6 +217,6 @@ async def test_the_council_respects_its_daily_call_ceiling():
 
 async def test_a_failing_analyst_produces_no_valuation():
     """Timeout, no credential, a malformed reply: all read as no answer."""
-    from till_infinity.trading import valuation
+    from till_infinity.strategies import valuation
 
     assert await valuation.ask("gold", "brief", timeout=0.01) is None

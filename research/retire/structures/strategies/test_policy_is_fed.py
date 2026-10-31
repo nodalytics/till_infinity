@@ -9,9 +9,9 @@ live desk the ledgers learned from parked signals alone.
 from __future__ import annotations
 
 from till_infinity.bus import Bus
-from till_infinity.trading import Settings
-from till_infinity.trading.service import Trader
-from till_infinity.trading.strategies.policy import family_of
+from till_infinity.strategies import Settings
+from till_infinity.strategies.service import Trader
+from till_infinity.strategies.strategies.policy import family_of
 
 
 def desk(**over) -> Trader:
@@ -31,8 +31,8 @@ class TestARealCloseTeachesThePolicy:
     def test_settling_a_trade_credits_both_ledgers(self):
         import asyncio
 
-        from till_infinity.trading import service as svc
-        from till_infinity.trading.models import Intent, Position, Side
+        from till_infinity.strategies import service as svc
+        from till_infinity.strategies.models import Intent, Position, Side
 
         trader = desk()
         intent = Intent(
@@ -66,8 +66,8 @@ class TestARealCloseTeachesThePolicy:
         guessing one would put another strategy's record against it."""
         import asyncio
 
-        from till_infinity.trading import service as svc
-        from till_infinity.trading.models import Intent, Position, Side
+        from till_infinity.strategies import service as svc
+        from till_infinity.strategies.models import Intent, Position, Side
 
         trader = desk()
         intent = Intent(
@@ -95,7 +95,7 @@ class TestParallelModeStillCollectsTheCounterfactual:
         """The three branches of `_take_all` that drop a formed intent - a slot,
         a guard, a size - each have to keep it. Otherwise enabling parallel to
         compare strategies is what stops the comparison."""
-        from till_infinity.trading.models import Intent, Side
+        from till_infinity.strategies.models import Intent, Side
 
         trader = desk()
 
@@ -133,7 +133,7 @@ class TestParallelModeStillCollectsTheCounterfactual:
         it would silently shrink the training set again."""
         import inspect
 
-        from till_infinity.trading import service as svc
+        from till_infinity.strategies import service as svc
 
         body = inspect.getsource(svc.Trader._take_all)
         # Each `continue` that follows a formed Intent must be preceded by a

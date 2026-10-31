@@ -19,8 +19,8 @@ import math
 
 import pytest
 
-from till_infinity.trading import Settings
-from till_infinity.trading.strategies.strategy import STRATEGIES
+from till_infinity.strategies import Settings
+from till_infinity.strategies.strategies.strategy import STRATEGIES
 
 #: A call the 1h and 4h already agree with, so the alignment gate is satisfied
 #: and each test below exercises the one condition it is about.
@@ -85,7 +85,7 @@ class TestItRunsBesideThePlainTrade:
         """Without one it still trades, stamping a hash with no inverse, and
         every position closes as unattributed - which for a strategy gated on
         its own scored record would be circular as well as broken."""
-        from till_infinity.trading.config import DEFAULT_MAGIC, magic_for, strategy_for
+        from till_infinity.strategies.config import DEFAULT_MAGIC, magic_for, strategy_for
 
         magic = magic_for(DEFAULT_MAGIC, "cycle-turn")
         assert strategy_for(DEFAULT_MAGIC, magic) == "cycle-turn"
@@ -415,16 +415,16 @@ class TestHold:
         `ceiling` exists for - a hold governed by a class body and reachable by
         no deployment is the defect that split these ceilings in the first
         place."""
-        from till_infinity.trading import Settings
-        from till_infinity.trading.strategies.strategy import STRATEGIES
+        from till_infinity.strategies import Settings
+        from till_infinity.strategies.strategies.strategy import STRATEGIES
 
         tight = Settings()
         tight.max_hold_position = 3_600.0
         assert STRATEGIES["cycle-turn"](settings=tight).hold_for("1h") <= 3_600.0
 
     def test_it_holds_longer_than_the_scalp_it_sits_beside(self, strategy):
-        from till_infinity.trading import Settings
-        from till_infinity.trading.strategies.strategy import STRATEGIES
+        from till_infinity.strategies import Settings
+        from till_infinity.strategies.strategies.strategy import STRATEGIES
 
         scalp = STRATEGIES["cycle-scalp"](settings=Settings())
         assert strategy.hold_for("15m") > scalp.hold_for("15m")

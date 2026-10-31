@@ -47,9 +47,9 @@ from dataclasses import dataclass
 import numpy as np
 import pandas as pd
 
-from till_infinity.trading import swap as swap_rules
-from till_infinity.trading.models import Side
-from till_infinity.trading.sizing import lots
+from till_infinity.strategies import swap as swap_rules
+from till_infinity.strategies.models import Side
+from till_infinity.strategies.sizing import lots
 
 from .data import Book
 
