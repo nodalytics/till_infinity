@@ -36,12 +36,6 @@ dependencies = [
     "river[pandas]>=0.25.0",
     "tenacity>=9.1.4",
     "yfinance>=1.5.2",
-    # The logger, environment parsing, `Restorable`, the persistence codec and
-    # the bus-contract reader. A workspace member rather than a `shared/`
-    # directory inside this package, because a service cannot carry its own
-    # dependency manifest while importing the desk - see
-    # `packages/till-platform/README.md`.
-    "till-platform",
 ]
 
 [project.optional-dependencies]
@@ -110,12 +104,12 @@ build-backend = "uv_build"
 # is a line in a config file against a boundary that is otherwise invisible.
 # `test_the_go_service_is_excluded_rather_than_broken` is what makes a missing
 # line fail here rather than at the next `uv sync`.
-[tool.uv.workspace]
-members = ["packages/*", "services/*"]
-exclude = ["services/ticks", "services/redis"]
-
-[tool.uv.sources]
-till-platform = { workspace = true }
+# **No workspace.** `packages/` is retired to `research/retire/`: `till-platform`
+# held the logger, environment parsing, `Restorable` and the persistence codec,
+# and Nautilus supplies the logger, the cache and the serialisation. What was
+# still used moved to `till_infinity/utils/`, which is small enough not to need
+# a distribution of its own - and `contracts` and `frozen` stayed behind with
+# the bus schemas and the retired models they read.
 
 [tool.uv.build-backend]
 module-root = ""
@@ -175,6 +169,10 @@ max-returns = 8
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG"]  # fakes accept arguments they have no reason to use
+# The gate chain in `Guard.allows` is one return per refusal, which is the
+# design: each gate names itself and stops. Collapsing eighteen reasons into
+# fewer exits would trade a readable refusal for a lint score.
+"till_infinity/strategies/guard.py" = ["PLR0911"]
 # A Nautilus adapter implements signatures the framework defines, and some of
 # their arguments do not apply to this venue: `filters` on
 # `InstrumentProvider` (the bridge lists what the terminal lists, and there is
@@ -182,7 +180,6 @@ max-returns = 8
 # always report everything carrying the desk's magic. Dropping either would
 # change the signature and break the override.
 "till_infinity/adapters/*/*.py" = ["ARG002"]
-"tests/channels/*" = ["PT011", "RUF012", "PERF401"]
 # trading/ is a set of ports with several implementations behind each, so the
 # exemptions here are about interfaces rather than about code that got away.
 # See docs/deployment.md.
@@ -192,7 +189,6 @@ max-returns = 8
 # `codec.unpack` is one return per wire type. Collapsing eight tagged
 # shapes into a table would put the mapping somewhere other than beside
 # the code that reads it, for no gain but a lint score.
-"till_infinity/structures/codec.py" = ["PLR0911"]
 # `Parse.kind` is a dispatch table written as code: one return per event kind,
 # beside the cached parse step it reads.
 # `Guard.allows` is the same shape: one return per gate, each naming itself.
@@ -201,7 +197,6 @@ max-returns = 8
 # origin, break, trap window, resolution - and the branch count is one per
 # transition. Splitting it would put half a state machine in another method and
 # make the order the transitions happen in harder to read, not easier.
-"till_infinity/structures/reactions.py" = ["PLR0912"]
 # `import MetaTrader5 as mt5` is the name every MT5 example and the terminal's
 # own documentation uses; renaming it would make this file harder to check
 # against them.

@@ -69,7 +69,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
-from ..models import Intent, Refusal, Side, SymbolSpec, Tick, Verdict
+from ...domain.models import Intent, Refusal, Side, SymbolSpec, Tick, Verdict
 from ..sizing import lots, respects_stops_level
 from .strategy import Strategy, register
 

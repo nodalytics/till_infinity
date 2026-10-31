@@ -19,12 +19,11 @@ from __future__ import annotations
 
 import datetime as dt
 
-from till_platform import effects
-
+from till_infinity.domain.models import Intent, Side
 from till_infinity.strategies import Settings
 from till_infinity.strategies.context import Context
-from till_infinity.strategies.models import Intent, Side
-from till_infinity.strategies.risk import Guard
+from till_infinity.strategies.guard import Guard
+from till_infinity.utils import effects
 
 HOUR = 3600.0
 

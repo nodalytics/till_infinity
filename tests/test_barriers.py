@@ -207,7 +207,7 @@ def test_a_generated_feed_keeps_the_brownian_answer():
 def test_the_intent_picks_the_duration_that_matches_its_feed():
     """The whole point of having two: a clock set from the Brownian form on a
     real feed is set short, everywhere it matters."""
-    from till_infinity.strategies.models import Intent, Side
+    from till_infinity.domain.models import Intent, Side
 
     def geometry(feed):
         return Intent(

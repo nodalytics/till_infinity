@@ -27,10 +27,10 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
-from till_platform.env import env as _env
-from till_platform.env import flag as _flag
-from till_platform.env import number as _float
-from till_platform.env import whole as _int
+from till_infinity.utils.env import env as _env
+from till_infinity.utils.env import flag as _flag
+from till_infinity.utils.env import number as _float
+from till_infinity.utils.env import whole as _int
 
 from ..utils import slugify
 
@@ -104,7 +104,7 @@ def register_broker_instruments(names: Sequence[str]) -> tuple[str, ...]:
 
     See `trading-config.md` in research/docs.
     """
-    from .exposure import register_broker_legs
+    from ..risk.exposure import register_broker_legs
 
     added: list[str] = []
     for raw in names:

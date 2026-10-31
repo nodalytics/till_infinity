@@ -37,10 +37,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
+from ...domain.models import SymbolSpec
 from ..config import INSTRUMENTS, SUFFIXES, Settings
-from ..models import SymbolSpec
 from .broker import Broker
 
 log = get_logger(__name__)

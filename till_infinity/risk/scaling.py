@@ -37,7 +37,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 
-from till_platform import effects
+from till_infinity.utils import effects
 
 from . import exposure as ex
 

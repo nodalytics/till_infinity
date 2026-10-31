@@ -15,7 +15,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, timedelta
 from typing import Any
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
 from .config import (
     CALENDAR_COUNTRIES,

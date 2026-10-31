@@ -14,7 +14,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
 from .config import (
     HEADLINE_CATEGORIES,

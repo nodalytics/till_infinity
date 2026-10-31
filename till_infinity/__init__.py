@@ -1,23 +1,22 @@
-"""till-infinity."""
-
-from pathlib import Path
-
-from till_platform import frozen
+"""till-infinity: a Nautilus trading node, and the pipeline that feeds it."""
 
 __version__ = "0.1.0"
 
-# **Where the shipped models are.** `till_platform.frozen` reads them and does
-# not know where they live: it guessed a sibling directory until it became a
-# package, at which point the guess pointed into the package and every shipped
-# model silently stopped being found. The desk ships them, so the desk says so,
-# and it happens here because importing anything under `till_infinity` imports
-# this first.
-# **The trained artefacts live with the scripts that produced them**, in
-# `research/retire/models/`, since every loader is in the retired
-# `structures/` package and `STRUCTURES_ENABLED=0` in production. `ship()`
-# tolerates an absent directory, which is what the image has - and that is
-# correct rather than unfortunate: an image that carries models nothing loads
-# is 1.7MB of confusion.
-frozen.ship(Path(__file__).resolve().parents[1] / "research" / "retire" / "models" / "artefacts")
+# **Nothing is shipped from here any more.** This module used to call
+# `frozen.ship()` to tell the model reader where the trained artefacts were -
+# it had guessed a sibling directory, and the guess pointed into the package
+# the moment that became installable, so every shipped model silently stopped
+# being found.
+#
+# Both the reader and the artefacts are retired: `frozen` went with
+# `till-platform` to `research/retire/`, and the `envelope`, `expansion` and
+# `shocks` JSON files went to `research/retire/models/artefacts/` beside the
+# scripts that trained them. Every loader was in `structures/`, which is
+# retired too.
+#
+# The lesson is worth more than the code: a `__file__`-relative path is a
+# hidden dependency on a module's *position*, and an absent directory reads as
+# "nothing found" rather than as an error. Whoever ships files says where they
+# are.
 
 __all__ = ["__version__"]

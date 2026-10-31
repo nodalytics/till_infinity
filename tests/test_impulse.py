@@ -234,7 +234,8 @@ class _Bars:
 
 
 def _trader(candles):
-    from till_infinity.bus import Bus
+    from fake_carrier import FakeCarrier as Bus
+
     from till_infinity.strategies.config import Settings
     from till_infinity.strategies.service import Trader
 
@@ -245,7 +246,7 @@ def _trader(candles):
 
 
 def _intent():
-    from till_infinity.strategies.models import Intent, Side
+    from till_infinity.domain.models import Intent, Side
 
     return Intent(
         feed="gold",

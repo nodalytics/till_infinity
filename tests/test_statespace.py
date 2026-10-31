@@ -437,7 +437,13 @@ def test_structures_does_not_import_the_state_space_package():
     root = pathlib.Path(__file__).resolve().parent.parent / "till_infinity"
     #: The only files that may reach into the package, and only from inside a
     #: function. See the note at the import check below.
-    start_sites = {"stack.py", "cli.py"}
+    #: **Both earlier start sites are retired.** `stack.py` and `cli.py` went
+    #: to `research/retire/bus/` on 2026-10-31; what starts the fold now is
+    #: `actor.py`, inside the package, and the node that registers it. The
+    #: rule is unchanged and is the only thing that matters: the import stays
+    #: *inside* a runner, so a deleted directory fails one task rather than
+    #: the whole node.
+    start_sites = {"actor.py", "live.py"}
     offenders: list[str] = []
     nested: list[str] = []
     for path in root.rglob("*.py"):
@@ -1106,9 +1112,9 @@ def test_the_package_is_not_in_the_state_files_persistence_schema():
     route and the tempting fix - making these classes `Restorable` - would have
     declared them persistable, which is false.
     """
-    from till_platform import codec
-
     import till_infinity.structures as pkg
+
+    from till_infinity.utils import codec
 
     schema = codec.registry(pkg)
     assert schema, "the registry should still find the real persisted classes"
@@ -1983,8 +1989,9 @@ class TestTheRestAgainstAReference:
         """Documented and therefore worth asserting: a quantity the desk has
         stopped seeing evidence for and a feed it has stopped seeing bars from
         are the same kind of absence, so they must not decay on two clocks."""
-        from till_infinity.statespace.linear import EXISTENCE_HALF_LIFE_HOURS
         from till_infinity.structures.engine import FORGET_FEED_SECONDS
+
+        from till_infinity.statespace.linear import EXISTENCE_HALF_LIFE_HOURS
 
         assert pytest.approx(FORGET_FEED_SECONDS / 3600.0) == EXISTENCE_HALF_LIFE_HOURS
 
@@ -6452,9 +6459,10 @@ class TestVendoredCusum:
         """
         import random
 
-        from till_infinity.statespace.accruing import THRESHOLD, OneSided
         from till_infinity.structures.learning.focus import THRESHOLD as ORIGINAL
         from till_infinity.structures.learning.focus import Focus
+
+        from till_infinity.statespace.accruing import THRESHOLD, OneSided
 
         assert THRESHOLD == ORIGINAL
 
@@ -9974,10 +9982,12 @@ class TestService:
         import json
         import tempfile
 
-        from till_infinity.bus import BARS, DISPERSION, TOPICS, Message
+        from till_infinity.carrier import Message
         from till_infinity.statespace.config import Settings
         from till_infinity.statespace.engine import Engine
         from till_infinity.statespace.service import Watcher
+        from till_infinity.topics import BARS, DISPERSION
+        from till_infinity.topics import DECLARED as TOPICS
 
         assert DISPERSION in TOPICS
 
@@ -10024,8 +10034,8 @@ class TestService:
         that is not checked is a service subscribed to a topic nobody
         publishes. This is the check.
         """
-        from till_infinity.bus import BARS, DISPERSION
         from till_infinity.statespace.service import CONSUMES, TOPIC
+        from till_infinity.topics import BARS, DISPERSION
 
         assert CONSUMES == BARS
         assert TOPIC == DISPERSION
@@ -10406,8 +10416,9 @@ class TestTheTransitionTopic:
         """The package cannot import `..bus` - `TestVendoredCusum` asserts it
         imports nothing outside itself but `shared` - so the name is duplicated
         and the duplicate is checked here, outside the package."""
-        from till_infinity.bus import STATESPACE_SIGNALS, TOPICS
         from till_infinity.statespace.service import NOTICES
+        from till_infinity.topics import DECLARED as TOPICS
+        from till_infinity.topics import STATESPACE_SIGNALS
 
         assert NOTICES == STATESPACE_SIGNALS
         assert STATESPACE_SIGNALS in TOPICS

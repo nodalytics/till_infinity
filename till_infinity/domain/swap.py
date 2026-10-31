@@ -23,7 +23,7 @@ from __future__ import annotations
 from datetime import UTC, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
-from .models import Side, SymbolSpec
+from ..domain.models import Side, SymbolSpec
 
 NEW_YORK = ZoneInfo("America/New_York")
 ROLLOVER = time(17, 0)

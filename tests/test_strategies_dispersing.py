@@ -11,8 +11,8 @@ from __future__ import annotations
 
 import pytest
 
+from till_infinity.domain.models import Intent, Refusal, Side, SymbolSpec, Tick
 from till_infinity.strategies.config import MAGIC_ORDER, Settings, magic_for
-from till_infinity.strategies.models import Intent, Refusal, Side, SymbolSpec, Tick
 from till_infinity.strategies.strategies.dispersing import Dispersing
 
 SPEC = SymbolSpec(symbol="EURUSD", digits=5, point=0.00001, tick_size=0.00001)

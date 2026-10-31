@@ -66,7 +66,7 @@ import time
 from datetime import UTC, datetime
 from typing import Any, ClassVar
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
 from .config import Settings
 from .models import Batch, Observation

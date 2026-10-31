@@ -21,8 +21,8 @@ from contextlib import contextmanager
 from pathlib import Path
 from typing import Any
 
-from till_platform import db as shared_db
-from till_platform.logging import get_logger
+from till_infinity.utils import db as shared_db
+from till_infinity.utils.logging import get_logger
 
 from .models import Entry, Kind
 

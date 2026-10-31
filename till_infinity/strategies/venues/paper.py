@@ -32,10 +32,10 @@ from __future__ import annotations
 import time
 from typing import ClassVar
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
+from ...domain.models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick
 from ..config import Settings, feed_for
-from ..models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick
 from .broker import Broker, RejectedError
 
 log = get_logger(__name__)

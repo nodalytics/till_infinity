@@ -55,7 +55,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 from pydantic import BaseModel, Field
-from till_platform.logging import get_logger
+
+from till_infinity.utils.logging import get_logger
 
 log = get_logger(__name__)
 

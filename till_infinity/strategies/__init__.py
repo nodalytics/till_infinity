@@ -28,7 +28,8 @@ The pieces, in dependency order:
 | `sizing` | volatility units to price, price to lots |
 | `plans` | risk limits as named, internally consistent bundles |
 | `context` | what the rest of the system knows: the calendar, the venues, the regime |
-| `exposure` | what is at risk per currency, as opposed to per ticket |
+| `risk.exposure` | what is at risk per currency rather than per ticket. In
+  `risk/`, because exposure is an account-level question |
 | `risk` | may this account take another trade right now |
 | `strategy` | the port a strategy implements, and the register |
 | `scalper` | the four arithmetic level strategies |
@@ -43,7 +44,19 @@ The pieces, in dependency order:
 
 from __future__ import annotations
 
-from . import exposure, report, strategies, venues
+from ..domain.models import (
+    Account,
+    Intent,
+    Order,
+    OrderResult,
+    Position,
+    Refusal,
+    Side,
+    SymbolSpec,
+    Tick,
+    Verdict,
+)
+from . import report, strategies, venues
 from .affordable import (
     CATASTROPHIC,
     STOPS,
@@ -74,23 +87,10 @@ from .config import (
     strategy_for,
 )
 from .context import Context, Release
-from .exposure import Exposure
+from .guard import Guard
 from .manage import Move, advance
-from .models import (
-    Account,
-    Intent,
-    Order,
-    OrderResult,
-    Position,
-    Refusal,
-    Side,
-    SymbolSpec,
-    Tick,
-    Verdict,
-)
 from .plans import PLANS, Plan
 from .report import Report, Trade
-from .risk import Guard
 from .service import Trader, listen
 from .sizing import Sizing, lots, price_distance
 from .speeds import Speeds
@@ -133,7 +133,6 @@ __all__ = [
     "Broker",
     "BrokerError",
     "Context",
-    "Exposure",
     "Guard",
     "Intent",
     "Move",
@@ -170,7 +169,6 @@ __all__ = [
     "build",
     "catalogue",
     "choose",
-    "exposure",
     "feed_for",
     "judge",
     "listen",

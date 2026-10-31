@@ -22,7 +22,7 @@ from pathlib import Path
 import pytest
 from till_platform import contracts
 
-from till_infinity import bus as bus_module
+from till_infinity import topics as bus_module
 
 #: Topics with no schema yet, and why.
 #:
@@ -49,7 +49,7 @@ RISK_DEBTS: dict[str, tuple[str, ...]] = {
 def test_every_topic_is_declared_or_named_as_a_gap():
     """A new topic cannot arrive without a schema or an entry saying why not."""
     known = set(contracts.declared()) | set(UNDECLARED)
-    missing = sorted(set(bus_module.TOPICS) - known)
+    missing = sorted(set(bus_module.DECLARED) - known)
     assert not missing, (
         f"{', '.join(missing)} on the bus with no schema and no entry in UNDECLARED. "
         "Write the schema, or record the gap with its reason."

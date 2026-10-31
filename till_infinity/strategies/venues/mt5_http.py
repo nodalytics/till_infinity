@@ -63,11 +63,12 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential_jitter,
 )
-from till_platform.logging import get_logger
 
+from till_infinity.utils.logging import get_logger
+
+from ...domain.models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick
 from ..candles import Bar
 from ..config import Settings, ours
-from ..models import Account, Order, OrderResult, Position, Side, SymbolSpec, Tick
 from .broker import Broker, BrokerError, NotConnectedError, RejectedError, TransientError
 
 log = get_logger(__name__)

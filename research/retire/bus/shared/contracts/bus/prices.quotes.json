@@ -1,0 +1,23 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "prices.quotes",
+  "title": "Top of book",
+  "description": "Published by prices for every stored quote, whether the venue pushed it or it was polled - the sink is wrapped so both paths behave alike.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["source", "feed", "venue", "ticker", "bid", "ask", "mid", "spread_bps", "time"],
+  "properties": {
+    "source": {"type": "string"},
+    "feed": {"type": "string"},
+    "venue": {"type": "string"},
+    "ticker": {"type": "string"},
+    "bid": {"type": "number"},
+    "ask": {"type": "number"},
+    "mid": {"type": "number"},
+    "spread_bps": {
+      "type": "number",
+      "description": "Basis points of the mid, computed here. Not the broker's spread column, which is in points - a conversion that read a 476% round trip on EURUSD when it was mistaken for price."
+    },
+    "time": {"type": "number", "description": "Epoch seconds, like the model."}
+  }
+}

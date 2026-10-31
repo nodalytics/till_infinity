@@ -16,7 +16,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
 from ..carrier import Carrier
 from . import bus as journal_bus

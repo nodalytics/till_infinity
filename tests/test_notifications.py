@@ -97,8 +97,9 @@ def test_an_instrument_without_a_symbol_keeps_the_plain_icon():
 
 def test_every_tracked_instrument_has_a_symbol():
     """The map has to keep up with the feeds, or new instruments go unmarked."""
-    from till_infinity.notifications.models import INSTRUMENTS
     from till_infinity.prices import DEFAULT_SYMBOLS
+
+    from till_infinity.notifications.models import INSTRUMENTS
 
     assert not set(DEFAULT_SYMBOLS) - set(INSTRUMENTS)
 

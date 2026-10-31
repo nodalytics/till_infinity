@@ -21,7 +21,8 @@ from tenacity import (
     stop_after_attempt,
     wait_exponential_jitter,
 )
-from till_platform.logging import get_logger
+
+from till_infinity.utils.logging import get_logger
 
 from ..carrier import Carrier
 from ..topics import ARTICLES, EVENTS, MACRO

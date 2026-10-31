@@ -239,7 +239,8 @@ class _Broker:
 
 
 def _trader(**over):
-    from till_infinity.bus import Bus
+    from fake_carrier import FakeCarrier as Bus
+
     from till_infinity.strategies.config import Settings
     from till_infinity.strategies.service import Trader
 
@@ -328,8 +329,9 @@ def _closed(ref: str):
     """Settle a position and return every journal call it made."""
     import asyncio
 
+    from fake_carrier import FakeCarrier as Bus
+
     import till_infinity.strategies as td
-    from till_infinity.bus import Bus
     from till_infinity.strategies.config import Settings
     from till_infinity.strategies.models import Intent, Side
     from till_infinity.strategies.service import Live, Trader
@@ -505,7 +507,8 @@ def _untaken(side="buy", entry=100.0, stop=99.0, target=103.0, hold=600.0):
 
 async def _walk(shade, quotes):
     """Push quotes at one intent and return (finished, journalled rows)."""
-    from till_infinity.bus import Bus
+    from fake_carrier import FakeCarrier as Bus
+
     from till_infinity.strategies.models import Tick
     from till_infinity.strategies.service import Trader
 
@@ -576,7 +579,8 @@ async def test_an_untaken_intent_that_resolves_neither_way_is_marked_to_market()
 
 def test_untaken_intents_are_bounded_per_feed():
     """Strategies times signals grows quickly and nothing else evicts it."""
-    from till_infinity.bus import Bus
+    from fake_carrier import FakeCarrier as Bus
+
     from till_infinity.strategies.models import Intent, Side
     from till_infinity.strategies.service import Trader
 
@@ -606,9 +610,9 @@ def test_an_untaken_intent_waits_exactly_as_long_as_a_real_resting_entry():
     resting entry gets `pullback_bars` bars of its own interval and is
     withdrawn. That credited fills the live system would never have seen, to
     exactly the strategies that rest their entry furthest out of reach."""
+    from fake_carrier import FakeCarrier as Bus
     from till_platform.intervals import SECONDS
 
-    from till_infinity.bus import Bus
     from till_infinity.strategies.service import Trader
 
     trader = Trader(Bus(), settings=_scalp().settings)

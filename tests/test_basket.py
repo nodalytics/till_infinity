@@ -10,7 +10,7 @@ same direction on the same instrument up to seventeen times over.
 from __future__ import annotations
 
 from till_infinity.strategies import Settings
-from till_infinity.strategies.risk import Guard
+from till_infinity.strategies.guard import Guard
 
 
 def desk(**over) -> Guard:
@@ -119,8 +119,9 @@ class TestTheWorstReasonWins:
 
 class TestTheServiceActsOnIt:
     async def test_it_closes_every_position_and_journals_once(self):
-        from till_infinity.bus import Bus
-        from till_infinity.strategies.models import Intent, Position, Side
+        from fake_carrier import FakeCarrier as Bus
+
+        from till_infinity.domain.models import Intent, Position, Side
         from till_infinity.strategies.service import Live, Trader
 
         settings = Settings(live=False)
@@ -175,7 +176,8 @@ class TestTheServiceActsOnIt:
         assert len(written) == 1, "the whole book closing is one event, not three"
 
     async def test_a_flat_book_does_nothing(self):
-        from till_infinity.bus import Bus
+        from fake_carrier import FakeCarrier as Bus
+
         from till_infinity.strategies.service import Trader
 
         settings = Settings(live=False)
@@ -242,8 +244,9 @@ class TestTheBookReadings:
     def test_progress_is_the_median_not_the_mean(self):
         """One malformed target - `best_r` reached 1,771 on the record - would
         otherwise decide the whole book."""
-        from till_infinity.bus import Bus
-        from till_infinity.strategies.models import Intent, Position, Side
+        from fake_carrier import FakeCarrier as Bus
+
+        from till_infinity.domain.models import Intent, Position, Side
         from till_infinity.strategies.service import Live, Trader
 
         trader = Trader(Bus(), settings=Settings(live=False))
@@ -276,10 +279,11 @@ class TestTheBookReadings:
     def test_a_hedged_book_reads_near_zero_momentum(self):
         """A per-position reading would call a hedged book alarming from both
         sides at once."""
-        from till_infinity.bus import Bus
-        from till_infinity.strategies.models import Intent, Position, Side
-        from till_infinity.strategies.service import Live, Trader
+        from fake_carrier import FakeCarrier as Bus
         from till_infinity.structures.context.cusum import Cusum
+
+        from till_infinity.domain.models import Intent, Position, Side
+        from till_infinity.strategies.service import Live, Trader
 
         trader = Trader(Bus(), settings=Settings(live=False))
         running = Cusum()
@@ -310,7 +314,8 @@ class TestTheBookReadings:
         assert abs(trader._book_against()) < 1e-9, trader._book_against()
 
     def test_a_flat_book_has_no_progress_to_report(self):
-        from till_infinity.bus import Bus
+        from fake_carrier import FakeCarrier as Bus
+
         from till_infinity.strategies.service import Trader
 
         trader = Trader(Bus(), settings=Settings(live=False))

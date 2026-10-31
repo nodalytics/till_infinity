@@ -63,7 +63,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from .models import SymbolSpec
+from ..domain.models import SymbolSpec
 from .sizing import lots
 
 #: Stop distances to test, in volatility units. The desk's own stop multiples

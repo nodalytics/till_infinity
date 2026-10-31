@@ -52,10 +52,10 @@ from collections.abc import Sequence
 from importlib.util import find_spec
 from typing import Any, ClassVar, Self
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
+from ...domain.models import Account, Order, OrderResult, Position, SymbolSpec, Tick
 from ..config import BACKENDS, HTTP, NATIVE, PAPER, RPYC, Settings
-from ..models import Account, Order, OrderResult, Position, SymbolSpec, Tick
 
 log = get_logger(__name__)
 

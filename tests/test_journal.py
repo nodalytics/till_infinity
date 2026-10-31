@@ -259,7 +259,9 @@ async def test_explicit_outcome_tags_win(book):
 
 
 async def test_an_entry_survives_the_bus_round_trip(book):
-    from till_infinity.bus import JOURNAL, Bus
+    from fake_carrier import FakeCarrier as Bus
+
+    from till_infinity.topics import JOURNAL
 
     bus = Bus()
     sub = bus.subscribe(JOURNAL, group="journal")
@@ -280,7 +282,9 @@ async def test_an_entry_survives_the_bus_round_trip(book):
 
 
 async def test_listen_writes_what_is_published(book):
-    from till_infinity.bus import JOURNAL, Bus
+    from fake_carrier import FakeCarrier as Bus
+
+    from till_infinity.topics import JOURNAL
 
     bus = Bus()
     bus.subscribe(JOURNAL, group="journal")
@@ -293,7 +297,9 @@ async def test_listen_writes_what_is_published(book):
 
 async def test_two_services_publishing_one_decision_is_one_row(book):
     """Ids are recomputed from content, so a duplicate collapses."""
-    from till_infinity.bus import JOURNAL, Bus
+    from fake_carrier import FakeCarrier as Bus
+
+    from till_infinity.topics import JOURNAL
 
     bus = Bus()
     bus.subscribe(JOURNAL, group="journal")
@@ -330,7 +336,9 @@ def test_hostile_fields_are_coerced_rather_than_trusted():
 
 async def test_recording_prefers_the_bus_when_there_is_one(book):
     """One writer is the point; a caller passing both should not write twice."""
-    from till_infinity.bus import JOURNAL, Bus
+    from fake_carrier import FakeCarrier as Bus
+
+    from till_infinity.topics import JOURNAL
 
     bus = Bus()
     sub = bus.subscribe(JOURNAL, group="journal")

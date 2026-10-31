@@ -55,9 +55,10 @@ from dataclasses import dataclass, field
 from itertools import pairwise
 from typing import Any
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
-from . import candles, rollover
+from ..domain import rollover
+from . import candles
 from .sizing import price_distance
 
 log = get_logger(__name__)

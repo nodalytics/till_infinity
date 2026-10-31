@@ -1,0 +1,475 @@
+"""State written by field name, not by import path.
+
+## The problem this exists for
+
+`store` persisted with pickle, and **pickle records the module path of every
+class it holds**. Reading the 58MB state file showed
+`till_infinity.structures.learning.anomaly` embedded in the bytes. That makes the
+directory layout part of the file format: moving `anomaly.py` into a
+subpackage - the ordinary housekeeping `trading/` had done to it on the same
+day - would make weeks of learned levels, the break model and every volatility
+estimator unloadable.
+
+It also makes the file opaque. The only way to see what is in it is to unpickle
+it with the exact code that wrote it, so a question as simple as "what does the
+break model weigh" needs the whole package importable at the right version.
+
+## What replaces it
+
+Every persisted class is a dataclass, and `Restorable.__setstate__` already
+restores one from a **mapping of field names**, defaulting whatever the state
+predates. That is half of a codec; this is the other half.
+
+An object becomes `{"~": "breaking.Breaks", "f": {field: ...}}` - keyed by the
+module's **basename** and the class name, resolved through a registry built by
+walking the package.
+
+The basename is the whole trick. `structures/anomaly.py` moving to
+`structures/detect/anomaly.py` keeps the key `anomaly.Detector`, so the
+package can be reorganised freely - which is the thing pickle made unsafe.
+Only *renaming the file* breaks it, and that is a deliberate act with an
+obvious remedy: add the old key to `ALIASES`.
+
+A bare class name would have been simpler and does not work: walking the
+package finds `Ensemble` in two modules, `Book` in three, and `Reading` and
+`Consensus` in two each. Keyed on the name alone, state for one would restore
+as the other, and the failure would be wrong numbers rather than a traceback.
+
+## What still has to be pickled, and why that is fine
+
+`anomaly.py` holds live **river** objects - `GaussianScorer`, a `MinMaxScaler`
+pipeline - which have no serialisation format and no stable numeric export.
+Those are wrapped as opaque `{"~": "raw", "b": <pickle bytes>}`.
+
+The distinction is the point. Pickling *river's* classes records *river's*
+paths, and this project does not move those. Pickling *our* classes recorded
+*ours*, which is what made a refactor unsafe. So the fragility that remains is
+tied to a dependency's version - which `store`'s fingerprint already checks
+and refuses on - rather than to our own file layout.
+"""
+
+from __future__ import annotations
+
+import dataclasses
+import io
+import pickle
+from collections import deque
+from functools import cache
+from typing import Any
+
+from .logging import get_logger
+from .state import Restorable, restore_enum, restore_number
+
+log = get_logger(__name__)
+
+#: The marker key. `~` because msgpack maps are string-keyed and no dataclass
+#: field is named that, so a tagged object can never collide with a plain one.
+TAG = "~"
+RAW = "raw"
+
+
+#: Keys that used to name a class whose file has since been renamed. Empty
+#: today; the alternative to keeping this is invalidating everything a rename
+#: touches, which for a 58MB state is a warm-up nobody chose.
+ALIASES: dict[str, str] = {}
+
+
+def key_for(cls: type) -> str:
+    """The stable name for a persisted class: `module basename . class`."""
+    return f"{cls.__module__.rsplit('.', 1)[-1]}.{cls.__name__}"
+
+
+#: Attribute a package sets on itself to stay out of the persistence schema.
+#:
+#: **The walk is by module discovery, not by import**, which is the trap this
+#: closes. `registry()` finds every dataclass in every submodule whether anything
+#: persists it or not - so a new subpackage of `structures` lands in the state
+#: file's schema the moment it exists, and from then on adding a field to it is a
+#: schema change on production state.
+#:
+#: `structures/statespace/` is the case that found it: a package built beside the
+#: live engine, explicitly publishing nothing and persisting nothing, which the
+#: walk pulled straight into the fingerprint. Making its dataclasses `Restorable`
+#: would have "fixed" the failing test by declaring them persistable, which is
+#: the opposite of true.
+#:
+#: Opt-out rather than opt-in because the default has to stay "a dataclass in a
+#: service is state": a class that should be persisted and silently is not is a
+#: worse failure than this one.
+UNPERSISTED = "CODEC_UNPERSISTED"
+
+
+def skipped(module_name: str) -> bool:
+    """True when this module, or a package above it, declares itself unpersisted.
+
+    Checks ancestors so a package opts out once in its `__init__` rather than in
+    every module it will ever contain.
+    """
+    import importlib
+    import sys
+
+    parts = module_name.split(".")
+    for cut in range(len(parts), 0, -1):
+        name = ".".join(parts[:cut])
+        module = sys.modules.get(name)
+        if module is None:
+            try:
+                module = importlib.import_module(name)
+            except Exception:
+                continue
+        if getattr(module, UNPERSISTED, False):
+            return True
+    return False
+
+
+def registry(package: Any = None) -> dict[str, type]:
+    """Every persisted class in the package, by its stable key.
+
+    See `shared-codec.md` in research/docs.
+    """
+    import importlib
+    import pkgutil
+
+    if package is None:
+        raise ValueError(
+            "registry() needs the package to walk. It used to default to "
+            "`structures` because it lived there; now that it is shared, a "
+            "default would silently hand one service another's classes - and "
+            "keys are `basename.ClassName`, with `config.Settings` in every "
+            "service, so the failure would be a restore into the wrong class "
+            "rather than an error."
+        )
+    where = package.__path__
+    prefix = f"{package.__name__}."
+    found: dict[str, type] = {}
+    for module_info in sorted(m.name for m in pkgutil.walk_packages(where, prefix=prefix)):
+        try:
+            module = importlib.import_module(module_info)
+        except Exception as exc:  # a module that will not import is not state
+            log.debug("codec: skipping %s while building the registry (%s)", module_info, exc)
+            continue
+        if skipped(module_info):
+            log.debug("codec: %s declares itself unpersisted", module_info)
+            continue
+        for name in dir(module):
+            cls = getattr(module, name)
+            if (
+                isinstance(cls, type)
+                and dataclasses.is_dataclass(cls)
+                and cls.__module__ == module.__name__
+            ):
+                found[key_for(cls)] = cls
+    return found
+
+
+def pack(value: Any) -> Any:
+    """Turn state into something msgpack can write."""
+    if value is None or isinstance(value, bool | int | float | str | bytes):
+        return value
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        return {
+            TAG: key_for(type(value)),
+            "f": {f.name: pack(getattr(value, f.name, None)) for f in dataclasses.fields(value)},
+        }
+    if isinstance(value, deque):
+        # The bound travels with it. A deque restored as an unbounded one grows
+        # until the box runs out, which is how this project has been OOM-killed.
+        return {TAG: "deque", "n": value.maxlen, "v": [pack(v) for v in value]}
+    if isinstance(value, dict):
+        # Keys are often tuples here - `(feed, venue, interval)` - which msgpack
+        # cannot express, so the whole mapping is carried as pairs.
+        return {TAG: "map", "v": [[pack(k), pack(v)] for k, v in value.items()]}
+    if isinstance(value, tuple):
+        return {TAG: "tuple", "v": [pack(v) for v in value]}
+    if isinstance(value, set | frozenset):
+        return {TAG: "set", "v": [pack(v) for v in value]}
+    if isinstance(value, list):
+        return [pack(v) for v in value]
+    # Anything else - river models, mostly. Opaque, and deliberately so.
+    return {TAG: RAW, "b": pickle.dumps(value, protocol=pickle.HIGHEST_PROTOCOL)}
+
+
+#: Bytes to gather before touching the file. The point of `pack_into` is that
+#: nothing whole-sized is ever resident, so the buffer has to be small against
+#: the state and large against a syscall - 4MB is 2% of the live file and
+#: amortises the writes of a few hundred thousand nodes.
+CHUNK = 4 << 20
+
+
+def pack_into(value: Any, stream: Any) -> int:  # noqa: PLR0915 - `walk` is one
+    # branch per container the codec knows, and each has to stay visibly the same
+    # branch `pack` has. Splitting them across helpers is what would let the two
+    # drift apart, which is the only way this function can be wrong.
+    """Write `value` to `stream` as msgpack, without building the packed form.
+
+    See `shared-codec.md` in research/docs.
+    """
+    import msgpack
+
+    packer = msgpack.Packer(use_bin_type=True)
+    buffer = bytearray()
+    written = 0
+
+    def emit(chunk: bytes) -> None:
+        nonlocal written
+        buffer.extend(chunk)
+        if len(buffer) >= CHUNK:
+            flush()
+
+    def flush() -> None:
+        nonlocal written
+        if buffer:
+            stream.write(buffer)
+            written += len(buffer)
+            buffer.clear()
+
+    def walk(node: Any) -> None:
+        if node is None or isinstance(node, bool | int | float | str | bytes):
+            emit(packer.pack(node))
+            return
+        if dataclasses.is_dataclass(node) and not isinstance(node, type):
+            emit(packer.pack_map_header(2))
+            emit(packer.pack(TAG))
+            emit(packer.pack(key_for(type(node))))
+            emit(packer.pack("f"))
+            fields = dataclasses.fields(node)
+            emit(packer.pack_map_header(len(fields)))
+            for field in fields:
+                emit(packer.pack(field.name))
+                walk(getattr(node, field.name, None))
+            return
+        if isinstance(node, deque):
+            emit(packer.pack_map_header(3))
+            emit(packer.pack(TAG))
+            emit(packer.pack("deque"))
+            emit(packer.pack("n"))
+            emit(packer.pack(node.maxlen))
+            emit(packer.pack("v"))
+            emit(packer.pack_array_header(len(node)))
+            for item in node:
+                walk(item)
+            return
+        if isinstance(node, dict):
+            emit(packer.pack_map_header(2))
+            emit(packer.pack(TAG))
+            emit(packer.pack("map"))
+            emit(packer.pack("v"))
+            emit(packer.pack_array_header(len(node)))
+            for key, item in node.items():
+                emit(packer.pack_array_header(2))
+                walk(key)
+                walk(item)
+            return
+        if isinstance(node, tuple | set | frozenset):
+            emit(packer.pack_map_header(2))
+            emit(packer.pack(TAG))
+            emit(packer.pack("tuple" if isinstance(node, tuple) else "set"))
+            emit(packer.pack("v"))
+            emit(packer.pack_array_header(len(node)))
+            for item in node:
+                walk(item)
+            return
+        if isinstance(node, list):
+            emit(packer.pack_array_header(len(node)))
+            for item in node:
+                walk(item)
+            return
+        # Anything else - river models, mostly. Opaque, and deliberately so.
+        #
+        # **And this branch is where the state actually lives.** Measured on
+        # production's own file: 206MB packed, of which 200.1MB is *three*
+        # pickle blobs - `engine` at 178.4MB, `detector` at 20.6MB, `drift` at
+        # 1.1MB - and only 5.9MB is codec structure. None of those three is a
+        # dataclass, so `pack` falls through to here and pickles each whole.
+        #
+        # So streaming the structure alone was never going to be the fix, and
+        # measuring said so: walking the tree instead of building it took the
+        # save transient from 0.395GB to 0.321GB, because the remaining 0.32GB
+        # is `pickle.dumps` returning a 178MB `bytes` in one piece.
+        #
+        # `pickle.Pickler` writes to a file object incrementally, so the blob
+        # goes to a spooled temporary file, its length is then known, and the
+        # bytes are copied through in `CHUNK`-sized pieces behind a manually
+        # written msgpack `bin32` header. Peak cost becomes one chunk and one
+        # temp file instead of one copy of the largest model in the book.
+        emit(packer.pack_map_header(2))
+        emit(packer.pack(TAG))
+        emit(packer.pack(RAW))
+        emit(packer.pack("b"))
+        _spill(node, emit, stream, flush)
+
+    walk(value)
+    flush()
+    # `_spill` writes its body straight to the stream, past the buffer, so the
+    # running total is not the whole story. The file's own size is.
+    return stream.tell() if hasattr(stream, "tell") else written
+
+
+def _spill(node: Any, emit: Any, stream: Any, flush: Any) -> None:
+    """Pickle `node` through a temp file rather than into one `bytes`.
+
+    See `shared-codec.md` in research/docs.
+    """
+    import struct
+    import tempfile
+
+    with tempfile.TemporaryFile() as spool:
+        pickle.Pickler(spool, protocol=pickle.HIGHEST_PROTOCOL).dump(node)
+        size = spool.tell()
+        spool.seek(0)
+        if size < 1 << 8:
+            header = b"\xc4" + struct.pack(">B", size)
+        elif size < 1 << 16:
+            header = b"\xc5" + struct.pack(">H", size)
+        else:
+            header = b"\xc6" + struct.pack(">I", size)
+        emit(header)
+        flush()  # the header must land before the body is copied past the buffer
+        while True:
+            chunk = spool.read(CHUNK)
+            if not chunk:
+                break
+            stream.write(chunk)
+
+
+@cache
+def _homes() -> dict[str, str]:
+    """Module basename -> where that module lives now.
+
+    See `shared-codec.md` in research/docs.
+    """
+    import importlib
+    import pkgutil
+
+    # **The one place this package reaches for a service, and it does so
+    # defensively.** The relocation exists for blobs written when a module
+    # lived somewhere else, and `_Relocating.HOME` names `structures`
+    # specifically. A platform package cannot import the desk - that is
+    # circular, and the point of being a package is to install without it - so
+    # the walk is attempted and an absent package means there is nothing to
+    # relocate, which is also true once `structures` is retired.
+    try:
+        home = importlib.import_module(_Relocating.HOME)
+    except Exception:
+        log.debug("codec: %s is not importable, so nothing is relocated", _Relocating.HOME)
+        return {}
+
+    return {
+        info.name.rsplit(".", 1)[-1]: info.name
+        for info in pkgutil.walk_packages(home.__path__, prefix=f"{home.__name__}.")
+    }
+
+
+class _Relocating(pickle.Unpickler):
+    """An unpickler that follows a module to its new folder.
+
+    See `shared-codec.md` in research/docs.
+    """
+
+    #: The package whose history this repairs, named rather than taken from
+    #: `__package__`. It was `__package__` while this file lived in
+    #: `structures`, and the moment the file moved that silently became
+    #: `till_infinity.shared` - so every old blob pointing at
+    #: `till_infinity.structures.anomaly` stopped matching and stopped being
+    #: relocated. The test that proves the relocation works is what caught it,
+    #: which is the second time in this move that `__package__` meant "wherever
+    #: this file happens to be" when the intent was "structures".
+    HOME = "till_infinity.structures"
+
+    def find_class(self, module: str, name: str) -> Any:
+        if module.startswith(f"{self.HOME}."):
+            home = _homes().get(module.rsplit(".", 1)[-1])
+            if home is not None and home != module:
+                module = home
+        return super().find_class(module, name)
+
+
+def _unpickle(blob: bytes) -> Any:
+    return _Relocating(io.BytesIO(blob)).load()
+
+
+def unpack(value: Any, known: dict[str, type]) -> Any:
+    """Rebuild state written by `pack`.
+
+    `known` is required. It used to default to this package's registry, which
+    was right while this lived in `structures` and is a trap now: keys are
+    `basename.ClassName` and `config.Settings` exists in every service, so a
+    guessed registry resolves one service's state into another's class without
+    raising. `structures.codec.unpack` supplies the old default.
+    """
+    if isinstance(value, list):
+        return [unpack(v, known) for v in value]
+    if not isinstance(value, dict):
+        return value
+    kind = value.get(TAG)
+    if kind is None:
+        return {k: unpack(v, known) for k, v in value.items()}
+
+    # A table rather than a chain of returns - the chain had reached eleven and
+    # every container type added one.
+    containers: dict[str, Any] = {
+        "map": lambda v: {unpack(k, known): unpack(x, known) for k, x in v["v"]},
+        "tuple": lambda v: tuple(unpack(x, known) for x in v["v"]),
+        "set": lambda v: {unpack(x, known) for x in v["v"]},
+        "deque": lambda v: deque((unpack(x, known) for x in v["v"]), maxlen=v.get("n")),
+        RAW: lambda v: _unpickle(v["b"]),
+    }
+    build = containers.get(str(kind))
+    if build is not None:
+        return build(value)
+
+    name = str(kind)
+    cls = known.get(name) or known.get(ALIASES.get(name, ""))
+    fields = {k: unpack(v, known) for k, v in value.get("f", {}).items()}
+    if cls is None:
+        # A class the current build no longer has. Returning the fields rather
+        # than raising keeps one removed model from costing the whole file, and
+        # the caller sees a dict where it expected an object - loud at the
+        # point of use rather than silent.
+        log.warning("codec: no class called %r in this build", kind)
+        return fields
+
+    made = cls.__new__(cls)
+    setter = getattr(made, "__setstate__", None)
+    if setter is not None:
+        # The same defaulting `Restorable.__setstate__` does, and for the same
+        # reason: state written before a field existed must not leave it
+        # missing.
+        setter(fields)
+        # **And then coerce anyway, because not every `__setstate__` here is
+        # `Restorable`'s.** A `@dataclass(slots=True)` gets one *generated* by
+        # Python for pickling, which assigns raw values and coerces nothing -
+        # and `Intent` is exactly that: frozen, slotted, and not `Restorable`,
+        # so `getattr(made, "__setstate__")` found the generated one and
+        # returned before the loop below could run.
+        #
+        # That is why the fix on 2026-09-08 did not hold. `restore_number` was
+        # added to both paths and this early return shadows one of them, so a
+        # resting `Intent` kept coming back with `entry` and `stop` as strings
+        # and `abs(entry - stop)` kept raising `unsupported operand type(s)
+        # for -: 'str' and 'float'` - 89 signals dropped in one session before
+        # anyone traced it past the guard that was catching it.
+        #
+        # Idempotent where it is not needed: `Restorable.__setstate__` has
+        # already coerced, and coercing a number twice returns the number.
+        if not isinstance(made, Restorable):
+            for field in dataclasses.fields(cls):
+                if field.name in fields:
+                    value = restore_enum(cls, field.name, fields[field.name])
+                    object.__setattr__(made, field.name, restore_number(cls, field.name, value))
+        return made
+    for field in dataclasses.fields(cls):
+        if field.name in fields:
+            # Enums come back as their raw value - `Side` is a `StrEnum` and
+            # serialises as a plain string - and nothing notices until
+            # something asks for a member. See `state.restore_enum`. Numbers
+            # have the same problem one type along: a price restored as the
+            # string "1.2345" took trading down on 2026-09-08, because
+            # `Intent.reward` subtracts it. See `state.restore_number`.
+            #
+            # An exact duplicate of this loop used to follow the `return`
+            # below, unreachable, so a fix applied to one copy would have
+            # looked applied and done nothing.
+            value = restore_enum(cls, field.name, fields[field.name])
+            object.__setattr__(made, field.name, restore_number(cls, field.name, value))
+    return made

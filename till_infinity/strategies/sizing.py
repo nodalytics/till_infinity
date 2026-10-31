@@ -30,9 +30,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
-from till_platform import effects
+from till_infinity.utils import effects
 
-from .models import Side, SymbolSpec
+from ..domain.models import Side, SymbolSpec
 
 #: **A trade refused because the minimum lot breaches the budget.** The runtime
 #: counterpart of `affordable.py`: that module is a catalogue of instruments

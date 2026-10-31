@@ -274,10 +274,13 @@ async def drive(days: float = DAYS, seed: int = 11) -> dict:
     are folded on at the publish site, and an engine-only fixture reaches none
     of them.
     """
-    from till_infinity.bus import BARS, QUOTES, Bus, Message
-    from till_infinity.journal import Journal
+    from fake_carrier import FakeCarrier as Bus
     from till_infinity.structures import config as sx
     from till_infinity.structures.service import Watcher
+
+    from till_infinity.carrier import Message
+    from till_infinity.journal import Journal
+    from till_infinity.topics import BARS, QUOTES
 
     published: list[dict] = []
     resolved: list[dict] = []

@@ -37,10 +37,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
+from ..domain.models import Intent, Position, Side, SymbolSpec
 from .config import Settings
-from .models import Intent, Position, Side, SymbolSpec
 from .sizing import price_distance
 
 log = get_logger(__name__)

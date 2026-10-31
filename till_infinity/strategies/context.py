@@ -39,10 +39,10 @@ from collections import defaultdict
 from dataclasses import dataclass, field
 from typing import Any
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
-from . import exposure as ex
-from .models import Tick
+from ..domain.models import Tick
+from ..risk import exposure as ex
 from .spreads import Spreads, hour_of
 
 log = get_logger(__name__)

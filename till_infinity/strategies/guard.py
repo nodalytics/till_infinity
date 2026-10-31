@@ -32,14 +32,14 @@ from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from zoneinfo import ZoneInfo
 
-from till_platform import effects
-from till_platform.logging import get_logger
+from till_infinity.utils import effects
+from till_infinity.utils.logging import get_logger
 
-from . import exposure as ex
-from . import rollover, swap
+from ..domain import rollover, swap
+from ..domain.models import Intent, Position, Refusal, SymbolSpec, Tick, money
+from ..risk import exposure as ex
 from .config import Settings
 from .context import Context
-from .models import Intent, Position, Refusal, SymbolSpec, Tick, money
 
 NEW_YORK = ZoneInfo("America/New_York")
 

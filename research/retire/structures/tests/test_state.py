@@ -5,10 +5,11 @@ def test_a_strenum_field_comes_back_as_its_enum():
     down with `'str' object has no attribute 'sign'` and left it stopped."""
     import dataclasses
 
+    from till_infinity.structures.codec import pack, registry, unpack
+
     from till_infinity import strategies
     from till_infinity.strategies import service as svc
     from till_infinity.strategies.models import Side
-    from till_infinity.structures.codec import pack, registry, unpack
 
     shade = svc.Untaken(
         feed="gold",
@@ -69,9 +70,8 @@ def test_restoring_does_not_build_unrelated_factories():
     """Reading a `maxlen` means calling a `default_factory`, and `Learned._model`
     builds a river pipeline. Introspection must not pay for that, so the lookup
     is gated on the annotation naming a deque."""
-    from till_platform.state import _deque_bounds
-
     from till_infinity.structures.vol.learned import Learned
+    from till_platform.state import _deque_bounds
 
     bounds = _deque_bounds(Learned)
 
@@ -84,10 +84,9 @@ def test_every_bounded_deque_field_survives_a_list_state():
     import dataclasses
     from collections import deque
 
-    from till_platform.state import _deque_bounds, restore_deque
-
     from till_infinity.structures.context import cusum, reach, trend
     from till_infinity.structures.vol import har, learned
+    from till_platform.state import _deque_bounds, restore_deque
 
     seen = 0
     for module in (cusum, reach, trend, har, learned):

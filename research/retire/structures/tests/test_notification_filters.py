@@ -175,8 +175,10 @@ def test_nonsense_env_falls_back_rather_than_crashing(monkeypatch: pytest.Monkey
 
 async def test_the_filter_is_actually_wired_into_the_listener(monkeypatch: pytest.MonkeyPatch):
     """The filter working alone proves nothing if `listen` never calls it."""
+    from fake_carrier import FakeCarrier as Bus
+
     from till_infinity import notifications as nt
-    from till_infinity.bus import ALERTS, Bus
+    from till_infinity.topics import ALERTS
 
     sent: list[str] = []
 
@@ -201,8 +203,10 @@ async def test_the_filter_is_actually_wired_into_the_listener(monkeypatch: pytes
 
 async def test_an_unconfigured_listener_still_delivers_everything(monkeypatch: pytest.MonkeyPatch):
     """The wiring must not become a filter by default."""
+    from fake_carrier import FakeCarrier as Bus
+
     from till_infinity import notifications as nt
-    from till_infinity.bus import ALERTS, Bus
+    from till_infinity.topics import ALERTS
 
     for name in ("NOTIFY_SHAPES", "NOTIFY_FEEDS", "NOTIFY_COOLDOWN_S", "NOTIFY_MAX_PER_HOUR"):
         monkeypatch.delenv(name, raising=False)
@@ -251,9 +255,10 @@ def test_routing_fields_are_not_printed_back_at_the_reader():
 
 
 def test_a_level_alert_leads_with_the_instrument_and_the_direction():
-    from till_infinity.notifications.service import from_message
     from till_infinity.structures.models import Shape, Signal
     from till_infinity.structures.service import alert_payload
+
+    from till_infinity.notifications.service import from_message
 
     signal = Signal(
         shape=Shape.LEVEL,
@@ -302,9 +307,10 @@ def test_a_level_signal_survives_missing_features():
 
 
 def test_a_level_alert_names_the_timeframes_that_agree():
-    from till_infinity.notifications.service import from_message
     from till_infinity.structures.models import Shape, Signal
     from till_infinity.structures.service import alert_payload
+
+    from till_infinity.notifications.service import from_message
 
     def body(confluence):
         signal = Signal(

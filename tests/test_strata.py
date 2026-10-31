@@ -7,7 +7,8 @@ to be mechanical rather than remembered.
 """
 
 import pytest
-from till_platform.strata import compare
+
+from till_infinity.utils.strata import compare
 
 
 def row(bucket, value, **over):

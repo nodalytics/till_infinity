@@ -13,8 +13,8 @@ import math
 
 import pytest
 
+from till_infinity.domain.models import Side
 from till_infinity.strategies import turning as tn
-from till_infinity.strategies.models import Side
 
 
 def ride(*, side=Side.BUY, entry=100.0, risk=2.0, suggested=103.0, **kw):

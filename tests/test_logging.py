@@ -2,7 +2,8 @@ import logging
 
 import orjson
 import pytest
-from till_platform.logging import (
+
+from till_infinity.utils.logging import (
     FALLBACK_WIDTH,
     JsonFormatter,
     _console,

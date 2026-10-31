@@ -61,7 +61,15 @@ STANDALONE: dict[str, str] = {}
 #: the vacuous scan described on `STANDALONE`, and the third instance of it in
 #: one day. `test_every_infrastructure_entry_is_real` is what makes the next
 #: one fail instead of lingering.
-INFRASTRUCTURE = frozenset({"bus"})
+#: **`bus` left on 2026-10-31 and three things replaced it.** `carrier` is the
+#: protocol a service publishes through - two methods, so the same code runs
+#: against Nautilus, a fake or nothing. `topics` is the names, which are still
+#: the contract because `shared/contracts/bus/*.json` is keyed on them and a
+#: Go service reads the same files. `utils` is the small things with several
+#: callers and no home, which ADR 0002 admits on the same terms as
+#: `till-platform` - and which is where that package's remnants landed when it
+#: too was retired.
+INFRASTRUCTURE = frozenset({"carrier", "topics", "utils"})
 
 #: The Nautilus layers, and what each is allowed to import.
 #:
@@ -102,7 +110,16 @@ LAYERS: dict[str, frozenset[str]] = {
 #:  left on 2026-10-31, retired to `research/retire/` because
 #: Nautilus owns the bus. `bus.py` carries a small in-process queue instead,
 #: which is all the legacy single-process path ever needed.
-PACKAGES = {"till-platform": "till_platform"}
+#: **Empty since 2026-10-31, and left here rather than deleted.**
+#: `till-platform` was the last entry and it is retired: Nautilus supplies the
+#: logger, the cache and the serialisation it existed for, and what was still
+#: used moved to `till_infinity/utils/` - small enough not to need a
+#: distribution. `packages/` is in `research/retire/`.
+#:
+#: Kept because the guards below are the ones worth having if a package ever
+#: comes back: where it is, that it owns its import name, that it does not
+#: import the desk, and that it declares the siblings it imports.
+PACKAGES: dict[str, str] = {}
 
 #: What each service imports from another service **today**, and nothing more.
 #:
@@ -114,12 +131,16 @@ PACKAGES = {"till-platform": "till_platform"}
 #: argument for the retirement in progress. It is listed rather than fixed
 #: because the package is leaving.
 DEBTS: dict[str, frozenset[str]] = {
-    "news": frozenset({"prices"}),
-    "structures": frozenset({"journal", "prices", "strategies"}),
     # Renamed from `trading` on 2026-10-31: what survives the port is the
     # strategy logic, because order management, sizing and the venue
     # abstraction are the engine's now.
-    "strategies": frozenset({"journal", "prices", "structures"}),
+    # **Three debts were paid by retirement rather than by work**, which is
+    # worth distinguishing: `prices` and `structures` are in
+    # `research/retire/`, so `strategies` no longer reaches into them because
+    # there is nothing to reach. What it kept, it kept by *moving* - rollover,
+    # cusum, holds, reach, trend and focus each had one consumer and travelled
+    # to it, which is the arrangement ADR 0002 asks for rather than a debt.
+    "strategies": frozenset({"journal"}),
 }
 
 #: Services retired into `research/retire/`, which must no longer be importable.
@@ -298,6 +319,22 @@ def desk_imports(root: Path) -> dict[str, list[str]]:
                 if name == "till_infinity" or name.startswith("till_infinity."):
                     found.setdefault(path.name, []).append(name)
     return found
+
+
+# **Three tests left with their subjects on 2026-10-31.**
+#
+# `test_the_image_carries_every_python_workspace_member` and
+# `test_the_dependency_layer_does_not_try_to_build_the_members` were about a
+# uv workspace, and there is no longer one: `packages/` is retired and
+# `till_infinity` is a single distribution. The second of those caught three
+# failed deploys, so it earned its place - and it has nothing left to check.
+#
+# `test_the_go_service_is_excluded_rather_than_broken` was about `services/`,
+# which is retired to `research/retire/services/`: Nautilus's
+# `ParquetDataCatalog` is the corpus and its Rust core is the polyglot story,
+# so ADR 0003's decision to add Go is superseded. That test is also what found
+# the directory had gone missing, by failing with "services/ticks is excluded
+# but does not exist" - a guard written for one reason catching another.
 
 
 def test_every_lint_exemption_points_at_files_that_exist():
@@ -572,7 +609,7 @@ def test_the_dependency_layer_does_not_try_to_build_the_members():
 def test_the_image_says_where_the_contracts_are():
     """The contracts were shipped and unfindable for this image's whole life.
 
-    `till_platform.contracts` counted parent directories from its own
+    `till_infinity.utils.contracts` counted parent directories from its own
     `__file__`. Installed, that is `site-packages/till_platform/`, so it
     looked in `/app/.venv/lib/shared/contracts/bus` while the files sat in
     `/app/shared/contracts/bus` - and `declared()` returned `()`, so the

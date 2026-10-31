@@ -41,9 +41,9 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
-from till_platform import effects
+from till_infinity.utils import effects
 
-from .models import Side
+from ..domain.models import Side
 
 #: **A close that actually carried a comparison.** Always on, because this is a
 #: shadow and costs nothing - so if it never fires, either the depth head is

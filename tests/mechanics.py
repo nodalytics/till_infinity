@@ -35,7 +35,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
-from till_infinity.strategies.models import Intent, Refusal, Side, SymbolSpec, Tick, Verdict
+from till_infinity.domain.models import Intent, Refusal, Side, SymbolSpec, Tick, Verdict
 from till_infinity.strategies.sizing import lots, price_distance
 from till_infinity.strategies.strategies.strategy import Strategy
 

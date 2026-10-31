@@ -30,11 +30,11 @@ from abc import ABC, abstractmethod
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
+from ...domain.models import Side, SymbolSpec, Tick, Verdict
 from ..config import Settings
-from ..models import Side, SymbolSpec, Tick, Verdict
-from ..risk import Limits
+from ..guard import Limits
 from .floors import Floors
 
 log = get_logger(__name__)
@@ -423,7 +423,7 @@ class Strategy(ABC):
         """
         import math
 
-        from till_platform.intervals import SECONDS
+        from till_infinity.utils.intervals import SECONDS
 
         bars = SECONDS.get(interval, 0.0)
         if bars <= 0:
@@ -561,7 +561,7 @@ class Strategy(ABC):
         style knows which ceiling applies; a caller does not, and the ones that
         thought they did were wrong.
         """
-        from till_platform.intervals import SECONDS
+        from till_infinity.utils.intervals import SECONDS
 
         seconds = SECONDS.get(interval, 0.0)
         limit = self.ceiling
@@ -578,7 +578,7 @@ class Strategy(ABC):
         the ceiling is fewer bars of noise, and pretending otherwise would size
         the stop for time the trade will not be given.
         """
-        from till_platform.intervals import SECONDS
+        from till_infinity.utils.intervals import SECONDS
 
         seconds = SECONDS.get(interval, 0.0)
         if seconds <= 0:

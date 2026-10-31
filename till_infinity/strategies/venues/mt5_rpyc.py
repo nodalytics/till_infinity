@@ -48,10 +48,10 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
+from ...domain.models import Account
 from ..config import Settings
-from ..models import Account
 from .broker import NotConnectedError
 from .mt5_native import NativeBroker
 

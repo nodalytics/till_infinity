@@ -67,13 +67,15 @@ from pathlib import Path
 from statistics import median
 from typing import Any, ClassVar
 
-from till_platform import effects
-from till_platform.codec import pack, registry, unpack
-from till_platform.intervals import SECONDS
-from till_platform.logging import get_logger
-from till_platform.state import Restorable
+from till_infinity.utils import effects
+from till_infinity.utils.codec import pack, registry, unpack
+from till_infinity.utils.intervals import SECONDS
+from till_infinity.utils.logging import get_logger
+from till_infinity.utils.state import Restorable
 
 from ..carrier import Carrier, Message
+from ..domain.models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
+from ..domain.models import money as money  # noqa: PLC0414
 from ..journal import Journal, decide, observe, outcome
 
 # The wire name `prices` gives its own broker connection's quotes, as opposed to
@@ -87,17 +89,15 @@ from .config import Settings, magic_for, strategy_for
 from .context import Context
 from .cusum import Cusum, Ensemble, adaptive_threshold
 from .focus import Focus
+from .guard import Guard
 from .holds import Book as HoldBook
 from .impulse import card_line as impulse_card
 from .impulse import features as impulse_features
 from .manage import Move, Take
-from .models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
-from .models import money as money  # noqa: PLC0414
 from .reach import Reaches
 from .regression import SPANS as TREND_SPANS
 from .regression import card_line as trend_card
 from .regression import features_across as trend_features
-from .risk import Guard
 from .sessions import Sessions
 from .shadow import ShadowGates
 from .sizing import lots, price_distance, respects_stops_level

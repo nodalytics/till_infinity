@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "statespace.dispersion",
+  "title": "One folded reading of log variance",
+  "description": "Published by statespace on every bar it folds, which is why statespace.signals exists as well: 200-odd armed feed-intervals at 1m is twelve thousand messages an hour and no consumer can tell which mattered. Recorded by trading, never consulted - a second volatility-based size cut on top of stops that already scale with volatility was sized on reversion rather than on risk.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["feed", "interval", "time", "log_variance", "spread", "surprise", "family",
+               "paced", "pace_factor", "seen", "spread_rule", "spread_saturated"],
+  "properties": {
+    "feed": {"type": "string"},
+    "interval": {"type": "string"},
+    "time": {"type": "number"},
+    "log_variance": {"type": "number", "description": "The space the members were fitted in."},
+    "spread": {"type": "number", "description": "The predictive spread, in log-variance units."},
+    "surprise": {"type": "number"},
+    "family": {"type": "string", "description": "Which member produced it."},
+    "paced": {"type": "boolean"},
+    "pace_factor": {"type": "number"},
+    "seen": {"type": "integer", "minimum": 0},
+    "spread_rule": {"type": "string", "description": "How spread was combined. A recorded spread is not comparable across rules."},
+    "spread_saturated": {
+      "type": "boolean",
+      "description": "Whether the loop that scaled the spread ran out of room. The condition that was silent: a matching loop against its clamp keeps returning numbers, so every member can run out of process noise without one line being out of the ordinary."
+    },
+    "fair_variance": {"type": "number", "description": "Present only when the anchor has one. A fair VOLATILITY, not a fair price."},
+    "fair_sd": {"type": "number"},
+    "stretch": {"type": "number", "description": "Half-band units, so comparable across feeds."},
+    "band": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The 0.90 interval, present only when the readout has one. source says whether the coverage is measured or assumed, so a consumer can refuse an assumed band without knowing how the choice is made."
+    }
+  }
+}

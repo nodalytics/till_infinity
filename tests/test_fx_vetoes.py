@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import datetime as dt
 
+from till_infinity.domain.models import Intent, Side
 from till_infinity.strategies import Settings
 from till_infinity.strategies.config import _ny_span
-from till_infinity.strategies.models import Intent, Side
-from till_infinity.strategies.risk import Guard, fx_window
+from till_infinity.strategies.guard import Guard, fx_window
 
 
 def utc(text: str) -> float:

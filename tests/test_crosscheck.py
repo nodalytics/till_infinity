@@ -6,7 +6,7 @@ on the hold timeout - and the mean R figures agreed, +0.032 replayed against
 +0.134 live. The number everyone looks at matched while the mechanics did not.
 """
 
-from till_platform.crosscheck import MIN_LIVE, agree, fingerprint
+from till_infinity.utils.crosscheck import MIN_LIVE, agree, fingerprint
 
 
 def closes(mix: dict[str, int], *, seconds: float = 300.0, best: float = 0.4):
@@ -116,7 +116,7 @@ def test_an_empty_side_is_not_a_verdict():
 def test_the_threshold_is_the_one_the_observed_case_justifies():
     """25 points on any kind, against an observed 86. Pinned so that loosening it
     has to be a decision somebody makes and defends."""
-    from till_platform import crosscheck
+    from till_infinity.utils import crosscheck
 
     assert crosscheck.MIX_POINTS == 0.25
     assert crosscheck.HOLD_RATIO == 2.0

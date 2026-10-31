@@ -34,7 +34,7 @@ from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
 
-from .models import Intent, Position, Side
+from ..domain.models import Intent, Position, Side
 
 
 #: Base and quote per instrument. `USD` on the right for everything that is
