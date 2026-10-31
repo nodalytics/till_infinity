@@ -960,8 +960,8 @@ def test_a_resting_intent_with_a_text_entry_does_not_kill_trading():
     """
     import asyncio
 
-    from till_infinity.trading.models import Side
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.models import Side
+    from till_infinity.strategies.service import Trader
 
     trader = Trader.__new__(Trader)
 

@@ -16,7 +16,7 @@ import pytest
 # By package path: see the note in `test_supervised.py`. `seqlab` imports its
 # own sibling as `from research.harness import feed`, so it needs no flat path.
 from research.harness import seqlab
-from till_infinity.trading.models import Tick
+from till_infinity.strategies.models import Tick
 
 #: What the broker's symbol info said on 2026-09-30.
 BROKER = {

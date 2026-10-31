@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from till_infinity.trading import barriers
+from till_infinity.strategies import barriers
 
 
 def test_the_shift_is_the_published_constant_on_closes():
@@ -207,7 +207,7 @@ def test_a_generated_feed_keeps_the_brownian_answer():
 def test_the_intent_picks_the_duration_that_matches_its_feed():
     """The whole point of having two: a clock set from the Brownian form on a
     real feed is set short, everywhere it matters."""
-    from till_infinity.trading.models import Intent, Side
+    from till_infinity.strategies.models import Intent, Side
 
     def geometry(feed):
         return Intent(
@@ -251,7 +251,7 @@ class TestConditionalSlowdown:
     def test_an_average_entry_changes_nothing(self):
         """The whole point of a *conditional* correction: at the long mean it is
         inert, so a caller with no unusual volatility is left where it was."""
-        from till_infinity.trading import barriers
+        from till_infinity.strategies import barriers
 
         assert barriers.conditional_slowdown(0.01, 0.01) == pytest.approx(1.0)
         assert barriers.conditional_slowdown(0.01, 0.01, generated=True) == pytest.approx(1.0)
@@ -262,7 +262,7 @@ class TestConditionalSlowdown:
         A short estimate above its longer mean sized the barriers too wide for
         the volatility that follows, so the trade runs **longer**.
         """
-        from till_infinity.trading import barriers
+        from till_infinity.strategies import barriers
 
         assert barriers.conditional_slowdown(0.02, 0.01) > 1.0
         assert barriers.conditional_slowdown(0.005, 0.01) < 1.0
@@ -275,7 +275,7 @@ class TestConditionalSlowdown:
         derived constants, and a fitted drift away from them would mean the
         derivation stopped applying.
         """
-        from till_infinity.trading import barriers
+        from till_infinity.strategies import barriers
 
         for scale in (0.5, 0.8, 1.25, 2.0):
             assert barriers.conditional_slowdown(scale * 0.01, 0.01) == pytest.approx(scale)
@@ -292,7 +292,7 @@ class TestConditionalSlowdown:
         spread collapses to +0.01 under full shrinkage where a traded feed's
         over-corrects to -0.48.
         """
-        from till_infinity.trading import barriers
+        from till_infinity.strategies import barriers
 
         assert barriers.conditional_slowdown(
             0.02, 0.01, generated=True
@@ -305,7 +305,7 @@ class TestConditionalSlowdown:
         caller's problem at the worst moment; one that returned a wild number
         would be worse. Returning 1.0 leaves the existing behaviour exactly.
         """
-        from till_infinity.trading import barriers
+        from till_infinity.strategies import barriers
 
         for short, long_run in ((0.0, 0.01), (0.01, 0.0), (-0.01, 0.01), (0.01, -0.01)):
             assert barriers.conditional_slowdown(short, long_run) == pytest.approx(1.0)
@@ -320,7 +320,7 @@ class TestConditionalSlowdown:
         """
         import inspect
 
-        from till_infinity.trading import barriers
+        from till_infinity.strategies import barriers
 
         source = inspect.getsource(barriers.duration_on_feed)
         assert "conditional_slowdown" not in source

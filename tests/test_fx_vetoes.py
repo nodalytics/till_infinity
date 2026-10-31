@@ -9,10 +9,10 @@ from __future__ import annotations
 
 import datetime as dt
 
-from till_infinity.trading import Settings
-from till_infinity.trading.config import _ny_span
-from till_infinity.trading.models import Intent, Side
-from till_infinity.trading.risk import Guard, fx_window
+from till_infinity.strategies import Settings
+from till_infinity.strategies.config import _ny_span
+from till_infinity.strategies.models import Intent, Side
+from till_infinity.strategies.risk import Guard, fx_window
 
 
 def utc(text: str) -> float:
@@ -100,7 +100,7 @@ def test_the_window_is_read_from_the_environment():
 def test_the_fast_bands_size_brake_applies_when_the_setting_is_unset(monkeypatch):
     """docs/environment.md: `from_env` used to read an unset TRADING_INTERVAL_WEIGHT as no weights,
     silently dropping the brake the dataclass sets."""
-    from till_infinity.trading.config import INTERVAL_WEIGHT
+    from till_infinity.strategies.config import INTERVAL_WEIGHT
 
     monkeypatch.delenv("TRADING_INTERVAL_WEIGHT", raising=False)
     assert Settings.from_env().interval_weight == INTERVAL_WEIGHT == Settings().interval_weight

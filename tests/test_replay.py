@@ -287,7 +287,7 @@ def test_the_shift_here_is_the_one_trading_derives():
     is duplicated. This is what stops the copies drifting apart."""
     from till_platform import replay as shared_replay
 
-    from till_infinity.trading import barriers
+    from till_infinity.strategies import barriers
 
     assert shared_replay.SHIFT == barriers.SHIFT
 

@@ -7,6 +7,7 @@ a source is expressed with the types below.
 
 from __future__ import annotations
 
+import math
 import re
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -133,6 +134,54 @@ class Bar:
 
     def close_time(self, interval: Interval) -> int:
         return self.time + interval.seconds
+
+    def defects(self) -> tuple[str, ...]:
+        """Ways this bar contradicts itself, named.
+
+        **These bars exist in our store and the desk has been folding them.**
+        1,187 daily and 37 weekly bars in `prices.db` violate one of these,
+        0.3 to 0.8% of daily bars per FX feed - one with `high < low` - and
+        none at any intraday interval. The example is unambiguous: `audusd 1d`
+        with high 0.84317 and close 0.84703, a close 46 pips above the high.
+        That is not float noise.
+
+        **They came in through Yahoo, and that is the known shape of it**: an
+        adjusted close carried against unadjusted highs and lows. The intraday
+        feeds come from the terminal and have none.
+
+        **Nothing downstream notices.** `observe_bar` checks only `close > 0`,
+        and the dispersion estimators return a number anyway - Garman-Klass
+        says 4.8e-05 and Rogers-Satchell 1.4e-04 for the same bad bar, a
+        threefold disagreement because the bar is internally inconsistent.
+        Nautilus refuses such a bar outright, which is how this was found.
+
+        Production folds 1m and 5m so it is untouched; research is not.
+        `drive-q-from-the-range` is a range-versus-close estimator ratio
+        reported on FX dailies, and a close outside the range is precisely the
+        quantity that breaks it.
+        """
+        out = []
+        values = (self.open, self.high, self.low, self.close)
+        if any(math.isnan(v) for v in values):
+            # Returned early: every comparison below is false against a NaN,
+            # so a bar with one would otherwise be reported as sound.
+            return ("not a number",)
+        if any(v <= 0.0 for v in values):
+            out.append("non-positive price")
+        if self.high < self.low:
+            out.append("high below low")
+        if self.open > self.high or self.open < self.low:
+            out.append("open outside the range")
+        if self.close > self.high or self.close < self.low:
+            out.append("close outside the range")
+        if self.volume is not None and self.volume < 0.0:
+            out.append("negative volume")
+        return tuple(out)
+
+    @property
+    def sound(self) -> bool:
+        """True when the bar does not contradict itself."""
+        return not self.defects()
 
     def is_closed(self, interval: Interval, now: float) -> bool:
         """A bar is final once its window has elapsed; until then it still moves."""
@@ -312,3 +361,22 @@ class SeriesInfo:
     bars: int
     first_time: int | None
     last_time: int | None
+
+
+def drop_unsound(bars: list[Bar]) -> tuple[list[Bar], dict[str, int]]:
+    """Keep the bars that hold together, and tally why the others did not.
+
+    Returns the tally rather than logging per bar: a warning for every bad bar
+    in a backfill is the whole log, and the count is the reading. The caller
+    decides whether a tally is worth a line.
+    """
+    kept: list[Bar] = []
+    tally: dict[str, int] = {}
+    for bar in bars:
+        reasons = bar.defects()
+        if not reasons:
+            kept.append(bar)
+            continue
+        for reason in reasons:
+            tally[reason] = tally.get(reason, 0) + 1
+    return kept, tally

@@ -13,12 +13,12 @@ import random
 import pytest
 
 from till_infinity.bus import Bus
+from till_infinity.strategies import shadow as sh
+from till_infinity.strategies.strategies import strategy as ts
 from till_infinity.structures import reactions
 from till_infinity.structures.config import Settings
 from till_infinity.structures.drawing import pivots
 from till_infinity.structures.service import Watcher
-from till_infinity.trading import shadow as sh
-from till_infinity.trading.strategies import strategy as ts
 
 FEED = "boom_1000_index"
 
@@ -78,7 +78,7 @@ def test_an_actionable_pivot_call_is_published_as_a_level_signal_the_gate_matche
 
 def test_no_strategy_trades_a_pivot_interval():
     """Publishing pivot signals must not start trading them: strategies select by interval."""
-    import till_infinity.trading.service  # noqa: F401  (registers every strategy)
+    import till_infinity.strategies.service  # noqa: F401  (registers every strategy)
 
     # **A count, not a threshold.** This asserted `>= 10` and broke when the
     # level strategies retired on 2026-10-28 - a magic number that has to be

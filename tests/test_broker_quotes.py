@@ -163,7 +163,7 @@ def test_each_synthetic_gets_its_own_exposure_leg():
     """`Volatility 75` and `Volatility 25` are different generators with no
     relationship. A shared base would net a long in one against a short in the
     other as though they were the same risk."""
-    from till_infinity.trading import exposure as ex
+    from till_infinity.strategies import exposure as ex
 
     seventy_five = ex.legs("volatility_75_index")
     twenty_five = ex.legs("volatility_25_index")

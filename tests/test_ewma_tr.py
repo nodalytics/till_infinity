@@ -80,9 +80,9 @@ class TestSizingReadsIt:
     def test_the_multiplier_follows_the_ewma_not_vol_bps(self):
         """`vol_bps` is the fallback for a signal published before this feature
         existed, not a switch - an absent reading still has to size somehow."""
-        from till_infinity.trading import Settings
-        from till_infinity.trading.models import Side
-        from till_infinity.trading.strategies.strategy import build
+        from till_infinity.strategies import Settings
+        from till_infinity.strategies.models import Side
+        from till_infinity.strategies.strategies.strategy import build
 
         settings = Settings()
         settings.volatility_target_bps = 10.0
@@ -101,9 +101,9 @@ class TestSizingReadsIt:
         assert calm > loud, (calm, loud)
 
     def test_it_falls_back_to_vol_bps_when_absent(self):
-        from till_infinity.trading import Settings
-        from till_infinity.trading.models import Side
-        from till_infinity.trading.strategies.strategy import build
+        from till_infinity.strategies import Settings
+        from till_infinity.strategies.models import Side
+        from till_infinity.strategies.strategies.strategy import build
 
         settings = Settings()
         settings.volatility_target_bps = 10.0

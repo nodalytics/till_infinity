@@ -14,10 +14,10 @@ import pickle
 import mechanics
 import pytest
 
+from till_infinity.strategies import Settings, scaling
+from till_infinity.strategies.models import Side
+from till_infinity.strategies.strategies.strategy import build, spike_scale
 from till_infinity.structures.vol.volatility import Volatility
-from till_infinity.trading import Settings, scaling
-from till_infinity.trading.models import Side
-from till_infinity.trading.strategies.strategy import build, spike_scale
 
 
 def bars(vol, n, *, span, price=100.0):
@@ -152,7 +152,7 @@ def test_spike_scale_reads_the_signal_features():
 @pytest.mark.parametrize(
     "module",
     [
-        "till_infinity.trading.service",  # consensus, parallel and follower re-sizing
+        "till_infinity.strategies.service",  # consensus, parallel and follower re-sizing
     ],
 )
 def test_every_path_that_sizes_a_trade_reads_it(module):
@@ -168,7 +168,7 @@ def test_every_path_that_sizes_a_trade_reads_it(module):
 def test_the_service_sizes_through_it_everywhere_it_resizes():
     import re
 
-    from till_infinity.trading import service
+    from till_infinity.strategies import service
 
     source = inspect.getsource(service)
     flat = source.count("risk_fraction=self.settings.risk_fraction\n")

@@ -10,7 +10,7 @@ resolved symbol and a checked terminal, and every decision - taken or refused -
 written to the journal beside the numbers it was made from.
 
 ```python
-from till_infinity.trading import Settings, listen
+from . import Settings, listen
 
 # Whatever this host can reach: the native package on Windows, the Wine bridge
 # on Linux, the paper book if neither. Nothing is armed without TRADING_LIVE.

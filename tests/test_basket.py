@@ -9,8 +9,8 @@ same direction on the same instrument up to seventeen times over.
 
 from __future__ import annotations
 
-from till_infinity.trading import Settings
-from till_infinity.trading.risk import Guard
+from till_infinity.strategies import Settings
+from till_infinity.strategies.risk import Guard
 
 
 def desk(**over) -> Guard:
@@ -120,8 +120,8 @@ class TestTheWorstReasonWins:
 class TestTheServiceActsOnIt:
     async def test_it_closes_every_position_and_journals_once(self):
         from till_infinity.bus import Bus
-        from till_infinity.trading.models import Intent, Position, Side
-        from till_infinity.trading.service import Live, Trader
+        from till_infinity.strategies.models import Intent, Position, Side
+        from till_infinity.strategies.service import Live, Trader
 
         settings = Settings(live=False)
         settings.basket_stop_fraction = 0.01  # 1% of 10,000 = 100
@@ -176,7 +176,7 @@ class TestTheServiceActsOnIt:
 
     async def test_a_flat_book_does_nothing(self):
         from till_infinity.bus import Bus
-        from till_infinity.trading.service import Trader
+        from till_infinity.strategies.service import Trader
 
         settings = Settings(live=False)
         settings.basket_stop_fraction = 0.01
@@ -243,8 +243,8 @@ class TestTheBookReadings:
         """One malformed target - `best_r` reached 1,771 on the record - would
         otherwise decide the whole book."""
         from till_infinity.bus import Bus
-        from till_infinity.trading.models import Intent, Position, Side
-        from till_infinity.trading.service import Live, Trader
+        from till_infinity.strategies.models import Intent, Position, Side
+        from till_infinity.strategies.service import Live, Trader
 
         trader = Trader(Bus(), settings=Settings(live=False))
         for ticket, target in ((1, 4420.0), (2, 4420.0), (3, 4_000_000.0)):
@@ -277,9 +277,9 @@ class TestTheBookReadings:
         """A per-position reading would call a hedged book alarming from both
         sides at once."""
         from till_infinity.bus import Bus
+        from till_infinity.strategies.models import Intent, Position, Side
+        from till_infinity.strategies.service import Live, Trader
         from till_infinity.structures.context.cusum import Cusum
-        from till_infinity.trading.models import Intent, Position, Side
-        from till_infinity.trading.service import Live, Trader
 
         trader = Trader(Bus(), settings=Settings(live=False))
         running = Cusum()
@@ -311,7 +311,7 @@ class TestTheBookReadings:
 
     def test_a_flat_book_has_no_progress_to_report(self):
         from till_infinity.bus import Bus
-        from till_infinity.trading.service import Trader
+        from till_infinity.strategies.service import Trader
 
         trader = Trader(Bus(), settings=Settings(live=False))
         assert trader._book_progress() is None

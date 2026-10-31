@@ -61,8 +61,8 @@ def test_the_entry_points_each_service_calls_exist():
     from till_infinity import news as nw
     from till_infinity import notifications as nt
     from till_infinity import prices as px
+    from till_infinity import strategies as td
     from till_infinity import structures as sx
-    from till_infinity import trading as td
 
     assert callable(nt.listen)
     assert callable(jr.listen)
@@ -131,7 +131,7 @@ def test_trading_is_off_unless_asked_for(monkeypatch):
 
 def test_enabling_trading_does_not_arm_it(monkeypatch):
     """Two switches, and neither implies the other."""
-    from till_infinity import trading as td
+    from till_infinity import strategies as td
 
     monkeypatch.setenv("TRADING_ENABLED", "1")
     monkeypatch.delenv("TRADING_LIVE", raising=False)

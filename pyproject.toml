@@ -195,9 +195,9 @@ max-returns = 8
 # trading/ is a set of ports with several implementations behind each, so the
 # exemptions here are about interfaces rather than about code that got away.
 # See docs/deployment.md.
-"till_infinity/trading/venues/broker.py" = ["ARG002", "B027"]
-"till_infinity/trading/strategies/strategy.py" = ["B027"]
-"till_infinity/trading/venues/paper.py" = ["ARG002"]
+"till_infinity/strategies/venues/broker.py" = ["ARG002", "B027"]
+"till_infinity/strategies/strategies/strategy.py" = ["B027"]
+"till_infinity/strategies/venues/paper.py" = ["ARG002"]
 # `codec.unpack` is one return per wire type. Collapsing eight tagged
 # shapes into a table would put the mapping somewhere other than beside
 # the code that reads it, for no gain but a lint score.
@@ -205,7 +205,7 @@ max-returns = 8
 # `Parse.kind` is a dispatch table written as code: one return per event kind,
 # beside the cached parse step it reads.
 # `Guard.allows` is the same shape: one return per gate, each naming itself.
-"till_infinity/trading/risk.py" = ["PLR0911"]
+"till_infinity/strategies/risk.py" = ["PLR0911"]
 # `Tracker.update` advances one touch through its states - first contact, wick,
 # origin, break, trap window, resolution - and the branch count is one per
 # transition. Splitting it would put half a state machine in another method and
@@ -214,7 +214,7 @@ max-returns = 8
 # `import MetaTrader5 as mt5` is the name every MT5 example and the terminal's
 # own documentation uses; renaming it would make this file harder to check
 # against them.
-"till_infinity/trading/venues/mt5_native.py" = ["N813"]
+"till_infinity/strategies/venues/mt5_native.py" = ["N813"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -20,7 +20,7 @@ from typing import TYPE_CHECKING, Any, Self
 
 from till_platform.logging import get_logger
 
-from .models import Bar, Interval, WriteResult
+from .models import Bar, Interval, WriteResult, drop_unsound
 from .source import BarSink, Job, PermanentError, Source, TransientError
 
 if TYPE_CHECKING:  # pragma: no cover - import cost stays out of the CLI path
@@ -91,9 +91,22 @@ def to_bars(frame: pd.DataFrame) -> list[Bar]:
             )
         except (KeyError, TypeError, ValueError):
             continue
-        if not math.isnan(bar.open):  # drop NaN rows
-            bars.append(bar)
-    return bars
+        bars.append(bar)
+    # **Filtered here rather than trusted.** Yahoo carries an adjusted close
+    # against unadjusted highs and lows, which puts the close outside the
+    # bar's own range - 1,187 daily bars in this store, and the dispersion
+    # estimators disagree threefold on such a bar rather than refusing it.
+    # The NaN check this replaces caught only one of the six ways a bar can
+    # contradict itself.
+    kept, tally = drop_unsound(bars)
+    if tally:
+        log.warning(
+            "yahoo: dropped %d of %d bars that contradict themselves: %s",
+            len(bars) - len(kept),
+            len(bars),
+            ", ".join(f"{reason} x{count}" for reason, count in sorted(tally.items())),
+        )
+    return kept
 
 
 def _optional_float(value: Any) -> float | None:

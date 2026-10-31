@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from till_infinity.trading.candles import Bar, confirms, engulfing, hammer, shooting_star
+from till_infinity.strategies.candles import Bar, confirms, engulfing, hammer, shooting_star
 
 
 def bar(o, h, lo, c):

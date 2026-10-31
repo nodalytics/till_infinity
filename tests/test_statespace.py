@@ -10304,7 +10304,7 @@ class TestTheCardSaysHowTheSpreadWasFormed:
         to this trade's outcome."""
         from till_infinity.actors.statespace.facade import Desk
         from till_infinity.actors.statespace.service import payload_for
-        from till_infinity.trading.context import Context
+        from till_infinity.strategies.context import Context
 
         quiet = Context()
         got = Desk().read("gold", "5m", 3_600.0, -16.0, 0.67)

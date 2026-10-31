@@ -319,7 +319,7 @@ def test_it_reaches_trading_as_a_feature():
     """`trading` copies the signal's features onto the intent, so the estimate
     is journalled beside every decision that was taken while it existed - which
     is what will make it possible to ask later whether it was worth gating on."""
-    from till_infinity.trading.models import Intent, Side
+    from till_infinity.strategies.models import Intent, Side
 
     intent = Intent(
         feed="gold",

@@ -201,8 +201,8 @@ ISO: frozenset[str] = frozenset(
 #: What a non-FX instrument is quoted in. Everything absent is quoted in
 #: dollars, which is all of them except the European and Asian index CFDs.
 #:
-#: Kept here rather than imported from `trading.exposure`, which has the same
-#: table for a different purpose: `trading` imports `structures` and reaching
+#: Kept here rather than imported from `strategies.exposure`, which has the same
+#: table for a different purpose: `strategies` imports `structures` and reaching
 #: back the other way would close the cycle. A test asserts the two agree, so
 #: the duplication cannot drift silently.
 QUOTED_IN: dict[str, str] = {

@@ -6,10 +6,10 @@ import datetime as dt
 
 import pytest
 
-from till_infinity.trading import Settings
-from till_infinity.trading import swap as sw
-from till_infinity.trading.models import Intent, Side, SymbolSpec
-from till_infinity.trading.risk import Guard
+from till_infinity.strategies import Settings
+from till_infinity.strategies import swap as sw
+from till_infinity.strategies.models import Intent, Side, SymbolSpec
+from till_infinity.strategies.risk import Guard
 
 
 def utc(text: str) -> float:

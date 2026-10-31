@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import pytest
 
-from till_infinity.trading.config import MAGIC_ORDER, Settings, magic_for
-from till_infinity.trading.models import Intent, Refusal, Side, SymbolSpec, Tick
-from till_infinity.trading.strategies.dispersing import Dispersing
+from till_infinity.strategies.config import MAGIC_ORDER, Settings, magic_for
+from till_infinity.strategies.models import Intent, Refusal, Side, SymbolSpec, Tick
+from till_infinity.strategies.strategies.dispersing import Dispersing
 
 SPEC = SymbolSpec(symbol="EURUSD", digits=5, point=0.00001, tick_size=0.00001)
 
@@ -174,7 +174,7 @@ class TestItCanBeScored:
         `MAGIC_ORDER`'s own comment records two strategies that ran live for an
         hour without a slot; their trades cannot be attributed in the record.
         """
-        from till_infinity.trading.config import strategy_for
+        from till_infinity.strategies.config import strategy_for
 
         assert "statespace-surprise" in MAGIC_ORDER
         base = 777_701
@@ -187,7 +187,7 @@ class TestItCanBeScored:
         assert magic != base
 
     def test_build_resolves_it_by_name(self) -> None:
-        from till_infinity.trading.strategies.strategy import build
+        from till_infinity.strategies.strategies.strategy import build
 
         built = build(["statespace-surprise"], Settings())
         assert [s.name for s in built] == ["statespace-surprise"]

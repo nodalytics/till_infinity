@@ -81,7 +81,7 @@ def test_the_level_being_judged_is_not_in_its_own_window():
     """
     import inspect
 
-    from till_infinity.trading import service as svc
+    from till_infinity.strategies import service as svc
 
     source = inspect.getsource(svc.Trader._hand_over_trend)
     assert source.index("context.efficiency") < source.index("context.observe(")

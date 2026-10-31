@@ -400,7 +400,7 @@ FEEDS: dict[str, Feed] = {
             "aus200",
             # Three venues, which is exactly the consensus quorum. One of them
             # going quiet leaves this instrument with no cross-venue check at
-            # all - the fail-open that `trading.spreads` now covers.
+            # all - the fail-open that `strategies.spreads` now covers.
             tradingview=(
                 "OANDA:AU200AUD",
                 "PEPPERSTONE:AUS200",
@@ -451,7 +451,7 @@ FEEDS: dict[str, Feed] = {
         # The crosses. Every one of these has **no dollar leg**, which is the
         # reason to carry them: everything else here is long or short the
         # dollar by construction, so a book of majors and metals is one trade
-        # wearing several tickets. See `trading.exposure`.
+        # wearing several tickets. See `strategies.exposure`.
         _feed(
             "eurgbp",
             tradingview=(

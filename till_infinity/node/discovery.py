@@ -170,22 +170,57 @@ def read(proposals: list[Proposal], results: list[Any]) -> Trials:
     return trials
 
 
-def gate_from(trials: Trials, trial: Trial, *, name: str = "backtest") -> Any:
+def gate_from(
+    trials: Trials,
+    trial: Trial,
+    *,
+    name: str = "backtest",
+    prior_trials: int = 0,
+    candidates: int | None = None,
+) -> Any:
     """Build the backtest gate, carrying the search's own count.
 
     The one function joining the halves: a gate cannot be constructed without
     the trial set, so the number of candidates cannot be left out by omission.
+
+    **`prior_trials` is the honest adjustment and usually the larger one.**
+    This sweep's count is only what happened *today*. The real number of
+    things tried on this data includes every idea tested before - and this
+    desk has tested a great many: pivots, Elliott, Wyckoff, Gann, z-scores,
+    four shock regimes, the level magnet, the up/down window. A gate that
+    counts only the current sweep understates the search that produced the
+    candidate, and the deflation is only as honest as that count.
+
+    `candidates` replaces the derived figure outright, for a search whose
+    shape this function cannot see - a window sweep, say, where twelve windows
+    times twenty candidates is 240 trials rather than 20. Both are recorded in
+    the gate's note, so a later reader can tell a counted search from an
+    asserted one.
     """
     from .promotion import Gate
 
+    derived = trials.attempted
+    total = candidates if candidates is not None else derived + prior_trials
+    if total < derived:
+        raise ValueError(
+            f"{total} candidates declared but {derived} were measured here - the "
+            f"count may be raised to cover earlier searching, never lowered below "
+            f"what this run itself tried"
+        )
+    how = (
+        f"set explicitly to {total}"
+        if candidates is not None
+        else f"{derived} measured here plus {prior_trials} prior"
+    )
     return Gate(
         name=name,
         criterion="DSR >= 0.95",
         control=trial.proposal.control or "none declared",
-        candidates=trials.attempted,
+        candidates=total,
         episodes=trial.episodes,
         trial_sharpes=trials.sharpes(),
         returns=trial.returns,
+        note=f"candidates {how}",
     )
 
 

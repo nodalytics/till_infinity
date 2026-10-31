@@ -17,8 +17,8 @@ from __future__ import annotations
 
 import pytest
 
-from till_infinity.trading import affordable as af
-from till_infinity.trading.models import SymbolSpec
+from till_infinity.strategies import affordable as af
+from till_infinity.strategies.models import SymbolSpec
 
 
 def spec(
@@ -276,6 +276,6 @@ class TestPublished:
         """`trading.models.Verdict` is whether a *trade* passed its gates. Two
         objects with one name in a package is how a reader ends up sure they
         know what an import means."""
-        from till_infinity.trading import models
+        from till_infinity.strategies import models
 
         assert af.Affordability is not getattr(models, "Verdict", None)

@@ -27,7 +27,7 @@ from pathlib import Path
 import mechanics
 import pytest
 
-from till_infinity import trading as td
+from till_infinity import strategies as td
 from till_infinity.bus import BARS, QUOTES, SIGNALS, Bus, Message
 from till_infinity.structures import service as sx
 
@@ -253,7 +253,7 @@ class TestTradingListensBeforeItConnects:
 
     @pytest.mark.asyncio
     async def test_signals_are_subscribed_while_the_broker_is_still_attaching(self, monkeypatch):
-        from till_infinity.trading import service as svc
+        from till_infinity.strategies import service as svc
 
         attaching = asyncio.Event()
         release = asyncio.Event()
@@ -279,7 +279,7 @@ class TestTradingListensBeforeItConnects:
     @pytest.mark.asyncio
     async def test_quotes_are_not_subscribed_early(self, monkeypatch):
         """Deliberately: they would queue a thousand stale quotes per restart."""
-        from till_infinity.trading import service as svc
+        from till_infinity.strategies import service as svc
 
         attaching = asyncio.Event()
         release = asyncio.Event()

@@ -11,8 +11,8 @@ from __future__ import annotations
 import mechanics
 import pytest
 
-from till_infinity.trading import scaling
-from till_infinity.trading.models import Side
+from till_infinity.strategies import scaling
+from till_infinity.strategies.models import Side
 
 
 def held(feed, side=Side.BUY):
@@ -160,7 +160,7 @@ def test_it_never_reaches_zero():
 def test_a_strategy_applies_all_four():
     import inspect
 
-    from till_infinity.trading.strategies.strategy import Strategy
+    from till_infinity.strategies.strategies.strategy import Strategy
 
     source = inspect.getsource(Strategy.risk_scale)
     for name in ("crowding", "by_volatility", "by_edge", "by_drawdown"):
@@ -170,7 +170,7 @@ def test_a_strategy_applies_all_four():
 def test_all_four_are_off_by_default():
     """Better sizing of a signal with no edge scales the loss rather than
     fixing it - see research/horizon.md - so these wait for that question."""
-    from till_infinity.trading.config import Settings
+    from till_infinity.strategies.config import Settings
 
     s = Settings()
     assert s.crowding_share == 0.0
@@ -197,7 +197,7 @@ def test_every_strategy_accepts_what_the_service_passes():
     """
     import inspect
 
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     for name, cls in td.STRATEGIES.items():
         for method in ("consider", "consider_async"):
@@ -214,7 +214,7 @@ def test_the_service_passes_them():
     caller never sends them."""
     import inspect
 
-    from till_infinity.trading import service
+    from till_infinity.strategies import service
 
     source = inspect.getsource(service.Trader.on_signal)
     assert "positions=positions" in source
@@ -240,8 +240,8 @@ class _Broker:
 
 def _trader(**over):
     from till_infinity.bus import Bus
-    from till_infinity.trading.config import Settings
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.config import Settings
+    from till_infinity.strategies.service import Trader
 
     made = {"entry_pending": True, "live": True}
     made.update(over)
@@ -264,8 +264,8 @@ async def test_an_order_the_process_is_not_tracking_is_withdrawn():
 
 @pytest.mark.asyncio
 async def test_an_order_it_is_tracking_is_left_alone():
-    from till_infinity.trading.models import Side
-    from till_infinity.trading.service import Waiting
+    from till_infinity.strategies.models import Side
+    from till_infinity.strategies.service import Waiting
 
     trader = _trader()
     trader._waiting["gold"] = Waiting(
@@ -290,7 +290,7 @@ async def test_it_does_nothing_when_resting_orders_are_off():
 @pytest.mark.asyncio
 async def test_a_broker_that_will_not_answer_is_not_a_fault():
     """Sweeping is recovery, not machinery: it must not stop the heartbeat."""
-    from till_infinity.trading.venues.broker import BrokerError
+    from till_infinity.strategies.venues.broker import BrokerError
 
     class Broken(_Broker):
         async def resting(self):
@@ -306,7 +306,7 @@ def test_the_heartbeat_sweeps_them():
     """A recovery nothing calls is not a recovery."""
     import inspect
 
-    from till_infinity.trading import service
+    from till_infinity.strategies import service
 
     assert "await self._orphans()" in inspect.getsource(service.Trader.sweep)
 
@@ -315,8 +315,8 @@ def test_the_heartbeat_sweeps_them():
 
 
 def _engine(name, **over):
-    import till_infinity.trading as td
-    from till_infinity.trading.config import Settings
+    import till_infinity.strategies as td
+    from till_infinity.strategies.config import Settings
 
     return td.STRATEGIES[name](Settings(**over))
 
@@ -328,11 +328,11 @@ def _closed(ref: str):
     """Settle a position and return every journal call it made."""
     import asyncio
 
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
     from till_infinity.bus import Bus
-    from till_infinity.trading.config import Settings
-    from till_infinity.trading.models import Intent, Side
-    from till_infinity.trading.service import Live, Trader
+    from till_infinity.strategies.config import Settings
+    from till_infinity.strategies.models import Intent, Side
+    from till_infinity.strategies.service import Live, Trader
 
     written = []
 
@@ -402,8 +402,8 @@ def test_the_ticket_is_recorded():
 
 
 def _scalp(**over):
-    import till_infinity.trading as td
-    from till_infinity.trading.config import Settings
+    import till_infinity.strategies as td
+    from till_infinity.strategies.config import Settings
 
     return td.STRATEGIES[mechanics.NAME](Settings(**over))
 
@@ -411,7 +411,7 @@ def _scalp(**over):
 def test_every_scalp_names_a_higher_timeframe_as_context():
     """The requirement is only meaningful if the context is actually higher -
     a 1m call confirmed by 3m is the same fast noise seen twice."""
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     fast = {"1m", "3m", "5m"}
     for name, cls in td.STRATEGIES.items():
@@ -424,7 +424,7 @@ def test_every_scalp_names_a_higher_timeframe_as_context():
 def test_every_strategy_wants_context():
     """The switch that staged this for scalps is gone: a trigger with nothing
     above it agreeing is a fast trade in no direction, whatever the style."""
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     # `test-mechanics` is a vehicle and declares no context, so a test about
     # what the desk *ships* filters it out - see `tests/mechanics.py`.
@@ -438,14 +438,14 @@ def test_a_stop_that_overshoots_gives_back_the_size_it_overshot_by():
     """Boom 500 stops came back at -1.25R where they were placed at 1R, so a
     trade sized to risk one unit risked a quarter more than it authorised.
     0.8 size restores what the plan said."""
-    from till_infinity.trading import scaling
+    from till_infinity.strategies import scaling
 
     assert scaling.by_slippage(1.25) == pytest.approx(0.8)
     assert scaling.by_slippage(1.79) == pytest.approx(1 / 1.79)
 
 
 def test_a_stop_that_behaves_is_left_alone():
-    from till_infinity.trading import scaling
+    from till_infinity.strategies import scaling
 
     assert scaling.by_slippage(1.0) == 1.0
     assert scaling.by_slippage(0.0) == 1.0
@@ -454,15 +454,15 @@ def test_a_stop_that_behaves_is_left_alone():
 def test_a_stop_that_comes_back_better_than_1r_never_enlarges():
     """An instrument whose stops beat their price is not a reason to trade it
     bigger; it is a reason to distrust five observations."""
-    from till_infinity.trading import scaling
+    from till_infinity.strategies import scaling
 
     assert scaling.by_slippage(0.5) == 1.0
 
 
 def test_an_unlisted_instrument_is_unscaled():
     """Every other feed must size exactly as it did before this existed."""
-    import till_infinity.trading as td
-    from till_infinity.trading.config import Settings
+    import till_infinity.strategies as td
+    from till_infinity.strategies.config import Settings
 
     made = Settings(stop_overshoot=(("boom_500_index", 1.25),))
     engine = td.STRATEGIES[mechanics.NAME](made)
@@ -472,7 +472,7 @@ def test_an_unlisted_instrument_is_unscaled():
 
 def test_the_pairs_survive_a_typo():
     """A malformed entry costs the correction, not the desk."""
-    from till_infinity.trading.config import _overshoot
+    from till_infinity.strategies.config import _overshoot
 
     assert _overshoot("boom_500_index=1.25") == (("boom_500_index", 1.25),)
     assert _overshoot("boom_500_index=oops,gold=1.1") == (("gold", 1.1),)
@@ -486,8 +486,8 @@ def test_the_pairs_survive_a_typo():
 
 
 def _untaken(side="buy", entry=100.0, stop=99.0, target=103.0, hold=600.0):
-    from till_infinity.trading.models import Side
-    from till_infinity.trading.service import Untaken
+    from till_infinity.strategies.models import Side
+    from till_infinity.strategies.service import Untaken
 
     return Untaken(
         feed="gold",
@@ -506,8 +506,8 @@ def _untaken(side="buy", entry=100.0, stop=99.0, target=103.0, hold=600.0):
 async def _walk(shade, quotes):
     """Push quotes at one intent and return (finished, journalled rows)."""
     from till_infinity.bus import Bus
-    from till_infinity.trading.models import Tick
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.models import Tick
+    from till_infinity.strategies.service import Trader
 
     trader = Trader(Bus(), settings=_scalp().settings)
     rows = []
@@ -515,7 +515,7 @@ async def _walk(shade, quotes):
     async def catch(_journal, title, **kw):
         rows.append(kw.get("context") or {})
 
-    import till_infinity.trading.service as svc
+    import till_infinity.strategies.service as svc
 
     real, svc.observe = svc.observe, catch
     try:
@@ -577,8 +577,8 @@ async def test_an_untaken_intent_that_resolves_neither_way_is_marked_to_market()
 def test_untaken_intents_are_bounded_per_feed():
     """Strategies times signals grows quickly and nothing else evicts it."""
     from till_infinity.bus import Bus
-    from till_infinity.trading.models import Intent, Side
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.models import Intent, Side
+    from till_infinity.strategies.service import Trader
 
     trader = Trader(Bus(), settings=_scalp().settings)
     intent = Intent(
@@ -609,7 +609,7 @@ def test_an_untaken_intent_waits_exactly_as_long_as_a_real_resting_entry():
     from till_platform.intervals import SECONDS
 
     from till_infinity.bus import Bus
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.service import Trader
 
     trader = Trader(Bus(), settings=_scalp().settings)
     bars = trader.settings.pullback_bars
@@ -625,7 +625,7 @@ def test_the_fill_window_matches_the_one_park_uses():
     """Two expressions of one rule drift. This asserts they are one."""
     import inspect
 
-    from till_infinity.trading import service
+    from till_infinity.strategies import service
 
     parked = inspect.getsource(service.Trader._park)
     window = inspect.getsource(service.Trader._fill_window)
@@ -640,7 +640,7 @@ def test_the_fill_window_matches_the_one_park_uses():
 def test_the_entry_timeframe_sizes_the_trade():
     """Sub-15m is -821.75 over 129 closes; 15m and above is +35.03 over 21,
     and the ordering is monotone across every band between."""
-    from till_infinity.trading import scaling
+    from till_infinity.strategies import scaling
 
     weights = (("1m", 0.3), ("3m", 0.5), ("15m", 0.7))
     assert scaling.by_interval("1m", weights) == 0.3
@@ -650,7 +650,7 @@ def test_the_entry_timeframe_sizes_the_trade():
 def test_an_unlisted_timeframe_sizes_at_full():
     """Every interval must size exactly as it did before this existed unless
     somebody named it."""
-    from till_infinity.trading import scaling
+    from till_infinity.strategies import scaling
 
     assert scaling.by_interval("4h", (("1m", 0.3),)) == 1.0
     assert scaling.by_interval("1m", ()) == 1.0
@@ -660,7 +660,7 @@ def test_an_unlisted_timeframe_sizes_at_full():
 def test_the_interval_weight_never_enlarges():
     """Same rule as every other model here: a sizing input that can size up is
     one that turns an estimation error into a margin call."""
-    from till_infinity.trading import scaling
+    from till_infinity.strategies import scaling
 
     assert scaling.by_interval("1m", (("1m", 4.0),)) == 1.0
     assert scaling.by_interval("1m", (("1m", -2.0),)) == scaling.FLOOR
@@ -672,7 +672,7 @@ def test_the_interval_weight_never_enlarges():
 def test_the_scalps_are_left_alone():
     """The disjunction is right for a scalp: it cannot wait four hours for a
     bar and would refuse a clean fast turn for having no candle yet."""
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     for name, cls in td.STRATEGIES.items():
         if cls.style == "scalp":
@@ -685,7 +685,7 @@ def test_a_leading_momentum_makes_the_turn_compulsory():
     and the candle was then the only thing asked, carrying the trade alone."""
     import inspect
 
-    from till_infinity.trading import service
+    from till_infinity.strategies import service
 
     source = inspect.getsource(service.Trader._rejected_at)
     # Asked for even without a pullback, once momentum leads.
@@ -700,7 +700,7 @@ def test_leading_momentum_still_wants_the_candle():
     compressed into one bar, which is worth having in that order."""
     import inspect
 
-    from till_infinity.trading import service
+    from till_infinity.strategies import service
 
     source = inspect.getsource(service.Trader._rejected_at)
     assert "both = both or leads" in source
@@ -815,7 +815,7 @@ def test_the_manage_loop_says_why_it_skipped_a_position():
     recorded which one."""
     import inspect
 
-    from till_infinity.trading import service
+    from till_infinity.strategies import service
 
     source = inspect.getsource(service.Trader._manage)
     # The two guards report separately - "no spec" and "no best" need different
@@ -847,7 +847,7 @@ def test_a_quiet_book_is_not_reported_as_a_fault():
     manage, and logging that every minute would bury the case that matters."""
     import inspect
 
-    from till_infinity.trading import service
+    from till_infinity.strategies import service
 
     assert "if looked and not moved:" in inspect.getsource(service.Trader._manage)
 
@@ -860,7 +860,7 @@ def test_the_measured_overshoot_applies_with_no_configuration():
     of stopped trades past half an R. Leaving that to an environment variable
     means a deployment that forgets it sizes the tail as though it were 1R.
     """
-    from till_infinity.trading.config import DEFAULT_STOP_OVERSHOOT
+    from till_infinity.strategies.config import DEFAULT_STOP_OVERSHOOT
 
     book = DEFAULT_STOP_OVERSHOOT
     # Boom drifts down and spikes up, so the sell has the stop that gets gapped.
@@ -879,7 +879,7 @@ def test_an_unset_variable_does_not_wipe_the_measured_default(monkeypatch):
     """`from_env` returning () for an unset variable is the `DEFAULT_FORMATION`
     drift again: a field default and its environment fallback disagreeing, and
     the deployment silently getting the weaker one."""
-    from till_infinity.trading.config import DEFAULT_STOP_OVERSHOOT, Settings
+    from till_infinity.strategies.config import DEFAULT_STOP_OVERSHOOT, Settings
 
     monkeypatch.delenv("TRADING_STOP_OVERSHOOT", raising=False)
     assert Settings.from_env().stop_overshoot == DEFAULT_STOP_OVERSHOOT

@@ -6,7 +6,7 @@ here are what Wall Street 30, EURUSD and BTCUSD actually reported.
 
 import calendar
 
-from till_infinity.trading.sessions import WEEK, Schedule, Sessions, week_minute
+from till_infinity.strategies.sessions import WEEK, Schedule, Sessions, week_minute
 
 M15 = 15 * 60
 

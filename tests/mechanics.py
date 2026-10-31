@@ -35,9 +35,9 @@ from __future__ import annotations
 from collections.abc import Sequence
 from typing import Any, ClassVar
 
-from till_infinity.trading.models import Intent, Refusal, Side, SymbolSpec, Tick, Verdict
-from till_infinity.trading.sizing import lots, price_distance
-from till_infinity.trading.strategies.strategy import Strategy
+from till_infinity.strategies.models import Intent, Refusal, Side, SymbolSpec, Tick, Verdict
+from till_infinity.strategies.sizing import lots, price_distance
+from till_infinity.strategies.strategies.strategy import Strategy
 
 #: The name the tests ask for. Prefixed so the floors partition and anything
 #: else that enumerates shipped strategies can tell it apart from one.

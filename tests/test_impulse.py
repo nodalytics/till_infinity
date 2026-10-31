@@ -6,8 +6,8 @@ import math
 
 import pytest
 
-from till_infinity.trading.candles import Bar
-from till_infinity.trading.impulse import (
+from till_infinity.strategies.candles import Bar
+from till_infinity.strategies.impulse import (
     MIN_GAP_VOL,
     SPAN,
     card_line,
@@ -235,8 +235,8 @@ class _Bars:
 
 def _trader(candles):
     from till_infinity.bus import Bus
-    from till_infinity.trading.config import Settings
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.config import Settings
+    from till_infinity.strategies.service import Trader
 
     trader = Trader(Bus(), settings=Settings(symbols=("gold",)))
     trader.paper = _Bars(candles)
@@ -245,7 +245,7 @@ def _trader(candles):
 
 
 def _intent():
-    from till_infinity.trading.models import Intent, Side
+    from till_infinity.strategies.models import Intent, Side
 
     return Intent(
         feed="gold",

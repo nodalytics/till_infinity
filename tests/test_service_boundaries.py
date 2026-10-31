@@ -79,7 +79,7 @@ INFRASTRUCTURE = frozenset({"bus"})
 #:     strategies -> adapters, actors
 #:     adapters -> nothing above them
 LAYERS: dict[str, frozenset[str]] = {
-    "node": frozenset({"adapters", "actors", "strategies", "trading"}),
+    "node": frozenset({"adapters", "actors", "strategies"}),
     "actors": frozenset({"adapters"}),
     "strategies": frozenset({"adapters", "actors"}),
     "adapters": frozenset(),
@@ -101,14 +101,17 @@ PACKAGES = {"till-platform": "till_platform", "till-channels": "till_channels"}
 #: Every entry is a debt, not a permission. Clearing them is the work ADR 0002
 #: describes; until then they are written down so the next one is visible.
 #:
-#: **`structures` importing `trading` makes the dependency a cycle** -
-#: `trading` imports `structures` as well - which is the clearest single
+#: **`structures` importing `strategies` makes the dependency a cycle** -
+#: `strategies` imports `structures` as well - which is the clearest single
 #: argument for the retirement in progress. It is listed rather than fixed
 #: because the package is leaving.
 DEBTS: dict[str, frozenset[str]] = {
     "news": frozenset({"prices"}),
-    "structures": frozenset({"journal", "prices", "trading"}),
-    "trading": frozenset({"journal", "prices", "structures"}),
+    "structures": frozenset({"journal", "prices", "strategies"}),
+    # Renamed from `trading` on 2026-10-31: what survives the port is the
+    # strategy logic, because order management, sizing and the venue
+    # abstraction are the engine's now.
+    "strategies": frozenset({"journal", "prices", "structures"}),
 }
 
 #: Services retired into `research/retire/`, which must no longer be importable.

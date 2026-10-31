@@ -76,7 +76,7 @@ def test_the_quote_table_agrees_with_the_one_trading_uses():
     cycle would close - so the currency an instrument is quoted in is written
     twice. Written twice and checked once.
     """
-    from till_infinity.trading import exposure as ex
+    from till_infinity.strategies import exposure as ex
 
     for feed, (_, quote) in ex.LEGS.items():
         base, mine = mc.currencies(feed)

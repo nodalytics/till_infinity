@@ -16,9 +16,9 @@ from __future__ import annotations
 import pytest
 
 from till_infinity.bus import Bus
-from till_infinity.trading import Settings
-from till_infinity.trading.models import Intent, Position, Side
-from till_infinity.trading.service import Live, Trader
+from till_infinity.strategies import Settings
+from till_infinity.strategies.models import Intent, Position, Side
+from till_infinity.strategies.service import Live, Trader
 
 
 def desk() -> Trader:
@@ -113,7 +113,7 @@ def test_the_rule_is_at_the_chokepoint_not_in_one_branch():
     reintroduce the duplicate by forgetting to check."""
     import inspect
 
-    from till_infinity.trading import service as svc
+    from till_infinity.strategies import service as svc
 
     body = inspect.getsource(svc.Trader.take)
     assert "already_open" in body, "take() must hold the rule itself"

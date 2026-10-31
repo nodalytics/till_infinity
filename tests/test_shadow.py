@@ -11,9 +11,9 @@ from pathlib import Path
 import pytest
 
 from till_infinity.bus import QUOTES, SIGNALS, Bus, Message
-from till_infinity.trading import candles
-from till_infinity.trading import shadow as sh
-from till_infinity.trading.service import Trader
+from till_infinity.strategies import candles
+from till_infinity.strategies import shadow as sh
+from till_infinity.strategies.service import Trader
 
 T0 = 1_700_000_000.0
 

@@ -21,7 +21,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 
-from till_infinity.trading.service import UNREACHABLE_AFTER, Trader
+from till_infinity.strategies.service import UNREACHABLE_AFTER, Trader
 
 
 @dataclass

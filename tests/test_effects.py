@@ -105,10 +105,10 @@ def test_the_declared_clock_starts_at_declaration_not_at_first_firing():
     ("module", "name"),
     [
         ("till_infinity.structures.engine", "structures.projection"),
-        ("till_infinity.trading.service", "trading.reachable_check"),
+        ("till_infinity.strategies.service", "trading.reachable_check"),
         ("till_infinity.structures.vol.har", "structures.stated_forecast"),
         ("till_infinity.notifications.service", "notifications.delivered"),
-        ("till_infinity.trading.scaling", "trading.spike_switch"),
+        ("till_infinity.strategies.scaling", "trading.spike_switch"),
     ],
 )
 def test_each_site_declares_and_fires(module: str, name: str):
@@ -205,8 +205,8 @@ class TestTheThreeThatWereReachedByNothing:
         assert "structures.cycles_cap" not in effects.inert(grace=0.0)
 
     def test_the_turn_exit_fires_when_a_close_is_scored(self, clean):
-        from till_infinity.trading import turning as tn
-        from till_infinity.trading.models import Side
+        from till_infinity.strategies import turning as tn
+        from till_infinity.strategies.models import Side
 
         effects.declare("trading.turn_exit", enabled=True)
         assert "trading.turn_exit" in effects.inert(grace=0.0)
@@ -218,8 +218,8 @@ class TestTheThreeThatWereReachedByNothing:
         """A suggestion behind the entry is the model declining, not a
         comparison - counting it would report the feature as working on rows it
         never scored."""
-        from till_infinity.trading import turning as tn
-        from till_infinity.trading.models import Side
+        from till_infinity.strategies import turning as tn
+        from till_infinity.strategies.models import Side
 
         effects.declare("trading.turn_exit", enabled=True)
         ride = tn.TurnExit(feed="v75", side=Side.BUY, entry=100.0, risk=2.0, suggested=99.0)
@@ -227,8 +227,8 @@ class TestTheThreeThatWereReachedByNothing:
         assert "trading.turn_exit" in effects.inert(grace=0.0)
 
     def test_the_unaffordable_refusal_fires_when_sizing_refuses(self, clean):
-        from till_infinity.trading.models import SymbolSpec
-        from till_infinity.trading.sizing import lots
+        from till_infinity.strategies.models import SymbolSpec
+        from till_infinity.strategies.sizing import lots
 
         spec = SymbolSpec(
             symbol="Boom 1000 Index",
@@ -247,8 +247,8 @@ class TestTheThreeThatWereReachedByNothing:
         assert "trading.unaffordable_refusal" not in effects.inert(grace=0.0)
 
     def test_an_affordable_trade_does_not_fire_the_refusal(self, clean):
-        from till_infinity.trading.models import SymbolSpec
-        from till_infinity.trading.sizing import lots
+        from till_infinity.strategies.models import SymbolSpec
+        from till_infinity.strategies.sizing import lots
 
         spec = SymbolSpec(
             symbol="EURUSD",

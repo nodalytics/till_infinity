@@ -5,10 +5,10 @@ def test_a_strenum_field_comes_back_as_its_enum():
     down with `'str' object has no attribute 'sign'` and left it stopped."""
     import dataclasses
 
-    from till_infinity import trading
+    from till_infinity import strategies
+    from till_infinity.strategies import service as svc
+    from till_infinity.strategies.models import Side
     from till_infinity.structures.codec import pack, registry, unpack
-    from till_infinity.trading import service as svc
-    from till_infinity.trading.models import Side
 
     shade = svc.Untaken(
         feed="gold",
@@ -21,7 +21,7 @@ def test_a_strenum_field_comes_back_as_its_enum():
         fill_by=0.0,
         hold=3600.0,
     )
-    known = registry(trading)
+    known = registry(strategies)
 
     back = unpack(pack(shade), known)
 
@@ -36,7 +36,7 @@ def test_an_unknown_member_keeps_the_raw_value_rather_than_raising():
     not cost the whole file."""
     from till_platform.state import restore_enum
 
-    from till_infinity.trading import service as svc
+    from till_infinity.strategies import service as svc
 
     assert restore_enum(svc.Untaken, "side", "sideways") == "sideways"
     assert restore_enum(svc.Untaken, "feed", "gold") == "gold"

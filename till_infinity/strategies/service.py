@@ -72,7 +72,6 @@ from till_platform.intervals import SECONDS
 from till_platform.logging import get_logger
 from till_platform.state import Restorable
 
-from .. import trading
 from ..bus import ALERTS, DISPERSION, EVENTS, PROPOSALS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from ..journal import Journal, decide, observe, outcome
 
@@ -2745,9 +2744,9 @@ class Trader:
 
         See `trading-service.md` in research/docs.
         """
-        from .. import structures
+        from .. import strategies, structures
 
-        return {**registry(structures), **registry(trading)}
+        return {**registry(structures), **registry(strategies)}
 
     def _remember_rung(self, feed: str, payload: dict[str, Any]) -> None:
         """Keep the level this signal was about, if it is one a swing trails on.

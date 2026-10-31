@@ -26,17 +26,17 @@ from . import news as nw
 from . import notifications as nt
 from . import prices as px
 from . import stack as st
+from . import strategies as td
 from . import structures as sx
-from . import trading as td
 from .bus import Bus
 from .prices.config import BROKER
+from .strategies import plans as tp
+from .strategies import report as tr
+from .strategies.strategies import strategy as ts
 from .structures import cycles as cyc
 from .structures import zma as zm
 from .structures.drawing import confluence as cf
 from .structures.vol import stated
-from .trading import plans as tp
-from .trading import report as tr
-from .trading.strategies import strategy as ts
 
 log = get_logger(__name__)
 T = TypeVar("T")

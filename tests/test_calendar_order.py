@@ -9,7 +9,7 @@ question is asked, against the time asked about. See research/docs/leads-and-liv
 
 from __future__ import annotations
 
-from till_infinity.trading.context import Context
+from till_infinity.strategies.context import Context
 
 HOUR = 3_600.0
 NFP = 1_790_000_000.0

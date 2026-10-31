@@ -20,24 +20,24 @@ from unittest import mock
 import mechanics
 import pytest
 
-from till_infinity import trading as td
+from till_infinity import strategies as td
 from till_infinity.bus import ALERTS, QUOTES, RESOLUTIONS, SIGNALS, Bus, Message
 from till_infinity.journal import Journal, read
+from till_infinity.strategies import exposure as ex
+from till_infinity.strategies import manage
+from till_infinity.strategies import plans as tp
+from till_infinity.strategies import report as tr
+from till_infinity.strategies import sessions as td_sessions
+from till_infinity.strategies.book import Book, Seen
+from till_infinity.strategies.context import Context
+from till_infinity.strategies.models import Intent, Refusal, Side, SymbolSpec, Tick
+from till_infinity.strategies.risk import Guard
+from till_infinity.strategies.service import Live, Trader, _intent_from, _market_closed
+from till_infinity.strategies.sizing import lots, price_distance, stop_for, target_for
+from till_infinity.strategies.speeds import Speeds
+from till_infinity.strategies.venues.paper import PaperBroker
+from till_infinity.strategies.venues.symbols import resolve
 from till_infinity.structures.context import cusum as td_cusum
-from till_infinity.trading import exposure as ex
-from till_infinity.trading import manage
-from till_infinity.trading import plans as tp
-from till_infinity.trading import report as tr
-from till_infinity.trading import sessions as td_sessions
-from till_infinity.trading.book import Book, Seen
-from till_infinity.trading.context import Context
-from till_infinity.trading.models import Intent, Refusal, Side, SymbolSpec, Tick
-from till_infinity.trading.risk import Guard
-from till_infinity.trading.service import Live, Trader, _intent_from, _market_closed
-from till_infinity.trading.sizing import lots, price_distance, stop_for, target_for
-from till_infinity.trading.speeds import Speeds
-from till_infinity.trading.venues.paper import PaperBroker
-from till_infinity.trading.venues.symbols import resolve
 
 
 def _stop_distance(parked, **over):
@@ -625,7 +625,7 @@ async def test_the_extremes_timing_is_forgotten_when_the_trade_closes(tmp_path):
 async def test_a_turn_suggestion_on_the_signal_reaches_the_close(tmp_path):
     """The shadow comparison, end to end, because it has never once run in production.
 
-    `trading.turn_exit` reports inert: declared always-on and never fired across the
+    `strategies.turn_exit` reports inert: declared always-on and never fired across the
     desk's whole history, and not one of 1,202 closed trades carries a single `turn_*`
     field. The declaration's own comment names the two candidates - "either the depth
     head is never warm on a traded feed or `turn_price` is not reaching
@@ -896,7 +896,7 @@ def test_a_broker_charging_far_more_than_the_group_is_refused():
 
 
 def test_without_a_quorum_of_venues_the_check_fails_open():
-    """A collector restarting must not stop the system trading."""
+    """A collector restarting must not stop the system strategies."""
     context = Context()
     context.observe_quote(venue_quote("OANDA", 4400.0))
     ours = Tick("XAUUSD", bid=4500.0, ask=4500.4)
@@ -1241,7 +1241,7 @@ def test_proposals_are_a_declared_topic_and_subscribed_early():
     is in progress would otherwise be dropped, and statespace warms by replay
     rather than by collecting bars, so it is publishing within a minute."""
     from till_infinity.bus import PROPOSALS
-    from till_infinity.trading.service import EARLY, TOPICS
+    from till_infinity.strategies.service import EARLY, TOPICS
 
     assert PROPOSALS in TOPICS, "a producer's own tally is not evidence of receipt"
     assert PROPOSALS in EARLY, "warms by replay, so it publishes inside the attach window"
@@ -1346,8 +1346,8 @@ def test_the_rpyc_backend_reuses_the_native_trading_logic():
 
     A second copy is a second place for the filling-mode logic to drift.
     """
-    from till_infinity.trading.venues.mt5_native import NativeBroker
-    from till_infinity.trading.venues.mt5_rpyc import RpycBroker
+    from till_infinity.strategies.venues.mt5_native import NativeBroker
+    from till_infinity.strategies.venues.mt5_rpyc import RpycBroker
 
     assert issubclass(RpycBroker, NativeBroker)
     for shared in ("send", "close_position", "modify", "spec", "positions", "_filling"):
@@ -1371,7 +1371,7 @@ def test_a_terminal_is_configured_by_any_of_the_routes():
 
 
 def http_broker(**over):
-    from till_infinity.trading.venues.mt5_http import HttpBroker
+    from till_infinity.strategies.venues.mt5_http import HttpBroker
 
     made = settings(url="http://bridge:8000", **over)
     return HttpBroker(made)
@@ -1379,7 +1379,7 @@ def http_broker(**over):
 
 async def test_an_order_reply_is_read_from_the_terminals_own_result():
     """The result carries the ticket and retcode; the stored row is a fallback."""
-    from till_infinity.trading.venues.mt5_http import HttpBroker
+    from till_infinity.strategies.venues.mt5_http import HttpBroker
 
     broker = http_broker()
     sent = {}
@@ -1407,7 +1407,7 @@ async def test_an_order_reply_is_read_from_the_terminals_own_result():
 
 async def test_an_older_bridge_that_returns_only_the_row_still_works():
     """Back-compat: earlier builds returned no `result` at all."""
-    from till_infinity.trading.venues.mt5_http import HttpBroker
+    from till_infinity.strategies.venues.mt5_http import HttpBroker
 
     broker = http_broker()
 
@@ -1425,7 +1425,7 @@ async def test_an_older_bridge_that_returns_only_the_row_still_works():
 
 async def test_a_stop_is_moved_by_ticket_over_the_bridge():
     """Without the ticket route this backend could not trail a stop at all."""
-    from till_infinity.trading.venues.mt5_http import HttpBroker
+    from till_infinity.strategies.venues.mt5_http import HttpBroker
 
     broker = http_broker()
     sent = {}
@@ -1444,7 +1444,7 @@ async def test_a_stop_is_moved_by_ticket_over_the_bridge():
 
 
 async def test_a_rejected_order_is_not_read_as_a_fill():
-    from till_infinity.trading.venues.mt5_http import HttpBroker
+    from till_infinity.strategies.venues.mt5_http import HttpBroker
 
     broker = http_broker()
 
@@ -1593,7 +1593,7 @@ def test_the_index_names_include_the_spaced_forms():
     assert "US TECH 100" in td.INSTRUMENTS["us100"]
     assert "US SP 500" in td.INSTRUMENTS["spx500"]
 
-    from till_infinity.trading.venues.symbols import matches
+    from till_infinity.strategies.venues.symbols import matches
 
     listing = ["US Tech 100", "US SP 500", "USDJPY", "USDJPYmicro"]
     assert matches("us100", listing) == ["US Tech 100"]
@@ -1610,7 +1610,7 @@ def test_bybit_style_suffixed_names_resolve():
     comes from the suffix list. The probe matters because the HTTP bridge
     cannot enumerate symbols on every build.
     """
-    from till_infinity.trading.venues.symbols import candidates, matches
+    from till_infinity.strategies.venues.symbols import candidates, matches
 
     listing = ["SP500.s", "NAS100.s", "XAUUSD.s", "EURUSD.s", "BTCUSDT"]
     assert matches("spx500", listing) == ["SP500.s"]
@@ -1652,7 +1652,7 @@ async def test_an_idle_trader_says_what_it_is_waiting_for(caplog):
     # locally while failing there.
     trader._last_summary = time.monotonic() - 100_000
 
-    with caplog.at_level(logging.INFO, logger="till_infinity.trading.service"):
+    with caplog.at_level(logging.INFO, logger="till_infinity.strategies.service"):
         trader._say_what_it_is_doing()
 
     said = " ".join(caplog.messages)
@@ -1673,7 +1673,7 @@ async def test_a_working_trader_reports_what_it_passed_over(caplog):
     await trader.handle(Message(topic=SIGNALS, payload=signal(interval="1d")))
     trader._last_summary = time.monotonic() - 100_000
 
-    with caplog.at_level(logging.INFO, logger="till_infinity.trading.service"):
+    with caplog.at_level(logging.INFO, logger="till_infinity.strategies.service"):
         trader._say_what_it_is_doing()
 
     said = " ".join(caplog.messages)
@@ -1757,7 +1757,7 @@ async def test_the_closing_deal_is_the_one_that_left_the_position():
     Costs are folded in, because what the account received is the number worth
     scoring - not the gross move.
     """
-    from till_infinity.trading.venues.mt5_http import HttpBroker
+    from till_infinity.strategies.venues.mt5_http import HttpBroker
 
     broker = http_broker()
 
@@ -1785,7 +1785,7 @@ async def test_the_closing_deal_is_the_one_that_left_the_position():
 
 
 async def test_a_position_with_no_closing_deal_yet_returns_nothing():
-    from till_infinity.trading.venues.mt5_http import HttpBroker
+    from till_infinity.strategies.venues.mt5_http import HttpBroker
 
     broker = http_broker()
 
@@ -1800,7 +1800,7 @@ async def test_a_position_with_no_closing_deal_yet_returns_nothing():
 
 
 def valued(value=4450.0, width=15.0, hours=4.0, because="CPI"):
-    from till_infinity.trading.valuation import Valuation
+    from till_infinity.strategies.valuation import Valuation
 
     return Valuation(value=value, width=width, hours=hours, because=because)
 
@@ -1810,7 +1810,7 @@ UNIT = 4.4  # one volatility unit on gold at 4400
 
 def test_a_valuation_above_the_market_is_a_long():
     """The stance is arithmetic. The model is never asked for a direction."""
-    from till_infinity.trading.valuation import price_it
+    from till_infinity.strategies.valuation import price_it
 
     got = price_it(valued(value=4450.0), spot=4400.0, unit=UNIT)
     assert got is not None
@@ -1819,7 +1819,7 @@ def test_a_valuation_above_the_market_is_a_long():
 
 
 def test_a_valuation_below_the_market_is_a_short():
-    from till_infinity.trading.valuation import price_it
+    from till_infinity.strategies.valuation import price_it
 
     got = price_it(valued(value=4350.0), spot=4400.0, unit=UNIT)
     assert got is not None
@@ -1829,7 +1829,7 @@ def test_a_valuation_below_the_market_is_a_short():
 
 def test_a_market_inside_the_interval_is_no_claim_at_all():
     """Most of the time the market's price is a fair estimate of itself."""
-    from till_infinity.trading.valuation import price_it
+    from till_infinity.strategies.valuation import price_it
 
     assert price_it(valued(value=4410.0, width=30.0), spot=4400.0, unit=UNIT) is None
 
@@ -1837,7 +1837,7 @@ def test_a_market_inside_the_interval_is_no_claim_at_all():
 def test_an_overconfident_width_is_widened_not_obeyed():
     """A narrow interval is a claim about the model's certainty, and it is the
     number that would size the position."""
-    from till_infinity.trading.valuation import MIN_WIDTH_VOL, price_it
+    from till_infinity.strategies.valuation import MIN_WIDTH_VOL, price_it
 
     got = price_it(valued(width=0.5), spot=4400.0, unit=UNIT)
     assert got is not None
@@ -1845,20 +1845,20 @@ def test_an_overconfident_width_is_widened_not_obeyed():
 
 
 def test_a_shrug_is_not_a_valuation_either():
-    from till_infinity.trading.valuation import MAX_WIDTH_VOL, price_it
+    from till_infinity.strategies.valuation import MAX_WIDTH_VOL, price_it
 
     got = price_it(valued(value=4600.0, width=10_000.0), spot=4400.0, unit=UNIT)
     assert got is None or got.width == pytest.approx(MAX_WIDTH_VOL * UNIT)
 
 
 def test_a_valuation_far_from_the_market_is_a_mistake_not_a_bold_call():
-    from till_infinity.trading.valuation import price_it
+    from till_infinity.strategies.valuation import price_it
 
     assert price_it(valued(value=9000.0, width=20.0), spot=4400.0, unit=UNIT) is None
 
 
 def test_declining_is_a_real_answer():
-    from till_infinity.trading.valuation import price_it
+    from till_infinity.strategies.valuation import price_it
 
     assert price_it(valued(value=0.0, width=0.0), spot=4400.0, unit=UNIT) is None
 
@@ -1869,7 +1869,7 @@ def test_the_gap_is_measured_in_the_analysts_own_widths():
     The same 50-point gap is three widths to a confident analyst and half a
     width to an unsure one, and only the first is a claim.
     """
-    from till_infinity.trading.valuation import price_it
+    from till_infinity.strategies.valuation import price_it
 
     confident = price_it(valued(value=4450.0, width=15.0), spot=4400.0, unit=UNIT)
     assert confident is not None
@@ -1935,7 +1935,7 @@ def test_a_foreign_magic_is_never_ours():
 
 def test_a_refinement_names_a_strategy_that_exists():
     """A typo in `refines` would silently disable the check it exists for."""
-    from till_infinity.trading.strategies.strategy import STRATEGIES
+    from till_infinity.strategies.strategies.strategy import STRATEGIES
 
     for name, cls in STRATEGIES.items():
         if cls.refines:
@@ -1987,7 +1987,7 @@ async def test_the_journal_records_what_the_fill_cost_against_what_was_asked(tmp
 
 def test_the_spread_model_says_nothing_until_it_has_evidence():
     """A spread limit derived from four quotes is not a limit."""
-    from till_infinity.trading.spreads import MIN_EVIDENCE, Spreads
+    from till_infinity.strategies.spreads import MIN_EVIDENCE, Spreads
 
     book = Spreads()
     when = 1_700_000_000.0
@@ -2004,7 +2004,7 @@ def test_the_spread_model_says_nothing_until_it_has_evidence():
 
 def test_an_unmeasured_instrument_is_never_mistaken_for_a_normal_one():
     """Zero means "no opinion", not "a ratio of zero" and not "normal"."""
-    from till_infinity.trading.spreads import Spreads
+    from till_infinity.strategies.spreads import Spreads
 
     book = Spreads()
     assert book.ratio("gold", 1_700_000_000.0, 4.0) == 0.0
@@ -2013,7 +2013,7 @@ def test_an_unmeasured_instrument_is_never_mistaken_for_a_normal_one():
 
 def test_a_thin_hour_reports_roughly_the_instruments_usual_spread():
     """Shrinkage, so one wide quote in a quiet hour is not a new normal."""
-    from till_infinity.trading.spreads import Spreads
+    from till_infinity.strategies.spreads import Spreads
 
     book = Spreads()
     busy = 1_700_000_000.0
@@ -2253,7 +2253,7 @@ def test_the_wide_log_does_not_announce_a_decision_nobody_made(caplog):
     no log, because it is what gets believed later.
     """
     ctx = Context(wide_venues=3, wide_pause=300.0, wide_warmup=900.0)
-    with caplog.at_level("INFO", logger="till_infinity.trading.context"):
+    with caplog.at_level("INFO", logger="till_infinity.strategies.context"):
         for venue in ("OANDA", "CAPITALCOM", "FOREXCOM"):
             ctx.observe_signal(_wide("gold", venue, 100.0))
         assert ctx.widened("gold", now=150.0) == 0
@@ -2422,8 +2422,8 @@ async def test_a_resting_order_is_taken_back_when_the_spread_eats_its_target():
     """The guard still guards. The broker's order cannot change its mind, so a
     spread that would refuse the entry outright has to reach in and take it
     back - measured against the target, as `risk.py` measures it."""
-    from till_infinity.trading.models import Side
-    from till_infinity.trading.service import Waiting
+    from till_infinity.strategies.models import Side
+    from till_infinity.strategies.service import Waiting
 
     made = settings(live=True, max_spread_fraction=0.25)
     trader = Trader(Bus(), settings=made, broker=RecordingBroker(made))
@@ -2563,7 +2563,7 @@ async def test_the_shadow_watch_can_be_switched_off(tmp_path):
 
 def test_a_winning_close_opens_no_shadow():
     """Only losses raise the question."""
-    from till_infinity.trading.service import Shadow
+    from till_infinity.strategies.service import Shadow
 
     assert Shadow.__doc__  # the type exists and is documented
 
@@ -2574,7 +2574,7 @@ def test_a_winning_close_opens_no_shadow():
 def test_how_a_trade_ended_is_decided_by_where_it_ended():
     """`reason` says how the position left the book, not what took it - so
     stop and target were distinguishable only by the sign of the profit."""
-    from till_infinity.trading.service import Live, _exit_kind
+    from till_infinity.strategies.service import Live, _exit_kind
 
     intent = Intent(
         feed="gold",
@@ -2844,7 +2844,7 @@ def test_the_floor_is_per_direction_because_the_distributions_differ():
     0.824. So one floor at 0.75 passed 96% of sells and 80% of buys, and the
     book came out 21 sells to 4 buys with no rule saying it should.
     """
-    from till_infinity.trading.strategies.floors import WARMUP, Floors
+    from till_infinity.strategies.strategies.floors import WARMUP, Floors
 
     book = Floors(percentile=0.5)
     # Two directions with genuinely different distributions.
@@ -2861,7 +2861,7 @@ def test_the_floor_is_per_direction_because_the_distributions_differ():
 def test_a_cold_direction_falls_back_to_the_absolute_floor():
     """A quantile of forty observations is a statement about forty
     observations."""
-    from till_infinity.trading.strategies.floors import Floors
+    from till_infinity.strategies.strategies.floors import Floors
 
     book = Floors(percentile=0.8)
     for _ in range(40):
@@ -2871,7 +2871,7 @@ def test_a_cold_direction_falls_back_to_the_absolute_floor():
 
 def test_the_percentile_never_opens_a_door_the_absolute_floor_shut():
     """It exists to correct an asymmetry, not to relax anything."""
-    from till_infinity.trading.strategies.floors import WARMUP, Floors
+    from till_infinity.strategies.strategies.floors import WARMUP, Floors
 
     book = Floors(percentile=0.1)
     for _ in range(WARMUP + 10):
@@ -2885,7 +2885,7 @@ def test_the_floor_does_not_move_with_outcomes():
     what happened next, so a losing streak cannot tighten it."""
     import inspect
 
-    from till_infinity.trading.strategies.floors import Floors
+    from till_infinity.strategies.strategies.floors import Floors
 
     src = inspect.getsource(Floors)
     for word in ("profit", "outcome", "won", "loss"):
@@ -2919,7 +2919,7 @@ def test_one_strategy_alone_is_not_a_consensus():
 def test_the_strategys_own_numbers_beat_the_global_ones():
     """A global threshold cannot fit both a thirty-minute thesis and a
     two-minute one."""
-    from till_infinity.trading import manage
+    from till_infinity.strategies import manage
 
     spec = GOLD
     made = settings(break_even_at=1.0, break_even_ticks=0, trail_vol=2.0)
@@ -3204,7 +3204,7 @@ def test_the_per_strategy_pullback_reaches_park():
     """
     import inspect
 
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.service import Trader
 
     source = inspect.getsource(Trader._park)
     assert "pullback_fraction" in source
@@ -3231,7 +3231,7 @@ def _with_bars(candles, **over):
 
 
 def _candle(o, h, lo, c):
-    from till_infinity.trading.candles import Bar
+    from till_infinity.strategies.candles import Bar
 
     return Bar(open=o, high=h, low=lo, close=c)
 
@@ -3336,7 +3336,7 @@ async def test_a_woken_signal_is_marked_as_post_pullback():
     requirement is inert while looking configured."""
     import inspect
 
-    from till_infinity.trading import service as svc
+    from till_infinity.strategies import service as svc
 
     assert "after_pullback" in inspect.getsource(svc.Trader._arrived)
 
@@ -3349,7 +3349,7 @@ def _gate_warnings(monkeypatch, **over):
     code is right or not - which is how the first version of this test passed
     while its partner failed.
     """
-    from till_infinity.trading import service as svc
+    from till_infinity.strategies import service as svc
 
     said = []
     monkeypatch.setattr(svc.log, "warning", lambda msg, *a, **k: said.append(msg % a if a else msg))
@@ -3451,7 +3451,7 @@ class _Records:
 
 
 async def _closed_with(volume):
-    from till_infinity.trading.venues.mt5_http import HttpBroker
+    from till_infinity.strategies.venues.mt5_http import HttpBroker
 
     broker = HttpBroker(settings())
     client = _Records()
@@ -3893,7 +3893,7 @@ def test_a_rejection_carries_whatever_the_bridge_said():
     one day - a stops-level miss, an impossible target, and a closed market -
     each needing its own investigation.
     """
-    from till_infinity.trading.venues import mt5_http
+    from till_infinity.strategies.venues import mt5_http
 
     class _Body:
         status_code = 400
@@ -3909,7 +3909,7 @@ def test_a_rejection_carries_whatever_the_bridge_said():
 
 
 def test_a_rejection_with_no_known_key_still_carries_the_body():
-    from till_infinity.trading.venues import mt5_http
+    from till_infinity.strategies.venues import mt5_http
 
     class _Odd:
         status_code = 400
@@ -4224,7 +4224,7 @@ def test_a_mixed_case_instrument_name_still_matches():
     """The matcher upper-cased the listing and not the configured name, which
     every entry survived by being upper-case already. `Volatility 75 Index`
     matched nothing, and the failure read as "the broker does not carry it"."""
-    from till_infinity.trading.venues.symbols import matches
+    from till_infinity.strategies.venues.symbols import matches
 
     listing = ["Volatility 75 Index", "Volatility 75 (1s) Index", "XAUUSD"]
     assert matches("volatility_75_index", listing) == ["Volatility 75 Index"]
@@ -4233,8 +4233,8 @@ def test_a_mixed_case_instrument_name_still_matches():
 def test_every_synthetic_resolves_against_the_brokers_own_listing():
     """The exact names, as the account lists them."""
     from till_infinity.prices.models import slugify
-    from till_infinity.trading.config import SYNTHETICS
-    from till_infinity.trading.venues.symbols import matches
+    from till_infinity.strategies.config import SYNTHETICS
+    from till_infinity.strategies.venues.symbols import matches
 
     listing = [*SYNTHETICS, "XAUUSD", "Wall Street 30"]
     for name in SYNTHETICS:
@@ -4275,7 +4275,7 @@ def test_a_contradicted_tick_value_is_corrected_to_the_contract():
 
     Sizing believed it risked 9.47 and risked about 886, which is 9.5% of the
     account on one position against an intended 0.25%."""
-    from till_infinity.trading.venues.mt5_http import _spec_from
+    from till_infinity.strategies.venues.mt5_http import _spec_from
 
     raw = {
         "name": "Volatility 75 Index",
@@ -4295,7 +4295,7 @@ def test_a_contradicted_tick_value_is_corrected_to_the_contract():
 def test_an_agreeing_tick_value_is_left_alone():
     """Every other instrument on the account already agrees, and correcting a
     right answer is how a fix becomes the next bug."""
-    from till_infinity.trading.venues.mt5_http import _spec_from
+    from till_infinity.strategies.venues.mt5_http import _spec_from
 
     gold = {
         "name": "XAUUSD",
@@ -4324,7 +4324,7 @@ def test_a_foreign_settlement_currency_is_never_corrected():
     """The tick value carries a conversion there - USDJPY settles in yen and
     its ratio is nowhere near its contract size - so the invariant does not
     hold and applying it would break the instruments that are right."""
-    from till_infinity.trading.venues.mt5_http import _spec_from
+    from till_infinity.strategies.venues.mt5_http import _spec_from
 
     usdjpy = {
         "name": "USDJPY",
@@ -4341,7 +4341,7 @@ def test_a_foreign_settlement_currency_is_never_corrected():
 def test_an_unknown_account_currency_changes_nothing():
     """Before `connect` there is nothing to compare against, and guessing would
     be worse than leaving the broker's number alone."""
-    from till_infinity.trading.venues.mt5_http import _spec_from
+    from till_infinity.strategies.venues.mt5_http import _spec_from
 
     raw = {
         "name": "Volatility 75 Index",
@@ -4386,7 +4386,7 @@ def test_r_is_signed_against_the_side():
     """Money is not comparable across instruments or account sizes; R is, and
     it was never recorded - so every question about how a strategy did began
     with a derivation the reader had to do themselves."""
-    from till_infinity.trading.service import _r_multiple
+    from till_infinity.strategies.service import _r_multiple
 
     long = Intent(
         feed="gold",
@@ -4410,7 +4410,7 @@ def test_no_risk_is_not_zero_r():
     """A trade that made nothing and one whose risk is unknown are different
     facts. An adopted placeholder has the broker's stop and the fill as its
     entry, which is not a trade that risked nothing."""
-    from till_infinity.trading.service import _r_multiple
+    from till_infinity.strategies.service import _r_multiple
 
     unknown = Intent(
         feed="gold",
@@ -4976,7 +4976,7 @@ async def _skip_said(trader, live, caplog):
     import logging
 
     trader.open[live.position.ticket] = live
-    with caplog.at_level(logging.INFO, logger="till_infinity.trading.service"):
+    with caplog.at_level(logging.INFO, logger="till_infinity.strategies.service"):
         await trader._manage()
     return " ".join(caplog.messages)
 
@@ -5079,8 +5079,8 @@ def test_every_carried_synthetic_is_registered_in_all_four_tables():
     price feed and a place in the symbol list. All four were once written by
     hand in three files, keyed on a slug each computed for itself - three
     chances to disagree and no way to notice. This is the noticing."""
-    from till_infinity.trading.config import INSTRUMENTS, SYNTHETICS, broker_slug
-    from till_infinity.trading.exposure import legs
+    from till_infinity.strategies.config import INSTRUMENTS, SYNTHETICS, broker_slug
+    from till_infinity.strategies.exposure import legs
 
     for name in SYNTHETICS:
         slug = broker_slug(name)
@@ -5093,7 +5093,7 @@ def test_the_one_second_variants_do_not_collide_with_their_parents():
     """`Volatility 25 (1s) Index` and `Volatility 25 Index` are different
     generated processes. A slug that folded them together would net a long in
     one against a short in the other as though they were the same risk."""
-    from till_infinity.trading.config import SYNTHETICS, broker_slug
+    from till_infinity.strategies.config import SYNTHETICS, broker_slug
 
     slugs = [broker_slug(n) for n in SYNTHETICS]
     assert len(set(slugs)) == len(slugs)
@@ -5103,7 +5103,7 @@ def test_the_one_second_variants_do_not_collide_with_their_parents():
 def test_an_unmapped_instrument_would_be_exempt_from_the_currency_limit():
     """The failure mode this guards is the one that looks like nothing at all:
     a feed with no exposure leg is not merely unmeasured, it is exempt."""
-    from till_infinity.trading.exposure import legs
+    from till_infinity.strategies.exposure import legs
 
     assert legs("not_a_real_instrument") == ("", "")
 
@@ -5112,7 +5112,7 @@ def test_a_position_that_cannot_be_halved_says_so():
     """The volume floor was the first suspicion and the measurement cleared it
     - 0 of 295 trades blocked - but it is still one of the five exits and has
     to name itself like the rest."""
-    from till_infinity.trading import manage
+    from till_infinity.strategies import manage
 
     made = settings(scale_out_at=1.0, scale_out_fraction=0.5)
     spec = td.SymbolSpec(symbol="XAUUSD", volume_min=0.1, volume_step=0.1, tick_size=0.01)
@@ -5128,7 +5128,7 @@ def test_a_position_that_cannot_be_halved_says_so():
 
 def test_a_successful_bank_leaves_no_stale_reason_behind():
     """Otherwise the next decline reports the one before it."""
-    from till_infinity.trading import manage
+    from till_infinity.strategies import manage
 
     made = settings(scale_out_at=1.0, scale_out_fraction=0.5)
     spec = td.SymbolSpec(symbol="XAUUSD", volume_min=0.01, volume_step=0.01, tick_size=0.01)
@@ -5205,7 +5205,7 @@ def test_a_live_mark_is_never_overwritten_by_a_stored_one(tmp_path):
 
 
 def test_an_unreadable_marks_file_does_not_stop_the_desk(tmp_path):
-    """A desk that cannot read a convenience file must keep trading."""
+    """A desk that cannot read a convenience file must keep strategies."""
     made = settings(state_dir=tmp_path)
     (tmp_path / "extremes.json").write_text("not json at all")
     trader = Trader(Bus(), settings=made)
@@ -5328,7 +5328,7 @@ def test_an_unresolvable_entry_is_dropped_rather_than_inserted(tmp_path, caplog)
     (tmp_path / "day.json").write_bytes(msgpack.packb(blob, use_bin_type=True))
     trader = Trader(Bus(), settings=made)
 
-    with caplog.at_level(logging.WARNING, logger="till_infinity.trading.service"):
+    with caplog.at_level(logging.WARNING, logger="till_infinity.strategies.service"):
         trader._recall_marks()
 
     assert "gold" not in trader._push
@@ -5339,7 +5339,7 @@ def test_the_venue_names_itself_from_the_terminal():
     """`mt5-http` is the transport and says nothing about where the money is.
     The terminal already knows - it reports `Deriv-Demo` and `Deriv.com
     Limited` - so the name is derived rather than configured."""
-    from till_infinity.trading.models import Account
+    from till_infinity.strategies.models import Account
 
     # The server splits on the hyphen that separates broker from account type,
     # and the account type is not the broker.
@@ -5359,7 +5359,7 @@ def test_the_venue_names_itself_from_the_terminal():
 
 
 def _rung_case(rungs, best, side=Side.BUY, stop=4395.0):
-    from till_infinity.trading import manage
+    from till_infinity.strategies import manage
 
     made = settings(trail_vol=2.0, break_even_at=0.0)
     spec = td.SymbolSpec(symbol="XAUUSD", volume_min=0.01, volume_step=0.01, tick_size=0.01)
@@ -5413,7 +5413,7 @@ def test_the_level_trail_can_only_tighten():
 
 def test_a_strategy_that_did_not_ask_keeps_the_distance_trail():
     """Everything else was measured on the distance trail and must keep it."""
-    from till_infinity.trading import manage
+    from till_infinity.strategies import manage
 
     made = settings(trail_vol=2.0, break_even_at=0.0)
     spec = td.SymbolSpec(symbol="XAUUSD", volume_min=0.01, volume_step=0.01, tick_size=0.01)
@@ -5434,7 +5434,7 @@ def test_the_regime_is_read_off_a_signal_the_way_the_journal_writes_it():
     an unwarmed classifier are the same thing to a reader splitting a table by
     it, and a float column with holes is worse than one with a documented
     unknown."""
-    from till_infinity.trading.service import _regime_of
+    from till_infinity.strategies.service import _regime_of
 
     assert _regime_of({"features": {"regime": 3.0}}) == 3.0
     assert _regime_of({"features": {}}) == 0.0
@@ -5451,7 +5451,7 @@ def test_the_position_to_decision_map_survives_a_restart():
     multiple, no geometry - and was invisible to every query reading
     `kind='outcome'`. Measured 2026-09-09: 227 of 548 closes.
     """
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.service import Trader
 
     trader = Trader.__new__(Trader)
     trader._refs = {}
@@ -5465,7 +5465,7 @@ def test_the_position_to_decision_map_survives_a_restart():
 
 
 def test_an_unreadable_ref_entry_is_skipped_rather_than_fatal():
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.service import Trader
 
     trader = Trader.__new__(Trader)
     trader._refs = {}
@@ -5477,7 +5477,7 @@ def test_an_unreadable_ref_entry_is_skipped_rather_than_fatal():
 
 def test_a_map_that_is_not_a_map_is_ignored():
     """A file written by an older build has no `refs` key at all."""
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.service import Trader
 
     trader = Trader.__new__(Trader)
     trader._refs = {}
@@ -5496,8 +5496,8 @@ def test_an_adopted_position_gets_its_timeframe_back():
     interval, 62% of the record, and every per-interval conclusion was drawn
     from the other 38%.
     """
-    from till_infinity.trading.models import Intent, Side
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.models import Intent, Side
+    from till_infinity.strategies.service import Trader
 
     trader = Trader.__new__(Trader)
     trader._refs = {}
@@ -5515,8 +5515,8 @@ def test_an_adopted_position_gets_its_timeframe_back():
 
 
 def test_an_intent_that_already_knows_its_timeframe_is_left_alone():
-    from till_infinity.trading.models import Intent, Side
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.models import Intent, Side
+    from till_infinity.strategies.service import Trader
 
     trader = Trader.__new__(Trader)
     trader._refs = {}
@@ -5541,7 +5541,7 @@ def test_an_intent_that_already_knows_its_timeframe_is_left_alone():
 
 
 def test_the_interval_map_survives_msgpack_string_keys():
-    from till_infinity.trading.service import Trader
+    from till_infinity.strategies.service import Trader
 
     trader = Trader.__new__(Trader)
     trader._intervals = {}
@@ -5579,7 +5579,7 @@ def test_a_slotted_dataclass_is_coerced_despite_its_generated_setstate():
     from till_platform.codec import registry, unpack
     from till_platform.state import Restorable
 
-    from till_infinity.trading.models import Intent
+    from till_infinity.strategies.models import Intent
 
     assert not isinstance(Intent.__new__(Intent), Restorable), "the premise"
     assert hasattr(Intent, "__setstate__"), "slots=True generates one"
@@ -5607,7 +5607,7 @@ def test_a_level_stored_as_text_cannot_break_the_subtraction():
     see `test_the_codec_already_coerces_a_level_it_restores`, which pins the
     fact that ruled out the first explanation.
     """
-    from till_infinity.trading.book import Book, Seen
+    from till_infinity.strategies.book import Book, Seen
 
     # Constructed with text - coerced on the way in.
     fresh = Seen(price="1.2345", interval="5m", when="100")
@@ -5654,7 +5654,7 @@ def test_the_codec_already_coerces_a_level_it_restores():
     from till_platform.codec import pack, registry, unpack
 
     from till_infinity import structures, trading
-    from till_infinity.trading.book import Book, Seen
+    from till_infinity.strategies.book import Book, Seen
 
     stale = Seen.__new__(Seen)
     for name, value in (
@@ -5683,7 +5683,7 @@ def test_the_codec_already_coerces_a_level_it_restores():
 def test_repair_drops_a_level_whose_price_is_not_a_number_at_all():
     """`float("")` raises rather than returning zero, and a level at price zero
     is not a level - it would sort to the front and match nothing."""
-    from till_infinity.trading.book import Book, Seen
+    from till_infinity.strategies.book import Book, Seen
 
     junk = Seen.__new__(Seen)
     for name, value in (
@@ -5738,7 +5738,7 @@ def test_speeds_survives_a_warmup_that_came_back_as_none():
     The guard belongs at the comparison, because no restore path can bypass it:
     `__post_init__` is skipped by the codec's `__setstate__`, which is exactly
     how the value got here."""
-    from till_infinity.trading.speeds import WARMUP, Speeds
+    from till_infinity.strategies.speeds import WARMUP, Speeds
 
     assert WARMUP > 0, "the fallback and the field default are the same number"
 
@@ -5761,7 +5761,7 @@ def test_speeds_survives_a_warmup_that_came_back_as_none():
 
 def test_a_speeds_built_normally_still_uses_its_own_warmup():
     """The fallback must not quietly override a real setting."""
-    from till_infinity.trading.speeds import Speeds
+    from till_infinity.strategies.speeds import Speeds
 
     tight = Speeds(warmup=100.0)
     tight._seen["gold"] = 50
@@ -5825,8 +5825,8 @@ def test_the_stop_overshoot_is_keyed_by_side_on_a_jump_instrument():
     to +19.1R** with 93-98% of stopped trades past 0.5R, against **+0.02R** on
     the grind side. One number for the feed would either leave the tail unsized
     or shrink the side that works - and the side that works is the grind."""
-    from till_infinity.trading import scaling
-    from till_infinity.trading.models import Side
+    from till_infinity.strategies import scaling
+    from till_infinity.strategies.models import Side
 
     book = (("boom_500_index.sell", 12.0), ("boom_500_index", 1.25), ("gold", 1.1))
 
@@ -5845,7 +5845,7 @@ def test_an_unfillable_stop_is_sized_down_by_an_order_of_magnitude():
     that costs 12R is sized at a twelfth. Sizing off stop *distance* understates
     the tail by 15x at a five-spread stop, which is the shape that ends an
     account rather than the shape that costs it a quarter."""
-    from till_infinity.trading import scaling
+    from till_infinity.strategies import scaling
 
     assert scaling.by_slippage(19.1) < 0.06
     assert scaling.by_slippage(1.0) == 1.0, "and it never enlarges"
@@ -5896,7 +5896,7 @@ async def test_a_terminal_that_is_late_does_not_kill_trading(monkeypatch):
     structures published 698 journal entries and the alerts channel looked
     entirely normal.
     """
-    from till_infinity.trading import service as svc
+    from till_infinity.strategies import service as svc
 
     monkeypatch.setattr(svc, "ATTACH_BACKOFF", 0.0)
     monkeypatch.setattr(svc, "ATTACH_BACKOFF_MAX", 0.0)
@@ -5918,7 +5918,7 @@ async def test_the_alarm_fires_while_trading_is_not_attached(monkeypatch):
     The first failure raises an alert and every tenth after it, so an overnight
     outage is noisy at the start and does not bury the channel.
     """
-    from till_infinity.trading import service as svc
+    from till_infinity.strategies import service as svc
 
     monkeypatch.setattr(svc, "ATTACH_BACKOFF", 0.0)
     monkeypatch.setattr(svc, "ATTACH_BACKOFF_MAX", 0.0)
@@ -5943,7 +5943,7 @@ async def test_the_alarm_fires_while_trading_is_not_attached(monkeypatch):
 
 async def test_the_alarm_cannot_take_the_retry_down_with_it():
     """An alarm that fails during the fault it reports is not an alarm."""
-    from till_infinity.trading import service as svc
+    from till_infinity.strategies import service as svc
 
     made = settings()
 
@@ -6103,7 +6103,7 @@ async def test_the_position_cap_is_re_read_between_parallel_fills():
     """
     import inspect
 
-    from till_infinity.trading import service
+    from till_infinity.strategies import service
 
     source = inspect.getsource(service.Trader._take_all)
     assert "fresh=True" in source, (
@@ -6235,7 +6235,7 @@ async def test_the_desk_counters_are_shown_however_small_they_are(caplog):
     """
     import logging
 
-    from till_infinity.trading import service as svc
+    from till_infinity.strategies import service as svc
 
     trader = Trader(Bus(), settings=settings())
     await trader.start()
@@ -6301,7 +6301,7 @@ async def test_received_counts_signals_and_survives_the_day_restore(caplog):
     import time
 
     from till_infinity.bus import PROPOSALS
-    from till_infinity.trading import service as svc
+    from till_infinity.strategies import service as svc
 
     trader = Trader(Bus(), settings=settings())
     await trader.start()
@@ -6333,7 +6333,7 @@ async def test_received_says_never_when_nothing_has_arrived(caplog):
     import logging
     import time
 
-    from till_infinity.trading import service as svc
+    from till_infinity.strategies import service as svc
 
     trader = Trader(Bus(), settings=settings())
     await trader.start()
@@ -6359,7 +6359,7 @@ class TestListenIntakeIsBoundedAndPutsSignalsFirst:
         return Message(topic=QUOTES, payload={"feed": "gold", "bid": 4400.0 + i, "ask": 4401.0 + i})
 
     async def test_a_signal_overtakes_a_quote_backlog(self):
-        from till_infinity.trading.service import _Intake
+        from till_infinity.strategies.service import _Intake
 
         intake = _Intake()
         await intake.pump(QUOTES, self._stream([self._quote(i) for i in range(500)]))
@@ -6371,7 +6371,7 @@ class TestListenIntakeIsBoundedAndPutsSignalsFirst:
         assert QUOTES not in topics, "a quote was handed out while a signal was waiting"
 
     async def test_the_quote_backlog_is_bounded(self):
-        from till_infinity.trading import service as svc
+        from till_infinity.strategies import service as svc
 
         intake = svc._Intake()
         flood = svc.QUOTE_BACKLOG + 2_000
@@ -6381,7 +6381,7 @@ class TestListenIntakeIsBoundedAndPutsSignalsFirst:
 
     async def test_quotes_keep_their_order_and_shed_the_oldest(self):
         """The Cusum and venue consensus integrate every step, so order matters."""
-        from till_infinity.trading import service as svc
+        from till_infinity.strategies import service as svc
 
         intake = svc._Intake()
         flood = svc.QUOTE_BACKLOG + 10
@@ -6405,7 +6405,7 @@ def test_a_strategy_cannot_be_given_its_own_daily_loss_budget():
     """
     import dataclasses
 
-    from till_infinity.trading.risk import ACCOUNT_LEVEL, PER_STRATEGY, Limits
+    from till_infinity.strategies.risk import ACCOUNT_LEVEL, PER_STRATEGY, Limits
 
     fields = {f.name for f in dataclasses.fields(Limits)} - {"by"}
     assert fields == PER_STRATEGY, fields
@@ -6417,7 +6417,7 @@ def test_a_strategy_cannot_be_given_its_own_daily_loss_budget():
 def test_a_longer_hold_takes_a_smaller_share_of_the_risk():
     """Structural, not a reading of the bar: the four existing multipliers all
     look at the current candle, so nothing said "this one holds for a day"."""
-    from till_infinity.trading.strategies.strategy import RISK_SHARE_BY_STYLE
+    from till_infinity.strategies.strategies.strategy import RISK_SHARE_BY_STYLE
 
     assert RISK_SHARE_BY_STYLE["scalp"] == 1.0
     assert RISK_SHARE_BY_STYLE["swing"] < RISK_SHARE_BY_STYLE["scalp"]
@@ -6429,7 +6429,7 @@ def test_a_longer_hold_takes_a_smaller_share_of_the_risk():
 
 def test_a_per_strategy_share_can_never_enlarge_a_position():
     """Like every multiplier in `scaling.combined`. A typo must not size up."""
-    from till_infinity.trading.strategies import strategy as st
+    from till_infinity.strategies.strategies import strategy as st
 
     class Greedy(st.Strategy):
         name = "greedy"
@@ -6463,7 +6463,7 @@ class TestTheRecordedProfitIncludesWhatWasActuallyPaid:
     """
 
     def _broker(self, deals):
-        from till_infinity.trading.venues import mt5_http
+        from till_infinity.strategies.venues import mt5_http
 
         class Fake(mt5_http.HttpBroker):
             def __init__(self):
@@ -6522,7 +6522,7 @@ class TestTheRecordedProfitIncludesWhatWasActuallyPaid:
     async def test_a_miss_refetches_rather_than_trusting_the_cache(self):
         """A deal that landed after the listing was taken is absent from it, and
         serving that from cache reports no deal for a position that has one."""
-        from till_infinity.trading.venues import mt5_http
+        from till_infinity.strategies.venues import mt5_http
 
         landed: list[dict] = []
 
@@ -6556,7 +6556,7 @@ class TestTheRecordedProfitIncludesWhatWasActuallyPaid:
     async def test_a_backend_that_cannot_answer_changes_nothing(self):
         """The paper book inherits the port's `None`, so the fallback to
         `position.profit` has to stay intact."""
-        from till_infinity.trading.venues.broker import Broker
+        from till_infinity.strategies.venues.broker import Broker
 
         assert await Broker.closed_deal(object(), 1) is None
 
@@ -6750,7 +6750,7 @@ def test_an_intent_with_no_timeframe_asks_for_no_bars():
 def test_the_trend_card_renders_once_something_publishes_the_fit():
     """The card was written against features nothing produced. This is the
     line it was always meant to print."""
-    from till_infinity.trading.regression import card_line
+    from till_infinity.strategies.regression import card_line
 
     trader = _with_bars(_rising())
     trader._vol_bps["gold"] = 10.0
@@ -6795,7 +6795,7 @@ def test_a_dispersion_payload_becomes_a_reading_and_a_card():
 def test_a_stale_or_malformed_reading_is_not_recorded_at_all():
     """A card that records a half-hour-old forecast without saying so has
     recorded the wrong number, and a record that can raise is a gate."""
-    from till_infinity.trading.context import WIDTH_TTL
+    from till_infinity.strategies.context import WIDTH_TTL
 
     context = Context()
     payload = {"feed": "gold", "interval": "1m", "time": 1_000.0, "log_variance": -16.0}
@@ -6829,7 +6829,7 @@ def test_nothing_in_the_risk_layer_reads_the_expected_width():
     second volatility-based cut on top of them was sized on reversion rather
     than on risk, and any anomaly score used in sizing has to be measured in
     production's R units first. This is the record that makes that possible."""
-    from till_infinity.trading import risk, sizing
+    from till_infinity.strategies import risk, sizing
 
     for module in (risk, sizing):
         source = Path(module.__file__).read_text()
@@ -6842,7 +6842,7 @@ async def test_a_trade_is_identical_with_and_without_the_forecast(tmp_path):
     not move - which is the only way a forecast can be let into the trading
     service before it has been measured in R units."""
     from till_infinity.bus import DISPERSION
-    from till_infinity.trading.service import TOPICS
+    from till_infinity.strategies.service import TOPICS
 
     assert DISPERSION in TOPICS, "the service has to subscribe before it can record"
 

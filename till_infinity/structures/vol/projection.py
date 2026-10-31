@@ -383,12 +383,12 @@ def path(
 def touch(target_units: float, stop_units: float) -> float:
     """Probability of reaching the target before the stop.
 
-    Deferred to `trading.barriers`, which carries the Broadie-Glasserman-Kou
+    Deferred to `strategies.barriers`, which carries the Broadie-Glasserman-Kou
     continuity correction. A naive Brownian first-passage form is wrong on
     discretely-monitored barriers and this module is not going to hold a second,
     worse copy of an integral that already has a correct home.
     """
-    from ...trading import barriers
+    from ...strategies import barriers
 
     return barriers.probability(target_units, stop_units)
 

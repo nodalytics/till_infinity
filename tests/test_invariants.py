@@ -18,11 +18,11 @@ from hypothesis import HealthCheck, assume, given, settings
 from hypothesis import strategies as st
 from hypothesis.stateful import RuleBasedStateMachine, initialize, invariant, rule
 
+from till_infinity.strategies import Settings, scaling, swap
+from till_infinity.strategies.models import Intent, Position, Side, SymbolSpec
+from till_infinity.strategies.risk import Guard, fx_window
+from till_infinity.strategies.sizing import lots
 from till_infinity.structures import rollover as ro
-from till_infinity.trading import Settings, scaling, swap
-from till_infinity.trading.models import Intent, Position, Side, SymbolSpec
-from till_infinity.trading.risk import Guard, fx_window
-from till_infinity.trading.sizing import lots
 
 settings.register_profile("ci", max_examples=150, deadline=None)
 settings.register_profile(
@@ -317,7 +317,7 @@ def test_swap_cost_is_never_negative(price, hold, side, feed):
 def test_a_managed_stop_only_ever_tightens(
     side, risk, current_off, run, even_at, trail, vol, ticks
 ):
-    from till_infinity.trading.manage import advance, better
+    from till_infinity.strategies.manage import advance, better
 
     sign = side.sign
     entry = 100.0

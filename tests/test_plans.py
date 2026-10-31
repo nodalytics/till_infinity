@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import re
 
-from till_infinity.trading import Settings, plans
+from till_infinity.strategies import Settings, plans
 
 
 def effective() -> Settings:

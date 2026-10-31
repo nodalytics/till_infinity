@@ -13,9 +13,9 @@ from __future__ import annotations
 import mechanics
 import pytest
 
-from till_infinity import trading
-from till_infinity.trading import config
-from till_infinity.trading.strategies.strategy import STRATEGIES
+from till_infinity import strategies
+from till_infinity.strategies import config
+from till_infinity.strategies.strategies.strategy import STRATEGIES
 
 
 @pytest.fixture(scope="session", autouse=True)
@@ -48,8 +48,8 @@ def _register_the_test_vehicle():
     was = config.MAGIC_ORDER
     widened = (*was, mechanics.NAME)
     config.MAGIC_ORDER = widened
-    trading.MAGIC_ORDER = widened
+    strategies.MAGIC_ORDER = widened
     yield
     config.MAGIC_ORDER = was
-    trading.MAGIC_ORDER = was
+    strategies.MAGIC_ORDER = was
     STRATEGIES.pop(mechanics.NAME, None)

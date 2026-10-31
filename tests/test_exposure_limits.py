@@ -26,8 +26,8 @@ change to any of the three settings cannot quietly break the reasoning.
 
 from __future__ import annotations
 
-import till_infinity.trading.exposure as ex
-from till_infinity.trading.models import Position, Side
+import till_infinity.strategies.exposure as ex
+from till_infinity.strategies.models import Position, Side
 
 #: The live configuration, as read off the instance on 2026-09-21.
 RISK_FRACTION = 0.005

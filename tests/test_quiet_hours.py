@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-from till_infinity.trading import Settings
-from till_infinity.trading.models import Intent, Side
-from till_infinity.trading.risk import Guard
+from till_infinity.strategies import Settings
+from till_infinity.strategies.models import Intent, Side
+from till_infinity.strategies.risk import Guard
 
 
 def at(hour: int) -> float:

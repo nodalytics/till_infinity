@@ -50,7 +50,7 @@ from . import journal as jr
 from . import news as nw
 from . import notifications as nt
 from . import prices as px
-from . import trading as td
+from . import strategies as td
 from .bus import Bus
 
 log = get_logger(__name__)

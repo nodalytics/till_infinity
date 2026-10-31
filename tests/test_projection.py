@@ -266,7 +266,7 @@ def test_separation_is_the_square_root_of_the_information():
 
 def test_touch_defers_to_barriers():
     """First-passage has one home and it carries the continuity correction."""
-    from till_infinity.trading import barriers
+    from till_infinity.strategies import barriers
 
     assert projection.touch(2.0, 1.0) == pytest.approx(barriers.probability(2.0, 1.0))
 
