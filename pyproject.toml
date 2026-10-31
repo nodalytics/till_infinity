@@ -16,6 +16,15 @@ dependencies = [
     "rich>=15.0.0",
     "ccxt>=4.4.0",
     "msgpack>=1.1.0",
+    # **Both of these were transitive until 2026-10-31**, and removing an
+    # unrelated package is what exposed them. `pydantic` arrived with
+    # `pydantic-ai-slim` and is imported directly by `trading/valuation.py`;
+    # `numpy` arrived with `river[pandas]` and is imported by
+    # `structures/cycles.py`. Dropping the agent clients broke the suite on
+    # `ModuleNotFoundError: No module named 'pydantic'` in a module that has
+    # nothing to do with agents, which is what an undeclared dependency buys.
+    "pydantic>=2.0",
+    "numpy>=1.26",
     "river[pandas]>=0.25.0",
     "tenacity>=9.1.4",
     "yfinance>=1.5.2",

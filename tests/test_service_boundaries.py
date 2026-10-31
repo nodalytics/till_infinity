@@ -22,6 +22,7 @@ from __future__ import annotations
 
 import ast
 import re
+import sys
 import tomllib
 from pathlib import Path
 
@@ -278,6 +279,72 @@ def test_every_lint_exemption_points_at_files_that_exist():
     assert not dead, (
         f"per-file-ignores matches nothing: {dead} - delete the entry, or "
         f"point it at where the code went"
+    )
+
+
+#: Import names that do not match the distribution that provides them.
+PROVIDED_BY = {
+    "dotenv": "python-dotenv",
+    "httpx_ws": "httpx-ws",
+    "MetaTrader5": "MetaTrader5",
+    "pandas": "river",  # arrives as river[pandas], an extra of a declared dep
+    "uvloop": "uvloop",
+}
+
+
+def third_party_imports(home: Path) -> dict[str, set[str]]:
+    """Top-level non-stdlib, non-local modules imported under `home`."""
+    local = {"till_infinity", "till_platform", "till_channels", "statespace"}
+    found: dict[str, set[str]] = {}
+    for path in sorted(home.rglob("*.py")):
+        tree = ast.parse(path.read_text(), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                names = [a.name for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                names = [node.module or ""] if node.level == 0 else []
+            else:
+                continue
+            for name in names:
+                top = name.split(".")[0]
+                if top and top not in sys.stdlib_module_names and top not in local:
+                    found.setdefault(top, set()).add(path.name)
+    return found
+
+
+def test_every_third_party_import_is_declared():
+    """An import that works only because something else happened to pull it in.
+
+    **This is what broke the suite on 2026-10-31.** Dropping `anthropic` and
+    `pydantic-ai-slim` - whose only callers are retired - took `pydantic` with
+    them, and `trading/valuation.py` imports `pydantic` directly. A module with
+    nothing to do with agents stopped importing because an agent library left.
+    `numpy` was in the same position behind `river[pandas]`.
+
+    The same shape had already appeared one level down: `till-platform`
+    declared `orjson` alone while importing `rich` at module level, and it only
+    worked because the desk pulls `rich` in. It was found by installing the
+    package somewhere the desk was not.
+
+    So: every top-level third-party import must be named in the manifest, as a
+    dependency or as an extra. Transitively satisfied is not declared, and the
+    difference only shows up when something unrelated is removed.
+    """
+    manifest = tomllib.loads((REPO / "pyproject.toml").read_text())["project"]
+    declared = " ".join(manifest["dependencies"])
+    declared += " " + " ".join(
+        dep for group in manifest.get("optional-dependencies", {}).values() for dep in group
+    )
+
+    undeclared = {}
+    for module, files in sorted(third_party_imports(ROOT).items()):
+        name = PROVIDED_BY.get(module, module)
+        if name in declared or name.replace("_", "-") in declared:
+            continue
+        undeclared[module] = sorted(files)[:3]
+    assert not undeclared, (
+        f"imported but not declared: {undeclared} - add it to pyproject.toml, or "
+        f"to PROVIDED_BY if the distribution is named differently"
     )
 
 
