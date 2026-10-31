@@ -1,0 +1,232 @@
+"""What is worth sending, and what is just true.
+
+A channel people actually read is one that is quiet most of the time. The
+detectors are not quiet: a stale feed re-fires every few seconds for as long as
+it stays stale, and a wide spread does the same. All of that belongs in the
+journal, where it is evidence. Very little of it belongs on a phone.
+
+Level routing was the only filter there was - `info`, `warning`, `critical` -
+and it is the wrong axis on its own. A stale feed and a level call can both be
+`warning` while being completely different things to a reader.
+
+Four filters, each answering a question the others cannot:
+
+- **shape** - a kind of finding. "I want level calls, not every wide spread."
+- **instrument** - "gold and BTC only."
+- **repeat** - the same finding again inside a cooling-off window. A stale feed
+  is one situation, not one situation per second.
+- **rate** - a ceiling per hour, whatever else got through. The backstop for
+  the case nobody predicted, because the failure being guarded against is a
+  channel nobody reads any more.
+
+Everything is allowed by default. A filter that silently drops things nobody
+configured would be worse than the noise.
+"""
+
+from __future__ import annotations
+
+import os
+import time
+from collections import OrderedDict
+from dataclasses import dataclass, field
+from typing import Any
+
+from till_platform.logging import get_logger
+
+log = get_logger(__name__)
+
+#: How long the same finding stays suppressed after being sent.
+DEFAULT_COOLDOWN = 900.0
+
+#: Ceiling per hour. Roughly one every three minutes at the worst.
+DEFAULT_MAX_PER_HOUR = 20
+
+#: Findings remembered for the repeat check.
+MEMORY = 500
+
+
+def _names(raw: str) -> frozenset[str]:
+    return frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
+
+
+#: Shapes the hourly cap may not drop.
+#:
+#: The cap is one budget shared by everything, and the noisiest producer wins
+#: it: level signals arrive continuously and a trade happens a few times a day,
+#: so an hour of ordinary chatter can exhaust the allowance and the alert that
+#: gets dropped is the one saying money moved. That is the wrong way round. A
+#: level call is information and can wait for the next hour; a position opening
+#: is a thing that has already happened to the account.
+#:
+#: They still *count* toward the hour, so the tally stays honest and a burst of
+#: trading correctly quietens everything else.
+UNCAPPED: frozenset[str] = frozenset({"trade"})
+
+
+@dataclass(slots=True)
+class Filter:
+    """Decides what reaches a channel. Empty allowlists allow everything."""
+
+    #: Shapes to accept - `level`, `stale`, `spread`, `dislocation`, `drift`.
+    shapes: frozenset[str] = frozenset()
+    #: Instruments to accept - `gold`, `btc`, …
+    feeds: frozenset[str] = frozenset()
+    #: The fastest timeframe worth telling anyone about. Empty accepts every
+    #: timeframe, which is what this did before.
+    #:
+    #: Sub-15m is where the noise and the losses both live. Over the book's
+    #: own record: 1m -7.75 a close, 3m -4.80, 5m -6.13, against 15m -2.46 and
+    #: everything slower positive - **129 closes and -821.75 below fifteen
+    #: minutes against 21 closes and +35.03 at or above it**. On the alert side
+    #: the imbalance is worse than the money: gold published 96 level rows on
+    #: 1m in 48 hours against **one** on 4h, so the timeframe worth acting on
+    #: is the one least likely to survive an hourly cap.
+    #:
+    #: An alert with no interval is kept. A trade opening or a service fault
+    #: carries none, and dropping those would be the opposite of the point.
+    floor: str = ""
+    cooldown: float = DEFAULT_COOLDOWN
+    max_per_hour: int = DEFAULT_MAX_PER_HOUR
+    _sent: OrderedDict[tuple[str, str, str], float] = field(default_factory=OrderedDict)
+    _recent: list[float] = field(default_factory=list)
+
+    @classmethod
+    def from_env(cls) -> Filter:
+        def number(name: str, fallback: float) -> float:
+            try:
+                return float(os.environ[name])
+            except (KeyError, ValueError):
+                return fallback
+
+        return cls(
+            shapes=_names(os.environ.get("NOTIFY_SHAPES", "")),
+            feeds=_names(os.environ.get("NOTIFY_FEEDS", "")),
+            floor=os.environ.get("NOTIFY_MIN_INTERVAL", "").strip().lower(),
+            cooldown=number("NOTIFY_COOLDOWN_S", DEFAULT_COOLDOWN),
+            max_per_hour=int(number("NOTIFY_MAX_PER_HOUR", DEFAULT_MAX_PER_HOUR)),
+        )
+
+    def key(self, payload: dict[str, Any]) -> tuple[str, str, str, str]:
+        """What makes two alerts "the same finding" for the repeat check.
+
+        See `notifications-filters.md` in research/docs.
+        """
+        fields = payload.get("fields") or {}
+        # The source is `agents/analyst`, not `agents`, so the fallback takes
+        # the part before the slash: a filter naming `agents` should match every
+        # role rather than none of them.
+        source = str(payload.get("source") or "").split("/")[0]
+        return (
+            str(fields.get("shape") or source),
+            str(fields.get("instrument") or ""),
+            str(fields.get("venue") or ""),
+            # `ref` where a publisher names the finding itself (see `ROUTING`).
+            str(fields.get("event") or fields.get("ref") or ""),
+        )
+
+    def rejects(self, payload: dict[str, Any], when: float | None = None) -> str:
+        """Why this should not be sent, or "" if it should.
+
+        A reason rather than a bool, because a channel that goes quiet is
+        indistinguishable from a channel that is broken unless the logs can say
+        which finding was dropped and on what grounds.
+        """
+        when = time.time() if when is None else when
+        shape, feed, _venue, _event = self.key(payload)
+
+        # **A critical alert is not a topic preference and must not be filtered
+        # like one.** `shapes` and `feeds` say what somebody is interested in;
+        # `critical` says the system is broken. Until 2026-09-12 they were the
+        # same gate, and every trading alarm this desk has ever raised went into
+        # it: `key` falls back to the **source** when a payload carries no shape,
+        # trading publishes `{title, body, level}` with source `trading`, and the
+        # configured list says `trade`. So `AutoTrading is off` - the alarm
+        # written after nine hours of rejected orders - was itself discarded, and
+        # so was `trading is not attached`, and so was the broker-unreachable
+        # alarm added the same day.
+        #
+        # The cooldown and the hourly cap still apply. Those exist to stop a
+        # channel being flooded, which is a different job from deciding what
+        # somebody cares about, and a critical alert that repeats every heartbeat
+        # is its own kind of broken.
+        urgent = str(payload.get("level") or "").strip().lower() == "critical"
+        if not urgent:
+            if self.shapes and shape.lower() not in self.shapes:
+                return f"shape {shape!r} not in {sorted(self.shapes)}"
+            if self.feeds and feed and feed.lower() not in self.feeds:
+                return f"instrument {feed!r} not in {sorted(self.feeds)}"
+        if slow := self._too_fast(payload):
+            return slow
+
+        last = self._sent.get(self.key(payload))
+        if last is not None and when - last < self.cooldown:
+            return f"same finding {when - last:.0f}s ago"
+
+        self._recent = [at for at in self._recent if when - at < 3_600]
+        if (
+            self.max_per_hour
+            and len(self._recent) >= self.max_per_hour
+            and shape.lower() not in UNCAPPED
+        ):
+            return f"{len(self._recent)} already sent this hour"
+        return ""
+
+    def _too_fast(self, payload: dict[str, Any]) -> str:
+        """Why this timeframe is below the floor, or "".
+
+        Compared in **seconds** rather than by name, so "5m" against a "15m"
+        floor is arithmetic instead of a lookup table that has to be kept in
+        the same order as the intervals. An interval the table does not know is
+        kept: a filter that silently drops what it cannot parse is a filter
+        that goes quiet for reasons nobody can see.
+        """
+        if not self.floor:
+            return ""
+        from till_platform.intervals import SECONDS
+
+        want = SECONDS.get(self.floor, 0.0)
+        if want <= 0:
+            return ""
+        raw = payload.get("interval") or (payload.get("fields") or {}).get("interval") or ""
+        name = str(raw).strip().lower()
+        if not name:
+            return ""
+        got = SECONDS.get(name, 0.0)
+        if got <= 0 or got >= want:
+            return ""
+        return f"{name} is below the {self.floor} floor"
+
+    def accept(self, payload: dict[str, Any], when: float | None = None) -> bool:
+        """Decide, and remember the decision. Call once per alert."""
+        when = time.time() if when is None else when
+        why = self.rejects(payload, when)
+        if why:
+            # **A dropped `critical` is logged loudly, because a silenced alarm
+            # is itself a fault.** At `debug` - which is where every drop used to
+            # go, and the container runs at INFO - a filter that swallows the one
+            # message somebody needed looks exactly like a quiet day.
+            speak = (
+                log.warning if str(payload.get("level") or "").lower() == "critical" else log.debug
+            )
+            speak("notify: dropped %r - %s", payload.get("title"), why)
+            return False
+
+        key = self.key(payload)
+        self._sent[key] = when
+        self._sent.move_to_end(key)
+        while len(self._sent) > MEMORY:
+            self._sent.popitem(last=False)
+        self._recent.append(when)
+        return True
+
+    def describe(self) -> str:
+        parts = []
+        if self.shapes:
+            parts.append(f"shapes {'/'.join(sorted(self.shapes))}")
+        if self.floor:
+            parts.append(f"{self.floor} and slower")
+        if self.feeds:
+            parts.append(f"instruments {'/'.join(sorted(self.feeds))}")
+        parts.append(f"one per {self.cooldown / 60:.0f}m")
+        parts.append(f"max {self.max_per_hour}/hour")
+        return ", ".join(parts)

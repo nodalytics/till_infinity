@@ -42,7 +42,7 @@ ROOT = REPO / "till_infinity"
 #:
 #: **Empty since 2026-10-31**, and left here rather than deleted. `statespace`
 #: was the one entry and it came back: as a Nautilus `Actor` it is part of the
-#: node, not a process on a bus, so `till_infinity/actors/statespace/` is where
+#: node, not a process on a bus, so `till_infinity/statespace/` is where
 #: it belongs and a separate distribution would be a fiction. The tests below
 #: parametrize over this dict and so simply do not run - which is only
 #: acceptable because `LAYERS` now asserts the thing that matters about it,
@@ -74,14 +74,19 @@ INFRASTRUCTURE = frozenset({"bus"})
 #: strategy has made the venue depend on what trades on it, which is how a
 #: second venue becomes impossible.
 #:
-#:     node     -> everything below it
-#:     actors   -> adapters (for conversion constants), never strategies
-#:     strategies -> adapters, actors
-#:     adapters -> nothing above them
+#: **There is no `actors/` directory, deliberately.** It was one for a few
+#: hours and it was the wrong shape: a layer name rather than a domain name,
+#: forcing `statespace` and `notifications` together because of what they
+#: *are* in the framework rather than what they *do*. Each capability is its
+#: own package now and exposes an `actor.py` if it has one, so the tree reads
+#: as what the desk does.
+#:
+#:     node       -> everything below it
+#:     strategies -> adapters, and the capability packages
+#:     adapters   -> nothing above them; a venue cannot know what trades on it
 LAYERS: dict[str, frozenset[str]] = {
-    "node": frozenset({"adapters", "actors", "strategies"}),
-    "actors": frozenset({"adapters"}),
-    "strategies": frozenset({"adapters", "actors"}),
+    "node": frozenset({"adapters", "strategies", "statespace", "notifications", "journal"}),
+    "strategies": frozenset({"adapters", "statespace"}),
     "adapters": frozenset(),
 }
 
@@ -225,7 +230,7 @@ def test_a_standalone_service_owns_its_top_level_name(name):
     taken. `research/harness/` holds 375 single-word modules, one of them
     `statespace.py`, and three test files used to put that directory at the
     *front* of `sys.path` to reach one module each. Whichever of them pytest
-    collected first then decided what `from till_infinity.actors.statespace import ...` meant for
+    collected first then decided what `from till_infinity.statespace import ...` meant for
     the rest of the session: the suite passed when run on its own files and
     died on `import numba` when run whole.
 
@@ -472,7 +477,7 @@ def test_the_statespace_fold_imports_nothing_above_it():
 
     It has been `till_infinity/statespace`, then `till_infinity/structures/
     statespace`, then `services/statespace` with its own manifest, and now
-    `till_infinity/actors/statespace`. What has to stay true through all of
+    `services/statespace`, and now `till_infinity/statespace`. What has to stay true through all of
     that is the direction: the fold reads nothing from the desk around it, so
     it can be tested without a node and lifted again if Nautilus stops being
     the answer.
@@ -481,7 +486,7 @@ def test_the_statespace_fold_imports_nothing_above_it():
     the package allowed to know about Nautilus, and it imports the fold rather
     than the reverse.
     """
-    fold = ROOT / "actors" / "statespace"
+    fold = ROOT / "statespace"
     assert fold.is_dir(), f"the fold is not at {fold}"
 
     offenders = {}

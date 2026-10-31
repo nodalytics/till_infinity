@@ -64,7 +64,7 @@ class Notifier(Actor):
         # Imported here: a node that sends nowhere should still start, and a
         # missing destination configuration is not a reason the desk cannot
         # trade.
-        from till_infinity.notifications import notify
+        from . import notify
 
         self._send = notify
         for topic in self._cfg.topics:
@@ -112,7 +112,7 @@ class Notifier(Actor):
         self.create_task(self._deliver(topic, payload))
 
     async def _deliver(self, topic: str, payload: dict[str, Any]) -> None:
-        from till_infinity.notifications import Level, Notification
+        from . import Level, Notification
 
         try:
             message = Notification(

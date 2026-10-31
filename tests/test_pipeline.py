@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 import random
 import tempfile
 from pathlib import Path
@@ -61,7 +62,7 @@ class TestTheBootstrapIsStationary:
         """Resampling observations independently destroys the serial
         dependence that makes the null fair."""
         picks = stationary_bootstrap(200, block=20, rng=random.Random(3))
-        consecutive = sum(1 for a, b in zip(picks, picks[1:], strict=False) if b == a + 1)
+        consecutive = sum(1 for a, b in itertools.pairwise(picks) if b == a + 1)
         assert consecutive > 100
 
 

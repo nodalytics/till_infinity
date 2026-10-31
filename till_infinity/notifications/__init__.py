@@ -1,6 +1,6 @@
 """Notifications: send an alert to Telegram and Discord.
 
-    from till_infinity.notifications import Level, Notification, notify
+    from . import Level, Notification, notify
 
     await notify(
         Notification(

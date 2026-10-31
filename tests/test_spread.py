@@ -8,7 +8,7 @@ from nautilus_trader.model.data import QuoteTick
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 from nautilus_trader.model.objects import Price, Quantity
 
-from till_infinity.actors.spread import RollingSpread
+from till_infinity.spread import RollingSpread
 
 IID = InstrumentId(Symbol("EURUSD"), Venue("MT5"))
 
