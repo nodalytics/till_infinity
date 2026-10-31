@@ -291,7 +291,13 @@ class RestingEntry(Desk):
     # ------------------------------------------------------------ the judgement
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
-        """The judgement half, exercised while the reflex half waits."""
+        """The judgement half, exercised while the reflex half waits.
+
+        `super()` first, so the counterfactual keeps resolving: an override
+        that forgets it leaves `following` climbing forever and the trial count
+        wrong, which nothing else would show.
+        """
+        super().on_quote_tick(tick)
         if not self._waiting:
             return
         if self.clock.timestamp() >= self._until:
@@ -438,7 +444,11 @@ class ArrivalEntry(Desk):
     # ------------------------------------------------------------- the arrival
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
-        """Wake the parked signal if price has come to it, or drop it if stale."""
+        """Wake the parked signal if price has come to it, or drop it if stale.
+
+        `super()` first, for the reason `RestingEntry.on_quote_tick` gives.
+        """
+        super().on_quote_tick(tick)
         if self._payload is None or self._side is None:
             return
         if self.clock.timestamp() >= self._until:

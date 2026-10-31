@@ -561,3 +561,92 @@ def test_asking_for_no_witness_confirms_everything():
     engine, strategy = _arrival_engine(require_turn_vol=0.0, require_candle=False)
     assert strategy._unconfirmed(intent()) is None
     engine.dispose()
+
+
+# ------------------------------------------------------- the counterfactual
+
+
+@pytest.mark.parametrize(
+    "build",
+    [EdgeEntry, RestingEntry, ArrivalEntry],
+    ids=["edge", "resting", "arrival"],
+)
+def test_every_entry_keeps_resolving_its_counterfactual(build):
+    """An override of `on_quote_tick` that forgets `super()` leaves
+    `following` climbing forever and the trial count wrong - and nothing else
+    would show it, because the number still prints.
+
+    `RestingEntry` and `ArrivalEntry` both override it, and both forgot on the
+    first pass. This is the test that would have caught that.
+    """
+    from till_infinity.domain.models import Intent as DomainIntent
+
+    cfgs = {
+        EdgeEntry: EdgeEntryConfig,
+        RestingEntry: RestingEntryConfig,
+        ArrivalEntry: ArrivalEntryConfig,
+    }
+    base = {"instrument_id": EURUSD.id, "bar_type": BAR_TYPE, "rule": "statespace-surprise"}
+    engine = BacktestEngine(
+        config=BacktestEngineConfig(
+            trader_id="TESTER-001", logging=LoggingConfig(bypass_logging=True)
+        )
+    )
+    engine.add_venue(
+        venue=VENUE,
+        oms_type=OmsType.HEDGING,
+        account_type=AccountType.MARGIN,
+        base_currency=USD,
+        starting_balances=[Money(1_000_000, USD)],
+    )
+    engine.add_instrument(EURUSD)
+    strategy = build(cfgs[build](**base))
+    engine.add_strategy(strategy)
+    engine.trader.start()
+
+    # One declined trade, followed. It never fills, so the fill window ends it.
+    wanted: DomainIntent = intent(entry=1.0500)
+    strategy.counterfactual.wanted(wanted, by="test", now=0.0, hold=1.0)
+    assert strategy.counterfactual.following == 1
+
+    strategy.on_quote_tick(quote(1.10000, 1.10010, 10_000_000_000))
+    assert strategy.counterfactual.following == 0, (
+        f"{build.__name__}.on_quote_tick did not resolve - did it call super()?"
+    )
+    assert strategy.resolved
+    assert strategy.resolved[0].how == "never filled"
+    engine.dispose()
+
+
+def test_a_refusal_with_no_intent_follows_nothing():
+    """Most gates refuse before there is an intent to build, and a
+    counterfactual invented from a refusal with no entry would be following a
+    trade nobody specified."""
+    engine, strategy = engine_with(config())
+    engine.trader.start()
+    strategy._follow(Refusal(gate="no-quote", detail="none"), {"feed": "eurusd"})
+    assert strategy.counterfactual.following == 0
+    engine.dispose()
+
+
+def test_a_refusal_carrying_its_intent_is_followed():
+    engine, strategy = engine_with(config())
+    engine.trader.start()
+    strategy._follow(
+        Refusal(gate="probability", detail="too low"),
+        {"feed": "eurusd", "intent": intent(), "regime": 0.7, "market": "quiet"},
+    )
+    assert strategy.counterfactual.following == 1
+    assert strategy.passed_over == {"(desk):following-probability": 1}
+    engine.dispose()
+
+
+def test_following_can_be_switched_off_but_is_on_by_default():
+    """On by default and it should stay on: the DSR's `Var(SR_trials)` is a
+    variance over the whole search."""
+    assert config().follow_untaken is True
+    engine, strategy = engine_with(config(follow_untaken=False))
+    engine.trader.start()
+    strategy._follow(Refusal(gate="g", detail="d"), {"feed": "eurusd", "intent": intent()})
+    assert strategy.counterfactual.following == 0
+    engine.dispose()

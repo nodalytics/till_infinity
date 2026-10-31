@@ -66,6 +66,7 @@ from nautilus_trader.trading.strategy import Strategy as NautilusStrategy
 
 from ..domain.models import Intent, Refusal, SymbolSpec, Tick
 from .config import Settings
+from .counterfactual import Counterfactual, Resolved
 from .strategies import strategy as rules
 
 
@@ -81,6 +82,15 @@ class DeskConfig(StrategyConfig, frozen=True):
     #: `name:source`. Empty by default - an indicator nothing reads still
     #: costs a fold per bar.
     indicators: tuple[str, ...] = ()
+    #: Follow the trades this strategy wanted and did not get.
+    #:
+    #: **On by default, and it should stay on.** The deflated Sharpe's
+    #: `Var(SR_trials)` is a variance over the whole search, so a record that
+    #: drops what was declined makes every DSR optimistic - and the failure is
+    #: silent, because the number still prints. See `counterfactual.py`.
+    follow_untaken: bool = True
+    #: How long a declined trade is followed, in hours.
+    follow_hours: float = 1.0
     #: Widest spread worth dealing, in volatility units. Above it the round
     #: trip is a bar range and the idea is over before it starts, which is what
     #: costing exotics first established.
@@ -108,6 +118,11 @@ class Desk(NautilusStrategy):
         self.refused = 0
         self.taken = 0
         self.detectors: dict[str, Any] = {}
+        self.counterfactual = Counterfactual()
+        #: What the counterfactual has resolved, newest last. Kept rather than
+        #: only logged so a run can be asked what its declined trades were
+        #: worth - which is the number the trial count depends on.
+        self.resolved: list[Resolved] = []
 
     # ----------------------------------------------------------- the lifecycle
 
@@ -129,10 +144,19 @@ class Desk(NautilusStrategy):
 
     def on_stop(self) -> None:
         """Say what it did, because a strategy that stops silently leaves no
-        way to tell a quiet session from a broken one."""
+        way to tell a quiet session from a broken one.
+
+        The counterfactual is reported alongside the trades. A run that took
+        three and declined four hundred is a different claim from one that took
+        three and declined three, and the trial count is the difference.
+        """
         self.log.info(
             f"taken {self.taken}, refused {self.refused}, "
             f"gates {dict(sorted(self.passed_over.items()))}"
+        )
+        self.log.info(
+            f"counterfactual: {len(self.resolved)} resolved, "
+            f"{self.counterfactual.following} still following"
         )
 
     def _register(self) -> None:
@@ -294,6 +318,14 @@ class Desk(NautilusStrategy):
         balance = account.balance_total()
         return float(balance.as_double()) if balance is not None else 0.0
 
+    def _feed_name(self) -> str:
+        """The feed name the rules key on, from the instrument.
+
+        Lower-cased with the separator dropped, which is what the desk's own
+        feed names look like: `EUR/USD` is `eurusd`.
+        """
+        return self._cfg.instrument_id.symbol.value.lower().replace("/", "")
+
     def _count(self, key: str) -> None:
         self.passed_over[key] = self.passed_over.get(key, 0) + 1
 
@@ -316,3 +348,47 @@ class Desk(NautilusStrategy):
         if isinstance(verdict, Intent):
             self.taken += 1
             self.place(verdict)
+        elif isinstance(verdict, Refusal):
+            self._follow(verdict, payload)
+
+    def _follow(self, refusal: Refusal, payload: dict[str, Any]) -> None:
+        """Follow a trade a gate refused, where the rule said where it would go.
+
+        A refusal carries the gate but not the geometry, so this asks the rule
+        for the intent it would have built. Where it cannot - most gates refuse
+        before there is an intent to build - there is nothing to follow and
+        nothing is recorded: **a counterfactual invented from a refusal with no
+        entry would be following a trade nobody specified.**
+        """
+        if not self._cfg.follow_untaken or self.rule is None:
+            return
+        intent = payload.get("intent")
+        if not isinstance(intent, Intent):
+            return
+        self.counterfactual.wanted(
+            intent,
+            by=self.rule.name,
+            now=self.clock.timestamp(),
+            hold=self._cfg.follow_hours * 3_600.0,
+            regime=float(payload.get("regime") or 0.0),
+            market=str(payload.get("market") or ""),
+        )
+        self._count(f"(desk):following-{refusal.gate}")
+
+    def on_quote_tick(self, tick: QuoteTick) -> None:
+        """Walk the counterfactual forward. Subclasses that override this must
+        call `super().on_quote_tick(tick)`, or the record stops resolving and
+        `following` climbs forever."""
+        done = self.counterfactual.observe(
+            self._feed_name(),
+            float(tick.bid_price),
+            float(tick.ask_price),
+            # **The tick's own time, not the clock's.** They agree in a
+            # backtest, where the clock follows the data, and they do not when
+            # a handler is driven directly - and `ts_event` is unambiguous
+            # either way: it is when this quote happened.
+            tick.ts_event / 1_000_000_000,
+        )
+        for row in done:
+            self.resolved.append(row)
+            self.log.info(f"{row.shape} {row.feed} {row.how} at {row.reward:+.2f}R")
