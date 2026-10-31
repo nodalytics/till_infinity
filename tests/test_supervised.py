@@ -33,7 +33,7 @@ ROOT = Path(__file__).resolve().parent.parent
 # session, and it put 375 single-word names from `research/harness` ahead of
 # every installed distribution for every file collected after this one. One of
 # them is `statespace`, now a service rather than a submodule of the desk, so
-# `from statespace import ...` elsewhere in the suite got a 968-line research
+# `from till_infinity.actors.statespace import ...` elsewhere in the suite got a 968-line research
 # harness in whichever order pytest happened to collect. Appending leaves
 # installed packages first, which is the only ordering that does not depend on
 # collection order.

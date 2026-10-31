@@ -47,7 +47,20 @@ from nautilus_trader.common.actor import Actor
 from nautilus_trader.common.config import ActorConfig
 from nautilus_trader.model.data import Bar, BarType
 
-from till_infinity.adapters.mt5.data import TIMEFRAMES
+#: How long a bar's aggregation unit lasts, in seconds.
+#:
+#: **Parsed from the `BarType`, not looked up per venue.** This used to import
+#: the MT5 adapter's table, which made the Actor MT5-specific for the sake of
+#: a constant - and `LAYERS` is right to forbid it: an actor that knows a venue
+#: cannot be run against another one, or against a backtest catalogue. A bar
+#: spec carries its own step and unit, so nothing here needs a venue.
+UNIT_SECONDS: dict[str, float] = {
+    "SECOND": 1.0,
+    "MINUTE": 60.0,
+    "HOUR": 3600.0,
+    "DAY": 86_400.0,
+    "WEEK": 604_800.0,
+}
 
 #: Nautilus aggregation -> the interval name `statespace` keys its state on.
 #: Its settings default to `("1m", "5m")`, and those are also the only
@@ -90,9 +103,9 @@ class StatespaceActor(Actor):
         # distribution, and `stack.py` has the same import inside its runner
         # for the same reason - a deleted directory should fail one supervised
         # task rather than the whole node.
-        from statespace import config as ss_config
-        from statespace import service as ss_service  # noqa: F401 - topic parity
-        from statespace.engine import Engine
+        from . import config as ss_config
+        from . import service as ss_service  # noqa: F401 - topic parity
+        from .engine import Engine
 
         self._engine = Engine(settings=ss_config.Settings.from_env())
         self._engine.restore()
@@ -153,11 +166,18 @@ def _interval(bar_type: BarType) -> str:
 
 
 def _seconds(bar_type: BarType) -> float:
-    spec = str(bar_type.spec)
-    for key, (_name, seconds) in TIMEFRAMES.items():
-        if spec.startswith(key):
-            return seconds
-    raise ValueError(f"{bar_type} has no known bar length")
+    """The bar's length, from its own spec.
+
+    `str(spec)` is `<step>-<unit>-<price type>`, so `4-HOUR-LAST` is four
+    hours. Multiplying rather than tabulating means a step this desk has never
+    used - 3-MINUTE, 2-HOUR - works without an edit.
+    """
+    parts = str(bar_type.spec).split("-")
+    if len(parts) < 2 or not parts[0].isdigit() or parts[1] not in UNIT_SECONDS:
+        raise ValueError(
+            f"{bar_type} has no length this actor can read - units: {sorted(UNIT_SECONDS)}"
+        )
+    return int(parts[0]) * UNIT_SECONDS[parts[1]]
 
 
 def _as_dict(readout: Any) -> dict[str, Any]:

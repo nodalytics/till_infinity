@@ -37,7 +37,6 @@ WORKDIR /app
 COPY pyproject.toml uv.lock ./
 COPY packages/till-platform/pyproject.toml ./packages/till-platform/
 COPY packages/till-channels/pyproject.toml ./packages/till-channels/
-COPY services/statespace/pyproject.toml ./services/statespace/
 RUN --mount=type=cache,target=/root/.cache/uv \
     uv sync --frozen --no-install-workspace --all-extras
 
@@ -46,7 +45,6 @@ COPY till_infinity/ ./till_infinity/
 # it runs beside the terminal, not beside the desk.
 COPY packages/till-platform/ ./packages/till-platform/
 COPY packages/till-channels/ ./packages/till-channels/
-COPY services/statespace/ ./services/statespace/
 # **The contracts, which are not inside the package.** `shared/contracts/` is
 # JSON and Markdown at the repository root because a Go service reads the same
 # files - see `docs/adr/0002-services-are-self-contained.md`. Left out of the

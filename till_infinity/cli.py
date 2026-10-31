@@ -1238,8 +1238,8 @@ def statespace_watch(redis_url, verbose, quiet, log_file):
     # Imported here for the reason `stack.py` gives: this is a separate
     # distribution now, and a top-level import would make the whole CLI
     # unusable wherever it is not installed.
-    from statespace import config as ss_config
-    from statespace import service as ss_service
+    from till_infinity.actors.statespace import config as ss_config
+    from till_infinity.actors.statespace import service as ss_service
 
     url = redis_url or os.environ.get("TILL_REDIS_URL") or None
     bus = Bus(redis_url=url)

@@ -10,7 +10,7 @@ cache as an absence of one.
 
 from __future__ import annotations
 
-from statespace import cohort
+from till_infinity.actors.statespace import cohort
 
 
 class TestOrient:

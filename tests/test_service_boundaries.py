@@ -39,7 +39,15 @@ ROOT = REPO / "till_infinity"
 #: `till_infinity/`, found no directory, and returned an empty set, so the test
 #: that says it owes nothing passed by asking nothing. A guard that goes quiet
 #: when its subject moves is worse than no guard, because it reports success.
-STANDALONE = {"statespace": "statespace"}
+#:
+#: **Empty since 2026-10-31**, and left here rather than deleted. `statespace`
+#: was the one entry and it came back: as a Nautilus `Actor` it is part of the
+#: node, not a process on a bus, so `till_infinity/actors/statespace/` is where
+#: it belongs and a separate distribution would be a fiction. The tests below
+#: parametrize over this dict and so simply do not run - which is only
+#: acceptable because `LAYERS` now asserts the thing that matters about it,
+#: that the fold imports nothing above it.
+STANDALONE: dict[str, str] = {}
 
 #: Imported freely, because none of it is a service.
 #:
@@ -214,7 +222,7 @@ def test_a_standalone_service_owns_its_top_level_name(name):
     taken. `research/harness/` holds 375 single-word modules, one of them
     `statespace.py`, and three test files used to put that directory at the
     *front* of `sys.path` to reach one module each. Whichever of them pytest
-    collected first then decided what `from statespace import ...` meant for
+    collected first then decided what `from till_infinity.actors.statespace import ...` meant for
     the rest of the session: the suite passed when run on its own files and
     died on `import numba` when run whole.
 
@@ -316,7 +324,7 @@ PROVIDED_BY = {
 
 def third_party_imports(home: Path) -> dict[str, set[str]]:
     """Top-level non-stdlib, non-local modules imported under `home`."""
-    local = {"till_infinity", "till_platform", "till_channels", "statespace"}
+    local = {"till_infinity", "till_platform", "till_channels"}
     found: dict[str, set[str]] = {}
     for path in sorted(home.rglob("*.py")):
         tree = ast.parse(path.read_text(), filename=str(path))
@@ -456,15 +464,35 @@ def test_a_package_declares_the_siblings_it_imports(dist):
     assert not undeclared, f"{dist} imports but does not declare: {undeclared}"
 
 
-def test_statespace_owes_nothing():
-    """The exemplar. Every other service is meant to end up here.
+def test_the_statespace_fold_imports_nothing_above_it():
+    """The property that survived every move this package has made.
 
-    It is no longer in `till_infinity/` at all, so this asserts the registry
-    agrees rather than measuring an empty directory.
+    It has been `till_infinity/statespace`, then `till_infinity/structures/
+    statespace`, then `services/statespace` with its own manifest, and now
+    `till_infinity/actors/statespace`. What has to stay true through all of
+    that is the direction: the fold reads nothing from the desk around it, so
+    it can be tested without a node and lifted again if Nautilus stops being
+    the answer.
+
+    `actor.py` is the exception and the whole point - it is the only file in
+    the package allowed to know about Nautilus, and it imports the fold rather
+    than the reverse.
     """
-    assert "statespace" in STANDALONE
-    assert "statespace" not in DEBTS
-    assert "statespace" not in services(), "it left the package; the scan should not find it"
+    fold = ROOT / "actors" / "statespace"
+    assert fold.is_dir(), f"the fold is not at {fold}"
+
+    offenders = {}
+    for path in sorted(fold.rglob("*.py")):
+        if path.name == "actor.py":
+            continue
+        for module, files in third_party_imports(path.parent).items():
+            if path.name not in files:
+                continue
+            if module in {"nautilus_trader", "till_infinity"}:
+                offenders.setdefault(path.name, []).append(module)
+    assert not offenders, (
+        f"the fold reaches upwards: {offenders} - only actor.py may know about the node it runs in"
+    )
 
 
 def test_the_image_carries_every_python_workspace_member():

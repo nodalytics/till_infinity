@@ -15,7 +15,6 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "statespace",
     "till-channels",
     "till-infinity",
     "till-platform",
@@ -3457,29 +3456,6 @@ wheels = [
 ]
 
 [[package]]
-name = "statespace"
-version = "0.1.0"
-source = { editable = "services/statespace" }
-dependencies = [
-    { name = "msgpack" },
-    { name = "till-platform" },
-]
-
-[package.optional-dependencies]
-analysis = [
-    { name = "numpy", version = "2.4.6", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.12'" },
-    { name = "numpy", version = "2.5.2", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "msgpack", specifier = ">=1.0" },
-    { name = "numpy", marker = "extra == 'analysis'", specifier = ">=1.26" },
-    { name = "till-platform", editable = "packages/till-platform" },
-]
-provides-extras = ["analysis"]
-
-[[package]]
 name = "tenacity"
 version = "9.1.4"
 source = { registry = "https://pypi.org/simple" }
@@ -3521,7 +3497,6 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "rich" },
     { name = "river", extra = ["pandas"] },
-    { name = "statespace" },
     { name = "tenacity" },
     { name = "till-channels" },
     { name = "till-platform" },
@@ -3577,7 +3552,6 @@ requires-dist = [
     { name = "river", extras = ["pandas"], specifier = ">=0.25.0" },
     { name = "rpyc", marker = "extra == 'rpyc'", specifier = ">=6.0.0" },
     { name = "scikit-learn", marker = "extra == 'train'", specifier = ">=1.5.0" },
-    { name = "statespace", editable = "services/statespace" },
     { name = "tenacity", specifier = ">=9.1.4" },
     { name = "till-channels", editable = "packages/till-channels" },
     { name = "till-platform", editable = "packages/till-platform" },

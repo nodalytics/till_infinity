@@ -667,8 +667,8 @@ class Stack:
         # here would make a stack that cannot start without it. The seam is
         # the bus: `watch` takes a carrier and the topics are named on both
         # sides, with a test asserting the two names match.
-        from statespace import config as ss_config
-        from statespace import service as ss_service
+        from till_infinity.actors.statespace import config as ss_config
+        from till_infinity.actors.statespace import service as ss_service
 
         await ss_service.watch(self.bus, ss_config.Settings.from_env())
 
