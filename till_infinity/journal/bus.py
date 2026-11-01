@@ -32,9 +32,9 @@ from collections.abc import Callable
 from typing import Any
 
 from till_infinity.utils.logging import get_logger
+from till_infinity.utils.topics import JOURNAL
 
 from ..carrier import Carrier
-from ..topics import JOURNAL
 from .models import Entry, Kind
 from .store import Journal
 

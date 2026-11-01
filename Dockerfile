@@ -1,7 +1,7 @@
 # Till Infinity - collectors, online models and agents in one image.
 # Multi-stage: build tooling stays in the builder, never ships.
 
-FROM ghcr.io/astral-sh/uv:python3.11-bookworm-slim AS build
+FROM ghcr.io/astral-sh/uv:python3.13-bookworm-slim AS build
 
 ENV UV_COMPILE_BYTECODE=1 \
     UV_LINK_MODE=copy \
@@ -118,7 +118,7 @@ sys.exit('FATAL: ' + why) if why \
 else print('contracts:', len(contracts.declared()), 'declared at', contracts.HOME)"
 
 
-FROM python:3.11-slim-bookworm AS runtime
+FROM python:3.13-slim-bookworm AS runtime
 
 # Not root: this reaches the network and parses what comes back.
 RUN useradd --create-home --uid 1000 till

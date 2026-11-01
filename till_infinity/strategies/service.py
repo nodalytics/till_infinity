@@ -72,6 +72,15 @@ from till_infinity.utils.codec import pack, registry, unpack
 from till_infinity.utils.intervals import SECONDS
 from till_infinity.utils.logging import get_logger
 from till_infinity.utils.state import Restorable
+from till_infinity.utils.topics import (
+    ALERTS,
+    DISPERSION,
+    EVENTS,
+    PROPOSALS,
+    QUOTES,
+    RESOLUTIONS,
+    SIGNALS,
+)
 
 from ..carrier import Carrier, Message
 from ..domain.models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
@@ -86,12 +95,6 @@ from ..indicators.trend import Trend
 from ..indicators.trend import card_line as trend_card
 from ..indicators.trend import features_across as trend_features
 from ..journal import Journal, decide, observe, outcome
-
-# The wire name `prices` gives its own broker connection's quotes, as opposed to
-# the six venues it scrapes through TradingView. Imported rather than repeated:
-# `trading.config` already depends on `prices.models`, so the direction is settled,
-# and a duplicated string would drift silently.
-from ..topics import ALERTS, DISPERSION, EVENTS, PROPOSALS, QUOTES, RESOLUTIONS, SIGNALS
 from . import manage, plans, turning
 from .config import Settings, magic_for, strategy_for
 from .context import Context
@@ -108,6 +111,11 @@ from .venues import replicate
 from .venues import symbols as sym
 from .venues.broker import Broker, BrokerError, build
 from .venues.paper import PaperBroker
+
+# The wire name `prices` gives its own broker connection's quotes, as opposed to
+# the six venues it scrapes through TradingView. Imported rather than repeated:
+# `trading.config` already depends on `prices.models`, so the direction is settled,
+# and a duplicated string would drift silently.
 
 #: The source name a broker-originated quote carries.
 #:

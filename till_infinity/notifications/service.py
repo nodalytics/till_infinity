@@ -25,9 +25,9 @@ from tenacity import (
 
 from till_infinity.utils import effects
 from till_infinity.utils.logging import get_logger
+from till_infinity.utils.topics import ALERTS
 
 from ..carrier import Carrier
-from ..topics import ALERTS
 from .config import DEFAULT_TARGETS, Settings
 from .discord import DiscordNotifier
 from .filters import Filter

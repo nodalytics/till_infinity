@@ -47,6 +47,8 @@ from nautilus_trader.common.actor import Actor
 from nautilus_trader.common.config import ActorConfig
 from nautilus_trader.model.data import Bar, BarType
 
+from till_infinity.utils import topics
+
 #: How long a bar's aggregation unit lasts, in seconds.
 #:
 #: **Parsed from the `BarType`, not looked up per venue.** This used to import
@@ -190,7 +192,7 @@ class StatespaceActor(Actor):
         if readout is None:
             return  # out of scope, unwarmed, or no variance - all expected
         self._engine.save()
-        self.publish_data_dict(self._cfg.topic, _as_dict(readout))
+        topics.publish(self, self._cfg.topic, _as_dict(readout))
 
     def _payload(self, bar: Bar) -> dict[str, Any]:
         bar_type = str(bar.bar_type)

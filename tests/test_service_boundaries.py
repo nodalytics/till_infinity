@@ -69,7 +69,7 @@ STANDALONE: dict[str, str] = {}
 #: callers and no home, which ADR 0002 admits on the same terms as
 #: `till-platform` - and which is where that package's remnants landed when it
 #: too was retired.
-INFRASTRUCTURE = frozenset({"carrier", "topics", "utils", "domain"})
+INFRASTRUCTURE = frozenset({"carrier", "utils", "domain"})
 
 #: The Nautilus layers, and what each is allowed to import.
 #:

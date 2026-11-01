@@ -190,12 +190,12 @@ class TestTheTopicAgrees:
 
     def test_the_bus_the_service_and_the_producer_agree(self) -> None:
         from till_infinity.statespace.service import PROPOSES
-        from till_infinity.topics import PROPOSALS
+        from till_infinity.utils.topics import PROPOSALS
 
         assert proposing.TOPIC == PROPOSALS == PROPOSES
 
     def test_it_is_not_the_signals_topic(self) -> None:
-        from till_infinity.topics import PROPOSALS, SIGNALS
+        from till_infinity.utils.topics import PROPOSALS, SIGNALS
 
         assert PROPOSALS != SIGNALS
 

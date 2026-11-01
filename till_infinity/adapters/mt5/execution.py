@@ -12,6 +12,7 @@ from __future__ import annotations
 import asyncio
 from typing import Any
 
+from nautilus_trader.core.uuid import UUID4
 from nautilus_trader.execution.reports import FillReport, OrderStatusReport, PositionStatusReport
 from nautilus_trader.live.execution_client import LiveExecutionClient
 from nautilus_trader.model.enums import (
@@ -120,7 +121,7 @@ class MT5ExecutionClient(LiveExecutionClient):
                     instrument_id=instrument_id,
                     position_side=side.to_position_side(),
                     quantity=Quantity(float(row.get("volume") or 0.0), instrument.size_precision),
-                    report_id=self._uuid4(),
+                    report_id=UUID4(),
                     ts_last=now,
                     ts_init=now,
                     venue_position_id=PositionId(str(row.get("ticket"))),
@@ -153,7 +154,7 @@ class MT5ExecutionClient(LiveExecutionClient):
                         instrument.size_precision,
                     ),
                     filled_qty=Quantity(0, instrument.size_precision),
-                    report_id=self._uuid4(),
+                    report_id=UUID4(),
                     ts_accepted=now,
                     ts_last=now,
                     ts_init=now,
@@ -190,7 +191,7 @@ class MT5ExecutionClient(LiveExecutionClient):
                         float(row.get("commission") or 0.0), instrument.quote_currency
                     ),
                     liquidity_side=LiquiditySide.TAKER,
-                    report_id=self._uuid4(),
+                    report_id=UUID4(),
                     ts_event=now,
                     ts_init=now,
                 )

@@ -9872,10 +9872,14 @@ class TestService:
         from till_infinity.statespace.config import Settings
         from till_infinity.statespace.engine import Engine
         from till_infinity.statespace.service import Watcher
-        from till_infinity.topics import BARS, DISPERSION
-        from till_infinity.topics import DECLARED as TOPICS
 
-        assert DISPERSION in TOPICS
+        # The topic strings, as literals. `topics.DECLARED` was a registry
+        # that let this assert a publisher used a *declared* name; it existed
+        # because the names were "read by a Go service" and had to be spellable
+        # outside Python. There is no Go service and Nautilus owns the bus, so
+        # the registry had one importer per name and no second reader. What is
+        # left to pin is that the name does not drift.
+        from till_infinity.utils.topics import BARS, DISPERSION
 
         class Recording:
             def __init__(self):
@@ -9921,7 +9925,7 @@ class TestService:
         publishes. This is the check.
         """
         from till_infinity.statespace.service import CONSUMES, TOPIC
-        from till_infinity.topics import BARS, DISPERSION
+        from till_infinity.utils.topics import BARS, DISPERSION
 
         assert CONSUMES == BARS
         assert TOPIC == DISPERSION
@@ -10299,11 +10303,11 @@ class TestTheTransitionTopic:
         imports nothing outside itself but `shared` - so the name is duplicated
         and the duplicate is checked here, outside the package."""
         from till_infinity.statespace.service import NOTICES
-        from till_infinity.topics import DECLARED as TOPICS
-        from till_infinity.topics import STATESPACE_SIGNALS
 
-        assert NOTICES == STATESPACE_SIGNALS
-        assert STATESPACE_SIGNALS in TOPICS
+        # The duplicate the docstring above describes, pinned against the
+        # string rather than against a registry - see the note in
+        # `test_it_publishes_a_dispersion_reading` for why the registry went.
+        assert NOTICES == "statespace.signals"
 
     def test_it_announces_a_break_and_a_widening_but_not_every_bar(self):
         from till_infinity.statespace.service import NOTICES

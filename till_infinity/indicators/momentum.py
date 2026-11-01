@@ -242,13 +242,21 @@ class Cusum(Indicator, Restorable):
         self.up = max(0.0, self.up + change)
         self.down = min(0.0, self.down + change)
 
+        # **`restart`, not `reset`.** This means *an event has fired, so
+        # accumulate from here* - it keeps `last` and `started`, because the
+        # price series did not restart. `reset` is Nautilus's and means *this
+        # detector has never seen anything*, and these two lines called it for
+        # a while after the rename: every event wiped the whole detector, so
+        # `has_inputs` and `initialized` went back to False and the filter
+        # never accumulated past its first event. The module docstring warned
+        # about exactly this and the call sites were missed anyway.
         if self.up >= self.threshold:
             run = self.up
-            self.reset()
+            self.restart()
             return self._record(index, when, price, "up", run)
         if -self.down >= self.threshold:
             run = -self.down
-            self.reset()
+            self.restart()
             return self._record(index, when, price, "down", run)
         return None
 

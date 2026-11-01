@@ -20,10 +20,13 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Callable
+from functools import partial
 from typing import Any
 
 from nautilus_trader.common.actor import Actor
 from nautilus_trader.common.config import ActorConfig
+
+from till_infinity.utils import topics
 
 #: Levels, mirroring `notifications.models.Level` without importing it at
 #: module scope - the package is a separate concern and an Actor that cannot
@@ -68,7 +71,14 @@ class Notifier(Actor):
 
         self._send = notify
         for topic in self._cfg.topics:
-            self.subscribe_data_dict(topic)
+            # `topics.subscribe` is `msgbus.subscribe`. The first version
+            # called `self.subscribe_data_dict`, **which is not a Nautilus
+            # method** - this actor would have raised on start, and nothing
+            # caught it because nothing started one.
+            #
+            # The bus hands the handler the payload alone, so the topic is
+            # bound here rather than passed.
+            topics.subscribe(self, topic, partial(self.on_alert, topic))
             self.log.info(f"notifying on {topic}")
 
     def on_stop(self) -> None:
@@ -77,7 +87,7 @@ class Notifier(Actor):
             + (f", failures {self._failed}" if self._failed else "")
         )
 
-    def on_data_dict(self, topic: str, payload: dict[str, Any]) -> None:
+    def on_alert(self, topic: str, payload: dict[str, Any]) -> None:
         """One bus message. Never raises, whatever the payload looks like."""
         try:
             if not self._wanted(payload):
@@ -106,12 +116,24 @@ class Notifier(Actor):
         return self.clock.timestamp_ns() / 1e9
 
     def _schedule(self, topic: str, payload: dict[str, Any]) -> None:
-        """Hand the send to a task so the handler returns immediately."""
+        """Hand the send to the executor so the handler returns immediately.
+
+        **`queue_for_executor`, not `create_task`.** `Actor` has no
+        `create_task` - that is on `LiveExecutionClient` - so the first version
+        of this would have raised `AttributeError` on the first alert. The
+        executor takes a *sync* callable and runs it sequentially, which is why
+        `_deliver` is not a coroutine: a send that blocks for an unknown time
+        belongs off the event loop either way, and the executor is where
+        Nautilus puts that work.
+
+        In a backtest it runs immediately, which is the right behaviour - a
+        measurement should not depend on whether an alert was delivered.
+        """
         if self._send is None:
             return
-        self.create_task(self._deliver(topic, payload))
+        self.queue_for_executor(self._deliver, (topic, payload))
 
-    async def _deliver(self, topic: str, payload: dict[str, Any]) -> None:
+    def _deliver(self, topic: str, payload: dict[str, Any]) -> None:
         from . import Level, Notification
 
         try:
@@ -125,7 +147,7 @@ class Notifier(Actor):
                 # the retry rather than the event.
                 at=float(payload.get("at") or self._clock_seconds()),
             )
-            await self._send(message)  # type: ignore[misc]
+            self._emit(message)
             self._sent += 1
         except asyncio.CancelledError:
             raise
@@ -142,3 +164,18 @@ class Notifier(Actor):
     def tally(self) -> dict[str, int]:
         """Sent, dropped and failed - the reading a report wants."""
         return {"sent": self._sent, "dropped": self._dropped, **self._failed}
+
+    def _emit(self, message: object) -> None:
+        """Send one notification, awaiting the sender if it is a coroutine.
+
+        The destinations are async - a webhook is a network call - and the
+        executor is sync, so the coroutine is driven here. `asyncio.run` rather
+        than a shared loop, because this runs on an executor thread that has no
+        loop of its own and a loop borrowed from the node would be the node's
+        loop doing a blocking network call.
+        """
+        import inspect
+
+        sent = self._send(message)  # type: ignore[misc]
+        if inspect.isawaitable(sent):
+            asyncio.run(sent)

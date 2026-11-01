@@ -38,6 +38,7 @@ from nautilus_trader.common.actor import Actor
 from nautilus_trader.common.config import ActorConfig
 from nautilus_trader.model.enums import PriceType
 
+from ..utils import topics
 from .config import Settings
 from .guard import Guard
 
@@ -153,10 +154,18 @@ class BasketExit(Actor):
         the position's `strategy_id` would then no longer name what opened and
         closed it - which is the whole property this carve-up was for. So the
         request goes on the message bus and the owning strategy acts on it.
+
+        Through `utils.topics.publish`, which is `msgbus.publish` - the first
+        version of this called `self.publish_data_dict`, **which is not a
+        Nautilus method**. It would have raised the first time a node ran, and
+        the test passed because it stubbed the name rather than checking one
+        existed.
         """
-        self.publish_data_dict(
-            "basket.close",
+        topics.publish(
+            self,
+            topics.ALERTS,
             {
+                "shape": "basket.close",
                 "position_id": str(position.id),
                 "strategy_id": str(position.strategy_id),
                 "instrument_id": str(position.instrument_id),

@@ -3,7 +3,7 @@ name = "till-infinity"
 version = "0.1.0"
 description = "Prices the market against a fair-value estimate from where volatility turns, and takes a stance on the distance"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [
     { name = "Samuel Ojietohamen", email = "seekersoftec@gmail.com" }
 ]
@@ -22,7 +22,7 @@ dependencies = [
     # rename this version has not shipped: 1.221 has `LiveMarketDataClient`,
     # `LiveExecutionClient` and `TradingNode`, where the docs call those v1
     # names for `MarketDataClient`, `ExecutionClient` and `LiveNode`.
-    "nautilus_trader>=1.221,<1.230",
+    "nautilus_trader>=1.231,<1.240",
     "msgpack>=1.1.0",
     # **Both of these were transitive until 2026-10-31**, and removing an
     # unrelated package is what exposed them. `pydantic` arrived with

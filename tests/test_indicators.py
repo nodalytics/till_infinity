@@ -1015,3 +1015,48 @@ def test_a_forgotten_level_stays_forgotten():
         close = 1.2000 + 0.0003 * math.sin(i / 2.0)
         book.handle_bar(bar(close, close + 0.0005, close - 0.0005, close, i * HOUR_NS))
     assert not [x for x in book.levels if x.at(book.when) < 1.15]
+
+
+def test_an_event_restarts_the_accumulators_without_wiping_the_detector():
+    """The reset/restart trap, caught in a real engine run and pinned here.
+
+    `Cusum.push` zeroes its accumulators when an event fires - *accumulate
+    from here*, keeping `last` and `started` because the price series did not
+    restart. After `reset` was given Nautilus's meaning (*never seen
+    anything*), these two internal call sites still pointed at it, so **every
+    event wiped the whole detector**: `has_inputs` and `initialized` went back
+    to False and the filter never accumulated past its first event.
+
+    It was invisible in isolation - a single `handle_bar` looks fine - and
+    showed up only as `has_inputs=False` after a 120-bar engine run, beside a
+    `Trend` on the same bar type reading True. The module docstring warned
+    about this exact confusion, which is why the test is here and not the
+    warning.
+    """
+    detector = ind.Cusum()
+    stream = [
+        bar(
+            1.1000 + 0.0002 * i,
+            1.1003 + 0.0002 * i,
+            1.0997 + 0.0002 * i,
+            1.1000 + 0.0002 * i,
+            i * HOUR_NS,
+        )
+        for i in range(120)
+    ]
+    for one in stream:
+        detector.handle_bar(one)
+
+    assert len(detector.events) > 1, "a steady climb must fire more than once"
+    assert detector.has_inputs, "an event wiped the detector"
+    assert detector.initialized
+    assert detector.started, "the price series did not restart"
+    assert detector.last > 0.0, "`last` is history and an event does not clear it"
+
+    # And the two meanings stay apart.
+    detector.restart()
+    assert detector.up == 0.0
+    assert detector.started is True
+    detector.reset()
+    assert detector.started is False
+    assert detector.has_inputs is False

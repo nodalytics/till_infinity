@@ -243,7 +243,22 @@ def test_the_basket_publishes_a_close_rather_than_submitting_one():
 
     actor = BasketExit(BasketConfig(venue="SIM"))
     published: list[tuple[str, dict]] = []
-    actor.publish_data_dict = lambda topic, payload: published.append((topic, payload))
+
+    # Stubbed at the **bus**, not on the actor. Stubbing
+    # `actor.publish_data_dict` is what let three modules call a method
+    # Nautilus does not have - assigning the name creates it, so the test
+    # passed and a node would have raised. `msgbus` is real, so a stub of it
+    # stands in for something that exists.
+    class Bus:
+        @staticmethod
+        def publish(topic, msg):
+            published.append((topic, msg))
+
+    object.__setattr__(actor, "_fake_bus", Bus())
+    import till_infinity.strategies.basket as basket_module
+
+    original = basket_module.topics.publish
+    basket_module.topics.publish = lambda component, topic, payload: Bus.publish(topic, payload)
 
     position = type(
         "P",
@@ -256,9 +271,12 @@ def test_the_basket_publishes_a_close_rather_than_submitting_one():
     )()
     actor._close(position)
 
+    basket_module.topics.publish = original
+
     assert len(published) == 1
     topic, payload = published[0]
-    assert topic == "basket.close"
+    assert topic == "alerts", "a declared topic, or the helper refuses it"
+    assert payload["shape"] == "basket.close"
     assert payload["position_id"] == "P-1"
     assert payload["strategy_id"] == "EdgeEntry-000", "the owner is named, so it acts"
     assert not hasattr(actor, "order_factory"), "an actor has no order factory"
@@ -331,7 +349,10 @@ def test_a_book_priced_at_its_own_opening_price_would_never_trip():
     actor.guard.opening_equity = 100_000.0
     actor._equity = lambda: 100_000.0
     published: list[object] = []
-    actor.publish_data_dict = lambda topic, payload: published.append(payload)
+    import till_infinity.strategies.basket as basket_module
+
+    original = basket_module.topics.publish
+    basket_module.topics.publish = lambda component, topic, payload: published.append(payload)
 
     def position(pnl_at):
         return type(
@@ -351,6 +372,7 @@ def test_a_book_priced_at_its_own_opening_price_would_never_trip():
 
     # Priced at the market, the same book is 2,000 down and trips the 1% stop.
     actor.judge([position(lambda price: -2_000.0)], lambda iid: 1.09)
+    basket_module.topics.publish = original
     assert published, "a book 2% down must trip a 1% basket stop"
 
 
@@ -363,7 +385,10 @@ def test_a_position_that_has_not_quoted_is_skipped_and_said_out_loud():
     actor.settings.basket_stop_fraction = 0.01
     actor.guard.opening_equity = 100_000.0
     actor._equity = lambda: 100_000.0
-    actor.publish_data_dict = lambda topic, payload: None
+    import till_infinity.strategies.basket as basket_module
+
+    original = basket_module.topics.publish
+    basket_module.topics.publish = lambda component, topic, payload: None
 
     def leg(name):
         return type(
@@ -378,6 +403,7 @@ def test_a_position_that_has_not_quoted_is_skipped_and_said_out_loud():
         )()
 
     actor.judge([leg("quoted"), leg("silent")], lambda iid: 1.09 if iid == "quoted" else None)
+    basket_module.topics.publish = original
     assert actor.unpriced == 1, "the skip is countable, not only loggable"
 
     # And the count is per look, not cumulative: a book that quotes next time
