@@ -6,6 +6,8 @@ and a quarter percent of a 2,000-unit one - five times the authorised risk, on
 the account least able to carry it.
 """
 
+from till_infinity.strategies.venues import replicate as rp
+
 from till_infinity.domain.models import (
     Intent,
     Order,
@@ -14,7 +16,6 @@ from till_infinity.domain.models import (
     SymbolSpec,
 )
 from till_infinity.strategies.config import Settings
-from till_infinity.strategies.venues import replicate as rp
 
 GOLD = SymbolSpec(
     symbol="XAUUSD",

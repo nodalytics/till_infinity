@@ -183,9 +183,6 @@ max-returns = 8
 # trading/ is a set of ports with several implementations behind each, so the
 # exemptions here are about interfaces rather than about code that got away.
 # See docs/deployment.md.
-"till_infinity/strategies/venues/broker.py" = ["ARG002", "B027"]
-"till_infinity/strategies/strategies/strategy.py" = ["B027"]
-"till_infinity/strategies/venues/paper.py" = ["ARG002"]
 # `codec.unpack` is one return per wire type. Collapsing eight tagged
 # shapes into a table would put the mapping somewhere other than beside
 # the code that reads it, for no gain but a lint score.
@@ -199,7 +196,6 @@ max-returns = 8
 # `import MetaTrader5 as mt5` is the name every MT5 example and the terminal's
 # own documentation uses; renaming it would make this file harder to check
 # against them.
-"till_infinity/strategies/venues/mt5_native.py" = ["N813"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

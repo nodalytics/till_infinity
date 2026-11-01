@@ -120,9 +120,9 @@ class TestTheWorstReasonWins:
 class TestTheServiceActsOnIt:
     async def test_it_closes_every_position_and_journals_once(self):
         from fake_carrier import FakeCarrier as Bus
+        from till_infinity.strategies.service import Live, Trader
 
         from till_infinity.domain.models import Intent, Position, Side
-        from till_infinity.strategies.service import Live, Trader
 
         settings = Settings(live=False)
         settings.basket_stop_fraction = 0.01  # 1% of 10,000 = 100
@@ -177,7 +177,6 @@ class TestTheServiceActsOnIt:
 
     async def test_a_flat_book_does_nothing(self):
         from fake_carrier import FakeCarrier as Bus
-
         from till_infinity.strategies.service import Trader
 
         settings = Settings(live=False)
@@ -245,9 +244,9 @@ class TestTheBookReadings:
         """One malformed target - `best_r` reached 1,771 on the record - would
         otherwise decide the whole book."""
         from fake_carrier import FakeCarrier as Bus
+        from till_infinity.strategies.service import Live, Trader
 
         from till_infinity.domain.models import Intent, Position, Side
-        from till_infinity.strategies.service import Live, Trader
 
         trader = Trader(Bus(), settings=Settings(live=False))
         for ticket, target in ((1, 4420.0), (2, 4420.0), (3, 4_000_000.0)):
@@ -280,10 +279,10 @@ class TestTheBookReadings:
         """A per-position reading would call a hedged book alarming from both
         sides at once."""
         from fake_carrier import FakeCarrier as Bus
+        from till_infinity.strategies.service import Live, Trader
 
         from till_infinity.domain.models import Intent, Position, Side
         from till_infinity.indicators.momentum import Cusum
-        from till_infinity.strategies.service import Live, Trader
 
         trader = Trader(Bus(), settings=Settings(live=False))
         running = Cusum()
@@ -315,7 +314,6 @@ class TestTheBookReadings:
 
     def test_a_flat_book_has_no_progress_to_report(self):
         from fake_carrier import FakeCarrier as Bus
-
         from till_infinity.strategies.service import Trader
 
         trader = Trader(Bus(), settings=Settings(live=False))

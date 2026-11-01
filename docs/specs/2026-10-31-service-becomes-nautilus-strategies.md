@@ -108,7 +108,8 @@ hat.
 
 ## What this does not change
 
-**`risk` stays above Nautilus, not inside it.** Checked on 1.221.0:
+**`risk` stays above Nautilus, not inside it.** Checked on 1.221.0 and
+re-checked on 1.231.0:
 `RiskEngine`'s entire public surface is `set_max_notional_per_order`,
 `set_trading_state` and `reset`, with a config of `bypass`, two rate throttles,
 `max_notional_per_order` and `debug`. Every actual check - `_check_order`,
@@ -139,21 +140,32 @@ same time, which is why they are still here.
 Each step keeps the suite green, and none of them is finished until the
 behaviour it replaces has a test that would have caught its absence.
 
-## Step 6 is held, as of 2026-11-01
+## Step 6 landed, 2026-11-01
 
-Steps 1 to 5 are done and the desks are wired into both nodes. **The
-retirement is not**, and the reason is not the port:
-`nautilus_trader`'s `BacktestEngine.run()` aborts on this workstation with
-`double free or corruption (out)` and exit 134, reproduced with one bar, no
-strategy and without importing `till_infinity` at all. See
-[`backtest-loop-aborts-here.md`](../backtest-loop-aborts-here.md) for the
-bisection.
+Steps 1 to 5 are done, the desks are wired into both nodes, and
+`service.py`, `strategies/venues/` and `strategies/strategies/` are in
+`research/retire/strategies/`. `holds.py`, `reach.py` and `shadow.py` went with
+them for having no caller once `service.py` was gone; `floors.py` moved up a
+level instead, because `Profile.floored_target` still reads it.
 
-So the ported desks have handler-level coverage - 1625 tests - and **no proven
-engine loop**. All 1625 pass because none of them enters it. Retiring
-`service.py` now would swap a path that has traded for a path whose loop has
-never completed, which would leave the desk with no proven way to trade at
-all. The ported desks are additive and cost nothing by sitting alongside, so
-they wait.
+It was held for most of a day on something that was not the port.
+`BacktestEngine.run()` aborted with `double free or corruption (out)` and exit
+134 - reproduced with one bar, no strategy, and without importing
+`till_infinity` at all. The handler-level suite was green throughout, because
+no test in it enters the run loop, so the suite could not tell a working engine
+from an aborting one. That was the whole reason to hold: retiring the traded
+path in favour of a path whose loop had never completed would have left the
+desk with no proven way to trade.
 
-What unblocks it is one run of a twenty-line bare engine on another host.
+The cause was `nautilus_trader` 1.221.0 itself - not this workstation's glibc,
+which was the first guess and was refuted on an older one, and not the data
+shape, which was the right second question and also no. Every release that
+fixes it needs Python >= 3.12, and 1.221 was the last line with a cp311 wheel,
+so the pin and the interpreter had to move together: **Python 3.13.5 and
+`nautilus_trader>=1.231,<1.240`**. The bisection and both wrong guesses are in
+[`backtest-engine-abort.md`](../backtest-engine-abort.md).
+
+With the loop running, the desks have one synthetic end-to-end backtest
+(+990.58 on generated bars, which proves the loop and nothing about the edge)
+on top of the handler coverage. What they do not have is a traded record, and
+that is the next thing they need rather than another test.

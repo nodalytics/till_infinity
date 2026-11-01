@@ -41,8 +41,8 @@ from till_infinity.utils.logging import get_logger
 
 from ..domain.models import Side, SymbolSpec
 from .config import Settings
+from .floors import Floors
 from .guard import Limits
-from .strategies.floors import Floors
 
 log = get_logger(__name__)
 

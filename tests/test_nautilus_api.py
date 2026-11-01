@@ -147,19 +147,28 @@ def test_the_names_the_sweep_found_still_do_not_exist(base_name, name):
     )
 
 
-def test_the_sweep_can_tell_our_strategy_from_nautilus_strategy():
-    """This repo has its own `Strategy` - a decision contract that places no
-    orders - so a sweep matching on the bare word would check our ABC against
-    the framework's class and report nonsense."""
+def test_there_is_no_longer_a_competing_strategy_class():
+    """The hazard this guarded against is gone, which is why it inverted.
 
-    from nautilus_trader.trading import strategy as nautilus
+    This repo used to have its own `Strategy` - a decision contract that
+    placed no orders - so a sweep matching on the bare word would check our
+    ABC against the framework's class and report nonsense. The ABC retired on
+    2026-11-01: its measured helpers are `strategies/profile.py` and its
+    decision is a mixin composed into a Nautilus `Strategy`.
 
-    import till_infinity.strategies.strategies.strategy as ours
+    So the assertion is now that nothing in the tree shadows the name. If
+    something does again, the sweep's import-resolution matters once more and
+    this test says so.
+    """
+    import importlib
 
-    assert ours.Strategy is not nautilus.Strategy
-    assert not issubclass(ours.Strategy, nautilus.Strategy)
-    # `Dispersing` subclasses ours, and has none of the framework's methods.
-    from till_infinity.strategies.strategies.dispersing import Dispersing
+    with pytest.raises(ModuleNotFoundError):
+        importlib.import_module("till_infinity.strategies.strategies.strategy")
 
-    assert issubclass(Dispersing, ours.Strategy)
-    assert not hasattr(Dispersing, "submit_order")
+    from nautilus_trader.trading.strategy import Strategy
+
+    from till_infinity.strategies.surprise import Surprise, SurpriseEdge
+
+    # The decision is a mixin with no base, and the leaf is the framework's.
+    assert Surprise.__mro__ == (Surprise, object)
+    assert issubclass(SurpriseEdge, Strategy)

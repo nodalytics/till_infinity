@@ -57,7 +57,7 @@ from ..domain.models import (
     Verdict,
 )
 from ..indicators.momentum import Speeds
-from . import report, strategies, venues
+from . import report
 from .affordable import (
     CATASTROPHIC,
     STOPS,
@@ -88,27 +88,17 @@ from .config import (
     strategy_for,
 )
 from .context import Context, Release
+from .desk import Desk, DeskConfig
+from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .guard import Guard
 from .manage import Move, advance
 from .plans import PLANS, Plan
+from .profile import Profile
 from .report import Report, Trade
-from .service import Trader, listen
 from .sizing import Sizing, lots, price_distance
-from .strategies.strategy import STRATEGIES, Strategy, catalogue
+from .surprise import Surprise, SurpriseArrival, SurpriseEdge, SurpriseResting
 from .turning import TurnExit, TurnOutcome, TurnTally
 from .valuation import Priced, Valuation, price_it
-from .venues.broker import (
-    Broker,
-    BrokerError,
-    NotConnectedError,
-    RejectedError,
-    TransientError,
-    available,
-    build,
-    choose,
-)
-from .venues.paper import PaperBroker
-from .venues.symbols import Resolution, resolve
 
 __all__ = [
     "BACKENDS",
@@ -125,64 +115,56 @@ __all__ = [
     "PLANS",
     "RPYC",
     "STOPS",
-    "STRATEGIES",
     "SUFFIXES",
     "Account",
     "Affordability",
+    "ArrivalEntry",
     "Book",
-    "Broker",
-    "BrokerError",
     "Context",
+    "Desk",
+    "DeskConfig",
+    "EdgeEntry",
     "Guard",
     "Intent",
     "Move",
-    "NotConnectedError",
     "Order",
     "OrderResult",
-    "PaperBroker",
     "Plan",
     "Position",
     "Priced",
+    "Profile",
     "Refusal",
-    "RejectedError",
     "Release",
     "Report",
-    "Resolution",
+    "RestingEntry",
     "Seen",
     "Settings",
     "Side",
     "Sizing",
     "Speeds",
-    "Strategy",
+    "Surprise",
+    "SurpriseArrival",
+    "SurpriseEdge",
+    "SurpriseResting",
     "SymbolSpec",
     "Tick",
     "Trade",
-    "Trader",
-    "TransientError",
     "TurnExit",
     "TurnOutcome",
     "TurnTally",
     "Valuation",
     "Verdict",
     "advance",
-    "available",
-    "build",
-    "catalogue",
-    "choose",
     "feed_for",
     "judge",
-    "listen",
     "lots",
     "magic_for",
     "ours",
     "price_distance",
     "price_it",
     "report",
-    "resolve",
     "resolve_symbols",
-    "strategies",
     "strategy_for",
     "survey",
     "unaffordable",
-    "venues",
 ]
