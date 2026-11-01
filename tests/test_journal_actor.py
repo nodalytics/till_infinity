@@ -18,6 +18,9 @@ from __future__ import annotations
 
 import ast
 import pathlib
+from collections import deque
+from threading import Lock
+from types import SimpleNamespace
 
 import pytest
 from nautilus_trader.backtest.engine import BacktestEngine
@@ -766,3 +769,62 @@ def test_it_resumes_once_the_disk_comes_back(tmp_path):
 
     assert actor.is_running
     assert [e.title for e in read(real.path)] == ["after it was emptied"]
+
+
+def test_a_slow_writer_cannot_grow_past_the_cap():
+    """**`max_pending` was not a bound.** It counted `_pending`, and a flush
+    emptied `_pending` into a list the cap could no longer see - so a writer
+    that was merely *slow* got a fresh in-flight batch every `flush_seconds`
+    and the process grew without limit while the config said 2,000.
+
+    `degrade_after` does not cover it: degrading needs three *failures*, and a
+    slow write is not a failed one.
+
+    Driven by holding one write open and flushing again, which is the shape
+    the review described. The second flush must leave the entries where the
+    cap can see them.
+    """
+    from till_infinity.journal.actor import JournalActor
+
+    actor = JournalActor.__new__(JournalActor)
+    actor._pending = deque()
+    actor._writing = True
+    written: list[list] = []
+    actor._write = written.append  # the actor's own attribute, not the framework's
+
+    for index in range(3):
+        actor._pending.append(Entry(title=f"held {index}"))
+
+    JournalActor._flush(actor)
+
+    assert not written, "a second batch must not be queued while one is in flight"
+    assert len(actor._pending) == 3, "and the entries stay where the cap can see them"
+
+    # Once the write finishes, the next flush proceeds.
+    actor._writing = False
+    actor.queue_for_executor = lambda call, args: written.append(list(args[0]))
+    JournalActor._flush(actor)
+    assert len(written) == 1
+    assert len(written[0]) == 3
+    assert not actor._pending
+
+
+def test_the_in_flight_flag_is_cleared_even_when_a_write_fails():
+    """A flag stuck on is a journal that never writes again - a worse failure
+    than the unbounded growth it was added to prevent. Every early return in
+    `_write` is a path that would leave it set, which is why it is cleared in
+    a `finally`."""
+    from till_infinity.journal.actor import JournalActor
+
+    actor = JournalActor.__new__(JournalActor)
+    actor._writing = True
+    actor._lock = Lock()
+    actor._opened = False
+    actor._open_store = lambda: False
+    noted: list[tuple] = []
+    actor._note_failure = lambda kind, detail: noted.append((kind, detail))
+    actor._store = SimpleNamespace(path="/nowhere/journal.db")
+
+    assert JournalActor._write(actor, [Entry(title="x")]) == 0
+    assert noted, "the failure is counted"
+    assert actor._writing is False, "and the flag does not stick"

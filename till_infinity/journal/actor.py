@@ -155,6 +155,21 @@ class JournalActor(Actor):
         #: SQLite connection, and the close is the one that would win a race by
         #: invalidating what the other is using.
         self._lock = Lock()
+        #: True from the moment a batch is handed to the executor until that
+        #: write returns. **It is what makes `max_pending` an actual bound.**
+        #:
+        #: Without it the cap counted only `_pending`, and a flush emptied
+        #: `_pending` into a list the cap could no longer see - so a writer
+        #: that was merely *slow* got a fresh in-flight batch every
+        #: `flush_seconds` and the process grew without limit while a config
+        #: said 2,000. `degrade_after` does not cover it either: degrading
+        #: needs three *failures*, and a slow write is not a failed one.
+        #:
+        #: With it, entries stay in `_pending` and are shed and counted at the
+        #: cap, which is the behaviour the cap was chosen for over
+        #: `deque(maxlen=...)`: a bound that sheds visibly rather than
+        #: silently.
+        self._writing = False
         self._opened = False
         self._written = 0
         self._dropped = 0
@@ -367,11 +382,23 @@ class JournalActor(Actor):
     def _flush(self, *, direct: bool = False) -> None:
         if not self._pending:
             return
+        if self._writing and not direct:
+            # **One batch in flight at a time.** Returning here leaves the
+            # entries in `_pending`, where the cap can see them - the whole
+            # point of a counted bound rather than a silent `maxlen`. A second
+            # queued batch would also put two writers on one SQLite
+            # connection, which `_lock` would then serialise anyway.
+            #
+            # `direct` ignores this because it is the shutdown path: `on_stop`
+            # runs on the loop thread and has to write what is left whatever
+            # the executor is doing, and `_lock` is what makes that safe.
+            return
         batch = list(self._pending)
         self._pending.clear()
         if direct:
             self._write(batch)
         else:
+            self._writing = True
             # Sync and not a coroutine: the executor takes a plain callable and
             # runs them sequentially, which is what a single writer wants. The
             # store's own `async write` would need a loop this thread has not
@@ -386,18 +413,25 @@ class JournalActor(Actor):
         that refuses one write refuses the next, and a queue that grows until
         it succeeds is how a journal takes down the process it records.
         """
-        with self._lock:
-            if not self._opened and not self._open_store():
-                self._note_failure("unopened", f"no journal at {self._store.path}")
-                return 0
-            try:
-                fresh = self._store.append(self._inherit(batch))
-            except Exception as exc:
-                self._note_failure(type(exc).__name__, exc)
-                return 0
-        self._written += fresh
-        self._consecutive_failures = 0
-        return fresh
+        try:
+            with self._lock:
+                if not self._opened and not self._open_store():
+                    self._note_failure("unopened", f"no journal at {self._store.path}")
+                    return 0
+                try:
+                    fresh = self._store.append(self._inherit(batch))
+                except Exception as exc:
+                    self._note_failure(type(exc).__name__, exc)
+                    return 0
+            self._written += fresh
+            self._consecutive_failures = 0
+            return fresh
+        finally:
+            # In a `finally` because every early return above is a path that
+            # would otherwise leave the flag set, and a flag stuck on is a
+            # journal that never writes again - a worse failure than the
+            # unbounded growth it was added to prevent.
+            self._writing = False
 
     def _open_store(self) -> bool:
         try:

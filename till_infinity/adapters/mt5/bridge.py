@@ -230,14 +230,14 @@ class Bridge:
             queue.put_nowait(raw)
 
         base = self._base.replace("https://", "wss://").replace("http://", "ws://")
-        url = f"{base}{API}/stream"
-        if self._key:
-            # On the query string and not in a header, deliberately: the
-            # bridge accepts either, and a browser cannot set headers on a
-            # websocket handshake. The header is still sent where it can be.
-            url = f"{url}?api_key={self._key}"
+        # **The header, never the query string.** The bridge accepts either,
+        # and its own route takes `api_key` as a query parameter because a
+        # browser cannot set headers on a websocket handshake. Nothing here is
+        # a browser - and a key on a URL reaches a log the moment anything
+        # formats the exception that carries it, which in a public repository
+        # is a credential in an issue.
         config = WebSocketConfig(
-            url=url,
+            url=f"{base}{API}/stream",
             headers=[("X-API-Key", self._key)] if self._key else [],
             heartbeat=STREAM_HEARTBEAT,
         )
