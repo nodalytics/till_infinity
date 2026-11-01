@@ -25,6 +25,7 @@ measured rather than reasoned:
 
 from __future__ import annotations
 
+import os
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -93,6 +94,115 @@ DEFAULT_YEARS = 2.0
 #: the inflated version of that study read 0.79 where the truth was 0.51.
 MIN_EPISODES = 200
 
+#: Episodes a **live leg** is given before the ladder looks at it again. Ten.
+#:
+#: **Ten episodes is an exploration budget, not a validation.** It is worth
+#: writing down what it buys, because 10 is small enough that a reader will
+#: otherwise take a positive result from it as evidence.
+#:
+#: The best per-trade edge this desk has measured is `+0.1436R +/- 0.0485 over
+#: 905 trades at t 2.96`, which is a per-trade Sharpe of about 0.098. A
+#: t-statistic is that times the root of the sample, so ten episodes of a real
+#: edge of exactly that size reads **t 0.31** - indistinguishable from zero -
+#: and reaching t 2 would take about 417 of them. Ten episodes cannot separate
+#: a working leg from a dead one, and no choice of threshold changes that.
+#:
+#: It is still the right number for *entering* `SMALL`, and the ladder is why.
+#: `Allocation.small` is 5% of the account and `Retirement` is fast, so what
+#: ten episodes decides is whether to spend a bounded amount finding out -
+#: which is a different question from whether the edge is real, and the only
+#: one a short sample can answer. Promotion to `FULL` still asks for
+#: `MIN_EPISODES`, because that decision is the one a thin sample would be
+#: making with the whole account.
+#:
+#: What this must never become is a reason to retire. `strategy-rotation-is-
+#: not-timeable` records that every pause rule tested here matched random
+#: pausing at the same duty cycle, so ten episodes of bad results is not
+#: evidence a leg has stopped working - it is the sample being short. See
+#: `may_retire`, which takes reasons and not performance.
+LIVE_EPISODES = 10
+
+
+def live_episodes() -> int:
+    """The live sample a leg is reviewed on. `TRADING_LIVE_EPISODES`, ten.
+
+    Read per call rather than captured at import, so a deploy or a test can
+    change it without a reload - the same reason `profile.multipliers_on` is a
+    function.
+
+    **Raising it is the supported direction.** Ten is the shortest sample this
+    desk is willing to act on and every statistical argument favours more, so
+    there is no upper bound here and no warning for a large value. A value
+    below one is refused: a rung whose sample is zero promotes on the first
+    episode, which is not a sample.
+    """
+    raw = os.environ.get("TRADING_LIVE_EPISODES")
+    if not raw:
+        return LIVE_EPISODES
+    try:
+        found = int(raw)
+    except ValueError as exc:
+        raise ValueError(f"TRADING_LIVE_EPISODES={raw!r} is not a number of episodes") from exc
+    if found < 1:
+        raise ValueError(
+            f"TRADING_LIVE_EPISODES={found} would decide on no episodes at all. "
+            f"One is the floor; {LIVE_EPISODES} is the default."
+        )
+    return found
+
+
+def required_dsr() -> float:
+    """The deflated Sharpe a promotion gate must clear. `TRADING_DSR_REQUIRED`, 0.95.
+
+    **The short live sample does not reach this number and is not meant to.**
+    A gate's DSR is computed from the *backtest's* returns, where episodes are
+    cheap, so `live_episodes` and this threshold govern two different
+    decisions: how long to watch a leg that is already past its gate, and how
+    strong the evidence had to be to get there. Conflating them - lowering the
+    bar because a live sample is short - would leave a number that still
+    prints as a probability and no longer means one.
+
+    Lowering it is allowed, because a deliberately looser bar on a bounded
+    allocation is a decision somebody can make, and because the alternative is
+    an unreadable constant. It is bounded to (0, 1): it is a probability.
+    """
+    raw = os.environ.get("TRADING_DSR_REQUIRED")
+    if not raw:
+        return Gate.DSR_REQUIRED
+    try:
+        found = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"TRADING_DSR_REQUIRED={raw!r} is not a probability") from exc
+    if not 0.0 < found < 1.0:
+        raise ValueError(
+            f"TRADING_DSR_REQUIRED={found} is not a probability. The deflated "
+            f"Sharpe is one, so this is strictly between 0 and 1."
+        )
+    return found
+
+
+def sample_for(rung: Rung) -> int:
+    """The sample fixed when `rung` is entered.
+
+    **The field's own docstring has always said the sample is "fixed when the
+    rung is entered", and nothing fixed it.** `promote` moved the rung and left
+    `decide_after` at whatever the candidate was built with, so every rung
+    inherited one number - a candidate entering small capital was given the
+    200-episode backtest sample, and one built by hand with a short sample kept
+    it all the way to full capital. Both directions are wrong and the second is
+    the dangerous one.
+
+    Backtested keeps `MIN_EPISODES` because that decision risks money for the
+    first time and backtest episodes are cheap. The two live rungs take
+    `live_episodes`, because a live episode costs a trade and the decision they
+    gate is review rather than evidence.
+    """
+    if rung is Rung.BACKTESTED:
+        return MIN_EPISODES
+    if rung in (Rung.SMALL, Rung.FULL):
+        return live_episodes()
+    return MIN_EPISODES
+
 
 @dataclass(frozen=True, slots=True)
 class Gate:
@@ -154,7 +264,9 @@ class Gate:
     def underpowered(self) -> bool:
         return self.episodes < MIN_EPISODES
 
-    #: A gate passes on the deflated Sharpe, where one can be computed.
+    #: A gate passes on the deflated Sharpe, where one can be computed. The
+    #: default; `required_dsr` is what a gate actually reads, so a deploy can
+    #: move it.
     DSR_REQUIRED = 0.95
 
     def verdict(self) -> tuple[bool, str]:
@@ -166,9 +278,10 @@ class Gate:
                 f"deflated Sharpe - {len(self.trial_sharpes)} trial Sharpes and "
                 f"{len(self.returns)} returns were supplied"
             )
-        ok = dsr >= self.DSR_REQUIRED
+        wanted = required_dsr()
+        ok = dsr >= wanted
         return ok, (
-            f"{self.name}: DSR {dsr:.3f} against {self.DSR_REQUIRED} over "
+            f"{self.name}: DSR {dsr:.3f} against {wanted} over "
             f"{len(self.trial_sharpes)} trials and {self.episodes} episodes"
         )
 
@@ -296,6 +409,40 @@ def may_retire(candidate: Candidate, reason: Retirement, *, evidence: str = "") 
     return True, f"{reason.value}: {evidence}"
 
 
+def book_evidence(ratio: float, *, episodes: int, floor: float = 0.0) -> str:
+    """A deflated information ratio against the book, as retirement evidence.
+
+    The empty string when it is not evidence, which `may_retire` reads as no
+    evidence and refuses. That is the point of the function: the rotation this
+    desk wants - retire a leg that has stopped working, promote a discovery in
+    its place - is one step from the rule already measured as worthless, and
+    the step is the sample.
+
+    **`strategy-rotation-is-not-timeable` is the finding to beat.** Every pause
+    rule tested here matched random pausing at the same duty cycle, so "it is
+    losing to the book lately" is not a reason. What makes an information ratio
+    a reason rather than a mood is that it is **deflated** - the number already
+    confronts how many legs were compared to find the worst one - and that it
+    is read over a sample long enough to carry it. Below `live_episodes` it is
+    not read at all.
+
+    `InformationRatio`'s own docstring puts this reading here and not on the
+    promotion side: against the rest of the book an IR answers "does this leg
+    beat the others", which is a retirement question. A gate on it would be a
+    second gate on the same algebra as `DSR` over a differenced series, and
+    would count one piece of evidence twice - see `node/statistics.GATES`.
+    """
+    least = live_episodes()
+    if episodes < least:
+        return ""
+    if ratio >= floor:
+        return ""
+    return (
+        f"deflated information ratio {ratio:.3f} against the book over "
+        f"{episodes} episodes, below {floor:.3f}"
+    )
+
+
 def retire(
     candidate: Candidate, reason: Retirement, *, evidence: str = ""
 ) -> tuple[Candidate, str]:
@@ -348,5 +495,14 @@ def promote(candidate: Candidate, allocation: Allocation, *, episodes_seen: int)
     nxt = {Rung.DISCOVERED: Rung.BACKTESTED, Rung.BACKTESTED: Rung.SMALL, Rung.SMALL: Rung.FULL}
     candidate.rung = nxt[candidate.rung]
     candidate.allocation = allocation.of(candidate.rung)
-    candidate.record(f"promoted: {why} at {candidate.allocation:.0%} of the account")
+    # **Fixed on entry, which is what the field has always claimed.** Nothing
+    # set it before, so a candidate carried one sample from discovery to full
+    # capital - and the direction that matters is a short one surviving the
+    # climb, because then the decision with the whole account is made on the
+    # sample that was chosen for a 5% one.
+    candidate.decide_after = sample_for(candidate.rung)
+    candidate.record(
+        f"promoted: {why} at {candidate.allocation:.0%} of the account, "
+        f"reviewed after {candidate.decide_after} episodes"
+    )
     return candidate

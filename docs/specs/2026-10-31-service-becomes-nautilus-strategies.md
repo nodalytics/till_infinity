@@ -214,7 +214,7 @@ tested and was correct. None of it was **reachable**:
 |---|---|
 | `exits.Exits` | no constructor call anywhere in `till_infinity/` |
 | `manage.advance`, `manage.partial` | no caller |
-| `Profile.protection`, `Profile.hold_for` | no caller |
+| `Profile.protection`, `against_limit` | no caller, and `horizon`, `hold_for` and `hold_bars_for` reachable only from those two |
 | `Exits.conflicts` | no caller, so the "exactly one may trail" rule was a docstring |
 | `Exits.apply` | named in the class docstring and never written |
 | `BasketExit._close` | published on `alerts`, whose only subscriber is the Telegram notifier |
@@ -273,8 +273,9 @@ arithmetic nobody has done. A test asserts the table is empty, so the
 capability cannot quietly become a claim.
 
 Also still unmeasured and deliberately not wired: `Profile.protection` and
-`Profile.hold_for` remain uncalled, so no rule yet carries its own protection
-speed or hold; `Intent.trail_levels` is off because no `Book` of levels reaches
+`Profile.against_limit` remain uncalled, so no rule yet carries its own
+protection speed or hold - the numbers reach `manage.advance` through the
+`Intent` instead, and no shipped decision sets them; `Intent.trail_levels` is off because no `Book` of levels reaches
 a strategy, and a level trail with no levels is the inert shape again; and
 `Settings.max_hold` (1800s) is **not** folded into the exit clock, because
 `research/spending.md` found the holds already running short - 50 of 133 closes

@@ -313,14 +313,138 @@ TICK_DETECTORS: dict[str, tuple[Callable[..., object], tuple[str, ...]]] = {
 }
 
 
-def build_detector(name: str, source: Reading | None = None, **kwargs: object) -> object:
+#: The side words a declaration may use, and the field suffix each one names.
+#:
+#: `up` and `down` are this package's own vocabulary - `momentum.Event.side` is
+#: already one of those two words, and a leaf of computations has no business
+#: knowing what a desk does with a direction. `buy`, `sell`, `long` and `short`
+#: are accepted because they are the spelling the desk's own side-keyed
+#: configuration already uses: `risk/scaling.overshoot_for` prefers
+#: `boom_500_index.sell` over `boom_500_index`, and `strategies/exits.py` reads
+#: the same spelling. Two spellings for one idea across one config file would
+#: be a second syntax, which is the thing `name:source` exists not to be.
+SIDES: dict[str, str] = {
+    "up": "up",
+    "buy": "up",
+    "long": "up",
+    "down": "down",
+    "sell": "down",
+    "short": "down",
+}
+
+
+def declaration(rest: object) -> tuple[str | None, dict[str, float | int]]:
+    """A detector's `name:` tail, split into the source and the parameters.
+
+    **One syntax, extended rather than replaced.** `cusum:typical` and `rsi:7`
+    reach here as `"typical"` and `"7"`, contain no `=`, and come back as the
+    source they always were - the whole point of `name:source` is that "a
+    strategy using both should not have to say which is which", so this does
+    not fork into a second spelling.
+
+    What is new is a comma list of parameters after the source, where a
+    parameter may be **keyed by side**:
+
+        cusum:typical,threshold.buy=1.2,threshold.sell=2.4
+
+    `param.side` becomes `param_up` or `param_down` per `SIDES`, which is the
+    suffix the detector declares the pair under. The source may be omitted -
+    `cusum:,threshold.sell=2.4` - and a parameter needs no side at all, because
+    a per-side parameter is just a second parameter and nothing here should
+    make it a special case.
+
+    Parsed here rather than in each registrar because `strategies/desk.py` and
+    `statespace/actor.py` both hand `build_detector` the **whole** tail after
+    the colon, so a grammar added here reaches both without either changing.
+    """
+    if rest is None:
+        return None, {}
+    source: str | None = None
+    params: dict[str, float | int] = {}
+    for position, part in enumerate(str(rest).split(",")):
+        term = part.strip()
+        if not term:
+            continue
+        if "=" not in term:
+            if position or source is not None:
+                raise ValueError(
+                    f"{rest!r} names {term!r} where a parameter was expected. "
+                    f"The source comes first and there is one of it: "
+                    f"`source,param=value,param.side=value`."
+                )
+            source = term
+            continue
+        key, _, value = term.partition("=")
+        field_name, dot, side = key.strip().partition(".")
+        if not field_name:
+            raise ValueError(f"{rest!r} has a value with no parameter name in {term!r}.")
+        if dot:
+            suffix = SIDES.get(side.strip().lower())
+            if suffix is None:
+                raise ValueError(
+                    f"{term!r} names the side {side.strip()!r}, which is not a "
+                    f"side. Known: {', '.join(sorted(SIDES))}."
+                )
+            field_name = f"{field_name}_{suffix}"
+        params[field_name] = _number(term, value)
+    return source, params
+
+
+def _number(term: str, value: str) -> float | int:
+    """A declared parameter's value, as an int where it was written as one.
+
+    An int where the text has no point or exponent, because a window or a span
+    is a count of bars and handing a dataclass `5.0` for one is a float that
+    reads as an integer everywhere it is printed.
+    """
+    text = value.strip()
+    try:
+        return int(text) if text.lstrip("+-").isdigit() else float(text)
+    except ValueError:
+        raise ValueError(f"{term!r} has no number in it: {text!r} is not one.") from None
+
+
+def _accepted(
+    build: Callable[..., object], name: str, params: dict[str, object]
+) -> dict[str, object]:
+    """`params`, having refused any this detector does not take.
+
+    Asked of the signature, like `_takes`, so a detector that gains or loses a
+    per-side pair needs nothing updated here. A declared parameter the detector
+    silently dropped would be a sweep reporting a null for a question it never
+    asked - the same failure `Desk._register` raises on an unknown name for.
+    """
+    for key in params:
+        if _takes(build, key):
+            continue
+        base, _, side = key.rpartition("_")
+        if side in ("up", "down") and _takes(build, base):
+            raise ValueError(
+                f"{name} has one {base} for both sides, so {key!r} cannot be "
+                f"declared. A per-side parameter needs the detector to hold a "
+                f"{base}_up and a {base}_down - which doubles its search, so a "
+                f"detector only grows them where the two sides were measured "
+                f"to differ."
+            )
+        raise ValueError(f"{name} takes no {key!r}.")
+    return params
+
+
+def build_detector(name: str, source: object = None, **kwargs: object) -> object:
     """One catalogued detector on one source, scaled correctly for it.
 
     The single entry point a discovery sweep should use. Picking the unit here
     rather than at each call site is what stops a sweep spending a trial on a
     detector whose threshold is in the wrong units - and trials are the scarce
     thing: at a target Sharpe of 1.5, one month of data supports about one.
+
+    `source` carries the whole tail a config wrote after the colon, so it may
+    name parameters as well as the reading - see `declaration`. An explicit
+    keyword argument wins over a declared one, because a caller holding the
+    object is more specific than a string a config carried.
     """
+    source, declared = declaration(source)
+    kwargs = {**declared, **kwargs}
     if name in TICK_DETECTORS:
         if source is not None:
             raise ValueError(
@@ -328,7 +452,7 @@ def build_detector(name: str, source: Reading | None = None, **kwargs: object) -
                 f"high, low or close for a `Reading` to pick."
             )
         build, _ = TICK_DETECTORS[name]
-        return build(**kwargs)
+        return build(**_accepted(build, name, kwargs))  # type: ignore[arg-type]
     if name in FRAMEWORK:
         # **The framework's, where it has one.** A strategy may use ours and
         # Nautilus's as it wishes, and one entry point resolving both means a
@@ -338,6 +462,13 @@ def build_detector(name: str, source: Reading | None = None, **kwargs: object) -
                 f"{name!r} is one of Nautilus's indicators and takes no "
                 f"`source`: it reads the bar the engine gives it. A period "
                 f"goes in the name, as {name}:20."
+            )
+        if set(declared) - {"period"}:
+            raise ValueError(
+                f"{name!r} is one of Nautilus's indicators and takes a period "
+                f"and nothing else, so {sorted(set(declared) - {'period'})} "
+                f"cannot be declared on it. Its parameters are not ours to "
+                f"add sides to."
             )
         return framework(name, kwargs.get("period"))  # type: ignore[arg-type]
     if name not in BAR_DETECTORS:
@@ -355,7 +486,7 @@ def build_detector(name: str, source: Reading | None = None, **kwargs: object) -
                 f"open, high, low and close together - rather than one float "
                 f"off it, so there is nothing for a `Reading` to select."
             )
-        return build(**kwargs)
+        return build(**_accepted(build, name, kwargs))  # type: ignore[arg-type]
     chosen = sources[0] if source is None else Reading(source)
     if chosen not in sources:
         raise ValueError(
@@ -373,7 +504,7 @@ def build_detector(name: str, source: Reading | None = None, **kwargs: object) -
             f"high, low and close together - rather than one float off it, so "
             f"there is nothing for a `Reading` to select."
         )
-    return build(**kwargs)
+    return build(**_accepted(build, name, kwargs))  # type: ignore[arg-type]
 
 
 def _takes(build: Callable[..., object], name: str) -> bool:
@@ -396,6 +527,7 @@ __all__ = [
     "DIMENSION",
     "NEEDS_PREVIOUS",
     "SCALED_BY",
+    "SIDES",
     "TICK_DETECTORS",
     "Basis",
     "BjorgumLevels",
@@ -438,6 +570,7 @@ __all__ = [
     "Zone",
     "build_detector",
     "check_scale",
+    "declaration",
     "read",
     "unit_for",
 ]

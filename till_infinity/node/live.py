@@ -139,7 +139,16 @@ def exec_config(venue: str) -> MT5ExecClientConfig:
         # desk's orders from a human's on the same account, so two venues that
         # are two accounts may share one - but two *desks* on one account must
         # not, and being off by one relabels every strategy as its neighbour.
-        magic=int(_env("DEFAULT_MAGIC", venue, str(DEFAULT_MAGIC))),
+        #
+        # **`TRADING_MAGIC`, and it read `DEFAULT_MAGIC` until 2026-11-01** -
+        # the *constant's* name passed where a variable name belongs, so the
+        # documented knob reached nothing and the live one was a spelling
+        # nobody had written down. Every sibling below passes the full
+        # variable name; this one did not, and the default being identical is
+        # why no deploy noticed. The old spelling is not kept as a fallback: it
+        # was a bug rather than an interface, and two names for one number is
+        # how one of them goes stale.
+        magic=int(_env("TRADING_MAGIC", venue, str(DEFAULT_MAGIC))),
         transport=_env("TRADING_MT5_TRANSPORT", venue, "http"),
         rpyc_host=_env("TRADING_RPYC_HOST", venue),
         rpyc_port=int(_env("TRADING_RPYC_PORT", venue, "18812")),

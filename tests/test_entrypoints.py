@@ -223,3 +223,71 @@ def test_the_guard_can_tell_an_invocation_from_a_mention():
     assert runnable("till-infinity health")
     assert not runnable("the `till-infinity` CLI retired to research/retire/bus/")
     assert not runnable("There is no `till-infinity` command, deliberately.")
+
+
+# --------------------------------------------------- and the image that builds
+
+
+def copy_sources() -> list[str]:
+    """The build-context paths every `COPY` in the Dockerfile reads.
+
+    `COPY --from=...` is skipped: its source is an earlier stage, not the
+    repository. A trailing destination is dropped, and a line may list several
+    sources, which is how the breakage below hid - the list was right and the
+    *order* was wrong, so a reader checking that each member appeared found
+    each member.
+    """
+    found = []
+    for line in read("Dockerfile").splitlines():
+        stripped = line.strip()
+        if not stripped.startswith("COPY ") or "--from=" in stripped:
+            continue
+        parts = [p for p in stripped.split()[1:] if not p.startswith("--")]
+        found.extend(parts[:-1])
+    return found
+
+
+def test_every_copy_source_exists():
+    """**The image could not build for eleven days and the suite was green.**
+
+    `packages/till-platform/`, `packages/till-channels/` and `shared/` were
+    copied in by five `COPY` lines, and all three retired to
+    `research/retire/` - `pyproject.toml` records that there is no uv
+    workspace any more. `docker build` failed at the second line in the file
+    with "packages/till-platform: not found", so no image was produced at all
+    and the rollback in `deploy.sh` was the only thing keeping the box up.
+
+    Nothing here builds the image, and this is the cheapest substitute: a COPY
+    whose source is not in the repository cannot succeed, whatever the build
+    arguments are. It is a weaker check than a build and it would have caught
+    this on the first run after the retirement, which the rest of the suite
+    did not manage in eleven days.
+    """
+    missing = [source for source in copy_sources() if not (ROOT / source).exists()]
+    assert not missing, (
+        f"the Dockerfile copies paths that are not in the repository: {missing} - "
+        f"`docker build` fails on the first one"
+    )
+
+
+def test_the_image_names_no_retired_workspace_member():
+    """Checked by name as well as by existence, so the fix cannot be to
+    recreate an empty `packages/` directory and leave the image installing a
+    workspace this project no longer has.
+
+    Only the `COPY` sources and the `ENV` lines are read. A plain substring
+    search over the file matches `site-packages/` inside the digest check that
+    compares the installed package against the source, which is a line that has
+    to stay.
+    """
+    retired = ("packages/till-", "shared/", "till-platform", "till-channels")
+    named = [
+        source
+        for source in copy_sources()
+        if any(source.startswith(mark) or source == mark.rstrip("/") for mark in retired)
+    ]
+    assert not named, f"the Dockerfile still copies {named}"
+
+    for line in read("Dockerfile").splitlines():
+        if line.strip().startswith("ENV ") and "shared/contracts" in line:
+            raise AssertionError(f"the Dockerfile still points at the retired contracts: {line!r}")

@@ -295,7 +295,7 @@ places and a node applying a plan to its own instance would leave the others on 
 | `TRADING_EVALUATE_ALL` | `0` | Ask every strategy about every signal and record what each would have done. One still trades. | restart |
 | `TRADING_CONSENSUS_MIN` | `2` | Strategies that must want the same side before the trade is rebuilt from their joint ask; 0 or 1 disables it. | trades |
 | `TRADING_DIR` | `.data/trading` | Where open positions' high-water marks and the day's state live between restarts. | state |
-| `TRADING_MAGIC` | `777701` ⚠ | One number the bridge stamps to tell this desk's orders from a human's. It is **no longer how a strategy is identified** - that is Nautilus's `strategy_id`, assigned by the framework and carried on every order, fill and position, which is why being off by one no longer relabels every strategy as its neighbour. **Setting this does not reach the MT5 execution client:** `node/live.py` builds the client's magic from a variable named `DEFAULT_MAGIC` (and `DEFAULT_MAGIC_<VENUE>`) instead. Don't change with positions open. | state |
+| `TRADING_MAGIC` | `777701` ⚠ | One number the bridge stamps to tell this desk's orders from a human's. It is **no longer how a strategy is identified** - that is Nautilus's `strategy_id`, assigned by the framework and carried on every order, fill and position, which is why being off by one no longer relabels every strategy as its neighbour. Per venue as `TRADING_MAGIC_<VENUE>`. It reached nothing until 2026-11-01: `node/live.py` passed the constant's name, `DEFAULT_MAGIC`, where the variable name belongs, so the documented knob was inert and the live one was undocumented. Don't change with positions open. | state |
 
 ### Risk and sizing
 
@@ -504,8 +504,10 @@ changed shape.
 - **`TRADING_STRATEGIES`, `TRADING_SYMBOLS` and `TRADING_INTERVALS` each have two defaults**, one in
   `node/desks.py` and one in `strategies/config.py`. The node's is what gets built. Set all three
   explicitly; the table at the top of this page gives both.
-- **`TRADING_MAGIC` does not reach the execution client.** `node/live.py` reads a variable named
-  `DEFAULT_MAGIC`. One of the two names is wrong and it is not a documentation question.
+- ~~**`TRADING_MAGIC` does not reach the execution client.**~~ Fixed on 2026-11-01. `node/live.py`
+  passed `DEFAULT_MAGIC` - the constant's name - where the variable name belongs, so the documented
+  knob was inert and the live one had never been written down. It reads `TRADING_MAGIC` now, like
+  every sibling beside it, and the old spelling is not kept: it was a bug rather than an interface.
 - **`.env.example` is out by 125 names in both directions**: 39 variables the code reads are missing
   from it, and 86 of its entries name something nothing reads - six of those uncommented, so a
   copied `.env` sets them and they do nothing. Two entries are corrupted, carrying Python source

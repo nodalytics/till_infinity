@@ -155,8 +155,9 @@ MERGE_VOL = 0.35
 #: published level calls, arriving many per hour. An indicator is fed bars, and
 #: pivots are sparse in bars: at `REACH` 3 a turn arrives every few bars, so 6
 #: hours on an hourly chart forgets every level before it is touched twice. It
-#: emptied the book on a visible shelf, which is the measurement that produced
-#: this number.
+#: emptied the book on a visible shelf, which is what prompted the change. The
+#: 6 hours is on the record in `docs/trading.md`; 500 is not measured anywhere,
+#: it is the round number that is long enough in bars on every interval.
 #:
 #: In bars it is interval-independent, which is the property that matters: a
 #: level on a daily chart needs weeks and one on a 1-minute chart needs hours,
@@ -514,8 +515,9 @@ class Mean:
 
     **Its band is not a zone, and must not be used as one.** The standard error
     shrinks as `1/sqrt(n)`, so twenty touches give a band twenty times tighter
-    than the touches themselves scatter - measured on the two-shelf case it
-    quotes 0.155 volatility units against the Kalman's 1.055, and price would
+    than the touches themselves scatter - on the two-shelf case it quotes
+    0.155 volatility units against the Kalman's 1.055, figures recorded here
+    and written up nowhere in `research/docs`, and price would
     almost never be inside it. The two answer different questions: this is *how
     well do we know the mean*, the Kalman's posterior is *where might the level
     be*. Only the second is a zone.
@@ -917,9 +919,11 @@ ATR_LEN = 30
 #: Band width as a multiple of ATR, from box bottom to box top - so each side
 #: gets half, which is what the script's trailing `/2` does.
 #:
-#: **0.5, and the harness agrees.** An earlier note here claimed the script
-#: used 0.015 and that the harness had widened it; reading the source, 0.5 is
-#: the script's own default and 0.015 belonged to a different lab. The
+#: **0.5, and the harness agrees** (`research/harness/bjorgum.py`). An earlier
+#: note here claimed the script used 0.015 and that the harness had widened it;
+#: reading the source, 0.5 is the script's own default and 0.015 belonged to a
+#: different lab. The Pine source is not in this tree, so that half rests on a
+#: reading nobody here can repeat - the harness half is checkable. The
 #: correction is recorded rather than quietly fixed, because the wrong version
 #: of it was the basis for a `PINE_MULT` constant that no longer exists.
 MULT = 0.5
@@ -933,7 +937,7 @@ MAX_PERCENT = 5.0
 FORWARD = 60
 
 #: A touch, in ATR from the level. Not entering a band whose size is the thing
-#: being tested - see the module docstring.
+#: being tested - see `Zone.near`, which makes the argument in place.
 TOUCH_ATR = 0.25
 
 #: A break, in ATR beyond the level on the far side.
@@ -982,8 +986,9 @@ class Detect(StrEnum):
     #: Zones are still built from bars whichever this is - a pivot needs bars
     #: either side of it and an ATR needs a range - so `TICKS` means *bars
     #: build, ticks detect*, and both feeds are correct on one instance. That
-    #: is the one documented exception to the one-feed rule the other
-    #: detectors enforce.
+    #: is the one documented exception to the one-feed rule `bars.check_feed`
+    #: enforces, which is why `BjorgumLevels` calls it with the source this
+    #: setting names rather than with a literal.
     TICKS = "ticks"
 
 
@@ -1037,7 +1042,15 @@ class Zone:
     @property
     def width(self) -> float:
         """`(top - bottom) / mid`. The feature that measured strongest, and
-        half of what it first appeared to be - see the module docstring."""
+        half of what it first appeared to be.
+
+        `bjorgum.md` in research/docs: width read 0.7602 against a 0.5417
+        control, the strongest of the five, and about half of that was the
+        label seeing the width rather than the width predicting anything. It
+        is real at half the size first reported, which is why `near` exists -
+        a touch test that entered through the band would be measuring the
+        feature under test.
+        """
         return (self.top - self.bottom) / self.mid if self.mid else 0.0
 
     @property
@@ -1099,8 +1112,9 @@ def band(
     they default to. They were the constants, and the instance's settings were
     stored and never read - so a band built with `mult=0.015` came out
     identical to one built with `mult=0.5`, a parameter that existed, was
-    accepted, and did nothing. Its own test caught it by printing the two
-    widths side by side.
+    accepted, and did nothing. It was caught by printing the two widths side by
+    side; the test that did so did not survive the port, and nothing in
+    `tests/` exercises `band`, `mult` or `max_percent` today.
     """
     if not math.isfinite(atr_now) or atr_now <= 0.0:
         return None
@@ -1398,7 +1412,6 @@ class BjorgumLevels(Indicator):
     def _detect(self, high: float, low: float, close: float) -> None:
         """Roles, visits and outcomes for every zone, from this bar."""
         for zone in self.zones:
-            # Role, and how many times it has changed.
             if close > zone.top and not zone.above:
                 zone.above, zone.breaks = True, zone.breaks + 1
             elif close < zone.bottom and zone.above:
@@ -1544,8 +1557,9 @@ DEFAULT_SPAN = 240
 
 class Swing(StrEnum):
     HIGH = "high"
-    #: An endpoint, or a point on a straight run. Carries no level information.
     LOW = "low"
+    #: An endpoint, or a point on a straight run. Carries no level information,
+    #: which is why `Point.is_turn` excludes it.
     EDGE = "edge"
 
 
@@ -1894,8 +1908,11 @@ class Pips(Indicator):
 
         The plainest reading of a structure sequence, and the one to be most
         careful with: this desk's measured record is that **direction is
-        closed** - the gate that looks for it finds a planted drift at z+2.90
-        and earns 2% of one spread on real data. A structure label is a
+        closed** - the gate that looks for it finds a *planted* drift at
+        z +2.90 and still earns only 2% of one spread there, and on the eight
+        traded instruments it reads +/-0.000 with not one cell past |z| of 2
+        (`statespace-directional-edge.md` in research/docs). A structure label
+        is a
         description of what happened, and an entry rule built on it is a claim
         that has already been refused.
         """
@@ -2286,7 +2303,8 @@ class Displacement(Indicator):
         """The origin of the most recent leg: the price a fade aims at.
 
         The *candle before the chain* - rank last, furthest from price. Not an
-        entry signal: see the table in the module docstring.
+        entry signal: see the table in `delivering.md` in research/docs, which
+        `Origin` quotes.
         """
         if not self.legs:
             return None
@@ -2565,6 +2583,13 @@ class Gaps(Indicator):
 
 NAN = float("nan")
 
+#: **Both of the next two names are already bound above in this module**, at
+#: the same values, and these lines rebind them - so `Displacement` and `Gaps`
+#: close over the earlier pair while the batch functions below see these. They
+#: agree today and a change to either half would be half-applied. Reported
+#: rather than merged here, because deleting a module-level name is not a
+#: documentation change.
+#:
 #: Bars the readings are taken over. Shorter than the regression's 100: a
 #: displacement is a local event and a hundred bars of context would bury the
 #: one that just happened under every older one.

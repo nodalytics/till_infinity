@@ -671,27 +671,27 @@ def test_the_statespace_fold_imports_nothing_above_it():
     )
 
 
-def test_the_image_says_where_the_contracts_are():
-    """The contracts were shipped and unfindable for this image's whole life.
-
-    `till_infinity.utils.contracts` counted parent directories from its own
-    `__file__`. Installed, that is `site-packages/till_platform/`, so it
-    looked in `/app/.venv/lib/shared/contracts/bus` while the files sat in
-    `/app/shared/contracts/bus` - and `declared()` returned `()`, so the
-    container reported that the bus declares nothing rather than failing.
-
-    Two things keep it fixed, and the second is the one that would have caught
-    it: the image declares the directory, and the build asks the *installed*
-    package whether it found the schemas, from `/` so that WORKDIR cannot
-    answer by accident.
-    """
-    dockerfile = (REPO / "Dockerfile").read_text()
-    assert "ENV TILL_CONTRACTS_DIR=" in dockerfile, "the image does not say where the contracts are"
-    assert "contracts.missing()" in dockerfile, (
-        "the build does not ask the installed package whether it found the schemas"
-    )
-
-
+# **A fourth left on 2026-11-01**, and it is the one that found the breakage.
+#
+# `test_the_image_says_where_the_contracts_are` asserted that the Dockerfile
+# declares `TILL_CONTRACTS_DIR` and that the build asks the installed package
+# `contracts.missing()`. Both were true of the file and neither could run:
+# `till_platform` retired to `research/retire/`, so the build step importing it
+# raised `ModuleNotFoundError`, and the directory it named - `shared/` - had
+# retired too. The image had not built since.
+#
+# The test was right about the property and wrong about who holds it. What it
+# was really asserting is that **a root-relative data directory has to be
+# findable from the installed package, not merely present**: the schemas were
+# shipped and unfindable for the whole of the previous image's life, because
+# `contracts` counted parent directories from its own `__file__` and that moves
+# on installation. `declared()` answered `()`, so the container reported that
+# the bus declares nothing rather than failing.
+#
+# Nothing under `till_infinity/` reads a contracts directory now. If one is
+# ever shipped again, this is the test to write first, and the Dockerfile
+# carries the same note beside the step that went.
+#
 # **Three tests left with their subjects on 2026-10-31**, and the reason each
 # went is worth more than the test was.
 #

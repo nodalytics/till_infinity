@@ -103,13 +103,37 @@ class Event(Restorable):
 
 @dataclass(slots=True)
 class Cusum(Indicator, Restorable):
-    """A symmetric CUSUM filter over a price series.
+    """A CUSUM filter over a price series, symmetric unless told otherwise.
 
     Stateful across calls, so it can be fed a stream one price at a time and
     keep its accumulators - which is the point of it over a windowed measure.
+
+    ## The threshold may differ by side, and by default it does not
+
+    `threshold` governs both accumulators. `threshold_up` and `threshold_down`
+    override it one side at a time, because long and short are not the same
+    trade: `risk/scaling.overshoot_for` already prefers `boom_500_index.sell`
+    over `boom_500_index`, on the measured ground that a stop on a jump
+    instrument's spike side can only be gapped over.
+
+    **Zero means "use `threshold`", so a detector built the old way is
+    arithmetically identical to the one that existed before these two fields.**
+    That is the only safe default: a second parameter doubles the search, and
+    at a target Sharpe of 1.5 a month of data supports about one trial, so an
+    asymmetric default would be two confounded parameters wearing one name.
+
+    **The two sides are not independent, and that is why this costs a grid
+    rather than two sweeps.** `restart` zeroes *both* accumulators, because the
+    statistic is progress since the last event - so raising the down threshold
+    changes which up events fire as well. A sweep over k thresholds per side is
+    therefore k**2 cells, not 2k.
     """
 
     threshold: float = THRESHOLD
+    #: The up accumulator's threshold, or zero to use `threshold`.
+    threshold_up: float = 0.0
+    #: The down accumulator's threshold, or zero to use `threshold`.
+    threshold_down: float = 0.0
     up: float = 0.0
     down: float = 0.0
     last: float = 0.0
@@ -151,13 +175,46 @@ class Cusum(Indicator, Restorable):
     #: The fields a reset keeps. Everything else is state - note that `up` and
     #: `down` here are the two accumulators, not a direction.
     _CONFIG: ClassVar[frozenset[str]] = frozenset(
-        {"threshold", "source", "unit", "unit_from", "unit_span", "tick_span"}
+        {
+            "threshold",
+            "threshold_up",
+            "threshold_down",
+            "source",
+            "unit",
+            "unit_from",
+            "unit_span",
+            "tick_span",
+        }
     )
 
     def __post_init__(self) -> None:
         """Hand Nautilus its parameters, and refuse an unset scale."""
-        Indicator.__init__(self, [self.threshold])
+        for name in ("threshold_up", "threshold_down"):
+            if getattr(self, name) < 0.0:
+                raise ValueError(
+                    f"Cusum.{name} is {getattr(self, name)}, and a negative "
+                    f"threshold is crossed by the first observation on that "
+                    f"side - so the filter would fire on every bar and report "
+                    f"a run length rather than an event. Zero means use "
+                    f"`threshold`."
+                )
+        Indicator.__init__(self, list(self.thresholds) if self.sided else [self.threshold])
         check_scale(type(self).__name__, self.source, self.unit, self.unit_from)
+
+    @property
+    def sided(self) -> bool:
+        """Whether the two sides carry different thresholds."""
+        return self.thresholds[0] != self.thresholds[1]
+
+    @property
+    def thresholds(self) -> tuple[float, float]:
+        """`(up, down)`, with `threshold` standing in for an unset side.
+
+        Resolved on read rather than at construction, so `reset_state` - which
+        rebuilds the instance from the fields in `_CONFIG` - cannot turn an
+        inherited threshold into a declared one.
+        """
+        return (self.threshold_up or self.threshold, self.threshold_down or self.threshold)
 
     def reset(self) -> None:
         """Nautilus's reset: as if this had never seen an observation.
@@ -252,11 +309,15 @@ class Cusum(Indicator, Restorable):
         # never accumulated past its first event. The distinction is written
         # up in this package's `__init__` and in `bars.reset_state`, and these
         # call sites were missed anyway.
-        if self.up >= self.threshold:
+        # One threshold per side, which is `threshold` twice unless a caller
+        # declared otherwise. The up side is tested first in both cases, so an
+        # asymmetric filter breaks a tie the same way a symmetric one does.
+        rising, falling = self.thresholds
+        if self.up >= rising:
             run = self.up
             self.restart()
             return self._record(index, when, price, "up", run)
-        if -self.down >= self.threshold:
+        if -self.down >= falling:
             run = -self.down
             self.restart()
             return self._record(index, when, price, "down", run)

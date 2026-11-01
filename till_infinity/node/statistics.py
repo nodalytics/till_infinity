@@ -430,6 +430,24 @@ class DeflatedInformationRatio(PortfolioStatistic):
 
 GATES: tuple[str, ...] = ("DSR",)
 
+#: Statistics that may justify taking a live leg **off**, which is a different
+#: question from putting one on and gets a different list.
+#:
+#: `DIR` is not in `GATES` and this is not a promotion by the back door. Both
+#: readings are against the rest of the book, which is what makes them answer
+#: "does this leg beat the others" rather than "is this leg real" - and that is
+#: a retirement question, as `InformationRatio`'s own docstring says. On the
+#: promotion side the same algebra over a differenced series would be a second
+#: gate counting one piece of evidence twice.
+#:
+#: Naming them is what makes the rotation safe rather than timed:
+#: `promotion.book_evidence` turns `DIR` into the evidence `may_retire`
+#: demands, and returns nothing at all on a sample under
+#: `promotion.live_episodes` - because `strategy-rotation-is-not-timeable`
+#: records that every pause rule tested here matched random pausing at the same
+#: duty cycle, and a short sample of bad results is the sample being short.
+RETIREMENT_EVIDENCE: tuple[str, ...] = ("DIR", "InfoRatio")
+
 #: Reported for a person. Correlated with each other and with the gate, which
 #: is why they are not gates.
 DIAGNOSTICS: tuple[str, ...] = (
