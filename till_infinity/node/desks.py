@@ -75,10 +75,49 @@ PER_CORE = 8
 
 
 def _names(value: str | None) -> tuple[str, ...]:
-    """A comma or space separated list, empty entries dropped."""
+    """A list of names, empty entries dropped. **Commas win over spaces.**
+
+    It used to split on both at once - `value.replace(",", " ").split()` -
+    which silently cannot express a broker symbol containing a space. Deriv's
+    synthetics all do: `TRADING_SYMBOLS="Volatility 75 Index"` became the
+    three symbols `Volatility`, `75` and `Index`, so one synthetic produced
+    three desks on instruments no venue lists. Nothing raised - `Symbol("75")`
+    is a valid symbol and the instrument simply never resolves - so the node
+    came up, registered three desks and traded none of them.
+
+    The rule is therefore: **a comma anywhere makes commas the only
+    separator**, which is what `utils.env.names` already does and what
+    `PRICES_BROKER_SYMBOLS` is written with. Whitespace still works where
+    there is no comma, because that is how every existing deploy and test
+    writes `EURUSD GBPUSD`. A single spaced name needs a trailing comma -
+    `"Volatility 75 Index,"` - which is also what a hand-edited env file
+    tends to look like anyway.
+    """
     if not value:
         return ()
-    return tuple(part for part in value.replace(",", " ").split() if part)
+    if "," in value:
+        return tuple(part.strip() for part in value.split(",") if part.strip())
+    found = tuple(part for part in value.split() if part)
+    # **Refuse the shape that used to pass silently.** No broker lists a
+    # symbol called `75`, so a bare number among whitespace-split parts means
+    # a name was torn apart - `Volatility 75 Index`, `Boom 1000 Index`,
+    # `Crash 500 Index`, `Jump 25 Index`. Raising here costs a deploy a clear
+    # error; the alternative cost three desks quoting instruments that do not
+    # exist, with nothing to say so.
+    #
+    # It does not catch every case: `Step Index` has no number in it, and
+    # without a comma it still splits into two. The comma rule is the one that
+    # always works, and this guard is for the spelling somebody will reach for
+    # first.
+    if any(part.isdigit() for part in found):
+        raise ValueError(
+            f"TRADING_SYMBOLS={value!r} splits on whitespace into {list(found)}, "
+            f"which contains a bare number - so a symbol name with a space in it "
+            f"has been torn apart. Separate the names with commas: "
+            f'"Volatility 75 Index,Boom 1000 Index", or a single one with a '
+            f'trailing comma: "Volatility 75 Index,".'
+        )
+    return found
 
 
 def rules() -> tuple[str, ...]:

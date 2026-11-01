@@ -404,3 +404,89 @@ def test_trading_live_arms_the_node(monkeypatch, loop):
         assert node.kernel.risk_engine.trading_state == TradingState.ACTIVE
     finally:
         node.dispose()
+
+
+# --------------------------------------------- symbols whose names have spaces
+
+
+def test_a_synthetic_name_is_one_symbol_and_not_three(monkeypatch):
+    """**Deriv's synthetics all have spaces in their names**, and the splitter
+    used to treat a space and a comma alike - so `Volatility 75 Index` became
+    the three symbols `Volatility`, `75` and `Index`.
+
+    Nothing raised: `Symbol("75")` is valid and the instrument simply never
+    resolves, so the node came up, registered three desks and traded none of
+    them. That is the same failure shape as the three deploys on 2026-10-09
+    which were health-checked and ran none of the code they claimed.
+    """
+    monkeypatch.setenv("TRADING_SYMBOLS", "Volatility 75 Index,Boom 1000 Index")
+    assert desks.symbols() == ("Volatility 75 Index", "Boom 1000 Index")
+
+
+def test_one_spaced_name_needs_a_trailing_comma(monkeypatch):
+    """Which is what a hand-edited env file tends to look like anyway, and the
+    only unambiguous way to say "this is one name"."""
+    monkeypatch.setenv("TRADING_SYMBOLS", "Volatility 75 Index,")
+    assert desks.symbols() == ("Volatility 75 Index",)
+
+
+def test_space_separated_names_still_work(monkeypatch):
+    """Every existing deploy and test writes `EURUSD GBPUSD`, so commas only
+    take over when there is a comma."""
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD GBPUSD")
+    assert desks.symbols() == ("EURUSD", "GBPUSD")
+
+
+def test_a_torn_name_refuses_rather_than_quoting_a_number(monkeypatch):
+    """No broker lists a symbol called `75`, so a bare number among the parts
+    is evidence a name was torn apart. A clear error costs a deploy a restart;
+    the silent version cost three desks on instruments that do not exist."""
+    monkeypatch.setenv("TRADING_SYMBOLS", "Volatility 75 Index")
+    with pytest.raises(ValueError, match="torn apart"):
+        desks.symbols()
+
+
+def test_a_desk_builds_for_a_synthetic(monkeypatch, loop):
+    """End to end, because the name survives `Symbol`, `InstrumentId` and
+    `BarType` individually and the question is whether it survives all three
+    plus the strategy id."""
+    monkeypatch.setenv("TRADING_SYMBOLS", "Volatility 75 Index,")
+    monkeypatch.setenv("TRADING_ENTRIES", "edge")
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+
+    built, clipped = desks.build("MT5")
+    assert not clipped
+    assert len(built) == 1
+    config = built[0].config
+    assert config.instrument_id.symbol.value == "Volatility 75 Index"
+    # The bar type is the one the data client subscribes with, and a name that
+    # round-trips through `BarType.from_str` is the whole requirement.
+    assert str(config.bar_type).startswith("Volatility 75 Index.MT5-")
+
+
+def test_two_synthetics_get_different_strategy_ids(monkeypatch, loop):
+    """`strategy_id` is what Nautilus carries on every order, fill and
+    position, so a collision would relabel one synthetic as the other - the
+    magic-number bug the whole carve-up was done to make impossible.
+
+    Read off `strategy.id` and not `config.strategy_id`, which is `None`:
+    the id is assigned by the framework from the class and the
+    `order_id_tag`, and asserting on the config field would pass for any two
+    desks at all.
+    """
+    monkeypatch.setenv("TRADING_SYMBOLS", "Volatility 75 Index,Volatility 100 Index")
+    monkeypatch.setenv("TRADING_ENTRIES", "edge")
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+
+    built, _ = desks.build("MT5")
+    assert len(built) == 2
+    ids = {str(strategy.id) for strategy in built}
+    assert ids == {
+        "EdgeEntry-Volatility 75 Index-E270",
+        "EdgeEntry-Volatility 100 Index-E270",
+    }
+    # The tag suffix is per-entry, so the symbol is what distinguishes these.
+    # Both halves matter: a tag-only id would collide across symbols, and a
+    # symbol-only id would collide across entries on one symbol.
+    tags = {strategy.config.order_id_tag for strategy in built}
+    assert len(tags) == 2

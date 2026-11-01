@@ -6,6 +6,7 @@ only reads the feed should not have to name credentials it will not use.
 
 from __future__ import annotations
 
+from nautilus_trader.config import NautilusConfig
 from nautilus_trader.live.config import LiveDataClientConfig, LiveExecClientConfig
 
 #: The bridge's prefix. Every route below hangs off it.
@@ -19,6 +20,60 @@ class MT5BridgeConfig:
     and multiple inheritance across the two would fight its validation - so the
     fields are repeated below and this holds the documentation.
     """
+
+
+class DockerizedMT5TerminalConfig(NautilusConfig, frozen=True):
+    """A terminal this node starts for itself, in Docker.
+
+    The analogue of `DockerizedIBGatewayConfig`: present on a client config,
+    the factory starts the container and points the client at it; absent,
+    nothing is started and `base_url` is used as given. Field names follow the
+    image's own environment variables so the mapping is checkable against its
+    README rather than inferred.
+
+    `setup_url` is the one that is not optional in spirit. It pins which
+    terminal installer the image fetches, and an unpinned one has already cost
+    this desk a working venue - an unpinned `mt5setup` against a pinned
+    `MetaTrader5==5.0.5640` produced a terminal whose IPC the module could not
+    speak, where **build 6140 works and 6204 does not**. Left blank, the image
+    takes MetaQuotes' latest, which is the arrangement that broke.
+    """
+
+    #: `MT5_LOGIN`, `MT5_PASSWORD`, `MT5_SERVER`.
+    login: int = 0
+    password: str | None = None
+    server: str | None = None
+    #: `API_KEY_SEED`. The bridge derives its `X-API-Key` from this, so a
+    #: client's `api_key` has to match what this seeds.
+    api_key_seed: str | None = None
+    #: `MT5_SETUP_URL`. Blank means MetaQuotes' latest - see the class note.
+    setup_url: str | None = None
+    #: `VNC_USER` / `VNC_PASSWORD`, for the one thing no API can do: clicking
+    #: through the terminal's own dialogs when a broker changes something.
+    vnc_user: str | None = None
+    vnc_password: str | None = None
+    #: Where the published bridge port lands on this host. The container
+    #: always serves 8000 internally.
+    host: str = "127.0.0.1"
+    port: int = 8000
+    #: `None` publishes no VNC port at all, which is the right default for a
+    #: trading host: the web interface is an unauthenticated desktop by
+    #: default and the password is an environment variable.
+    vnc_port: int | None = None
+    image: str = "ghcr.io/nodalytics/mt5-terminal:latest"
+    #: Seconds to wait for `/health` to report `connected`. Generous because a
+    #: cold start installs a terminal and logs it in.
+    timeout: int = 300
+    #: Anything the image accepts that this does not model. A field per knob
+    #: here is a field to keep in step with someone else's repo.
+    extra: dict[str, str] | None = None
+
+    def __repr__(self) -> str:
+        return (
+            f"DockerizedMT5TerminalConfig(login={self.login}, "
+            f"password=********, server={self.server!r}, "
+            f"image={self.image!r}, port={self.port}, timeout={self.timeout})"
+        )
 
 
 class MT5DataClientConfig(LiveDataClientConfig, frozen=True):
@@ -43,6 +98,18 @@ class MT5DataClientConfig(LiveDataClientConfig, frozen=True):
     price_precision: dict[str, int] | None = None
     volume_precision: int = 2
     request_timeout: float = 30.0
+    #: Which transport reaches the terminal: `http` for the bridge, `rpyc` for
+    #: the module proxy. The choice is the adapter's and nothing above it can
+    #: see it - see `transport.py` for why that matters.
+    transport: str = "http"
+    #: Where the rpyc server listens, when `transport="rpyc"`. **Never a public
+    #: interface**: `allow_all_attrs` makes it a remote-code-execution service
+    #: by design, so bind it to localhost or a private network.
+    rpyc_host: str | None = None
+    rpyc_port: int = 18812
+    #: A terminal this node starts for itself. Absent, `base_url` is used as
+    #: given, which is the lab box.
+    dockerized_terminal: DockerizedMT5TerminalConfig | None = None
 
 
 class MT5ExecClientConfig(LiveExecClientConfig, frozen=True):
@@ -61,3 +128,22 @@ class MT5ExecClientConfig(LiveExecClientConfig, frozen=True):
     #: MT5 order filling mode. The bridge passes it through as `type_filling`.
     filling: str = "IOC"
     request_timeout: float = 30.0
+    #: Which transport reaches the terminal: `http` for the bridge, `rpyc` for
+    #: the module proxy. The choice is the adapter's and nothing above it can
+    #: see it - see `transport.py` for why that matters.
+    transport: str = "http"
+    #: Where the rpyc server listens, when `transport="rpyc"`. **Never a public
+    #: interface**: `allow_all_attrs` makes it a remote-code-execution service
+    #: by design, so bind it to localhost or a private network.
+    rpyc_host: str | None = None
+    rpyc_port: int = 18812
+    #: A terminal this node starts for itself. Absent, `base_url` is used as
+    #: given, which is the lab box.
+    dockerized_terminal: DockerizedMT5TerminalConfig | None = None
+    #: Only for `transport="rpyc"`: `initialize` still has to run on the
+    #: remote terminal, because a proxy is a way of calling one rather than a
+    #: way of starting one. Blank means whatever terminal is already logged in.
+    terminal_path: str | None = None
+    login: int = 0
+    password: str | None = None
+    server: str | None = None
