@@ -85,6 +85,26 @@ class Transport(Protocol):
     async def cancel(self, ticket: int) -> dict[str, Any]: ...
 
 
+@runtime_checkable
+class Streaming(Protocol):
+    """A transport that can **push**, which is not all of them.
+
+    Deliberately separate from `Transport` rather than an optional method on
+    it. `Bridge` has a websocket; `Proxy` is an in-process call into a
+    terminal and has nothing to push with, and a protocol that demanded
+    `stream` of both would be satisfied by a `Proxy.stream` that raised - the
+    kind of stub that makes a capability check pass and the feature fail at
+    the one moment it is used.
+
+    So the check is `isinstance(transport, Streaming)`, and `data.py` refuses
+    `quote_source="push"` on a transport that is not, rather than falling back
+    to polling. A feed that samples while reporting itself as a push makes
+    every measurement taken on it wrong, and nothing about it looks wrong.
+    """
+
+    def stream(self, symbols: list[str]) -> Any: ...
+
+
 #: Every transport name a config may carry. `http` is the default because it
 #: is the one the lab box runs and the only one that works through a firewall
 #: without a tunnel.

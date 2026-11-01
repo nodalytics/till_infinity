@@ -44,7 +44,7 @@ from .config import (
     MT5ExecClientConfig,
 )
 from .factories import MT5LiveDataClientFactory, MT5LiveExecClientFactory
-from .transport import TRANSPORTS, Transport
+from .transport import TRANSPORTS, Streaming, Transport
 
 MT5 = "MT5"
 
@@ -56,5 +56,6 @@ __all__ = [
     "MT5ExecClientConfig",
     "MT5LiveDataClientFactory",
     "MT5LiveExecClientFactory",
+    "Streaming",
     "Transport",
 ]

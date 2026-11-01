@@ -247,8 +247,11 @@ def test_the_live_node_builds_with_its_desks_on_it(monkeypatch, loop):
     node = live.build()
     try:
         assert len(node.trader.strategies()) == 4
+        # `BasketExit-MT5` and not `BasketExit`: the id carries the venue
+        # because Nautilus requires actor ids to be unique in a trader, and
+        # two venues both adding a bare `BasketExit` is refused.
         assert {str(a.id) for a in node.trader.actors()} == {
-            "BasketExit",
+            "BasketExit-MT5",
             "StatespaceActor",
         }
     finally:
@@ -276,7 +279,7 @@ def test_statespace_is_only_added_when_it_is_configured(monkeypatch, loop):
 
     node = live.build()
     try:
-        assert [str(a.id) for a in node.trader.actors()] == ["BasketExit"]
+        assert [str(a.id) for a in node.trader.actors()] == ["BasketExit-MT5"]
     finally:
         node.dispose()
 

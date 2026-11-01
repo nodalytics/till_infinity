@@ -28,14 +28,8 @@ from nautilus_trader.config import (
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.enums import TradingState
 
-from till_infinity.adapters.mt5 import (
-    MT5,
-    MT5DataClientConfig,
-    MT5ExecClientConfig,
-    MT5LiveDataClientFactory,
-    MT5LiveExecClientFactory,
-)
-from till_infinity.node import desks
+from till_infinity.adapters.mt5 import MT5DataClientConfig, MT5ExecClientConfig
+from till_infinity.node import desks, venues
 from till_infinity.statespace.actor import StatespaceActor, StatespaceConfig
 from till_infinity.utils.env import flag
 
@@ -56,8 +50,6 @@ def settings() -> TradingNodeConfig:
     Deliberately the same variables the desk already uses, so a deploy does
     not have to learn a new vocabulary at the same time as a new engine.
     """
-    bridge = os.environ.get("TRADING_MT5_URL", "http://localhost:8000")
-    key = os.environ.get("TRADING_MT5_API_KEY") or None
     return TradingNodeConfig(
         trader_id=os.environ.get("TRADER_ID", "TILL-001"),
         logging=LoggingConfig(log_level=os.environ.get("LOG_LEVEL", "INFO")),
@@ -84,20 +76,15 @@ def settings() -> TradingNodeConfig:
             reconciliation=True,
             inflight_check_interval_ms=2_000,
         ),
-        data_clients={
-            MT5: MT5DataClientConfig(
-                base_url=bridge,
-                api_key=key,
-                poll_seconds=float(os.environ.get("MT5_POLL_SECONDS", "0.25")),
-            )
-        },
-        exec_clients={
-            MT5: MT5ExecClientConfig(
-                base_url=bridge,
-                api_key=key,
-                magic=int(os.environ.get("DEFAULT_MAGIC", DEFAULT_MAGIC)),
-            )
-        },
+        # **One client pair per venue, in one kernel.** Nautilus keys its
+        # clients by name and runs them side by side with one cache and one
+        # portfolio, which is what makes exposure across venues answerable at
+        # all - a node per venue would put each one's positions out of the
+        # other's sight. Only MT5 has an adapter, so several venues today
+        # means several MT5 accounts: a demo beside a live one, or two brokers
+        # both on MT5.
+        data_clients={venue: venues.configs(venues.kind(venue), venue)[0] for venue in _wanted()},
+        exec_clients={venue: venues.configs(venues.kind(venue), venue)[1] for venue in _wanted()},
         timeout_connection=float(os.environ.get("NODE_CONNECT_TIMEOUT", "60")),
         timeout_reconciliation=float(os.environ.get("NODE_RECONCILE_TIMEOUT", "30")),
         timeout_portfolio=float(os.environ.get("NODE_PORTFOLIO_TIMEOUT", "30")),
@@ -107,6 +94,55 @@ def settings() -> TradingNodeConfig:
         # a named operation, because the right answer depends on why the node
         # is coming down.
         timeout_post_stop=float(os.environ.get("NODE_POST_STOP_TIMEOUT", "10")),
+    )
+
+
+def _wanted() -> tuple[str, ...]:
+    """The venues this node runs, from the one place that decides.
+
+    `settings()` registers the clients and `build()` registers the factories,
+    and the two must name the same venues or a client is configured with no
+    factory to build it - which fails at `node.build()` with a message about
+    a missing factory rather than about a mismatched list.
+    """
+    return desks.venues()
+
+
+def _env(name: str, venue: str, fallback: str | None = None) -> str | None:
+    """A setting for one venue, or the shared one.
+
+    `TRADING_MT5_URL_DERIV` beats `TRADING_MT5_URL`, so a second venue is
+    added by naming what differs rather than by re-stating everything. The
+    venue is upper-cased into the variable name because that is how every
+    other variable here is spelled and a mixed-case one would be missed
+    silently - which, for a credential, means connecting to the wrong account.
+    """
+    return os.environ.get(f"{name}_{venue.upper()}") or os.environ.get(name) or fallback
+
+
+def data_config(venue: str) -> MT5DataClientConfig:
+    return MT5DataClientConfig(
+        base_url=_env("TRADING_MT5_URL", venue, "http://localhost:8000"),
+        api_key=_env("TRADING_MT5_API_KEY", venue),
+        poll_seconds=float(_env("MT5_POLL_SECONDS", venue, "0.25")),
+        transport=_env("TRADING_MT5_TRANSPORT", venue, "http"),
+        rpyc_host=_env("TRADING_RPYC_HOST", venue),
+        rpyc_port=int(_env("TRADING_RPYC_PORT", venue, "18812")),
+    )
+
+
+def exec_config(venue: str) -> MT5ExecClientConfig:
+    return MT5ExecClientConfig(
+        base_url=_env("TRADING_MT5_URL", venue, "http://localhost:8000"),
+        api_key=_env("TRADING_MT5_API_KEY", venue),
+        # **Per venue, and that is the point of it.** The magic tells this
+        # desk's orders from a human's on the same account, so two venues that
+        # are two accounts may share one - but two *desks* on one account must
+        # not, and being off by one relabels every strategy as its neighbour.
+        magic=int(_env("DEFAULT_MAGIC", venue, str(DEFAULT_MAGIC))),
+        transport=_env("TRADING_MT5_TRANSPORT", venue, "http"),
+        rpyc_host=_env("TRADING_RPYC_HOST", venue),
+        rpyc_port=int(_env("TRADING_RPYC_PORT", venue, "18812")),
     )
 
 
@@ -121,10 +157,12 @@ def build() -> TradingNode:
     """
     node = TradingNode(config=settings())
     _arm(node)
-    node.add_data_client_factory(MT5, MT5LiveDataClientFactory)
-    node.add_exec_client_factory(MT5, MT5LiveExecClientFactory)
+    for venue in _wanted():
+        data, orders = venues.factories(venues.kind(venue))
+        node.add_data_client_factory(venue, data)
+        node.add_exec_client_factory(venue, orders)
 
-    strategies, clipped = desks.build(MT5)
+    strategies, clipped = desks.build_all()
     if clipped:
         # **Said out loud, never silent.** A set smaller than the one asked for
         # is the shape of bug this desk has paid for repeatedly: a min-events
@@ -200,7 +238,7 @@ def _actors() -> list[Actor]:
     a node may trade without it, and an actor subscribed to nothing is a fold
     that never runs pretending to be a model that does.
     """
-    found: list[Actor] = list(desks.actors(MT5))
+    found: list[Actor] = list(desks.actors_all())
     bars = tuple(
         part for part in (os.environ.get("STATESPACE_BARS") or "").replace(",", " ").split() if part
     )

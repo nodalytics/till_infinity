@@ -14,7 +14,8 @@ Routes, as the bridge exposes them under `/api/v1`:
 | `GET /symbols/` | what the terminal lists |
 | `GET /symbols/info/{symbol}` | digits, point, volume step, contract size |
 | `GET /symbols/rates/pos` | bars, by position back from now |
-| `GET /symbols/ticks/{symbol}` | ticks over a time range |
+| `GET /symbols/ticks/{symbol}/range` | ticks over a time range |
+| `WS /stream` | quotes, pushed as they change |
 | `GET /positions/` | open positions |
 | `GET /orders/pending` | resting orders |
 | `POST /trading/order` | place |
@@ -26,11 +27,28 @@ Routes, as the bridge exposes them under `/api/v1`:
 
 from __future__ import annotations
 
+import contextlib
+from collections.abc import AsyncIterator
+from datetime import UTC, datetime
 from typing import Any
 
 import httpx
 
 API = "/api/v1"
+
+#: Frames the push stream will hold before dropping its oldest.
+#:
+#: Sized for a burst rather than for a backlog: at the bridge's 0.25s pump
+#: and a few dozen symbols, 1024 frames is seconds of history, and anything
+#: older than that has been superseded by a newer quote for the same symbol.
+#: A stale quote is the one input every gate here trusts, so holding more of
+#: them is not caution.
+STREAM_BACKLOG = 1024
+
+#: Seconds between websocket pings. The bridge is on a private network or a
+#: tunnel, and a silently half-open socket reads as a market that stopped
+#: quoting - which is why this is set at all rather than left to the default.
+STREAM_HEARTBEAT = 20
 
 
 class BridgeError(RuntimeError):
@@ -136,7 +154,27 @@ class Bridge:
         return _rows(raw)
 
     async def ticks(self, symbol: str, start: int, end: int) -> list[dict]:
-        raw = await self.get(f"/symbols/ticks/{symbol}", date_from=start, date_to=end)
+        """Every tick in a range, which is where completeness lives.
+
+        **`/range`, not `/symbols/ticks/{symbol}`.** That bare route is
+        `get_symbol_info_tick` - the *latest single tick* - and it ignores
+        `date_from` and `date_to` entirely, so this used to return the current
+        quote over and over whatever range it was asked for. A backfill built
+        on it would look like a market that never moved, and a corpus written
+        from it would be one tick repeated: wrong in a way no exception
+        reports. Checked against the bridge's `routers/symbols.py`, which has
+        `/ticks/{symbol}` (one tick), `/ticks/{symbol}/from` (a count) and
+        `/ticks/{symbol}/range` (this one).
+
+        Sent as ISO 8601 rather than as epoch seconds because the route types
+        both parameters as `datetime`, and an int is only accepted by
+        whichever coercion the bridge's pydantic happens to do.
+        """
+        raw = await self.get(
+            f"/symbols/ticks/{symbol}/range",
+            date_from=_iso(start),
+            date_to=_iso(end),
+        )
         return _rows(raw)
 
     async def positions(self) -> list[dict]:
@@ -147,6 +185,77 @@ class Bridge:
 
     async def deals(self, start: int, end: int) -> list[dict]:
         return _rows(await self.get("/history/deals", date_from=start, date_to=end))
+
+    # ──── the push stream ────
+    async def stream(self, symbols: list[str]) -> AsyncIterator[dict[str, Any]]:
+        """Quotes as the bridge pushes them, over `WS /stream`.
+
+        **Only the HTTP bridge has this**, which is why it is not on the
+        `Transport` protocol: an rpyc proxy is an in-process call into a
+        terminal and has nothing to push with. `data.py` refuses `push` on a
+        transport without a `stream` rather than falling back to polling,
+        because a feed that quietly samples while claiming to push is exactly
+        the measurement error this desk keeps paying for.
+
+        **Nautilus's own `WebSocketClient` and not a new dependency.** It is
+        the Rust client its own adapters use, so reconnection, backoff and
+        heartbeats are the framework's rather than ours - and `httpx` cannot
+        do websockets at all, so the alternative was adding one. It is
+        callback-shaped, so the handler feeds a queue and this yields from it.
+
+        The queue is **bounded and drops the oldest frame when full**. A quote
+        that could not be consumed in time is worthless - the next one
+        supersedes it - and the alternative is an unbounded queue inside a
+        trading process, which fails later and worse. Frames arrive as the
+        bridge sends them (`tick`, `subscribed`, `error`, `account`,
+        `positions`) and are yielded unchanged: deciding here what is
+        interesting would make this a second place that knows what a tick is.
+        """
+        import asyncio
+        import json
+
+        from nautilus_trader.core.nautilus_pyo3 import WebSocketClient, WebSocketConfig
+
+        loop = asyncio.get_running_loop()
+        queue: asyncio.Queue[bytes] = asyncio.Queue(maxsize=STREAM_BACKLOG)
+
+        def _received(raw: bytes) -> None:
+            # Called from the client's own task. `put_nowait` rather than an
+            # await because the handler cannot block the socket read, and a
+            # full queue drops its oldest frame instead of this one - a
+            # dropped *new* quote would leave the stalest data in place.
+            if queue.full():
+                with contextlib.suppress(asyncio.QueueEmpty):
+                    queue.get_nowait()
+            queue.put_nowait(raw)
+
+        base = self._base.replace("https://", "wss://").replace("http://", "ws://")
+        url = f"{base}{API}/stream"
+        if self._key:
+            # On the query string and not in a header, deliberately: the
+            # bridge accepts either, and a browser cannot set headers on a
+            # websocket handshake. The header is still sent where it can be.
+            url = f"{url}?api_key={self._key}"
+        config = WebSocketConfig(
+            url=url,
+            headers=[("X-API-Key", self._key)] if self._key else [],
+            heartbeat=STREAM_HEARTBEAT,
+        )
+        client = await WebSocketClient.connect(loop_=loop, config=config, handler=_received)
+        try:
+            await client.send_text(json.dumps({"action": "subscribe", "symbols": symbols}))
+            while True:
+                raw = await queue.get()
+                try:
+                    message = json.loads(raw)
+                except ValueError:
+                    # A frame that is not JSON is the bridge's problem, not a
+                    # reason to end a feed. Skipped rather than raised.
+                    continue
+                if isinstance(message, dict):
+                    yield message
+        finally:
+            await client.disconnect()
 
     # ──── writes ────
     async def order(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -166,6 +275,17 @@ class Bridge:
 
     async def cancel(self, ticket: int) -> dict[str, Any]:
         return (await self.delete(f"/orders/{int(ticket)}")) or {}
+
+
+def _iso(stamp: int | float) -> str:
+    """A POSIX second as an ISO 8601 UTC string.
+
+    Explicitly UTC. The bridge's routes type their range parameters as
+    `datetime`, and a naive string would be read in whatever timezone the
+    bridge's process is in - which is the terminal's, and not UTC on any
+    broker this desk trades. A range off by hours reads as a quiet market.
+    """
+    return datetime.fromtimestamp(float(stamp), tz=UTC).isoformat()
 
 
 def _rows(raw: Any) -> list[dict]:

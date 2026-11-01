@@ -26,6 +26,7 @@ from till_infinity.adapters.mt5 import (
     DockerizedMT5TerminalConfig,
     MT5DataClientConfig,
     MT5ExecClientConfig,
+    Streaming,
     Transport,
 )
 from till_infinity.adapters.mt5.bridge import Bridge
@@ -50,10 +51,33 @@ def test_the_two_transports_answer_the_same_methods():
         for name in dir(Transport)
         if not name.startswith("_") and callable(getattr(Transport, name, None))
     }
+    # `stream` is deliberately not in here - see `test_only_the_bridge_can_push`.
+    assert "stream" not in surface
     assert surface, "the protocol declared nothing, so this test proves nothing"
     for transport in (Bridge, Proxy):
         missing = {name for name in surface if not hasattr(transport, name)}
         assert not missing, f"{transport.__name__} is missing {sorted(missing)}"
+
+
+def test_only_the_bridge_can_push():
+    """**Streaming is a separate protocol on purpose.** `Bridge` has a
+    websocket; `Proxy` is an in-process call into a terminal and has nothing
+    to push with.
+
+    Were `stream` on `Transport`, the way to satisfy it would be a
+    `Proxy.stream` that raises - a stub that makes the capability check pass
+    and the feature fail at the one moment it is used. So `data.py` asks
+    `isinstance(transport, Streaming)` and refuses `quote_source="push"`
+    rather than falling back to polling: a feed that samples while reporting
+    itself as a push makes every measurement taken on it wrong, and nothing
+    about it looks wrong.
+    """
+    import inspect
+
+    assert isinstance(connect(MT5DataClientConfig()), Streaming)
+    assert not isinstance(connect(MT5ExecClientConfig(transport="rpyc", rpyc_host="h")), Streaming)
+    # And it is an async generator, which is the shape `data.py` consumes.
+    assert inspect.isasyncgenfunction(Bridge.stream)
 
 
 def test_both_transports_satisfy_the_protocol():

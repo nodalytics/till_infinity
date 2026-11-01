@@ -93,6 +93,35 @@ class MT5DataClientConfig(LiveDataClientConfig, frozen=True):
     #: every tick the terminal recorded. A tighter interval costs the terminal
     #: and still samples; history is where completeness lives.
     poll_seconds: float = 0.25
+    #: Where the quote stream comes from: `poll`, `ticks` or `push`.
+    #:
+    #: **These are three different feeds, not three settings.** `poll` asks
+    #: `symbol_info` every `poll_seconds` and is a *sample* - a quote that
+    #: moved and moved back between polls never happened as far as the desk is
+    #: concerned. `ticks` pulls `copy_ticks_range` from a watermark, which is
+    #: **complete** but up to one interval late. `push` consumes the bridge's
+    #: websocket, which is immediate and complete only as far as the bridge's
+    #: own producer is - today that producer polls too, so `push` is only
+    #: genuinely a push once an EA feeds it.
+    #:
+    #: Default `poll`, because it is what has run in production. An unknown
+    #: value is refused at `_connect` rather than falling back: a feed that
+    #: samples while claiming to push would make every measurement taken on it
+    #: wrong in a way nothing reports.
+    quote_source: str = "poll"
+    #: Seconds before a dropped push stream is re-established. The gap is
+    #: refilled from `copy_ticks_range`, so this is a latency rather than a
+    #: hole.
+    reconnect_seconds: float = 1.0
+    #: Seconds to subtract from a tick's own stamp to reach UTC.
+    #:
+    #: **MT5 stamps ticks in broker server time**, which is not UTC on any
+    #: broker this desk trades. Zero is the honest default rather than the
+    #: right one: the offset has not been measured against a live terminal,
+    #: and bars make the same assumption in `_is_forming`, so an error here
+    #: would be an error there too. Measure it before trusting a timestamp
+    #: comparison across venues.
+    server_offset_seconds: float = 0.0
     #: Price decimals per symbol, by Nautilus symbol. See the note in `data.py`:
     #: `Price` is fixed-precision, so this truncates the feed.
     price_precision: dict[str, int] | None = None
