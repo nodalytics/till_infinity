@@ -30,7 +30,16 @@ from till_infinity.adapters.mt5 import (
     Transport,
 )
 from till_infinity.adapters.mt5.bridge import Bridge
-from till_infinity.adapters.mt5.proxy import Proxy, ProxyError, _row, _rows, _sent, _when
+from till_infinity.adapters.mt5.proxy import (
+    TUNNELLED,
+    Proxy,
+    ProxyError,
+    _reachable,
+    _row,
+    _rows,
+    _sent,
+    _when,
+)
 from till_infinity.adapters.mt5.terminal import API_PORT, container_name, environment
 from till_infinity.adapters.mt5.transport import TRANSPORTS, connect
 
@@ -270,6 +279,45 @@ def test_a_call_before_open_says_so():
     broken transport rather than an unopened one."""
     with pytest.raises(ProxyError, match="not open"):
         assert Proxy(host="127.0.0.1").module
+
+
+@pytest.mark.parametrize("host", ["127.0.0.1", "localhost", "::1"])
+def test_a_loopback_rpyc_host_is_allowed(host):
+    """The documented arrangement: a Windows Python in the Wine prefix beside
+    the terminal, on the same host."""
+    _reachable(host)
+
+
+@pytest.mark.parametrize("host", ["10.0.0.5", "mt5.example.invalid", "203.0.113.7"])
+def test_a_non_loopback_rpyc_host_is_refused(monkeypatch, host):
+    """**The rule was documented and nothing enforced it.** This module and
+    `docs/trading.md` both say "never expose the RPyC server" - it runs
+    whatever its client asks, so it is a remote-code-execution channel by
+    construction - and the code would have connected to any address on the
+    internet.
+
+    Trusting the server is the transport's premise, which is exactly why the
+    premise has to be true: the pickled values `_obtain` brings back are the
+    least of it when the same channel can call `order_send`.
+    """
+    monkeypatch.delenv(TUNNELLED, raising=False)
+    with pytest.raises(ProxyError, match="not loopback"):
+        _reachable(host)
+
+
+def test_the_operator_can_say_the_path_is_private(monkeypatch):
+    """Only they can know it. Nothing in this process can distinguish a VPN
+    address from a public one, so the switch asserts a fact rather than
+    disabling a check."""
+    monkeypatch.setenv(TUNNELLED, "1")
+    _reachable("10.0.0.5")
+
+
+def test_the_refusal_points_at_the_bridge():
+    """The HTTP bridge is the transport that can safely face a network, and a
+    refusal that did not say so would read as "this cannot be done"."""
+    with pytest.raises(ProxyError, match="HTTP bridge"):
+        _reachable("203.0.113.7")
 
 
 def test_an_rpyc_transport_with_no_host_refuses_to_open():

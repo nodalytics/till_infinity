@@ -70,6 +70,24 @@ from typing import Any
 #: What `rpyc.utils.server` listens on by default, and what `mt5linux` uses.
 DEFAULT_PORT = 18812
 
+#: Hosts an rpyc server may be reached on without an explicit acknowledgement.
+#:
+#: **The rule was documented and nothing enforced it.** This module and
+#: `docs/trading.md` both say "never expose the RPyC server" - it is a remote
+#: Python with `allow_all_attrs`, so it is a remote-code-execution service by
+#: construction, not by accident - and the code would cheerfully connect to
+#: any address on the internet. A rule written in prose and checked nowhere is
+#: the failure class this desk keeps paying for, so it is checked here.
+LOOPBACK: frozenset[str] = frozenset({"127.0.0.1", "::1", "localhost", "", "0.0.0.0"})
+
+#: Set this to connect to an rpyc server that is not on loopback.
+#:
+#: Named for what it asserts rather than for what it disables, because the
+#: operator is the only one who can know it is true: that the path to the
+#: terminal is a private network or an SSH tunnel and not the open internet.
+#: There is nothing this process can measure that would establish it.
+TUNNELLED = "TRADING_RPYC_TUNNELLED"
+
 #: `M1` to `mt5.TIMEFRAME_M1`. The names are the bridge's, because
 #: `data.TIMEFRAMES` already speaks them and a second vocabulary here would
 #: be a second place for a timeframe to be wrong.
@@ -138,6 +156,7 @@ class Proxy:
         # fix for a typo'd config looks like a dependency to add.
         if not self._host:
             raise ProxyError("no rpyc host: set `rpyc_host` on the client config")
+        _reachable(self._host)
         try:
             import rpyc
         except ImportError as exc:  # pragma: no cover - optional dependency
@@ -412,6 +431,36 @@ class Proxy:
 
 
 # ──── translation ────
+
+
+def _reachable(host: str) -> None:
+    """Refuse a non-loopback rpyc host unless the operator has said it is safe.
+
+    An rpyc server with `allow_all_attrs` executes whatever its client asks
+    for, so reaching one over an untrusted path is handing a terminal - and
+    the account behind it - to whoever is on that path. **Trusting the server
+    is the transport's premise**, which is exactly why the premise has to be
+    true: the pickled values `_obtain` brings back are the least of it when
+    the same channel can call `order_send`.
+
+    Loopback is allowed silently because that is the documented arrangement: a
+    Windows Python in the Wine prefix beside the terminal, on the same host.
+    Anything else requires `TRADING_RPYC_TUNNELLED`, which asserts a private
+    network or an SSH tunnel - a claim only the operator can make, since
+    nothing here can distinguish a VPN address from a public one.
+    """
+    from ...utils.env import flag
+
+    if host.lower() in LOOPBACK or flag(TUNNELLED):
+        return
+    raise ProxyError(
+        f"refusing to reach an rpyc server at {host!r}, which is not loopback. "
+        f"An rpyc server with `allow_all_attrs` runs whatever its client asks, "
+        f"so this is a remote-code-execution channel and the path to it has to "
+        f"be private. Put it on localhost, or tunnel it over SSH and set "
+        f"{TUNNELLED}=1 to say so. Use the HTTP bridge for anything that has "
+        f"to cross a network it does not control."
+    )
 
 
 def _when(stamp: int | float) -> datetime:

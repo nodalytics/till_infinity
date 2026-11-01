@@ -134,6 +134,11 @@ class MT5DataClientConfig(LiveDataClientConfig, frozen=True):
     #: Where the rpyc server listens, when `transport="rpyc"`. **Never a public
     #: interface**: `allow_all_attrs` makes it a remote-code-execution service
     #: by design, so bind it to localhost or a private network.
+    #:
+    #: Enforced rather than only documented - see `proxy._reachable`. A host
+    #: that is not loopback is refused unless `TRADING_RPYC_TUNNELLED` says
+    #: the path is a private network or an SSH tunnel, which is a claim only
+    #: the operator can make.
     rpyc_host: str | None = None
     rpyc_port: int = 18812
     #: A terminal this node starts for itself. Absent, `base_url` is used as
@@ -164,6 +169,11 @@ class MT5ExecClientConfig(LiveExecClientConfig, frozen=True):
     #: Where the rpyc server listens, when `transport="rpyc"`. **Never a public
     #: interface**: `allow_all_attrs` makes it a remote-code-execution service
     #: by design, so bind it to localhost or a private network.
+    #:
+    #: Enforced rather than only documented - see `proxy._reachable`. A host
+    #: that is not loopback is refused unless `TRADING_RPYC_TUNNELLED` says
+    #: the path is a private network or an SSH tunnel, which is a claim only
+    #: the operator can make.
     rpyc_host: str | None = None
     rpyc_port: int = 18812
     #: A terminal this node starts for itself. Absent, `base_url` is used as
