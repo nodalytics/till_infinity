@@ -553,3 +553,36 @@ def test_discord_gets_a_machine_readable_stamp():
     payload = DiscordNotifier(FULL, HOOK).payload(Notification(title="x", at=1787059920.0))
     stamp = payload["embeds"][0]["timestamp"]
     assert stamp.startswith("2026-08-18T13:32")
+
+
+@pytest.mark.asyncio
+async def test_a_channel_that_cannot_open_does_not_suppress_the_others(monkeypatch):
+    """**Measured: the first channel's session failure cost every later one.**
+
+    `notify` opened all the channels in one `AsyncExitStack`, and a stack
+    enters its contexts in sequence - so a notifier that raised on
+    `__aenter__` meant nothing after it was even attempted. The order is
+    `DEFAULT_TARGETS`, telegram first, which makes the suppressed one Discord;
+    reverse the fault and it suppressed Telegram. Each channel opens its own
+    session now.
+
+    This is the worst day: the broker is down, the terminal is unreachable,
+    and one of the two transports is sick as well. The other one has to carry
+    the message.
+    """
+
+    async def refuse(self):
+        raise RuntimeError("no socket")
+
+    async def ok_send(self):
+        from till_infinity.notifications import Delivery
+
+        return Delivery(self.name, ok=True)
+
+    monkeypatch.setattr(TelegramNotifier, "__aenter__", refuse)
+    monkeypatch.setattr(DiscordNotifier, "send", lambda self, note: ok_send(self))
+
+    results = {d.target: d for d in await notify(alert(), settings=FULL)}
+    assert results["discord[alerts]"].ok, "a Telegram session failure took Discord with it"
+    assert not results["telegram[ops]"].ok
+    assert "no socket" in results["telegram[ops]"].detail

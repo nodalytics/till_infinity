@@ -8,12 +8,18 @@ transport.
 
 from __future__ import annotations
 
+import base64
 import html
+import re
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from enum import IntEnum
 from typing import Any
+
+from till_infinity.utils.logging import get_logger
+
+log = get_logger(__name__)
 
 
 class Level(IntEnum):
@@ -301,3 +307,93 @@ class Delivery:
     def __str__(self) -> str:
         state = "sent" if self.ok else "failed"
         return f"{self.target}: {state}" + (f" ({self.detail})" if self.detail else "")
+
+
+#: The largest picture a bus message may carry. Both providers take more; a
+#: chart is a few tens of kilobytes, and anything near this is not one.
+MAX_IMAGE_BYTES = 5_000_000
+
+#: What a level nobody can read becomes.
+#:
+#: **Not a raise, and not INFO.** `Level.parse` raises on a word it does not
+#: know, and the callers that matter are reading a bus payload another service
+#: wrote: the retired `listen` would have ended its loop on one misspelled
+#: level and taken every later alert with it, and the Actor counted it as a
+#: parse failure and lost the alarm - measured, `tally` reading
+#: `{"sent": 0, "dropped": 0, "ValueError": 1}`. INFO would be nearly as bad,
+#: because a channel configured for warnings and up then drops it silently.
+#: WARNING keeps the alert without claiming an emergency on the strength of a
+#: typo.
+UNREADABLE_LEVEL = Level.WARNING
+
+_MAGIC = {b"\x89PNG\r\n\x1a\n": ".png", b"\xff\xd8\xff": ".jpg"}
+
+
+def read_level(value: Any) -> Level:
+    """`Level.parse`, except that a word nobody knows is kept, not raised.
+
+    A publisher that misspells its level has a bug. Losing the alarm over it
+    would be this package's bug, and the failure this package exists around is
+    alerts discarded in silence.
+    """
+    try:
+        return Level.parse(value)
+    except ValueError:
+        log.warning("alerts: unreadable level %r - sending it as %s", value, UNREADABLE_LEVEL.name)
+        return UNREADABLE_LEVEL
+
+
+def from_message(payload: dict[str, Any]) -> Notification | None:
+    """Turn an `alerts` message into a Notification.
+
+    The payload comes off the bus, which means another service wrote it - so
+    nothing here trusts it. A message with no title is dropped rather than sent
+    as an empty alert, and `fields` is flattened to strings because a notifier
+    renders text, not arbitrary JSON.
+
+    **Moved here from `notifications/service.py` on 2026-11-01**, when that
+    file retired to `research/retire/notifications/`. It sits beside `to_dict`,
+    which is its inverse, because the two are one contract and were in two
+    files: `research/shared/contracts/bus/alerts.json` documents the field
+    `to_dict` writes and this never read - `at` - and a reader had to open both
+    files to notice.
+    """
+    title = str(payload.get("title") or "").strip()
+    if not title:
+        return None
+    raw = payload.get("fields")
+    fields = {str(k): str(v) for k, v in raw.items()} if isinstance(raw, dict) else {}
+    image, image_name = _image(payload.get("image"))
+    return Notification(
+        title=title,
+        body=str(payload.get("body") or ""),
+        level=read_level(payload.get("level")),
+        url=str(payload.get("url") or ""),
+        fields=fields,
+        source=str(payload.get("source") or ""),
+        image=image,
+        image_name=image_name,
+    )
+
+
+def _image(raw: Any) -> tuple[bytes | None, str]:
+    """An image from an alert payload - `{"name": ..., "data": base64}` - or none.
+
+    Untrusted like the rest of the payload: the bytes must decode, be a PNG or
+    JPEG by their own header, and fit `MAX_IMAGE_BYTES`; the name is reduced to
+    a plain file name with the matching extension. Anything else is dropped and
+    the alert goes out as text, because a bad picture is no reason to lose it.
+    """
+    if not isinstance(raw, dict) or not raw.get("data"):
+        return None, ""
+    try:
+        data = base64.b64decode(str(raw["data"]), validate=True)
+    except (ValueError, TypeError):
+        log.warning("alerts: dropped an image that is not base64")
+        return None, ""
+    suffix = next((ext for magic, ext in _MAGIC.items() if data.startswith(magic)), None)
+    if suffix is None or len(data) > MAX_IMAGE_BYTES:
+        log.warning("alerts: dropped an image (%d bytes, not a PNG/JPEG or too large)", len(data))
+        return None, ""
+    stem = re.sub(r"[^A-Za-z0-9_-]+", "-", str(raw.get("name") or "chart").rsplit(".", 1)[0])
+    return data, f"{stem.strip('-')[:60] or 'chart'}{suffix}"

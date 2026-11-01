@@ -19,24 +19,30 @@ Each provider fans out to as many channels as you list.
 """
 
 from .config import DEFAULT_TARGETS, Settings, parse_channels
+from .delivery import (
+    NOTIFIERS,
+    build_notifiers,
+    discover_telegram_chats,
+    notify,
+    send_one,
+)
 from .discord import DiscordNotifier
 from .filters import Filter
-from .models import COLOURS, Channel, Delivery, Level, Notification, truncate
+from .models import (
+    COLOURS,
+    Channel,
+    Delivery,
+    Level,
+    Notification,
+    from_message,
+    truncate,
+)
 from .notifier import (
     NotConfiguredError,
     Notifier,
     NotifierError,
     PermanentError,
     TransientError,
-)
-from .service import (
-    NOTIFIERS,
-    build_notifiers,
-    discover_telegram_chats,
-    from_message,
-    listen,
-    notify,
-    send_one,
 )
 from .telegram import TelegramNotifier, parse_chats
 
@@ -60,7 +66,6 @@ __all__ = [
     "build_notifiers",
     "discover_telegram_chats",
     "from_message",
-    "listen",
     "notify",
     "parse_channels",
     "parse_chats",
