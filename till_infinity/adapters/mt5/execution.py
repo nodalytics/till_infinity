@@ -46,6 +46,7 @@ from nautilus_trader.model.objects import Money, Price, Quantity
 
 from .config import MT5ExecClientConfig
 from .providers import MT5InstrumentProvider
+from .redact import redact
 from .transport import connect
 
 #: MT5 position types. 0 buy, 1 sell - and nothing else is a position.
@@ -57,9 +58,41 @@ _SIDES = {0: OrderSide.BUY, 1: OrderSide.SELL}
 #: position.
 _POSITION_SIDES = {0: PositionSide.LONG, 1: PositionSide.SHORT}
 
-#: `retcode`s that mean the terminal took the request: 0 is "no code sent",
-#: 10008 "placed", 10009 "done".
-_OK_RETCODES = (0, 10008, 10009)
+#: MT5 trade server return codes this client acts on.
+#:
+#: **0 is not one of them.** The first version accepted it as "no code sent",
+#: and `Bridge._send` reads a 404 as `None`, which every write method turns
+#: into `{}` - so an empty body parsed to retcode 0, 0 was OK, and "the bridge
+#: did not answer" was indistinguishable from "done". A real `order_send`
+#: never returns 0. A request is confirmed by a *positive* code, never by the
+#: absence of a failure.
+DONE = 10009
+PLACED = 10008
+#: Placed or done: the terminal has the request.
+_TAKEN = (PLACED, DONE)
+
+
+class _Refusal(Exception):  # noqa: N818 - a control-flow signal, not an error to catch widely
+    """A modify that must be answered with a rejection, carrying the reason."""
+
+
+class ReconciliationError(RuntimeError):
+    """The broker's book could not be established, so none is reported.
+
+    Raised instead of returning a shorter list. A report generator that skips
+    what it cannot read tells the engine the account is smaller than it is,
+    and a desk that believes it is flat re-opens the position it already
+    holds.
+    """
+
+
+def _retcode(raw: dict) -> int:
+    return int(((raw or {}).get("result") or {}).get("retcode") or 0)
+
+
+def _confirmed(raw: dict, codes: tuple[int, ...] = (DONE,)) -> bool:
+    """A positive signal: the envelope says success *and* carries a real code."""
+    return bool(raw) and raw.get("success") is True and _retcode(raw) in codes
 
 
 class MT5ExecutionClient(LiveExecutionClient):
@@ -99,11 +132,21 @@ class MT5ExecutionClient(LiveExecutionClient):
         self._cfg = config
         self._bridge = connect(config)
         self._venue = venue
+        #: Deals dropped from a fill report because their instrument would not
+        #: resolve. Non-zero means a fill report was incomplete.
+        self.skipped_deals = 0
 
     # ──── lifecycle ────
+    def _scrub(self, value: Any) -> str:
+        """Text safe to log or to put in an event: the API key removed."""
+        return redact(value, (getattr(self._cfg, "api_key", None),))
+
     async def _connect(self) -> None:
-        await self._bridge.open()
-        account = await self._bridge.account()
+        try:
+            await self._bridge.open()
+            account = await self._bridge.account()
+        except Exception as exc:
+            raise ConnectionError(self._scrub(exc)) from None
         if not account:
             raise ConnectionError("the bridge returned no account - is the terminal logged in?")
         # **The venue answering is what "connected" means.** Three deploys on
@@ -159,16 +202,22 @@ class MT5ExecutionClient(LiveExecutionClient):
         for row in await self._bridge.positions():
             if not self._ours(row):
                 continue  # not ours; another strategy or a human
-            side = _POSITION_SIDES.get(int(row.get("type") if row.get("type") is not None else -1))
-            if side is None:
-                continue
             instrument_id = InstrumentId(Symbol(str(row.get("symbol"))), self._venue)
             if wanted is not None and instrument_id != wanted:
                 continue
+            side = _POSITION_SIDES.get(int(row.get("type") if row.get("type") is not None else -1))
+            if side is None:
+                raise ReconciliationError(
+                    f"position {row.get('ticket')} has type {row.get('type')!r}, which is "
+                    f"neither a buy nor a sell - the book cannot be reported"
+                )
             instrument = await self._instrument(instrument_id)
             if instrument is None:
-                self._log.warning(f"position {row.get('ticket')}: unknown symbol {instrument_id}")
-                continue
+                raise ReconciliationError(
+                    f"position {row.get('ticket')} is in {instrument_id.symbol}, which the "
+                    f"terminal will not describe - reporting the book without it would say "
+                    f"the account is smaller than it is"
+                )
             now = self._clock.timestamp_ns()
             reports.append(
                 PositionStatusReport(
@@ -184,12 +233,14 @@ class MT5ExecutionClient(LiveExecutionClient):
             )
         return reports
 
-    async def _order_report(self, row: dict) -> OrderStatusReport | None:
+    async def _order_report(self, row: dict) -> OrderStatusReport:
         instrument_id = InstrumentId(Symbol(str(row.get("symbol"))), self._venue)
         instrument = await self._instrument(instrument_id)
         if instrument is None:
-            self._log.warning(f"order {row.get('ticket')}: unknown symbol {instrument_id}")
-            return None
+            raise ReconciliationError(
+                f"resting order {row.get('ticket')} is in {instrument_id.symbol}, which the "
+                f"terminal will not describe"
+            )
         now = self._clock.timestamp_ns()
         return OrderStatusReport(
             account_id=self.account_id,
@@ -222,9 +273,7 @@ class MT5ExecutionClient(LiveExecutionClient):
                 continue
             if wanted is not None and str(row.get("symbol")) != wanted.symbol.value:
                 continue
-            report = await self._order_report(row)
-            if report is not None:
-                reports.append(report)
+            reports.append(await self._order_report(row))
         return reports
 
     async def generate_order_status_report(
@@ -272,7 +321,16 @@ class MT5ExecutionClient(LiveExecutionClient):
                 continue
             instrument = await self._instrument(instrument_id)
             if instrument is None:
-                self._log.warning(f"deal {row.get('ticket')}: unknown symbol {instrument_id}")
+                # **Loud, not fatal.** Positions and resting orders are state
+                # the desk acts on, so an unreadable one raises. A deal is
+                # history: the position report carries the same fact, and a
+                # node that cannot start over a day-old fill is its own
+                # outage. It is counted and logged at error so it is seen.
+                self.skipped_deals += 1
+                self._log.error(
+                    f"deal {row.get('ticket')} skipped: {instrument_id.symbol} unknown "
+                    f"({self.skipped_deals} skipped since start)"
+                )
                 continue
             now = self._clock.timestamp_ns()
             reports.append(
@@ -300,16 +358,73 @@ class MT5ExecutionClient(LiveExecutionClient):
     # `_query_order` is not overridden: the base class builds a
     # `GenerateOrderStatusReport`, awaits `generate_order_status_report` above
     # and sends what comes back. Overriding it here called the wrong name.
+    def _reject(self, order: Any, reason: str) -> None:
+        self.generate_order_rejected(
+            strategy_id=order.strategy_id,
+            instrument_id=order.instrument_id,
+            client_order_id=order.client_order_id,
+            reason=self._scrub(reason),
+            ts_event=self._clock.timestamp_ns(),
+        )
+
+    def _fill(
+        self,
+        order: Any,
+        instrument: Any,
+        *,
+        ticket: Any,
+        trade_id: Any,
+        qty: float,
+        px: float,
+        commission: float = 0.0,
+    ) -> None:
+        # **By keyword, on purpose.** The positional call left out `trade_id`,
+        # which sits between `venue_position_id` and `order_side`, so every
+        # later argument landed one slot early and every successful fill
+        # raised `TypeError`. A keyword call turns the next signature change
+        # into a named error instead of a silent reassignment.
+        self.generate_order_filled(
+            strategy_id=order.strategy_id,
+            instrument_id=order.instrument_id,
+            client_order_id=order.client_order_id,
+            venue_order_id=VenueOrderId(str(ticket)),
+            venue_position_id=PositionId(str(ticket)),
+            trade_id=TradeId(str(trade_id)),
+            order_side=order.side,
+            order_type=order.order_type,
+            last_qty=Quantity(qty, instrument.size_precision),
+            last_px=Price(px, instrument.price_precision),
+            quote_currency=instrument.quote_currency,
+            commission=Money(commission, instrument.quote_currency),
+            liquidity_side=LiquiditySide.TAKER,
+            ts_event=self._clock.timestamp_ns(),
+        )
+
+    async def _deal_for(self, ticket: int) -> dict | None:
+        """This desk's newest deal for an order ticket in the last day, if any.
+
+        Raises when the history cannot be read: "no deal" and "could not ask"
+        are different answers and only the first one is a fact.
+        """
+        now_s = int(self._clock.timestamp_ns() / 1e9)
+        found = [
+            row
+            for row in await self._bridge.deals(now_s - 86_400, now_s + 60)
+            if self._ours(row) and int(row.get("order") or 0) == ticket
+        ]
+        return found[-1] if found else None
+
     async def _submit_order(self, command: Any) -> None:
         order = command.order
+        # Only the two shapes this client can express. A stop order has no
+        # `price`, so `has_price` was False and it went out as a market order.
+        if order.order_type not in (OrderType.MARKET, OrderType.LIMIT):
+            self._reject(order, f"{order.order_type.name} orders are not supported on MT5 here")
+            return
         instrument = await self._instrument(order.instrument_id)
         if instrument is None:
-            self.generate_order_rejected(
-                strategy_id=order.strategy_id,
-                instrument_id=order.instrument_id,
-                client_order_id=order.client_order_id,
-                reason=f"{order.instrument_id.symbol.value} is not a symbol this terminal lists",
-                ts_event=self._clock.timestamp_ns(),
+            self._reject(
+                order, f"{order.instrument_id.symbol.value} is not a symbol this terminal lists"
             )
             return
         body = {
@@ -323,6 +438,13 @@ class MT5ExecutionClient(LiveExecutionClient):
         }
         if order.has_price:
             body["price"] = float(order.price)
+        # A stop or target the strategy attached, passed through as given. The
+        # HTTP bridge's market-order route *requires* `sl`; this client never
+        # invents one.
+        for key in ("sl", "tp"):
+            value = (getattr(command, "params", None) or {}).get(key)
+            if value is not None:
+                body[key] = float(value)
         self.generate_order_submitted(
             strategy_id=order.strategy_id,
             instrument_id=order.instrument_id,
@@ -332,52 +454,57 @@ class MT5ExecutionClient(LiveExecutionClient):
         raw = await self._bridge.order(body)
         result = raw.get("result") or {}
         trade = raw.get("trade") or {}
-        retcode = int(result.get("retcode") or 0)
-        # The bridge raises on a bad retcode, so a 2xx already means filled -
-        # but reading the code when it is there means a future build that stops
-        # raising cannot silently look like a fill.
-        if not raw.get("success") or retcode not in _OK_RETCODES:
-            self.generate_order_rejected(
-                strategy_id=order.strategy_id,
-                instrument_id=order.instrument_id,
-                client_order_id=order.client_order_id,
-                reason=str(result.get("comment") or f"retcode {retcode}"),
-                ts_event=self._clock.timestamp_ns(),
+        retcode = _retcode(raw)
+        if raw.get("success") is not True or retcode not in _TAKEN:
+            # Includes `{}`: an empty answer is not an acceptance. It may mean
+            # the order was never placed (a 404 is "no such route") or that it
+            # was and the reply was lost; rejecting is the safe reading and
+            # the next position report corrects it if it was placed.
+            self._reject(
+                order,
+                str(result.get("comment") or f"retcode {retcode or 'missing'}: not confirmed"),
             )
             return
         ticket = result.get("order") or trade.get("transaction_broker_id") or 0
-        deal = result.get("deal") or ticket
-        filled = float(result.get("volume") or trade.get("order_volume") or order.quantity)
-        price = float(result.get("price") or trade.get("entry_price") or 0.0)
-        now = self._clock.timestamp_ns()
+        if not ticket:
+            self._log.error(f"{order.client_order_id}: confirmed with no ticket - reconcile")
+            self._reject(order, "confirmed by the terminal but no ticket came back")
+            return
         self.generate_order_accepted(
             strategy_id=order.strategy_id,
             instrument_id=order.instrument_id,
             client_order_id=order.client_order_id,
             venue_order_id=VenueOrderId(str(ticket)),
-            ts_event=now,
+            ts_event=self._clock.timestamp_ns(),
         )
-        # **By keyword, on purpose.** The positional call left out `trade_id`,
-        # which sits between `venue_position_id` and `order_side`, so every
-        # later argument landed one slot early and every successful fill
-        # raised `TypeError`. A keyword call turns the next signature change
-        # into a named error instead of a silent reassignment.
-        self.generate_order_filled(
-            strategy_id=order.strategy_id,
-            instrument_id=order.instrument_id,
-            client_order_id=order.client_order_id,
-            venue_order_id=VenueOrderId(str(ticket)),
-            venue_position_id=PositionId(str(ticket)),
-            trade_id=TradeId(str(deal)),
-            order_side=order.side,
-            order_type=order.order_type,
-            last_qty=Quantity(filled, instrument.size_precision),
-            last_px=Price(price, instrument.price_precision),
-            quote_currency=instrument.quote_currency,
-            commission=Money(0.0, instrument.quote_currency),
-            liquidity_side=LiquiditySide.TAKER,
-            ts_event=now,
-        )
+        # **A fill is only a market order that came back DONE.** 10008 is
+        # PLACED - a working order - and a pending order's DONE means placed,
+        # not filled. Reporting either as a fill gave the desk a position it
+        # did not have. Those fills arrive through the broker's deals.
+        if order.order_type != OrderType.MARKET or retcode != DONE:
+            return
+        price = float(result.get("price") or trade.get("entry_price") or 0.0)
+        qty = float(result.get("volume") or trade.get("order_volume") or 0.0)
+        deal = result.get("deal") or 0
+        if price <= 0 or qty <= 0:
+            # Done at the broker but unpriced. Rejecting would tell the engine
+            # there is no position when there is one, so ask the deals; failing
+            # that, leave the order accepted and let reconciliation find it.
+            try:
+                row = await self._deal_for(int(ticket))
+            except Exception as exc:
+                row = None
+                self._log.error(
+                    f"{order.client_order_id}: no fill price, deals: {self._scrub(exc)}"
+                )
+            if row is None:
+                self._log.error(f"{order.client_order_id}: done with no fill price - reconcile")
+                return
+            price, qty = float(row.get("price") or 0.0), float(row.get("volume") or 0.0)
+            deal = row.get("ticket") or deal
+            if price <= 0 or qty <= 0:
+                return
+        self._fill(order, instrument, ticket=ticket, trade_id=deal or ticket, qty=qty, px=price)
 
     @staticmethod
     def _ticket(venue_order_id: Any) -> int:
@@ -386,17 +513,115 @@ class MT5ExecutionClient(LiveExecutionClient):
         except ValueError:
             return 0
 
-    async def _modify_order(self, command: Any) -> None:
-        """Move a stop and target, and say what happened.
+    @staticmethod
+    def _near(a: float, b: float, digits: int) -> bool:
+        return abs(float(a) - float(b)) <= 0.5 * 10.0**-digits
 
-        Every path ends in an event. An order left in `PENDING_UPDATE` is not
-        a quiet failure: the engine will not accept another modify or cancel
-        for it until something resolves it, and nothing would.
+    async def _locate(self, ticket: int) -> tuple[dict | None, dict | None]:
+        """The resting order and the open position with this ticket, if either.
+
+        Raises `_Refusal` when the book cannot be read or the ticket is not
+        this desk's: neither is a reason to guess.
+        """
+        try:
+            resting = next(
+                (r for r in await self._bridge.pending() if int(r.get("ticket") or 0) == ticket),
+                None,
+            )
+            held = next(
+                (r for r in await self._bridge.positions() if int(r.get("ticket") or 0) == ticket),
+                None,
+            )
+        except Exception as exc:
+            raise _Refusal(f"cannot read the terminal's book: {exc}") from None
+        for row in (resting, held):
+            if row is not None and not self._ours(row):
+                raise _Refusal(f"{ticket} is not this desk's")
+        return resting, held
+
+    async def _send_modify(
+        self, command: Any, ticket: int, resting: dict | None, held: dict | None
+    ) -> tuple[float, ...]:
+        """Send the right modify for what the ticket is; return what was sent."""
+        if resting is not None:
+            # A resting order is not a position: `/positions/modify` addresses
+            # a position ticket. It has its own route and its own transport
+            # method, and a transport without one cannot do this at all.
+            move = getattr(self._bridge, "modify_order", None)
+            if move is None:
+                raise _Refusal(f"{type(self._bridge).__name__} cannot modify a resting order")
+            price = float(command.price or 0.0)
+            if price <= 0:
+                raise _Refusal("a resting order is moved by price, and the command carries none")
+            sent: tuple[float, ...] = (price,)
+            call = move(ticket, price)
+        elif held is not None:
+            if not (command.trigger_price or command.price):
+                raise _Refusal("the modify carries neither a stop nor a target to change")
+            sent = (
+                float(command.trigger_price or 0.0) or float(held.get("sl") or 0.0),
+                float(command.price or 0.0) or float(held.get("tp") or 0.0),
+            )
+            call = self._bridge.modify(ticket, *sent)
+        else:
+            raise _Refusal(f"{ticket} is neither a resting order nor an open position")
+        try:
+            raw = await call
+        except Exception as exc:
+            raise _Refusal(f"bridge: {exc}") from None
+        if not _confirmed(raw):
+            comment = (raw.get("result") or {}).get("comment")
+            raise _Refusal(str(comment or f"retcode {_retcode(raw) or 'missing'}: not confirmed"))
+        return sent
+
+    async def _verify_modify(
+        self, ticket: int, resting: bool, sent: tuple[float, ...], digits: int
+    ) -> None:
+        """Read the book back; raise unless it shows what was sent."""
+        try:
+            if resting:
+                rows = await self._bridge.pending()
+                keys = ("price_open",)
+            else:
+                rows = await self._bridge.positions()
+                keys = ("sl", "tp")
+        except Exception as exc:
+            raise _Refusal(
+                f"unconfirmed: acknowledged, but the book could not be read: {exc}"
+            ) from None
+        row = next((r for r in rows if int(r.get("ticket") or 0) == ticket), None)
+        if row is None or not all(
+            self._near(row.get(k) or 0.0, v, digits) for k, v in zip(keys, sent, strict=True)
+        ):
+            raise _Refusal("unconfirmed: the terminal's listing does not show the new value")
+
+    async def _modify_order(self, command: Any) -> None:
+        """Move a resting order's price, or an open position's stop and target.
+
+        **Never sends a stop of zero, because zero removes it.** The first
+        version sent `float(command.trigger_price or 0.0)`, so a modify that
+        only moved the target came back with no stop at all. An omitted side
+        is filled from what the terminal currently holds, and a modify that
+        supplies nothing to change is refused.
+
+        Every path ends in an event, and `OrderUpdated` is emitted only after
+        a DONE reply *and* the terminal's own listing showing the new value.
         """
         ticket = self._ticket(command.venue_order_id)
         order = self._cache.order(command.client_order_id)
-
-        def refuse(reason: str) -> None:
+        try:
+            if not ticket:
+                raise _Refusal("cannot modify an order with no venue id")
+            quantity = command.quantity or (order.quantity if order is not None else None)
+            if quantity is None:
+                raise _Refusal("the order is not in the cache, so its quantity is unknown")
+            instrument = await self._instrument(command.instrument_id)
+            resting, held = await self._locate(ticket)
+            sent = await self._send_modify(command, ticket, resting, held)
+            digits = instrument.price_precision if instrument is not None else 5
+            await self._verify_modify(ticket, resting is not None, sent, digits)
+        except _Refusal as refusal:
+            reason = self._scrub(refusal)
             self._log.error(f"modify {command.client_order_id}: {reason}")
             self.generate_order_modify_rejected(
                 strategy_id=command.strategy_id,
@@ -406,28 +631,6 @@ class MT5ExecutionClient(LiveExecutionClient):
                 reason=reason,
                 ts_event=self._clock.timestamp_ns(),
             )
-
-        if not ticket:
-            refuse("cannot modify an order with no venue id")
-            return
-        quantity = command.quantity or (order.quantity if order is not None else None)
-        if quantity is None:
-            refuse("the order is not in the cache, so its quantity is unknown")
-            return
-        try:
-            raw = await self._bridge.modify(
-                ticket,
-                float(command.trigger_price or 0.0),
-                float(command.price or 0.0),
-            )
-        except Exception as exc:
-            refuse(f"bridge: {exc}")
-            return
-        # Absent keys read as accepted: the bridge raises on a refusal, so a
-        # plain 2xx is the success case. A body that *says* otherwise wins.
-        retcode = int((raw.get("result") or {}).get("retcode") or 0)
-        if raw.get("success") is False or retcode not in _OK_RETCODES:
-            refuse(str((raw.get("result") or {}).get("comment") or f"retcode {retcode}"))
             return
         self.generate_order_updated(
             strategy_id=command.strategy_id,
@@ -443,17 +646,19 @@ class MT5ExecutionClient(LiveExecutionClient):
     async def _withdraw(
         self, strategy_id: Any, instrument_id: Any, client_order_id: Any, venue_order_id: Any
     ) -> None:
-        """Cancel one ticket and settle the order either way.
+        """Cancel one ticket and settle the order only on evidence.
 
-        **The broker is asked afterwards, not trusted.** A cancel answers
-        `{}` both when it worked and when the ticket was already gone (the
-        bridge reads a 404 as "nothing there"), so the response cannot tell a
-        cancelled order from one that filled a moment earlier. A resting order
-        that is still listed is the one answer that is unambiguous.
+        **The unknown case is treated as still working.** The bridge answers
+        `{}` for a cancel that did nothing as well as for one that worked, and
+        an empty pending listing is also what a failed one looks like. So a
+        cancel is announced only when the envelope carries DONE; when it does
+        not, the order is reported as *not* cancelled unless the broker shows
+        a deal for it, in which case it filled and the fill is reported.
         """
         ticket = self._ticket(venue_order_id)
 
         def refuse(reason: str) -> None:
+            reason = self._scrub(reason)
             self._log.error(f"cancel {client_order_id}: {reason}")
             self.generate_order_cancel_rejected(
                 strategy_id=strategy_id,
@@ -468,20 +673,53 @@ class MT5ExecutionClient(LiveExecutionClient):
             refuse("cannot cancel an order with no venue id")
             return
         try:
-            await self._bridge.cancel(ticket)
-            resting = {int(r.get("ticket") or 0) for r in await self._bridge.pending()}
+            raw = await self._bridge.cancel(ticket)
         except Exception as exc:
             refuse(f"bridge: {exc}")
             return
+        confirmed = _confirmed(raw)
+
+        try:
+            resting = {int(r.get("ticket") or 0) for r in await self._bridge.pending()}
+        except Exception as exc:
+            if confirmed:
+                resting = set()  # the terminal's own DONE outweighs an unreadable listing
+            else:
+                refuse(f"unconfirmed: no cancel confirmation and the listing failed: {exc}")
+                return
         if ticket in resting:
             refuse(f"order {ticket} is still resting after the cancel")
             return
-        self.generate_order_canceled(
-            strategy_id=strategy_id,
-            instrument_id=instrument_id,
-            client_order_id=client_order_id,
-            venue_order_id=venue_order_id,
-            ts_event=self._clock.timestamp_ns(),
+        if confirmed:
+            self.generate_order_canceled(
+                strategy_id=strategy_id,
+                instrument_id=instrument_id,
+                client_order_id=client_order_id,
+                venue_order_id=venue_order_id,
+                ts_event=self._clock.timestamp_ns(),
+            )
+            return
+
+        # Not confirmed and no longer resting: it filled, expired, or the reply
+        # was lost. Only a deal is evidence of which.
+        try:
+            deal = await self._deal_for(ticket)
+        except Exception as exc:
+            refuse(f"unconfirmed: no cancel confirmation and the deals failed: {exc}")
+            return
+        order = self._cache.order(client_order_id)
+        instrument = await self._instrument(instrument_id)
+        if deal is None or order is None or instrument is None:
+            refuse("unconfirmed: not confirmed cancelled, not resting, and no deal to explain it")
+            return
+        self._fill(
+            order,
+            instrument,
+            ticket=ticket,
+            trade_id=deal.get("ticket") or ticket,
+            qty=float(deal.get("volume") or 0.0),
+            px=float(deal.get("price") or 0.0),
+            commission=float(deal.get("commission") or 0.0),
         )
 
     async def _cancel_order(self, command: Any) -> None:
@@ -497,7 +735,8 @@ class MT5ExecutionClient(LiveExecutionClient):
 
         Only orders the cache knows get an event: an engine cannot be told
         about an order it never held. A resting order of ours that the cache
-        does not know is cancelled at the terminal and logged.
+        does not know is cancelled at the terminal and logged. A listing that
+        cannot be read raises, leaving every order exactly as it was.
         """
         wanted = getattr(command, "instrument_id", None)
         side = getattr(command, "order_side", OrderSide.NO_ORDER_SIDE)
@@ -523,4 +762,4 @@ class MT5ExecutionClient(LiveExecutionClient):
             )
 
 
-__all__ = ["ClientOrderId", "MT5ExecutionClient"]
+__all__ = ["ClientOrderId", "MT5ExecutionClient", "ReconciliationError"]

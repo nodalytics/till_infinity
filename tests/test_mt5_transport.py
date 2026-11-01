@@ -262,6 +262,15 @@ class FakeMT5:
     def positions_get(self):
         return self._note("positions_get")
 
+    def orders_get(self):
+        return self._note("orders_get")
+
+    def history_deals_get(self, start, end):
+        return self._note("history_deals_get", start, end)
+
+    def last_error(self):
+        return self.answers.get("last_error", (0, "no error"))
+
     def order_send(self, request):
         self.requests.append(dict(request))
         return self.answers.get("order_send")
@@ -573,3 +582,115 @@ def test_the_terminal_password_is_not_in_the_config_repr():
     shown = repr(DockerizedMT5TerminalConfig(login=1, password="hunter2"))
     assert "hunter2" not in shown
     assert "********" in shown
+
+
+# --------------------------------- the routes the bridge actually serves
+
+
+def test_a_market_order_goes_to_the_market_route_and_carries_a_stop():
+    """**No market order this adapter sent could ever have been placed.**
+    `MarketOrderRequest` declares `sl` as a bare `float` with no default, so a
+    body without it is a 422 - checked against the bridge repo's
+    `models/trading.py`, not inferred.
+
+    `0.0` where the caller named none is how MT5 spells "no stop"; the
+    protective stop proper is the bracket's own order, submitted separately.
+    """
+    sent: list[tuple] = []
+
+    class Routed(Bridge):
+        async def post(self, route, body):
+            sent.append((route, body))
+            return {"success": True, "result": {"retcode": 10009, "order": 1}}
+
+    asyncio.run(
+        Routed("http://x").order(
+            {"symbol": "EURUSD", "order_type": "BUY", "volume": 0.1, "magic": 777_701}
+        )
+    )
+    route, body = sent[0]
+    assert route == "/trading/order"
+    assert body["order_type"] == "BUY"
+    assert body["sl"] == 0.0, "present, because the route requires the field"
+    assert "price" not in body
+
+
+def test_a_limit_order_goes_to_the_pending_route():
+    """`POST /trading/order` validates `order_type` against `^(BUY|SELL)$` and
+    its handler calls `send_market_order`, which takes no price at all - so a
+    limit sent there was accepted and **filled at the market**, which is the
+    opposite of what a resting entry is for."""
+    sent: list[tuple] = []
+
+    class Routed(Bridge):
+        async def post(self, route, body):
+            sent.append((route, body))
+            return {"success": True, "result": {"retcode": 10008, "order": 2}}
+
+    asyncio.run(
+        Routed("http://x").order(
+            {"symbol": "EURUSD", "order_type": "SELL", "volume": 0.1, "price": 1.2000}
+        )
+    )
+    route, body = sent[0]
+    assert route == "/orders/pending"
+    assert body["order_type"] == "SELL_LIMIT"
+    assert body["price"] == 1.2000
+
+
+def test_resting_orders_are_listed_from_the_route_that_exists():
+    """`/orders/pending` is a `POST` that *places* one. There is no `GET` at
+    that path, so `pending()` asked for a route that does not exist - and the
+    old 404-means-empty rule turned every call into "no resting orders", which
+    cancel verification and reconciliation then read as fact."""
+    asked: list[str] = []
+
+    class Routed(Bridge):
+        async def get(self, route, empty_on_404=False, **params):
+            asked.append(route)
+            return []
+
+    asyncio.run(Routed("http://x").pending())
+    assert asked == ["/orders/"]
+
+
+def test_a_resting_order_is_moved_by_its_own_route():
+    """`POST /positions/modify` sets a *position's* stop and target. A resting
+    order is not a position: sending one there posted its limit price as a
+    target and left the order where it was."""
+    sent: list[tuple] = []
+
+    class Routed(Bridge):
+        async def put(self, route, body):
+            sent.append((route, body))
+            return {"success": True, "result": {"retcode": 10009}}
+
+    asyncio.run(Routed("http://x").modify_order(4242, 1.2345))
+    assert sent == [("/orders/4242", {"price": 1.2345})]
+
+
+def test_both_transports_can_move_a_resting_order():
+    """The surface test again, for the method added after it: a transport
+    missing this is an `AttributeError` on the one path that moves a limit."""
+    assert hasattr(Bridge, "modify_order")
+    assert hasattr(Proxy, "modify_order")
+
+
+def test_a_failed_listing_is_not_an_empty_one():
+    """**MT5 returns `None` both for "nothing" and for "could not".** Without
+    asking `last_error`, a failed `positions_get` is indistinguishable from a
+    flat account - and reconciliation believing the desk is flat when it is
+    not is how it opens a position it already holds."""
+    made, _ = proxy(positions_get=None, last_error=(10013, "invalid request"))
+    with pytest.raises(ProxyError, match="positions_get failed"):
+        asyncio.run(made.positions())
+
+
+def test_a_genuinely_empty_listing_is_empty():
+    """An empty tuple is a real answer - a flat account - and some builds
+    return `None` with error 0 for the same thing, so the error *code* decides
+    rather than the `None`."""
+    made, _ = proxy(positions_get=())
+    assert asyncio.run(made.positions()) == []
+    quiet, _ = proxy(positions_get=None, last_error=(0, "no error"))
+    assert asyncio.run(quiet.positions()) == []

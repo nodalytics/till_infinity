@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import time
 from datetime import UTC, datetime
 from typing import Any
@@ -80,9 +81,10 @@ from nautilus_trader.test_kit.stubs.identifiers import TestIdStubs
 from till_infinity.adapters.mt5.bridge import Bridge, BridgeError
 from till_infinity.adapters.mt5.config import MT5DataClientConfig, MT5ExecClientConfig
 from till_infinity.adapters.mt5.data import QUOTE_SOURCES, MT5DataClient, _milliseconds
-from till_infinity.adapters.mt5.execution import MT5ExecutionClient
+from till_infinity.adapters.mt5.execution import MT5ExecutionClient, ReconciliationError
 from till_infinity.adapters.mt5.factories import MT5LiveDataClientFactory, MT5LiveExecClientFactory
 from till_infinity.adapters.mt5.providers import MT5InstrumentProvider
+from till_infinity.adapters.mt5.redact import redact
 
 VENUE = Venue("MT5")
 EURUSD_ID = InstrumentId.from_str("EURUSD.MT5")
@@ -103,6 +105,10 @@ EURUSD_INFO: dict[str, Any] = {
 
 
 # ──── the fake bridge ────
+
+
+#: What the bridge returns when the terminal took a modify or a cancel.
+DONE_ENVELOPE = {"success": True, "result": {"retcode": 10009}}
 
 
 class FakeBridge:
@@ -128,9 +134,10 @@ class FakeBridge:
             "pending": [],
             "deals": [],
             "order": {"success": True, "result": {"retcode": 10009, "order": 55}},
-            "modify": {},
+            "modify": DONE_ENVELOPE,
+            "modify_order": DONE_ENVELOPE,
             "close_position": {},
-            "cancel": {},
+            "cancel": DONE_ENVELOPE,
             #: One entry per connection: frames to deliver, then either an
             #: exception (the connection drops) or the end of the list (it
             #: stays open and quiet, as a live socket does).
@@ -197,6 +204,9 @@ class FakeBridge:
     async def order(self, body: dict) -> dict:
         return self._answer("order", (body,), {})
 
+    async def modify_order(self, ticket: int, price: float) -> dict:
+        return self._answer("modify_order", (ticket, price), {})
+
     async def modify(self, ticket: int, stop: float, target: float = 0.0) -> dict:
         return self._answer("modify", (ticket, stop, target), {})
 
@@ -213,7 +223,7 @@ PLUMBING = {"get", "post", "delete"}
 #: Defined on the fake ahead of the transports, for the push path. `stream` is
 #: an async generator, which `iscoroutinefunction` does not see, so it is
 #: checked by its own test below.
-STREAMING = {"stream"}
+STREAMING = {"stream", "modify_order"}
 
 
 def _public_coroutines(cls: type) -> dict[str, inspect.Signature]:
@@ -232,9 +242,15 @@ def test_the_fake_bridge_has_the_surface_of_the_real_one():
     in for. Both directions, so a new `Bridge` method also fails here until the
     fake learns it.
     """
+    # `get`/`post`/`put`/`delete` are the real client's HTTP plumbing, not the
+    # transport surface a client calls - a fake answers the named methods
+    # instead, so it has no reason to carry them.
+    plumbing = {"get", "post", "put", "delete"}
     real, fake = _public_coroutines(Bridge), _public_coroutines(FakeBridge)
-    assert set(fake) - STREAMING == set(real) - STREAMING
+    assert set(fake) - STREAMING - plumbing == set(real) - STREAMING - plumbing
     for name, signature in real.items():
+        if name in plumbing or name in STREAMING:
+            continue
         assert list(fake[name].parameters) == list(signature.parameters), name
 
 
@@ -257,6 +273,23 @@ def test_a_transport_that_streams_does_so_with_the_signature_the_client_calls():
     for cls in present:
         assert list(inspect.signature(cls.stream).parameters) == expected, cls.__name__
         assert inspect.isasyncgenfunction(cls.stream), cls.__name__
+
+
+def test_a_transport_that_moves_a_resting_order_does_so_with_the_signature_the_client_calls():
+    """`modify_order(ticket, price)` is the contract `execution.py` calls.
+
+    A resting order is moved by `PUT /orders/{ticket}`, not by the position
+    route. Until a transport defines it the client refuses the modify, and
+    this skips; once one does, its signature is held to the fake's.
+    """
+    from till_infinity.adapters.mt5.proxy import Proxy
+
+    expected = list(inspect.signature(FakeBridge.modify_order).parameters)
+    present = [cls for cls in (Bridge, Proxy) if hasattr(cls, "modify_order")]
+    if not present:
+        pytest.skip("no transport defines modify_order yet")
+    for cls in present:
+        assert list(inspect.signature(cls.modify_order).parameters) == expected, cls.__name__
 
 
 class Rig:
@@ -483,7 +516,7 @@ class TestTheAdapterOverridesNamesNautilusActuallyCalls:
         import ast
         import textwrap
 
-        source = textwrap.dedent(inspect.getsource(MT5ExecutionClient._submit_order))
+        source = textwrap.dedent(inspect.getsource(MT5ExecutionClient._fill))
         call = next(
             n
             for n in ast.walk(ast.parse(source))
@@ -563,7 +596,7 @@ class TestDataConnect:
 
     async def test_a_bridge_that_is_down_raises_rather_than_connecting(self):
         rig = make_data(FakeBridge(ping=httpx.ConnectError("refused")))
-        with pytest.raises(httpx.ConnectError):
+        with pytest.raises(ConnectionError, match="refused"):
             await rig.client._connect()
 
     async def test_a_failed_connect_leaves_the_client_disconnected(self):
@@ -1163,7 +1196,7 @@ class TestExecConnect:
 
     async def test_a_bridge_that_refuses_the_account_query_propagates(self):
         rig = make_exec(FakeBridge(account=BridgeError("GET -> 401: unauthorised")))
-        with pytest.raises(BridgeError, match="401"):
+        with pytest.raises(ConnectionError, match="401"):
             await rig.client._connect()
 
     async def test_a_failed_connect_leaves_the_client_disconnected(self):
@@ -1326,16 +1359,27 @@ class TestSubmittingAnOrder:
         await rig.client._submit_order(_submit(rig, _market()))
         assert rig.events(OrderRejected)[0].reason == "Request rejected"
 
-    async def test_success_without_a_retcode_still_reads_as_filled(self):
-        """`retcode` absent reads 0, which is accepted - the bridge's current behaviour.
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            {"success": True, "result": {"order": 9, "volume": 0.5, "price": 1.1}},
+            {"success": True, "result": {"retcode": 0, "order": 9}},
+            {"success": True},
+            {"result": {"retcode": 10009, "order": 9, "volume": 0.5, "price": 1.1}},
+        ],
+    )
+    async def test_an_answer_without_a_positive_signal_is_a_rejection_not_a_fill(self, raw):
+        """`retcode` 0 used to be OK, and a 404 reads as `{}`, so silence was 'done'.
 
-        Recorded so a change is a decision: a bridge build that stops sending
-        the code would look like a fill.
+        A real `order_send` never returns 0. The bridge not answering must not
+        be distinguishable from the broker agreeing, so the absence of a
+        failure is not a success: it needs `success: true` *and* 10008/10009.
         """
-        raw = {"success": True, "result": {"order": 9, "volume": 0.5, "price": 1.1}}
         rig = make_exec(FakeBridge(order=raw))
         await rig.client._submit_order(_submit(rig, _market()))
-        assert not rig.events(OrderRejected)
+        assert len(rig.events(OrderRejected)) == 1
+        assert not rig.events(OrderAccepted)
+        assert not rig.events(OrderFilled)
 
     async def test_a_bridge_that_raises_propagates_to_the_framework(self):
         """The base `create_task` wrapper logs it; the order stays SUBMITTED.
@@ -1367,6 +1411,87 @@ class TestSubmittingAnOrder:
         assert fill.venue_order_id == VenueOrderId("55")
         assert fill.position_id == PositionId("55")
 
+    async def test_placed_is_accepted_and_never_filled(self):
+        """10008 is PLACED: a working order, not a position.
+
+        The first version emitted `OrderAccepted` and `OrderFilled` for it, so
+        a resting order gave the desk a position it did not have.
+        """
+        raw = {"success": True, "result": {"retcode": 10008, "order": 55, "price": 1.0851}}
+        rig = make_exec(FakeBridge(order=raw))
+        await rig.client._submit_order(_submit(rig, _market()))
+        assert len(rig.events(OrderAccepted)) == 1
+        assert not rig.events(OrderFilled)
+
+    async def test_a_limit_order_is_accepted_when_placed_even_if_the_code_is_done(self):
+        """For a pending order DONE means placed, not filled."""
+        raw = {"success": True, "result": {"retcode": 10009, "order": 77, "price": 1.08}}
+        rig = make_exec(FakeBridge(order=raw))
+        await rig.client._submit_order(_submit(rig, _limit()))
+        assert len(rig.events(OrderAccepted)) == 1
+        assert not rig.events(OrderFilled)
+
+    async def test_a_done_with_no_price_is_priced_from_the_deals(self):
+        raw = {"success": True, "result": {"retcode": 10009, "order": 55}}
+        deal = _deal(ticket=9001, order=55, volume=0.5, price=1.0853)
+        rig = make_exec(FakeBridge(order=raw, deals=[deal]))
+        await rig.client._submit_order(_submit(rig, _market()))
+        (fill,) = rig.events(OrderFilled)
+        assert fill.last_px == Price(1.0853, 5)
+        assert str(fill.trade_id) == "9001"
+
+    async def test_a_done_with_no_price_and_no_deal_is_never_a_fill_at_zero(self):
+        """Not rejected either: the broker may hold the position.
+
+        Rejecting would tell the engine there is no position when there is one,
+        which is how a desk opens a second. It stays accepted and the next
+        position report finds it.
+        """
+        raw = {"success": True, "result": {"retcode": 10009, "order": 55}}
+        rig = make_exec(FakeBridge(order=raw, deals=[]))
+        await rig.client._submit_order(_submit(rig, _market()))
+        assert len(rig.events(OrderAccepted)) == 1
+        assert not rig.events(OrderFilled)
+        assert not rig.events(OrderRejected)
+
+    async def test_a_done_with_no_ticket_is_rejected_not_tracked_as_order_zero(self):
+        raw = {"success": True, "result": {"retcode": 10009, "volume": 0.5, "price": 1.1}}
+        rig = make_exec(FakeBridge(order=raw))
+        await rig.client._submit_order(_submit(rig, _market()))
+        assert len(rig.events(OrderRejected)) == 1
+        assert not rig.events(OrderAccepted)
+
+    async def test_a_stop_order_is_refused_rather_than_sent_as_a_market_order(self):
+        """A stop has no `price`, so `has_price` was False and it went out as a market order."""
+        order = _factory().stop_market(
+            EURUSD_ID, OrderSide.BUY, Quantity.from_str("0.50"), Price.from_str("1.09")
+        )
+        rig = make_exec()
+        await rig.client._submit_order(_submit(rig, order))
+        assert not rig.bridge.called("order")
+        assert "not supported" in rig.events(OrderRejected)[0].reason
+
+    async def test_a_stop_and_target_the_strategy_attached_are_passed_through(self):
+        rig = make_exec(FakeBridge(order=REJECTION))
+        command = SubmitOrder(
+            TestIdStubs.trader_id(),
+            TestIdStubs.strategy_id(),
+            _market(),
+            UUID4(),
+            time.time_ns(),
+            None,
+            ClientId("MT5"),
+            {"sl": 1.08, "tp": 1.09},
+        )
+        await rig.client._submit_order(command)
+        body = rig.bridge.called("order")[0][0][0]
+        assert (body["sl"], body["tp"]) == (1.08, 1.09)
+
+    async def test_no_stop_is_invented_when_none_is_attached(self):
+        rig = make_exec(FakeBridge(order=REJECTION))
+        await rig.client._submit_order(_submit(rig, _market()))
+        assert "sl" not in rig.bridge.called("order")[0][0][0]
+
     async def test_an_order_for_a_symbol_the_terminal_does_not_list_is_rejected(self):
         """It used to raise `AttributeError` on `None.size_precision`."""
         rig = make_exec(FakeBridge(symbol_info={}), loaded=False)
@@ -1381,13 +1506,74 @@ class TestSubmittingAnOrder:
         assert rig.bridge.called("order")
 
 
-class TestModifyAndCancel:
-    """What the client sends to move or cancel, and that the engine hears back.
+def _held(**row: Any) -> dict:
+    """An open position of this desk's, with a stop and a target."""
+    return {
+        "ticket": 55,
+        "symbol": "EURUSD",
+        "type": 0,
+        "volume": 0.5,
+        "magic": MAGIC,
+        "sl": 1.0800,
+        "tp": 1.0900,
+        **row,
+    }
 
-    The first version sent the request and returned. Nothing generated
-    `OrderUpdated` or `OrderCanceled`, so an order stayed `PENDING_UPDATE` or
-    `PENDING_CANCEL` for good - and the engine refuses a second modify or
-    cancel for an order in either state, so the desk could not even retry.
+
+class Terminal:
+    """A bridge with a book: modifies change the rows the listings return.
+
+    The fix for 'false success' needs a fake that can *disagree* with an
+    envelope, so state lives here and the envelope is independent of it.
+    """
+
+    def __init__(self, positions=(), pending=(), deals=(), **responses: Any) -> None:
+        self.positions = (
+            [] if isinstance(positions, BaseException) else [dict(r) for r in positions]
+        )
+        self.pending = [] if isinstance(pending, BaseException) else [dict(r) for r in pending]
+        self.applies = True
+        wiring: dict[str, Any] = {
+            "positions": positions
+            if isinstance(positions, BaseException)
+            else lambda: [dict(r) for r in self.positions],
+            "pending": pending
+            if isinstance(pending, BaseException)
+            else lambda: [dict(r) for r in self.pending],
+            "deals": deals if isinstance(deals, BaseException) else list(deals),
+            "modify": self._modify,
+            "modify_order": self._move,
+            "cancel": self._cancel,
+        }
+        wiring.update(responses)
+        self.bridge = FakeBridge(**wiring)
+
+    def _modify(self, ticket, sl, tp):
+        if self.applies:
+            for row in self.positions:
+                if row["ticket"] == ticket:
+                    row["sl"], row["tp"] = sl, tp
+        return DONE_ENVELOPE
+
+    def _move(self, ticket, price):
+        if self.applies:
+            for row in self.pending:
+                if row["ticket"] == ticket:
+                    row["price_open"] = price
+        return DONE_ENVELOPE
+
+    def _cancel(self, ticket):
+        self.pending = [r for r in self.pending if r["ticket"] != ticket]
+        return DONE_ENVELOPE
+
+
+class TestModifyAndCancel:
+    """What the client sends to move or cancel, and that the engine hears the truth.
+
+    The first version sent the request and returned, so an order stayed
+    `PENDING_UPDATE` for good. The second announced success on the absence of
+    a failure: an empty reply, a failed listing and a retcode of 0 all read as
+    'done'. These tests give the fake a book that can disagree with the reply.
     """
 
     def _modify(self, rig, venue_order_id: VenueOrderId | None, price=None, trigger=None):
@@ -1421,88 +1607,281 @@ class TestModifyAndCancel:
             ClientId("MT5"),
         )
 
-    async def test_modify_sends_the_ticket_the_stop_and_the_target(self):
-        rig = make_exec()
+    # ── a position's stop and target ──
+
+    async def test_a_target_only_modify_keeps_the_stop_the_position_has(self):
+        """The worst of the fail-open paths: `sl=0` removes the stop in MT5.
+
+        The first version sent `float(trigger_price or 0.0)`, so a modify that
+        moved only the target came back with no stop at all.
+        """
+        terminal = Terminal(positions=[_held()])
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(
+            self._modify(rig, VenueOrderId("55"), Price.from_str("1.095"))
+        )
+        assert rig.bridge.called("modify") == [((55, 1.08, 1.095), {})]
+        assert rig.events(OrderUpdated)
+
+    async def test_a_stop_only_modify_keeps_the_target(self):
+        terminal = Terminal(positions=[_held()])
+        rig = make_exec(terminal.bridge)
+        command = self._modify(rig, VenueOrderId("55"), None, Price.from_str("1.0820"))
+        await rig.client._modify_order(command)
+        assert rig.bridge.called("modify") == [((55, 1.082, 1.09), {})]
+
+    async def test_both_sides_are_sent_as_given(self):
+        terminal = Terminal(positions=[_held()])
+        rig = make_exec(terminal.bridge)
         command = self._modify(
-            rig, VenueOrderId("55"), Price.from_str("1.09000"), Price.from_str("1.07")
+            rig, VenueOrderId("55"), Price.from_str("1.09500"), Price.from_str("1.07")
         )
         await rig.client._modify_order(command)
-        assert rig.bridge.called("modify") == [((55, 1.07, 1.09), {})]
+        assert rig.bridge.called("modify") == [((55, 1.07, 1.095), {})]
 
-    async def test_a_modify_that_worked_is_announced_with_the_new_price(self):
-        rig = make_exec()
-        command = self._modify(rig, VenueOrderId("55"), Price.from_str("1.09"))
-        await rig.client._modify_order(command)
+    async def test_a_modify_that_changes_nothing_is_refused_before_the_bridge(self):
+        terminal = Terminal(positions=[_held()])
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(self._modify(rig, VenueOrderId("55")))
+        assert not rig.bridge.called("modify")
+        assert "neither a stop nor a target" in rig.events(OrderModifyRejected)[0].reason
+
+    async def test_no_modify_ever_sends_a_zero_stop_to_a_position_that_has_one(self):
+        terminal = Terminal(positions=[_held()])
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(self._modify(rig, VenueOrderId("55"), Price.from_str("1.1")))
+        assert all(args[1] != 0.0 for args, _ in rig.bridge.called("modify"))
+
+    async def test_an_updated_event_carries_the_new_price_and_cached_quantity(self):
+        terminal = Terminal(positions=[_held()])
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(
+            self._modify(rig, VenueOrderId("55"), Price.from_str("1.095"))
+        )
         (updated,) = rig.events(OrderUpdated)
-        assert updated.price == Price.from_str("1.09")
+        assert updated.price == Price.from_str("1.095")
         assert updated.quantity == Quantity.from_str("0.50")
-        assert updated.venue_order_id == VenueOrderId("55")
+
+    # ── a modify that must not read as a success ──
+
+    @pytest.mark.parametrize(
+        "reply",
+        [
+            {},
+            {"success": True},
+            {"success": True, "result": {"retcode": 0}},
+            {"success": True, "result": {"retcode": 10013, "comment": "Invalid request"}},
+            {"success": False, "result": {"retcode": 10009}},
+        ],
+    )
+    async def test_a_reply_without_a_positive_signal_is_a_rejection(self, reply):
+        """An empty body used to parse to retcode 0, and 0 was OK."""
+        terminal = Terminal(positions=[_held()], modify=reply)
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(
+            self._modify(rig, VenueOrderId("55"), Price.from_str("1.095"))
+        )
+        assert len(rig.events(OrderModifyRejected)) == 1
+        assert not rig.events(OrderUpdated)
+
+    async def test_the_brokers_comment_is_the_reason(self):
+        reply = {"success": True, "result": {"retcode": 10016, "comment": "Invalid stops"}}
+        terminal = Terminal(positions=[_held()], modify=reply)
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(
+            self._modify(rig, VenueOrderId("55"), Price.from_str("1.095"))
+        )
+        assert rig.events(OrderModifyRejected)[0].reason == "Invalid stops"
+
+    async def test_a_done_reply_the_book_does_not_bear_out_is_rejected(self):
+        """DONE is the reply to the request; the listing is what the terminal holds."""
+        terminal = Terminal(positions=[_held()])
+        terminal.applies = False
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(
+            self._modify(rig, VenueOrderId("55"), Price.from_str("1.095"))
+        )
+        assert "unconfirmed" in rig.events(OrderModifyRejected)[0].reason
+        assert not rig.events(OrderUpdated)
+
+    async def test_an_unreadable_book_after_a_done_reply_is_rejected_as_unconfirmed(self):
+        terminal = Terminal(positions=[_held()])
+        calls = {"n": 0}
+
+        def positions():
+            calls["n"] += 1
+            if calls["n"] > 1:
+                raise BridgeError("GET /positions/ -> 500")
+            return [dict(r) for r in terminal.positions]
+
+        terminal.bridge.responses["positions"] = positions
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(
+            self._modify(rig, VenueOrderId("55"), Price.from_str("1.095"))
+        )
+        assert "unconfirmed" in rig.events(OrderModifyRejected)[0].reason
+
+    async def test_an_unreadable_book_before_the_modify_sends_nothing(self):
+        terminal = Terminal(positions=[_held()])
+        terminal.bridge.responses["positions"] = BridgeError("GET /positions/ -> 500")
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(
+            self._modify(rig, VenueOrderId("55"), Price.from_str("1.095"))
+        )
+        assert not rig.bridge.called("modify")
+        assert len(rig.events(OrderModifyRejected)) == 1
+
+    async def test_a_bridge_error_on_the_modify_is_a_rejection_not_a_raise(self):
+        terminal = Terminal(positions=[_held()], modify=BridgeError("POST -> 500"))
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(
+            self._modify(rig, VenueOrderId("55"), Price.from_str("1.095"))
+        )
+        assert "500" in rig.events(OrderModifyRejected)[0].reason
 
     async def test_a_modify_with_no_venue_id_is_rejected_rather_than_dropped(self):
         rig = make_exec()
         await rig.client._modify_order(self._modify(rig, None, Price.from_str("1.09000")))
         assert not rig.bridge.called("modify")
-        (rejected,) = rig.events(OrderModifyRejected)
-        assert "no venue id" in rejected.reason
+        assert "no venue id" in rig.events(OrderModifyRejected)[0].reason
 
-    async def test_a_modify_the_terminal_refuses_is_rejected_with_its_comment(self):
-        refusal = {"success": False, "result": {"retcode": 10016, "comment": "Invalid stops"}}
-        rig = make_exec(FakeBridge(modify=refusal))
+    async def test_a_ticket_that_is_neither_resting_nor_open_is_rejected(self):
+        rig = make_exec(Terminal().bridge)
         await rig.client._modify_order(
             self._modify(rig, VenueOrderId("55"), Price.from_str("1.09"))
         )
-        (rejected,) = rig.events(OrderModifyRejected)
-        assert rejected.reason == "Invalid stops"
-        assert not rig.events(OrderUpdated)
+        assert "neither a resting order nor an open position" in (
+            rig.events(OrderModifyRejected)[0].reason
+        )
 
-    async def test_a_modify_the_bridge_fails_is_rejected_not_raised(self):
-        rig = make_exec(FakeBridge(modify=BridgeError("POST -> 500")))
+    async def test_another_desks_position_is_never_modified(self):
+        terminal = Terminal(positions=[_held(magic=MAGIC + 1)])
+        rig = make_exec(terminal.bridge)
         await rig.client._modify_order(
             self._modify(rig, VenueOrderId("55"), Price.from_str("1.09"))
         )
-        (rejected,) = rig.events(OrderModifyRejected)
-        assert "500" in rejected.reason
+        assert not rig.bridge.called("modify")
+        assert len(rig.events(OrderModifyRejected)) == 1
 
     async def test_a_modify_for_an_order_the_cache_lacks_is_rejected_before_the_bridge(self):
         """Its quantity is unknown, and `OrderUpdated` cannot be built without one."""
-        rig = make_exec()
+        rig = make_exec(Terminal(positions=[_held()]).bridge)
         command = self._modify(rig, VenueOrderId("55"), Price.from_str("1.09"))
         rig.client._cache.reset()
         await rig.client._modify_order(command)
         assert not rig.bridge.called("modify")
         assert len(rig.events(OrderModifyRejected)) == 1
 
-    async def test_cancel_sends_the_ticket(self):
-        rig = make_exec()
+    # ── a resting order ──
+
+    async def test_a_resting_order_is_moved_through_the_pending_order_route(self):
+        """It was posted to `/positions/modify` as a `tp`, which addresses a position."""
+        terminal = Terminal(pending=[_pending(ticket=55)])
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(
+            self._modify(rig, VenueOrderId("55"), Price.from_str("1.0790"))
+        )
+        assert rig.bridge.called("modify_order") == [((55, 1.079), {})]
+        assert not rig.bridge.called("modify")
+        assert rig.events(OrderUpdated)
+
+    async def test_a_resting_order_move_the_book_does_not_bear_out_is_rejected(self):
+        terminal = Terminal(pending=[_pending(ticket=55)])
+        terminal.applies = False
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(
+            self._modify(rig, VenueOrderId("55"), Price.from_str("1.0790"))
+        )
+        assert not rig.events(OrderUpdated)
+        assert len(rig.events(OrderModifyRejected)) == 1
+
+    async def test_a_resting_order_needs_a_price_to_move(self):
+        terminal = Terminal(pending=[_pending(ticket=55)])
+        rig = make_exec(terminal.bridge)
+        command = self._modify(rig, VenueOrderId("55"), None, Price.from_str("1.07"))
+        await rig.client._modify_order(command)
+        assert not rig.bridge.called("modify_order")
+        assert len(rig.events(OrderModifyRejected)) == 1
+
+    async def test_a_transport_that_cannot_move_a_resting_order_says_so(self):
+        class NoMove(FakeBridge):
+            modify_order = None
+
+        terminal = Terminal(pending=[_pending(ticket=55)])
+        terminal.bridge.__class__ = NoMove
+        rig = make_exec(terminal.bridge)
+        await rig.client._modify_order(
+            self._modify(rig, VenueOrderId("55"), Price.from_str("1.079"))
+        )
+        assert "cannot modify a resting order" in rig.events(OrderModifyRejected)[0].reason
+        assert not rig.bridge.called("modify")
+
+    # ── cancel ──
+
+    async def test_a_confirmed_cancel_is_announced(self):
+        terminal = Terminal(pending=[_pending(ticket=55)])
+        rig = make_exec(terminal.bridge)
         await rig.client._cancel_order(self._cancel(rig, VenueOrderId("55")))
         assert rig.bridge.called("cancel") == [((55,), {})]
-
-    async def test_a_cancel_that_worked_is_announced(self):
-        rig = make_exec()
-        await rig.client._cancel_order(self._cancel(rig, VenueOrderId("55")))
         (canceled,) = rig.events(OrderCanceled)
         assert canceled.venue_order_id == VenueOrderId("55")
         assert not rig.events(OrderCancelRejected)
 
-    async def test_a_cancel_after_which_the_order_still_rests_is_rejected(self):
-        """The bridge answers `{}` for a cancel that did nothing, too.
-
-        A 404 reads as "nothing there", so the response cannot tell a
-        cancelled order from a ticket that was never cancelled. The pending
-        list is the unambiguous answer.
-        """
-        rig = make_exec(FakeBridge(pending=[_pending(ticket=55)]))
+    async def test_an_empty_reply_is_not_a_cancel(self):
+        """`{}` is what the bridge returns for a 404, and for a transport that said nothing."""
+        terminal = Terminal(pending=[], cancel={})
+        rig = make_exec(terminal.bridge)
         await rig.client._cancel_order(self._cancel(rig, VenueOrderId("55")))
-        (rejected,) = rig.events(OrderCancelRejected)
-        assert "still resting" in rejected.reason
         assert not rig.events(OrderCanceled)
+        assert "unconfirmed" in rig.events(OrderCancelRejected)[0].reason
+
+    async def test_an_unreadable_listing_after_an_empty_reply_is_not_a_cancel(self):
+        """The false confirmation: a failed listing read as 'the order is gone'."""
+        terminal = Terminal(cancel={}, pending=BridgeError("GET /orders/pending -> 500"))
+        rig = make_exec(terminal.bridge)
+        await rig.client._cancel_order(self._cancel(rig, VenueOrderId("55")))
+        assert not rig.events(OrderCanceled)
+        assert "listing failed" in rig.events(OrderCancelRejected)[0].reason
+
+    async def test_a_confirmed_cancel_stands_even_if_the_listing_cannot_be_read(self):
+        """The terminal's own DONE outweighs an unreadable corroboration."""
+        terminal = Terminal(pending=BridgeError("GET /orders/pending -> 500"))
+        rig = make_exec(terminal.bridge)
+        await rig.client._cancel_order(self._cancel(rig, VenueOrderId("55")))
+        assert len(rig.events(OrderCanceled)) == 1
+
+    async def test_a_cancel_after_which_the_order_still_rests_is_rejected(self):
+        terminal = Terminal(pending=[_pending(ticket=55)])
+        terminal.bridge.responses["cancel"] = DONE_ENVELOPE
+        terminal.bridge.responses["cancel"] = lambda ticket: DONE_ENVELOPE  # leaves it resting
+        rig = make_exec(terminal.bridge)
+        await rig.client._cancel_order(self._cancel(rig, VenueOrderId("55")))
+        assert "still resting" in rig.events(OrderCancelRejected)[0].reason
+        assert not rig.events(OrderCanceled)
+
+    async def test_an_unconfirmed_cancel_of_an_order_that_has_a_deal_is_a_fill(self):
+        """If the order filled, say so; do not say it was cancelled."""
+        terminal = Terminal(
+            cancel={}, deals=[_deal(ticket=9001, order=55, volume=0.5, price=1.0852)]
+        )
+        rig = make_exec(terminal.bridge)
+        await rig.client._cancel_order(self._cancel(rig, VenueOrderId("55")))
+        (fill,) = rig.events(OrderFilled)
+        assert fill.last_px == Price(1.0852, 5)
+        assert not rig.events(OrderCanceled)
+
+    async def test_an_unreadable_history_is_not_evidence_of_a_cancel(self):
+        terminal = Terminal(cancel={}, deals=BridgeError("GET /history/deals -> 500"))
+        rig = make_exec(terminal.bridge)
+        await rig.client._cancel_order(self._cancel(rig, VenueOrderId("55")))
+        assert not rig.events(OrderCanceled)
+        assert "deals failed" in rig.events(OrderCancelRejected)[0].reason
 
     async def test_a_cancel_with_no_venue_id_is_rejected_rather_than_dropped(self):
         rig = make_exec()
         await rig.client._cancel_order(self._cancel(rig, None))
         assert not rig.bridge.called("cancel")
-        (rejected,) = rig.events(OrderCancelRejected)
-        assert "no venue id" in rejected.reason
+        assert "no venue id" in rig.events(OrderCancelRejected)[0].reason
 
     async def test_a_cancel_the_bridge_fails_is_rejected_not_raised(self):
         rig = make_exec(FakeBridge(cancel=BridgeError("DELETE -> 500")))
@@ -1510,15 +1889,10 @@ class TestModifyAndCancel:
         assert len(rig.events(OrderCancelRejected)) == 1
         assert not rig.events(OrderCanceled)
 
+    # ── cancel all ──
+
     def _resting(self, *rows: dict) -> FakeBridge:
-        """A bridge whose pending list loses a ticket when it is cancelled."""
-        live = list(rows)
-
-        def cancel(ticket: int) -> dict:
-            live[:] = [r for r in live if r["ticket"] != ticket]
-            return {}
-
-        return FakeBridge(pending=lambda: list(live), cancel=cancel)
+        return Terminal(pending=rows).bridge
 
     async def test_cancel_all_cancels_only_this_desks_resting_orders(self):
         rig = make_exec(
@@ -1546,6 +1920,12 @@ class TestModifyAndCancel:
         await rig.client._cancel_all_orders(None)
         assert rig.bridge.called("cancel") == [((8,), {})]
         assert not rig.events(OrderCanceled)
+
+    async def test_cancel_all_with_an_unreadable_listing_raises_and_cancels_nothing(self):
+        rig = make_exec(FakeBridge(pending=BridgeError("GET -> 500")))
+        with pytest.raises(BridgeError):
+            await rig.client._cancel_all_orders(None)
+        assert not rig.bridge.called("cancel")
 
     async def test_cancel_all_respects_the_side_it_was_asked_for(self):
         from nautilus_trader.execution.messages import CancelAllOrders
@@ -1634,18 +2014,38 @@ class TestPositionReports:
         reports = await rig.client.generate_position_status_reports()
         assert [str(r.venue_position_id) for r in reports] == ["2"]
 
-    async def test_a_row_that_is_not_a_buy_or_sell_is_skipped(self):
+    async def test_a_row_that_is_neither_a_buy_nor_a_sell_raises(self):
+        """Skipping it would report a book smaller than the account's."""
         rig = make_exec(FakeBridge(positions=[_position(type=7)]))
-        assert await rig.client.generate_position_status_reports() == []
+        with pytest.raises(ReconciliationError, match="neither a buy nor a sell"):
+            await rig.client.generate_position_status_reports()
 
-    async def test_a_position_in_a_symbol_the_terminal_does_not_list_is_skipped(self):
+    async def test_a_position_in_a_symbol_the_terminal_will_not_describe_raises(self):
+        """A report that omits it says the account is flat in that name.
+
+        A desk that believes it is flat re-opens the position it already holds,
+        which is the failure `judge-the-desk-on-the-broker-not-the-journal`
+        records. The row is this desk's (its magic), so it is not noise.
+        """
         rig = make_exec(
             FakeBridge(
-                positions=[_position(symbol="NOSUCH")],
+                positions=[_position(ticket=1), _position(ticket=2, symbol="NOSUCH")],
                 symbol_info=lambda symbol: {} if symbol == "NOSUCH" else EURUSD_INFO,
             )
         )
-        assert await rig.client.generate_position_status_reports() == []
+        with pytest.raises(ReconciliationError, match="NOSUCH"):
+            await rig.client.generate_position_status_reports()
+
+    async def test_another_desks_unresolvable_position_does_not_stop_reconciliation(self):
+        """Raising is for this desk's book; a stranger's position is none of its business."""
+        rig = make_exec(
+            FakeBridge(
+                positions=[_position(ticket=1), _position(ticket=2, symbol="NOSUCH", magic=0)],
+                symbol_info=lambda symbol: {} if symbol == "NOSUCH" else EURUSD_INFO,
+            )
+        )
+        reports = await rig.client.generate_position_status_reports()
+        assert [str(r.venue_position_id) for r in reports] == ["1"]
 
     async def test_a_position_in_an_instrument_not_yet_loaded_is_still_reported(self):
         """Before the on-demand load this read as flat, which is the dangerous answer."""
@@ -1731,6 +2131,122 @@ class TestOrderStatusReports:
         )
         await rig.client._query_order(command)
         assert rig.reports == []
+
+
+class TestAnUnreadableBookIsNotAnEmptyOne:
+    """Reconciliation that skips what it cannot read reports a smaller account.
+
+    The judgement call: raise for state the desk acts on (positions, resting
+    orders), degrade loudly for history (deals). A fill report that is short
+    by one day-old deal is repaired by the position report that carries the
+    same fact; a position report that is short by one position tells the desk
+    it is flat in a name it holds.
+    """
+
+    async def test_an_order_in_a_symbol_the_terminal_will_not_describe_raises(self):
+        rig = make_exec(
+            FakeBridge(
+                pending=[_pending(symbol="NOSUCH")],
+                symbol_info=lambda symbol: {} if symbol == "NOSUCH" else EURUSD_INFO,
+            )
+        )
+        with pytest.raises(ReconciliationError, match="NOSUCH"):
+            await rig.client.generate_order_status_reports()
+
+    async def test_an_unreadable_order_listing_raises(self):
+        rig = make_exec(FakeBridge(pending=BridgeError("GET -> 500")))
+        with pytest.raises(BridgeError):
+            await rig.client.generate_order_status_reports()
+
+    async def test_an_unreadable_symbol_lookup_raises_rather_than_skipping(self):
+        rig = make_exec(
+            FakeBridge(positions=[_position()], symbol_info=BridgeError("GET -> 500")),
+            loaded=False,
+        )
+        with pytest.raises(BridgeError):
+            await rig.client.generate_position_status_reports()
+
+    async def test_a_deal_in_an_unknown_symbol_is_skipped_counted_and_the_rest_reported(self):
+        rig = make_exec(
+            FakeBridge(
+                deals=[_deal(ticket=1), _deal(ticket=2, symbol="NOSUCH")],
+                symbol_info=lambda symbol: {} if symbol == "NOSUCH" else EURUSD_INFO,
+            )
+        )
+        reports = await rig.client.generate_fill_reports()
+        assert [str(r.trade_id) for r in reports] == ["1"]
+        assert rig.client.skipped_deals == 1
+
+    async def test_an_unreadable_history_raises(self):
+        rig = make_exec(FakeBridge(deals=BridgeError("GET -> 500")))
+        with pytest.raises(BridgeError):
+            await rig.client.generate_fill_reports()
+
+
+class TestCredentialsStayOutOfLoggedText:
+    """The stream URL carried `api_key=` and exception text carries URLs.
+
+    The repo is public and logs get pasted into issues. The transport is being
+    changed to send the key as a header, but a URL can reach a log from more
+    than one place, so the text is scrubbed where it is written.
+    """
+
+    KEY = "s3cr3t-key-123"
+
+    @pytest.mark.parametrize(
+        "text",
+        [
+            f"ws://bridge:8000/api/v1/stream?api_key={KEY}&symbols=EURUSD",
+            f"GET https://bridge/x?API_KEY={KEY}",
+            f"headers {{'X-API-Key': '{KEY}'}}",
+            f"X-API-Key: {KEY}",
+            f"connect to http://user:{KEY}@bridge:8000 failed",
+            f"the key {KEY} was rejected",
+        ],
+    )
+    def test_redact_removes_the_key_from_every_shape_it_arrives_in(self, text):
+        assert self.KEY not in redact(text, (self.KEY,))
+
+    def test_redact_keeps_the_rest_of_the_message_readable(self):
+        out = redact(f"ws://bridge/stream?api_key={self.KEY}&symbols=EURUSD", (self.KEY,))
+        assert out == "ws://bridge/stream?api_key=***&symbols=EURUSD"
+
+    def test_a_short_secret_is_not_replaced_everywhere(self):
+        """A 2-character 'secret' would mangle every word that contains it."""
+        assert redact("a key", ("ke",)) == "a key"
+
+    async def test_a_connect_failure_does_not_carry_the_key(self):
+        error = httpx.ConnectError(f"All connection attempts failed: ?api_key={self.KEY}")
+        rig = make_data(FakeBridge(ping=error), api_key=self.KEY)
+        with pytest.raises(ConnectionError) as caught:
+            await rig.client._connect()
+        assert self.KEY not in str(caught.value)
+        assert caught.value.__cause__ is None
+        assert caught.value.__suppress_context__
+
+    async def test_an_exec_connect_failure_does_not_carry_the_key(self):
+        error = BridgeError(f"GET http://bridge?api_key={self.KEY} -> 401")
+        rig = make_exec(FakeBridge(account=error), api_key=self.KEY)
+        with pytest.raises(ConnectionError) as caught:
+            await rig.client._connect()
+        assert self.KEY not in str(caught.value)
+
+    async def test_a_rejection_reason_does_not_carry_the_key(self):
+        """Reasons are stored in events, and events go to the journal."""
+        error = BridgeError(f"POST http://bridge?api_key={self.KEY} -> 500")
+        terminal = Terminal(positions=[_held()], modify=error)
+        rig = make_exec(terminal.bridge, api_key=self.KEY)
+        command = TestModifyAndCancel()._modify(rig, VenueOrderId("55"), Price.from_str("1.095"))
+        await rig.client._modify_order(command)
+        assert self.KEY not in rig.events(OrderModifyRejected)[0].reason
+
+    def test_the_clients_scrub_with_their_configured_key(self):
+        async def build():
+            return make_data(api_key=self.KEY), make_exec(api_key=self.KEY)
+
+        data, execution = asyncio.run(build())
+        for rig in (data, execution):
+            assert self.KEY not in rig.client._scrub(f"boom {self.KEY}")
 
 
 class TestASingleOrderStatusReport:
@@ -1881,11 +2397,41 @@ class TestTheBridgeSpeaksTheWireProtocol:
             seen.append(request)
             return httpx.Response(200, json={"success": True})
 
-        await _wired(handler).order({"symbol": "EURUSD", "magic": MAGIC})
+        await _wired(handler).order(
+            {"symbol": "EURUSD", "order_type": "BUY", "volume": 0.1, "magic": MAGIC}
+        )
         (request,) = seen
         assert (request.method, request.url.path) == ("POST", "/api/v1/trading/order")
-        assert request.read() == b'{"symbol":"EURUSD","magic":777701}'
+        # **`sl` is present because the route requires it.**
+        # `MarketOrderRequest` declares it as a bare `float` with no default,
+        # so a body without it is a 422 - meaning no market order this adapter
+        # sent could ever have been placed. Checked against the bridge repo's
+        # `models/trading.py` rather than inferred.
+        body = json.loads(request.read())
+        assert body["sl"] == 0.0
+        assert body["order_type"] == "BUY"
+        assert body["magic"] == MAGIC
+        assert "price" not in body, "a market order names no price"
         assert request.headers["X-API-Key"] == "secret"
+
+    async def test_a_limit_order_is_posted_to_the_pending_route(self):
+        """`/trading/order` validates `order_type` against `^(BUY|SELL)$` and
+        calls `send_market_order`, which takes no price - so a limit sent
+        there was accepted and **filled at the market**."""
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json={"success": True})
+
+        await _wired(handler).order(
+            {"symbol": "EURUSD", "order_type": "SELL", "volume": 0.1, "price": 1.2}
+        )
+        (request,) = seen
+        assert request.url.path == "/api/v1/orders/pending"
+        body = json.loads(request.read())
+        assert body["order_type"] == "SELL_LIMIT"
+        assert body["price"] == 1.2
 
     async def test_modify_sends_sl_and_only_sends_tp_when_there_is_one(self):
         bodies: list[bytes] = []
@@ -1926,10 +2472,22 @@ class TestTheBridgeSpeaksTheWireProtocol:
         with pytest.raises(BridgeError, match=r"POST /trading/order -> 400: invalid volume"):
             await bridge.order({})
 
-    async def test_a_404_reads_as_nothing_rather_than_a_failure(self):
+    async def test_a_404_reads_as_nothing_only_for_history(self):
+        """**It used to mean "nothing" everywhere, and that was a fail-open on
+        the money path.** A 404 from `/positions/` became an empty list, which
+        is indistinguishable from a flat account - and reconciliation believing
+        the desk is flat when it is not is how it opens a position it already
+        holds.
+
+        History keeps the old reading, because an empty range genuinely is the
+        normal answer for a quiet market or a closed session.
+        """
         bridge = _wired(lambda r: httpx.Response(404))
-        assert await bridge.positions() == []
-        assert await bridge.account() == {}
+        assert await bridge.ticks("EURUSD", 0, 1) == []
+        assert await bridge.bars("EURUSD", "M1", count=1) == []
+        for call in (bridge.positions(), bridge.pending(), bridge.account()):
+            with pytest.raises(BridgeError):
+                await call
 
     async def test_bars_are_requested_by_position_with_the_documented_parameters(self):
         seen: list[httpx.Request] = []

@@ -17,8 +17,10 @@ Routes, as the bridge exposes them under `/api/v1`:
 | `GET /symbols/ticks/{symbol}/range` | ticks over a time range |
 | `WS /stream` | quotes, pushed as they change |
 | `GET /positions/` | open positions |
-| `GET /orders/pending` | resting orders |
-| `POST /trading/order` | place |
+| `GET /orders/` | resting orders |
+| `POST /trading/order` | place at market |
+| `POST /orders/pending` | place a limit |
+| `PUT /orders/{ticket}` | move a resting order |
 | `POST /positions/modify` | move a stop or target, by ticket |
 | `POST /positions/close` | close |
 | `DELETE /orders/{ticket}` | cancel a resting order |
@@ -102,22 +104,38 @@ class Bridge:
         return self._client
 
     # ──── plumbing ────
-    async def get(self, route: str, **params: Any) -> Any:
+    async def get(self, route: str, empty_on_404: bool = False, **params: Any) -> Any:
         return await self._send(
-            "GET", route, params={k: v for k, v in params.items() if v is not None}
+            "GET",
+            route,
+            empty_on_404=empty_on_404,
+            params={k: v for k, v in params.items() if v is not None},
         )
 
     async def post(self, route: str, body: dict[str, Any]) -> Any:
         return await self._send("POST", route, json=body)
 
+    async def put(self, route: str, body: dict[str, Any]) -> Any:
+        return await self._send("PUT", route, json=body)
+
     async def delete(self, route: str) -> Any:
         return await self._send("DELETE", route)
 
-    async def _send(self, method: str, route: str, **kwargs: Any) -> Any:
+    async def _send(
+        self, method: str, route: str, empty_on_404: bool = False, **kwargs: Any
+    ) -> Any:
         response = await self.session.request(method, route, **kwargs)
-        if response.status_code == 404:
-            # A 404 is "nothing there", not a failure: the tick corpus relies
-            # on an empty range reading as empty rather than as an error.
+        if response.status_code == 404 and empty_on_404:
+            # **Only where a 404 genuinely means "nothing there"**: the tick
+            # and bar history routes, where an empty range is the normal
+            # answer for a quiet market or a closed session.
+            #
+            # It used to apply to every route, and that was a fail-open on the
+            # money path. A 404 from `/positions/` became an empty list, which
+            # is indistinguishable from a flat account - and reconciliation
+            # believing the account is flat when it is not is how a desk opens
+            # a position it already holds. A 404 from a write became `{}`,
+            # which read as retcode 0, which read as success.
             return None
         if response.status_code >= 400:
             raise BridgeError(f"{method} {route} -> {response.status_code}: {response.text[:200]}")
@@ -146,6 +164,7 @@ class Bridge:
         """Bars by position back from now. `start=0` is the forming bar."""
         raw = await self.get(
             "/symbols/rates/pos",
+            empty_on_404=True,
             symbol=symbol,
             timeframe=timeframe,
             start_pos=start,
@@ -172,6 +191,7 @@ class Bridge:
         """
         raw = await self.get(
             f"/symbols/ticks/{symbol}/range",
+            empty_on_404=True,
             date_from=_iso(start),
             date_to=_iso(end),
         )
@@ -181,7 +201,15 @@ class Bridge:
         return _rows(await self.get("/positions/"))
 
     async def pending(self) -> list[dict]:
-        return _rows(await self.get("/orders/pending"))
+        """Resting orders. **`GET /orders/`, not `/orders/pending`.**
+
+        `/orders/pending` is a `POST` that *places* one; there is no `GET` at
+        that path, so this asked for a route that does not exist and every
+        call would have been a 404 - which the old 404-means-empty rule then
+        turned into "no resting orders". Cancel verification and resting-order
+        reconciliation were both reading that empty list as fact.
+        """
+        return _rows(await self.get("/orders/"))
 
     async def deals(self, start: int, end: int) -> list[dict]:
         return _rows(await self.get("/history/deals", date_from=start, date_to=end))
@@ -259,7 +287,61 @@ class Bridge:
 
     # ──── writes ────
     async def order(self, body: dict[str, Any]) -> dict[str, Any]:
-        return (await self.post("/trading/order", body)) or {}
+        """Place one. **Two routes, chosen by whether a price was named.**
+
+        `POST /trading/order` is market-only: its `order_type` is validated
+        against `^(BUY|SELL)$` and its handler calls `send_market_order`,
+        which has no price parameter at all. So a limit sent there was
+        accepted and filled **at the market** - the opposite of what a resting
+        entry is for. A limit goes to `POST /orders/pending`, whose
+        `order_type` takes `BUY_LIMIT` and `SELL_LIMIT`.
+
+        **And a market order must carry `sl`.** `MarketOrderRequest` declares
+        it as a bare `float` with no default, so a body without it is a
+        422 - meaning no market order this adapter sent could ever have been
+        placed. It is sent as `0.0` where the caller named none, which is how
+        MT5 spells "no stop"; the protective stop proper is the bracket's own
+        order, which is a separate submission.
+        """
+        side = str(body.get("order_type") or "BUY").upper()
+        buy = side.startswith("BUY")
+        price = body.get("price")
+        shared = {
+            "symbol": body.get("symbol"),
+            "volume": float(body.get("volume") or 0.0),
+            "sl": float(body.get("sl") or 0.0),
+            "deviation": int(body.get("deviation") or 20),
+            "comment": str(body.get("comment") or "")[:31],
+            "magic": int(body.get("magic") or 0),
+            "type_filling": str(body.get("type_filling") or "IOC"),
+        }
+        if body.get("tp"):
+            shared["tp"] = float(body["tp"])
+        if price is None:
+            return (await self.post("/trading/order", {**shared, "order_type": side})) or {}
+        return (
+            await self.post(
+                "/orders/pending",
+                {
+                    **shared,
+                    "order_type": "BUY_LIMIT" if buy else "SELL_LIMIT",
+                    "price": float(price),
+                },
+            )
+        ) or {}
+
+    async def modify_order(self, ticket: int, price: float) -> dict[str, Any]:
+        """Move a **resting order**, which is not the same call as a stop move.
+
+        `POST /positions/modify` sets a position's stop and target, and a
+        resting order is not a position - sending one there posted its limit
+        price as a target and left the order where it was. `PUT /orders/{t}`
+        is the route for it.
+
+        The route's model requires `price`, so moving an order's stop alone is
+        not expressible here; that is the bridge's shape, not a choice.
+        """
+        return (await self.put(f"/orders/{int(ticket)}", {"price": float(price)})) or {}
 
     async def modify(self, ticket: int, stop: float, target: float = 0.0) -> dict[str, Any]:
         body: dict[str, Any] = {"ticket": int(ticket), "sl": float(stop)}

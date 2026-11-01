@@ -317,13 +317,37 @@ class Proxy:
         return _rows(rows)
 
     async def positions(self) -> list[dict]:
-        return _rows(await self._call("positions_get"))
+        return await self._listed("positions_get")
 
     async def pending(self) -> list[dict]:
-        return _rows(await self._call("orders_get"))
+        return await self._listed("orders_get")
 
     async def deals(self, start: int, end: int) -> list[dict]:
-        return _rows(await self._call("history_deals_get", _when(start), _when(end)))
+        return await self._listed("history_deals_get", _when(start), _when(end))
+
+    async def _listed(self, name: str, *args: Any) -> list[dict]:
+        """A listing, where `None` is asked about rather than read as empty.
+
+        **MT5 returns `None` both for "nothing" and for "could not".** The
+        difference is only in `last_error`, and without checking it a failed
+        `positions_get` is indistinguishable from a flat account - which is
+        how reconciliation comes to believe the desk holds nothing and opens a
+        position it already has. `judge-the-desk-on-the-broker-not-the-journal`
+        is the same lesson a level up: our own side of the wire is not
+        evidence about the account.
+
+        An empty tuple is a genuine empty listing and passes through. Only
+        `None` is interrogated, and only a non-zero error code raises - some
+        builds return `None` with error 0 for an empty result, so the code is
+        what decides and not the `None`.
+        """
+        found = await self._call(name, *args)
+        if found is None:
+            code, message = await self._error()
+            if code:
+                raise ProxyError(f"{name} failed: {message} ({code})")
+            return []
+        return _rows(found)
 
     # ──── writes ────
     async def order(self, body: dict[str, Any]) -> dict[str, Any]:
@@ -405,6 +429,20 @@ class Proxy:
             "magic": int(position.get("magic") or 0),
             "type_time": await self._const("ORDER_TIME_GTC"),
             "type_filling": await self._filling("IOC"),
+        }
+        return _sent(await self._call("order_send", request))
+
+    async def modify_order(self, ticket: int, price: float) -> dict[str, Any]:
+        """Move a resting order. `TRADE_ACTION_MODIFY`, on the *order*.
+
+        Not `TRADE_ACTION_SLTP`, which takes a `position` and sets its stop
+        and target: a resting order is not a position, and sending one there
+        posted its limit price as a target and left the order where it was.
+        """
+        request = {
+            "action": await self._const("TRADE_ACTION_MODIFY"),
+            "order": int(ticket),
+            "price": float(price),
         }
         return _sent(await self._call("order_send", request))
 

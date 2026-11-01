@@ -39,6 +39,7 @@ from nautilus_trader.model.objects import Price, Quantity
 
 from .config import MT5DataClientConfig
 from .providers import MT5InstrumentProvider
+from .redact import redact
 from .transport import connect
 
 #: Nautilus bar aggregation -> the bridge's timeframe name, and the bar's
@@ -146,14 +147,24 @@ class MT5DataClient(LiveMarketDataClient):
 
     # ──── lifecycle ────
     async def _connect(self) -> None:
-        await self._bridge.open()
-        if not await self._bridge.ping():
-            raise ConnectionError(f"the bridge at {self._cfg.base_url} did not answer")
+        try:
+            await self._bridge.open()
+            answered = await self._bridge.ping()
+        except Exception as exc:
+            # `from None`: the chained exception's text is the unscrubbed one,
+            # and the framework logs the whole traceback.
+            raise ConnectionError(self._scrub(exc)) from None
+        if not answered:
+            raise ConnectionError(f"the bridge at {self._scrub(self._cfg.base_url)} did not answer")
         self._check_quote_source()
         await self._instrument_provider.load_all_async()
         for instrument in self._instrument_provider.list_all():
             self._handle_data(instrument)
         self._log.info(f"loaded {len(self._instrument_provider.list_all())} instruments")
+
+    def _scrub(self, value: Any) -> str:
+        """Text safe to log: the configured API key and `api_key=` removed."""
+        return redact(value, (getattr(self._cfg, "api_key", None),))
 
     @property
     def quote_source(self) -> str:
@@ -238,7 +249,7 @@ class MT5DataClient(LiveMarketDataClient):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._log.warning(f"quote poll for {symbol}: {exc}")
+                self._log.warning(f"quote poll for {symbol}: {self._scrub(exc)}")
             await asyncio.sleep(self._cfg.poll_seconds)
 
     async def _poll_bars(self, bar_type: BarType) -> None:
@@ -261,7 +272,7 @@ class MT5DataClient(LiveMarketDataClient):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._log.warning(f"bar poll for {symbol} {name}: {exc}")
+                self._log.warning(f"bar poll for {symbol} {name}: {self._scrub(exc)}")
             await asyncio.sleep(max(1.0, seconds / 10.0))
 
     # ──── every tick ────
@@ -328,7 +339,7 @@ class MT5DataClient(LiveMarketDataClient):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._log.warning(f"tick pull for {symbol}: {exc}")
+                self._log.warning(f"tick pull for {symbol}: {self._scrub(exc)}")
             await asyncio.sleep(self._cfg.poll_seconds)
 
     async def _stream_quotes(self, instrument_id: Any) -> None:
@@ -350,7 +361,9 @@ class MT5DataClient(LiveMarketDataClient):
                 async for frame in self._bridge.stream([symbol]):
                     kind = frame.get("type")
                     if kind == "error":
-                        self._log.warning(f"stream error for {symbol}: {frame.get('message')}")
+                        self._log.warning(
+                            f"stream error for {symbol}: {self._scrub(frame.get('message'))}"
+                        )
                         continue
                     if kind != "tick" or frame.get("symbol") != symbol:
                         continue
@@ -366,7 +379,7 @@ class MT5DataClient(LiveMarketDataClient):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
-                self._log.warning(f"stream for {symbol}: {exc}")
+                self._log.warning(f"stream for {symbol}: {self._scrub(exc)}")
             await asyncio.sleep(float(getattr(self._cfg, "reconnect_seconds", 1.0) or 1.0))
 
     # ──── history, which is the complete side ────
