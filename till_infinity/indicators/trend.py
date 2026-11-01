@@ -16,7 +16,7 @@ three readings of the same question at different resolutions:
 
 **Nautilus has `trend.LinearRegression`, `MovingAverageConvergenceDivergence`,
 `AroonOscillator`, `DirectionalMovement`, `Swings` and `Bias`** - take those
-from there. Two notes from the audit in this package's `__init__`:
+from there. Three notes from the audit in this package's `__init__`:
 
 * `LinearRegression`'s slope and R² agree with `fit`'s to 1e-9, so **prefer
   the framework's for the fit**. What `Channel` adds is the bands and the
@@ -27,10 +27,13 @@ from there. Two notes from the audit in this package's `__init__`:
 * `Swings` reports a *running* extreme, not a confirmed pivot, which is why
   `Trendlines` detects its own.
 
-**Three different `SPAN`s met here when these modules merged** - 100 for the
-channel, 120 for the pivot window, 40 for a displacement leg - so the pivot
-window is `PIVOT_SPAN` and `SPAN` stays the channel's, which is the one with
-callers and a test asserting its value.
+**Three different `SPAN`s met when these modules merged** - 100 for the
+channel, 120 for the pivot window, and 40 for a displacement leg, which went
+to `levels.py` - so the pivot window here is `PIVOT_SPAN` and `SPAN` stays the
+channel's, which is the one a test asserts the value of. `PIVOT_SPAN` is the
+one with a live caller: it is `Trendlines`' default, and `Trendlines` is in
+`BAR_DETECTORS`. `SPAN` is read only by the fit and feature functions below,
+which nothing in the live tree calls yet.
 """
 
 from __future__ import annotations
@@ -51,7 +54,7 @@ from .bars import NANOS, Reading, bar_input, check_feed, check_scale, reset_stat
 from .candles import Bar as Ohlc
 
 # ==========================================================================
-# from trend.py
+# the efficiency ratio
 # ==========================================================================
 
 WINDOW = 12
@@ -86,11 +89,13 @@ def ratio(prices: Sequence[float]) -> float | None:
     was no path to measure - which is not the same answer as zero, and the
     callers want to tell them apart.
 
-    **A module-level function because two things ask it of two different
-    series.** `Trend` asks it of recent *level prices*, to scale sizing;
-    `touches.base` asks it of recent *bar closes*, as a model feature. Same
-    statistic, different input, and one copy - the second copy was written and
-    deleted before it shipped.
+    **A module-level function rather than a method**, because it was asked of
+    two different series. `Trend` asks it of recent *level prices*, to scale
+    sizing; the other caller was `touches.base`, which asked it of recent *bar
+    closes* as a model feature and retired to
+    `research/retire/structures/engine/learning/touches.py`. Same statistic,
+    different input, and one copy - the second copy was written and deleted
+    before it shipped. `Trend` is the only live caller today.
     """
     xs = list(prices)
     if len(xs) < 2:
@@ -114,9 +119,10 @@ class Trend(Indicator, Restorable):
     #: through `unit_from` instead, which is the default.
     unit: float = 0.0
     #: Where a per-bar unit comes from. The **range**, because the range-based
-    #: estimator beats close-to-close as a volatility driver by a ratio of
-    #: 0.648 within strata on FX and on 371 of 392 equities, and the advantage
-    #: grows as the window shortens - which is the regime a one-bar unit is in.
+    #: estimator beats close-to-close as a volatility driver: the range-vs-close
+    #: ratio reads 0.648 within strata on FX and 0.667 on 371 of 392 equities,
+    #: and it grows as the window shortens - which is the regime a one-bar unit
+    #: is in. `candle-screen.md` in research/docs.
     unit_from: Reading | None = Reading.RANGE
     #: EWMA half-life in bars for `unit_from`. Zero uses each bar's own
     #: reading, which is noisier but carries no warmup.
@@ -143,7 +149,10 @@ class Trend(Indicator, Restorable):
         """Nautilus's entry point, once registered for a bar type.
 
         Efficiency is a ratio of net travel to gross, so it is already
-        dimensionless and the scale is read but unused. `unit=1.0` says so.
+        dimensionless: the per-bar scale is computed and thrown away, which is
+        what the `_` is. `unit_from` is still required, because `check_scale`
+        uses it to catch a reading fed in the wrong dimension, and that is a
+        different error from a missing unit.
         """
         value, _ = bar_input(self, bar)
         if value is None:
@@ -192,7 +201,7 @@ class Trend(Indicator, Restorable):
 
 
 # ==========================================================================
-# from trendlines.py
+# the trendlines
 # ==========================================================================
 
 REACH = 3
@@ -490,10 +499,14 @@ class Trendlines(Indicator):
     def held(self) -> int:
         """Consecutive bars closed past a line, in the `broke` direction.
 
-        0 when there is no break. The desk's own measurement of the primitive
-        this feeds: of 6,008 displacements at 4h, 889 closed past the 20-bar
-        high and only 515 **held** - so the holding is where most of a break
-        goes, and reporting the crossing alone overstates it by two thirds.
+        0 when there is no break. The desk's own measurement of the nearest
+        primitive, in `order-block-zones.md` in research/docs: of 6,008
+        displacements at 4h, 889 closed past the 20-bar high (14.8%) and only
+        515 **held** (8.6%). So two in five crossings do not hold, and a
+        reading that counted the crossing alone would be 1.7 times the number
+        that matters. Measured on a 20-bar high after a displacement rather
+        than on a trendline, which is why it is the primitive this feeds and
+        not this.
         """
         return self._held
 
@@ -531,7 +544,7 @@ class Trendlines(Indicator):
 
 
 # ==========================================================================
-# from regression.py
+# the regression channel
 # ==========================================================================
 
 NAN = float("nan")
@@ -730,10 +743,11 @@ def fit(bars: Sequence[Ohlc], span: int = SPAN) -> Channel | None:
 def slope_vol(channel: Channel | None, unit: float) -> float:
     """The slope in volatility units per bar, given one unit of price.
 
-    `unit` is whatever the caller already uses as one volatility unit - the
-    strategies pass `price_distance(spot, vol_bps, 1.0)` and `atr` is here for
-    callers that have bars but no signal. NaN when there is no scale to divide
-    by, which is the honest answer and not zero: zero would read as "flat".
+    `unit` is whatever the caller already uses as one volatility unit -
+    `risk.sizing.price_distance(spot, vol_bps, 1.0)` is the one a strategy
+    would have, and `atr` is here for callers that have bars but no signal. NaN
+    when there is no scale to divide by, which is the honest answer and not
+    zero: zero would read as "flat".
     """
     if channel is None or not unit > 0 or math.isnan(unit):
         return NAN
@@ -880,8 +894,11 @@ def card_line(got: dict[str, float]) -> list[str]:
     """The trend line for an alert card, or nothing when there is no fit.
 
     A list rather than a string, and empty rather than a placeholder, so this
-    composes with the other cards in `_announce_fill` - every one of them
-    contributes zero or more lines and the caller drops the empties.
+    composes with the other card lines - `levels.card_line` is the other one -
+    every one of them contributing zero or more lines and the caller dropping
+    the empties. The caller that did the composing was `_announce_fill`, which
+    retired to `research/retire/strategies/service.py`; nothing in the live
+    tree calls either `card_line` yet.
     """
     slope = got.get("regression_slope_vol")
     r2 = got.get("regression_r2")
@@ -921,9 +938,16 @@ VR_WINDOW = 200
 
 #: Observations per unit of horizon, at least.
 #:
-#: **Measured, not chosen.** Even with Lo and MacKinlay's unbiased estimator a
-#: residual downward bias remains, and it scales as roughly `q/n`. Over 20
-#: random walks, where the answer is 1:
+#: **Measured, not chosen - but the measurement was never written up.** These
+#: figures appear nowhere in `research/docs` or `docs`; the only thing outside
+#: this comment that pins any of them is
+#: `test_a_sweep_beyond_the_usable_range_returns_nothing`, which records the
+#: 0.908 at a `q/n` of 0.1 on one series. Treat the table as a note of a
+#: simulation nobody can re-run from here.
+#:
+#: Even with Lo and MacKinlay's unbiased estimator a residual downward bias
+#: remains, and it scales as roughly `q/n`. Over 20 random walks, where the
+#: answer is 1:
 #:
 #: | q/n | mean VR |
 #: |---|---|
@@ -976,6 +1000,9 @@ class VarianceRatio(Indicator):
     construction and a trend does not". A companion measurement put the traded
     ratio at **0.980 falling to 0.924 across horizons against 1.000 on an
     i.i.d. control**, so the three states are things the data distinguishes.
+    That figure is carried in `statespace/switching.py`'s own docstring and
+    nowhere in `research/docs`, so it is a sibling's note rather than a
+    write-up anybody can check.
 
     What was missing was anything that computed it. The switching member
     infers the regime through a mixture; this reports the statistic.
@@ -1084,7 +1111,6 @@ class VarianceRatio(Indicator):
         if horizon < 2 or n < horizon * VR_LEAST:
             return None
         mean = sum(values) / n
-        # The one-period variance, on `n - 1` as usual.
         one = sum((v - mean) ** 2 for v in values) / (n - 1)
         if one <= 0.0:
             return None
@@ -1093,7 +1119,9 @@ class VarianceRatio(Indicator):
         # correction is not cosmetic. The naive version - a sample variance of
         # the overlapping sums divided by `q` times the one-period variance -
         # reads **0.440 at q = 20 on a 200-observation random walk**, where the
-        # answer is 1. It would be reported as strong mean reversion and it is
+        # answer is 1 - the figure
+        # `test_a_sweep_beyond_the_usable_range_returns_nothing` records.
+        # It would be reported as strong mean reversion and it is
         # the overlap, which is the artefact this desk already has on record
         # from permutation nulls on overlapping windows.
         #

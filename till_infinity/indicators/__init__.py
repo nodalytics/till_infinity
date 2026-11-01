@@ -9,8 +9,9 @@ this package, which is the whole reason it exists as a package.
 `statespace` was required to import nothing outside itself, so that it stayed
 extractable in one move. The rule was honoured the only way it could be: by
 **vendoring**. `statespace/accruing.py` held a field-for-field copy of FOCuS,
-identical to `strategies/focus.py` down to the threshold, and the drift between
-them was caught by a *persistence collision* rather than by review - the
+identical down to the threshold to the `Focus` that now lives in
+`changepoint.py`, and the drift between them was caught by a *persistence
+collision* rather than by review - the
 registry keys state on module basename and class name (`utils/codec.py`), so
 two modules called `focus` holding two classes called `Focus` resolved to one
 key and one silently shadowed the other.
@@ -44,12 +45,12 @@ appends a value and then subtracts the one it just appended. Both are pinned by
 tests, so an upstream fix shows up as a failure rather than as a silent change
 of meaning.
 
-**One of ours is an exact duplicate.** `regression.fit`'s slope and `r2` agree
-with `trend.LinearRegression` to 1e-9, so prefer the framework's for the fit.
-What `Channel` adds is the bands, `slope_vol` and the vol-scaled readings, and
-that is the part worth keeping.
+**One of ours is an exact duplicate.** `trend.py`'s own `fit` returns a slope
+and `r2` that agree with Nautilus's `trend.LinearRegression` to 1e-9, so prefer
+the framework's for the fit. What `Channel` adds is the bands, `slope_vol` and
+the vol-scaled readings, and that is the part worth keeping.
 
-**One is the same indicator with a different edge.** `regression.atr` and
+**One is the same indicator with a different edge.** `trend.py`'s own `atr` and
 `volatility.AverageTrueRange(n, SIMPLE)` differ by about 0.015%, which is a
 window convention. Replaceable - but the swap changes every number measured on
 the old one, so it is a re-measurement and not a refactor.
@@ -110,32 +111,30 @@ everywhere else.
 
 ## What is here
 
+Seven modules. The names a config or a discovery sweep uses to ask for one
+detector are not these - they are the keys of `BAR_DETECTORS`, `TICK_DETECTORS`
+and `FRAMEWORK` below, and several of them live in the same module.
+
 | module | what it answers | fed by |
 |---|---|---|
-| `changepoint` | has the regime changed, and how long has this one held | bars |
-| `cusum` | how far has price run since the last event | bars |
-| `focus` | of every place a change could have started, the best evidence | bars |
-| `trend` | is this trending through here, or ranging inside it | bars |
-| `variance_ratio` | a walk, a trend or reverting - with a null | bars |
-| `speeds` | three EWMAs per feed, and whether they agree | bars, keyed |
-| `displacement` | where the last leg came from | bars |
-| `gaps` | is that hole still there | bars |
-| `trendlines` | what lines the pivots make, top and bottom, and breaks | bars |
-| `ticks` | who is moving, from trades or from quote revisions | ticks |
+| `bars` | which float a bar is, and what scales it | bars, ticks |
+| `changepoint` | has the regime changed, and where did it start | bars |
+| `momentum` | how far has price run, do the speeds agree, who is moving | bars, ticks |
+| `trend` | trending or ranging, a walk or not, and on what line | bars, functions |
+| `levels` | which prices are defended, where the leg came from, is the hole still there | bars |
+| `candles` | did this bar reject a price | bars, functions |
 | `spread` | what will this cost, over a rolling window | quotes |
-| `candles` | did this bar reject a price | functions |
-| `impulse` | how far and how fast, over a window | functions |
-| `regression` | what line is price on | functions |
 
-`candles`, `impulse` and `regression` stay as functions over a sequence of
-bars. An `Indicator` is for state the engine feeds; a shape test over two bars
-has no state, and a window fit called with an explicit list is clearer than one
-that reads a window it also maintains. `displacement` and `gaps` are the
-incremental forms of what `impulse` computes in a batch, and exist because the
-live versions of those two questions need a causal answer: a gap list holding
-only *unfilled* gaps is lookahead the moment it is read as of a time before the
-fill was known, which is a mistake this desk has already paid +0.50R a trade
-for.
+Some of this is functions over a sequence of bars rather than an `Indicator`:
+`candles`' shape tests, `trend`'s `ratio`, `fit` and `atr`, and `levels`'
+`gaps` and `displacement`. An `Indicator` is for state the engine feeds; a
+shape test over two bars has no state, and a window fit called with an explicit
+list is clearer than one that reads a window it also maintains. The
+`Displacement` and `Gaps` indicators are the incremental forms of those last
+two, and exist because the live versions of those questions need a causal
+answer: a gap list holding only *unfilled* gaps is lookahead the moment it is
+read as of a time before the fill was known, which is a mistake this desk has
+already paid +0.50R a trade for.
 
 ## Speed
 

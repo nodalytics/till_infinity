@@ -32,6 +32,8 @@ def test_the_observed_case_does_not_reproduce():
 
 
 def test_a_matching_mix_reproduces():
+    """The positive control. A check that never says yes cannot be used to
+    clear a replay, and a harness nobody can clear gets switched off."""
     replayed = fingerprint(closes({"hold": 60, "stop": 25, "target": 15}))
     live = fingerprint(closes({"hold": 55, "stop": 28, "target": 17}))
 
@@ -82,7 +84,7 @@ def test_an_exit_kind_the_replay_cannot_produce_is_structural():
 
 
 def test_a_missing_exit_kind_is_counted_not_folded_in():
-    """`exit_kind` is simply absent on 8% of `sweep-aware` closes and 20% of
+    """`exit_kind` is absent outright on 8% of `sweep-aware` closes and 20% of
     `fade-to-value`. That is a liveness problem in the field this check depends
     on, and treating unknown as a fourth category would hide it."""
     got = fingerprint(

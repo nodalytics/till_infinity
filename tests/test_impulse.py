@@ -1,4 +1,25 @@
-"""Displacement, imbalance, and the ways a lurch can be mis-read."""
+"""Reading a lurch after the fact, with the three sign and causality traps shut.
+
+`displacement` and `gaps` describe a move that has already happened: how far
+price travelled, how fast, how long ago, and what unfilled holes it left. The
+readings are cheap and the ways of getting them wrong are all silent.
+
+* **An unsigned reading.** `efficiency` went in without a sign and this
+  repo's note on it says the obvious way to trade it would have had the
+  direction backwards. A magnitude with no direction is a number that looks
+  usable and points nowhere.
+* **A leg read out of order.** Up and then back down is a *down* leg, because
+  the high came before the low. Taking the extremes without their order makes
+  the move that got price here into whichever one was larger.
+* **A gap list that only holds unfilled gaps.** `open-gap-filters-are-lookahead`
+  is the measurement: read as of a time before the fill was known, that list
+  is lookahead, and used as a bias it read +0.50R a trade - which was a
+  measurement of its own lookahead and nothing else.
+
+Everything is divided by a volatility unit, and a reading with no unit returns
+nothing rather than a price-unit number under a volatility-unit name. One
+journal column in two scales is the failure this desk keeps rediscovering.
+"""
 
 from __future__ import annotations
 
@@ -69,6 +90,9 @@ def test_an_older_leg_reports_its_age():
 
 
 def test_a_window_with_nothing_in_it_has_no_leg():
+    """NaN and not zero. A zero displacement reads as "price went nowhere",
+    which is a measurement; this is "there was nothing to measure", and the
+    two take opposite actions downstream."""
     move, took, age = displacement(flat(5))
     assert math.isnan(move)
     assert (took, age) == (0, 0)
@@ -117,6 +141,12 @@ def test_a_gap_is_checked_against_the_whole_rest_of_the_window():
 
 
 def test_tick_sized_gaps_are_dropped_when_there_is_a_scale():
+    """A one-tick hole between two bars is the quoting grid, not an imbalance.
+
+    Without a scale every such hole counts, so the gap count measures the tick
+    size of the instrument rather than anything about the market - and the
+    count would then be incomparable between gold and a currency.
+    """
     tiny = bars([(10, 11.0), (12, 16), (11.01, 18)])
     assert len(gaps(tiny)) == 1, "no scale means every gap counts"
     # One unit is 10.0, so the 0.01 gap is far under MIN_GAP_VOL.

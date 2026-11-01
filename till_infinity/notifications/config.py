@@ -1,8 +1,8 @@
 """Credentials, channels and delivery settings.
 
 Secrets are read from the environment and never written anywhere - not to the
-store, not to a log line, not to `notify targets`, which prints a masked
-address at most.
+store and not to a log line. `Channel.masked` is what anything printing a
+destination goes through, and it shows a host and a four-character tail.
 
 Each provider takes a *list* of destinations, because one bot posts to many
 chats and a server has a webhook per channel:

@@ -13,7 +13,10 @@ import math
 from research.harness.implied_floor import cost_fraction, floor
 
 
-def test_half_the_spread_over_mark():
+def test_a_round_trip_costs_half_the_spread_and_not_the_whole_one():
+    """Half, because the forecast is compared against `mark_iv`, which already
+    sits in the middle of the book. Charging the full spread would double the
+    floor and refuse forecasts that do pay."""
     # bid 0.0120, ask 0.0126 -> half-spread 0.0003, mark 0.0123
     got = cost_fraction(0.0120, 0.0126, 0.0123)
     assert got is not None
@@ -48,7 +51,15 @@ def test_an_empty_surface_does_not_divide_by_zero():
     assert math.isnan(got["median_cost"])
 
 
-def test_the_floor_reports_a_median_and_a_count():
+def test_the_count_is_the_rows_that_priced_and_not_the_rows_read():
+    """A surface arrives with holes in it - an option quoted one side only, or
+    not at all - and a floor computed over three rows when two of them priced
+    is a floor diluted by the rows that said nothing.
+
+    Both rows below cost the same fraction by construction, 0.001/0.011, so
+    the median is exact rather than merely positive: the old assertion was
+    `median_cost > 0`, which any of the three rows would have satisfied.
+    """
     rows = [
         {"bid_price": 0.010, "ask_price": 0.012, "mark_price": 0.011},
         {"bid_price": 0.020, "ask_price": 0.024, "mark_price": 0.022},
@@ -56,7 +67,7 @@ def test_the_floor_reports_a_median_and_a_count():
     ]
     got = floor(rows)
     assert got["n"] == 2
-    assert got["median_cost"] > 0
+    assert math.isclose(got["median_cost"], 0.001 / 0.011, rel_tol=1e-9)
 
 
 def test_volatility_points_use_mark_iv_and_not_a_bare_hundred():
@@ -107,7 +118,15 @@ def test_an_empty_string_is_skipped_not_crashed_on():
     assert floor(rows)["n"] == 0
 
 
-def test_the_p90_is_at_least_the_median():
+def test_the_p90_is_the_tail_of_the_surface_and_not_its_middle():
+    """The floor is quoted as both, because a forecast has to pay on the
+    options it will actually be traded on - and the worst-quoted strike is
+    where an implied-volatility edge looks largest.
+
+    The three rows cost 0.0099, 0.0476 and 0.3333 of mark. So the median is
+    the middle row and the p90 is the worst one, seven times it, and asserting
+    only `p90 >= median` would hold if p90 were silently the median.
+    """
     rows = [
         {"bid_price": 0.0100, "ask_price": 0.0102, "mark_price": 0.0101},
         {"bid_price": 0.0100, "ask_price": 0.0110, "mark_price": 0.0105},
@@ -115,3 +134,5 @@ def test_the_p90_is_at_least_the_median():
     ]
     got = floor(rows)
     assert got["p90_cost"] >= got["median_cost"]
+    assert math.isclose(got["median_cost"], 0.0005 / 0.0105, rel_tol=1e-9)
+    assert math.isclose(got["p90_cost"], 0.0050 / 0.0150, rel_tol=1e-9)

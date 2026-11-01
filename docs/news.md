@@ -4,6 +4,13 @@
 around them - the event-proximity context a vol or regime model needs to know
 *why* a price moved.
 
+**No node registers it.** The client, the factory, the sources and the store are
+all written and tested, and nothing in `node/` adds them, so a running desk
+collects no news and `.data/news/news.db` is whatever the retired collector last
+left there. Said here rather than left to be discovered, because a document that
+describes a working feed is how a desk ends up measuring against a calendar it
+is not reading.
+
 **It is a Nautilus data adapter and not a service, and the reason is backtest
 parity.** A `NewsDataClient` polls the sources into its own SQLite store and
 publishes `CalendarEvent` on the engine's bus; its `_request` serves that store
@@ -118,7 +125,7 @@ async with SqliteStore(Settings.from_env().database) as store:
 
 Publishers tag articles `VENUE:TICKER` - 641 distinct strings across 3,058
 articles, and none of them the feed names the rest of this project uses.
-[`news/symbols.py`](../till_infinity/news/symbols.py) maps them onto feeds,
+[`news/symbols.py`](../research/retire/strategies/venues/symbols.py) maps them onto feeds,
 building its table from the symbols `prices` already collects rather than from
 a second hand-written list: `prices.config` already knows `BTCUSD` on Bitstamp
 and `BTC-USD` on Yahoo are both `btc`, because it had to in order to collect
@@ -150,7 +157,7 @@ to `usdjpy` because both are dollar pairs would invent a relationship, and
 `EURJPY` is not `eurusd` however much of the alphabet they share.
 
 This is what lets a headline **wake an agent** rather than merely be readable
-once one is awake. See [agents.md](agents.md), "News can wake the analyst".
+once one is awake. See [agents.md](../research/retire/agents/agents.md), "News can wake the analyst".
 
 ## Environment
 

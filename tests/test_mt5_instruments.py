@@ -143,7 +143,11 @@ def test_the_provider_opens_its_transport_before_using_it():
 # ------------------------------------------------------------------- the split
 
 
-def test_a_currency_pair_is_a_currency_pair():
+def test_a_real_fx_pair_keeps_both_its_currencies():
+    """The control for the split. EURUSD is the one symbol here that genuinely
+    has a base and a quote, so it is what says the fix narrowed the fallback
+    rather than removing it: an index losing its invented base is only an
+    improvement if a pair keeps its real one."""
     instrument = one("EURUSD")
     assert isinstance(instrument, CurrencyPair)
     assert str(instrument.base_currency) == "EUR"

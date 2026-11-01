@@ -23,9 +23,10 @@ and saying neither fails when the indicator is built rather than inside a
 handler on a live feed.
 
 `unit_from=Reading.RANGE` is the one with evidence behind it: the bar range
-beats the close-to-close estimator as a volatility driver by a ratio of 0.648
-within strata on FX and on 371 of 392 equities, and the advantage grows as the
-window shortens - which is the regime a one-bar scale is in.
+beats the close-to-close estimator as a volatility driver by a within-strata
+ratio of 0.648 on twenty FX feeds and 0.667 on 371 of 392 equities, and the
+advantage grows as the window shortens - which is the regime a one-bar scale is
+in. Measured in `candle-screen.md` in research/docs.
 """
 
 from __future__ import annotations

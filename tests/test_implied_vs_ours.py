@@ -12,6 +12,7 @@ import numpy as np
 
 from research.harness.implied_vs_ours import (
     MIN_HORIZON_BARS,
+    MIN_PAIRS,
     MONEYNESS_BAND,
     NOTHING_SCORED,
     annualise,
@@ -40,15 +41,23 @@ def test_an_expiry_shorter_than_one_bar_is_refused():
     assert horizon_bars(expiry=2_030.0, at=2_000.0, bar_seconds=60.0) is None
 
 
-def test_the_horizon_is_in_bars():
+def test_the_horizon_is_in_bars_and_not_in_seconds():
+    """Everything downstream indexes a bar array with it, so seconds would
+    read as 7,200 bars of a 400-bar series - which `realised_vol` answers with
+    `nan` rather than with an error."""
     assert horizon_bars(expiry=2_000.0 + 2 * HOUR, at=2_000.0, bar_seconds=HOUR) == 2
 
 
-def test_a_nonsense_bar_length_is_refused():
+def test_a_bar_length_of_zero_is_refused_rather_than_dividing():
+    """It arrives from a config, and the division is the next line."""
     assert horizon_bars(expiry=2_000.0 + HOUR, at=2_000.0, bar_seconds=0.0) is None
 
 
 def test_annualising_scales_with_the_square_root_of_time():
+    """`mark_iv` is quoted annualised and ours is per bar, so this conversion
+    is the only thing making the two comparable. Linear instead of square-root
+    would put a 5-minute forecast out by a factor of 12 against the quote it
+    is being judged on."""
     a = annualise(0.01, 60.0)
     b = annualise(0.01, 240.0)
     # Four times the bar length is half the annualised sigma for the same per-bar value.
@@ -56,16 +65,26 @@ def test_annualising_scales_with_the_square_root_of_time():
 
 
 def test_annualising_a_non_positive_sigma_is_nan():
+    """A zero sigma is a dead stretch of the series, not a perfect forecast,
+    and QLIKE on it is unbounded."""
     assert np.isnan(annualise(0.0, 60.0))
     assert np.isnan(annualise(0.01, 0.0))
 
 
 def test_realised_vol_of_a_flat_series_is_zero():
+    """The control. A `nan` here instead would make every refusal below
+    indistinguishable from a working estimator."""
     out = realised_vol(np.ones(100), bars=10)
     assert np.nanmax(out) == 0.0
 
 
 def test_realised_vol_recovers_a_known_sigma():
+    """The estimator, against a path whose sigma is known by construction.
+
+    `rtol=0.15` is the sampling error on a 200-bar window, not a tolerance
+    chosen to make this pass: the standard error of a volatility estimate over
+    n bars is about `1/sqrt(2n)`, which is 5% here, so 15% is three of them.
+    """
     rng = np.random.default_rng(7)
     sigma = 0.01
     closes = 100.0 * np.exp(np.cumsum(rng.normal(0.0, sigma, 20_000)))
@@ -74,6 +93,8 @@ def test_realised_vol_recovers_a_known_sigma():
 
 
 def test_realised_vol_is_nan_when_the_window_exceeds_the_data():
+    """Not zero, which is what a partial window silently computes - and a zero
+    realised volatility makes any forecast look infinitely bad."""
     out = realised_vol(np.ones(5), bars=50)
     assert np.isnan(out).all()
 
@@ -93,6 +114,8 @@ def test_realised_vol_is_aligned_to_the_windows_start():
 
 
 def test_qlike_is_zero_for_a_perfect_forecast():
+    """Which fixes the scale: the two QLIKE numbers in the write-up are read
+    as distances from zero, not as a ranking alone."""
     a = np.full(500, 0.01)
     assert np.isclose(qlike(a, a), 0.0)
 
@@ -205,6 +228,10 @@ def test_the_underlying_series_is_one_price_per_instant_sorted():
 
 
 def test_the_underlying_series_separates_currencies():
+    """One recording holds BTC and ETH, and the index paths are nothing like
+    each other. Pooled, a BTC forecast would be scored against a path that is
+    half ETH - and the result would look like a forecast failure rather than a
+    join failure."""
     rows = [
         _quote(100.0, 9_999.0, 83_900.0, 40.0, underlying="BTC"),
         _quote(100.0, 9_999.0, 2_100.0, 55.0, underlying="ETH"),
@@ -250,15 +277,46 @@ def test_compare_scores_a_window_that_closed_inside_the_recording():
     assert out["qlike_mark"] > out["qlike_ours"], "a 400% quote must lose to a 20% path"
 
 
-def test_compare_reports_nan_rather_than_a_number_on_a_thin_sample():
-    rows = [
-        _quote(
-            at=float(i * 300), expiry=float(i * 300 + 600), underlying_price=84_000.0, mark_iv=40.0
-        )
-        for i in range(5)
-    ]
-    out = compare(rows)
-    assert np.isnan(out["qlike_mark"]) or out["scored"] < 200
+def test_a_thin_sample_reports_nan_rather_than_a_number():
+    """`MIN_PAIRS` is 200, and the number below it is the one that would be
+    believed. **A mean QLIKE over six windows is a number, and it is the
+    number somebody would put in the write-up** - the whole point of the
+    phase-0 gate is that the verdict waits for the sample.
+
+    Two ways to be thin, because they are rejected in different places. The
+    first set is rejected before scoring, for windows under
+    `MIN_HORIZON_BARS`; the second scores six windows and is then refused by
+    `qlike` itself. The second case is the one the old assertion was written
+    for and did not reach: it read
+    `isnan(qlike_mark) or scored < 200`, and `scored < 200` is true of any
+    five-row fixture, so the `nan` was never required of anything.
+    """
+    rejected = compare(
+        [
+            _quote(
+                at=float(i * 300),
+                expiry=float(i * 300 + 600),
+                underlying_price=84_000.0,
+                mark_iv=40.0,
+            )
+            for i in range(5)
+        ]
+    )
+    assert rejected["scored"] == 0
+    assert np.isnan(rejected["qlike_mark"])
+
+    rng = np.random.default_rng(13)
+    step, n = 300.0, 40
+    price = 84_000.0 * np.exp(np.cumsum(rng.normal(0.0, 0.0004, n)))
+    scored_but_thin = compare(
+        [
+            _quote(i * step, i * step + (MIN_HORIZON_BARS + 5) * step, price[i], 40.0)
+            for i in range(n)
+        ]
+    )
+    assert 0 < scored_but_thin["scored"] < MIN_PAIRS
+    assert np.isnan(scored_but_thin["qlike_mark"])
+    assert np.isnan(scored_but_thin["qlike_ours"])
 
 
 def test_a_far_out_of_the_money_strike_is_not_scored():
@@ -288,8 +346,45 @@ def test_a_far_out_of_the_money_strike_is_not_scored():
     assert both["off_the_money"] > 100
 
 
-def test_the_moneyness_band_is_a_fraction_of_spot():
+def test_the_moneyness_band_is_read_as_a_fraction_and_not_as_a_percentage():
+    """A units error on this constant is silent and total.
+
+    `compare` asks `abs(strike / spot - 1) > MONEYNESS_BAND`, so the shipped
+    0.05 means five per cent. Written as `5` - which is how the same quantity
+    is printed, `f"{100 * MONEYNESS_BAND:.0f}%"` - every strike on the board
+    is inside the band and the wing filter is gone, taking the 173.6%-against-
+    41.4% gap in `test_a_far_out_of_the_money_strike_is_not_scored` with it.
+
+    Asserted at the boundary rather than as `0 < band < 1`, which held for
+    any plausible-looking fraction and for none of the ways to get it wrong.
+    """
     assert 0.0 < MONEYNESS_BAND < 1.0
+
+    rng = np.random.default_rng(17)
+    step, n = 300.0, 200
+    price = 84_000.0 * np.exp(np.cumsum(rng.normal(0.0, 0.0004, n)))
+
+    def band(multiple: float) -> dict:
+        return compare(
+            [
+                _quote(
+                    i * step,
+                    i * step + 20 * step,
+                    price[i],
+                    40.0,
+                    strike=price[i] * (1.0 + MONEYNESS_BAND * multiple),
+                )
+                for i in range(n)
+            ]
+        )
+
+    inside = band(0.5)
+    assert inside["scored"] > 100
+    assert inside["off_the_money"] == 0
+
+    outside = band(2.0)
+    assert outside["scored"] == 0
+    assert outside["off_the_money"] > 100
 
 
 def test_a_window_too_short_to_measure_is_not_scored():

@@ -70,6 +70,12 @@ def test_every_adapter_this_install_ships_is_available():
         assert expected in found, f"{expected} missing from {found}"
 
 
+#: How `nautilus_trader.live.node_builder` calls a factory: by keyword, all
+#: six, for both the data and the execution side. Read off the framework
+#: rather than remembered, which is why the names are here and not inlined.
+CREATE_KEYWORDS = ("loop", "name", "config", "msgbus", "cache", "clock")
+
+
 @pytest.mark.parametrize("name", ["binance", "bybit", "kraken", "okx", "deribit"])
 def test_a_shipped_adapter_resolves_by_convention(name):
     """**The convention this whole resolver rests on.** Each adapter exports
@@ -78,15 +84,27 @@ def test_a_shipped_adapter_resolves_by_convention(name):
 
     If `nautilus_trader` ever breaks that naming, this fails here rather than
     at a deploy - which is the only reason to test somebody else's package.
+
+    The signature is bound rather than asked about, because `node_builder`
+    does not raise when a factory will not serve: it logs "No
+    `LiveDataClientFactory` registered" and carries on, so the venue ends up
+    with no client on a node that started cleanly.
     """
+    import inspect
+
     data, orders = venues.factories(name)
     assert data.__name__.endswith("LiveDataClientFactory")
     assert orders.__name__.endswith("LiveExecClientFactory")
-    assert hasattr(data, "create")
-    assert hasattr(orders, "create")
+    for factory in (data, orders):
+        bound = inspect.signature(factory.create).bind(**dict.fromkeys(CREATE_KEYWORDS, object()))
+        assert tuple(bound.arguments) == CREATE_KEYWORDS, factory.__name__
 
 
 def test_our_own_adapter_resolves_too():
+    """Named exactly rather than by suffix, because ours is the one adapter
+    whose naming is a choice we made. The resolver has a single code path, so
+    an MT5 factory called something else would be found by nothing and the
+    convention test above would still pass."""
     data, orders = venues.factories("mt5")
     assert data.__name__ == "MT5LiveDataClientFactory"
     assert orders.__name__ == "MT5LiveExecClientFactory"
@@ -324,21 +342,38 @@ def test_one_symbol_on_two_venues_is_two_strategy_ids(monkeypatch, loop):
 
     built, _ = desks.build_all()
     assert {str(strategy.id) for strategy in built} == {
-        "EdgeEntry-EURUSD-E270-MT5",
-        "EdgeEntry-EURUSD-E270-DERIV",
+        "SurpriseEdge-EURUSD-E270-MT5",
+        "SurpriseEdge-EURUSD-E270-DERIV",
     }
 
 
 def test_a_single_venue_tag_is_unchanged(monkeypatch):
     """The other half of that asymmetry, and the reason for it: a tag that
     changed between runs would orphan every open order, which is the failure
-    `_tag`'s own docstring was written to prevent."""
+    `_tag`'s own docstring was written to prevent.
+
+    **This test has fired once, on 2026-11-01, and the expected value was
+    changed rather than the code.** That is the opposite of what it is for, so
+    the argument is written down here. The class name is half the tag, and
+    `node/desks.py` used to build a bare `EdgeEntry` - a strategy with no
+    decision mixin in front of it, whose `decide` raised `NotImplementedError`
+    on every proposal it was sent. Building the composed leaf instead renamed
+    every single-venue desk, and that was safe **exactly once**: nothing had
+    ever been placed under a Nautilus `strategy_id` on this desk, because three
+    independent things stopped it - no decision on the built class, no size on
+    any intent, and for eleven days no console script to start the process at
+    all. There was nothing open to orphan.
+
+    It will not be safe a second time. If this test fails again it is reporting
+    a migration: every resting order has to be drained before the deploy that
+    carries the rename, and the expected value is the last thing to change.
+    """
     monkeypatch.setenv("TRADING_VENUES", "MT5")
     monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD")
     monkeypatch.setenv("TRADING_ENTRIES", "edge")
 
     built, _ = desks.build_all()
-    assert [str(strategy.id) for strategy in built] == ["EdgeEntry-EURUSD-E270"]
+    assert [str(strategy.id) for strategy in built] == ["SurpriseEdge-EURUSD-E270"]
 
 
 # ------------------------------------------------ two accounts on one broker

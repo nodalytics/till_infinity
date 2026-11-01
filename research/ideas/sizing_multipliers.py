@@ -224,7 +224,15 @@ def _agrees(made: Profile, features: dict, settings, values: dict) -> None:
     was = os.environ.get("SIZING_MULTIPLIERS")
     os.environ["SIZING_MULTIPLIERS"] = "all"
     try:
-        theirs = made.multipliers(features, "boom_500_index", (), 9_500.0, 10_000.0, "5m", "sell")
+        theirs = made.multipliers(
+            features,
+            "boom_500_index",
+            book=(),
+            equity=9_500.0,
+            peak=10_000.0,
+            interval="5m",
+            side="sell",
+        )
     finally:
         if was is None:
             os.environ.pop("SIZING_MULTIPLIERS", None)

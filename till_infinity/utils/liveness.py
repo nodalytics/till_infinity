@@ -2,22 +2,25 @@
 
 ## Why this exists
 
-Across the last 20,000 production `structures` outcomes, `run_vol` and `pivot`
-are **identically zero on every row**. They are published on every level call,
-journalled on every outcome, and carried into the models that consume those
-features. A model weighting a constant learns nothing from it and spends
-capacity doing so; a research cut on it finds nothing and cannot say whether the
-effect is absent or the column is dead.
+Across 20,000 production outcomes of the retired structures service, `run_vol`
+and `pivot` were **identically zero on every row** - measured in
+`research/docs/structures-service.md` and `research/docs/structures-engine.md`.
+They were published on every level call, journalled on every outcome, and
+carried into the models that consumed those features. A model weighting a
+constant learns nothing from it and spends capacity doing so; a research cut on
+it finds nothing and cannot say whether the effect is absent or the column is
+dead.
 
-Neither is new. Both have been zero for as long as the journal reaches, and
+Neither was new. Both had been zero for as long as the journal reached, and
 nothing noticed until somebody cut by them by hand.
 
 The same fault, one step earlier, nearly cost a month: a collector for option
 gamma was being planned on Yahoo's `openInterest`, which returns **zero on 366
 of 366 SPY contracts** while `volume` on the same chain reads 1,587,783.
-`prices/options.py` already names the failure mode - *"not a number nothing
-reads, but a number read as more than it is"* - and it happened anyway, because
-nothing systematically asks.
+The retired prices service already named the failure mode - *"not a number
+nothing reads, but a number read as more than it is"*, in what is now
+`research/retire/prices/options.py` - and it happened anyway, because nothing
+systematically asks.
 
 This asks. One question, mechanically: **does it vary?**
 
@@ -52,9 +55,14 @@ precisely the failure it exists to prevent.
 
 So a field is only called dead when it has been constant **across saves**. One
 window says "it did not move today"; a value that is identical at every save for
-days is a field that has stopped. `Watcher.liveness_tally` keeps the previous
-reading per field and reports how many consecutive saves it has been stuck for,
-and `SLOW_SAVES` is the line between the two.
+days is a field that has stopped. `stuck` keeps the previous reading per field
+and reports how many consecutive saves it has been stuck for, and `SLOW_SAVES`
+is the line between the two.
+
+**Nothing in the ported desk calls `stuck` yet.** The caller was the structures
+service's own `Watcher.liveness_tally`, which retired with it, so the
+across-saves half of this module is machinery without a user and only
+`assert_alive` is reached - from `strata.compare`.
 
 ## What it deliberately ignores
 
@@ -183,8 +191,8 @@ def report(
     """The dead and the dying, as a line somebody will actually read.
 
     Empty when everything varies, so it can be logged unconditionally without
-    becoming noise - the tallies in `structures.service` take the same line, and
-    for the same reason: a check nobody reads settles nothing.
+    becoming noise - the retired structures service's tallies took the same
+    line, and for the same reason: a check nobody reads settles nothing.
     """
     got = survey(rows, within)
     if within is not None:

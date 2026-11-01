@@ -289,8 +289,11 @@ class MT5DataClient(LiveMarketDataClient):
         or a constant 5000, so there is no trade tick to build. `flags` is a
         bitfield with an undocumented bit 128, and a one-sided revision is
         `flags in (4, 130)` rather than `(2, 4)` - reading it wrongly
-        under-reports one-sidedness as 10.0% where the truth is 22.8%. Both
-        sides are always published, so no flag is needed to build the quote.
+        under-reports one-sidedness as 10.0% where the truth is 22.8%.
+        Measured on the terminal and carried as an established claim in
+        `node.closed`: flags 4 (ask only) 10.0%, 130 (bid only) 12.8%, 134
+        (both) 77.2%. Both sides are always published, so no flag is needed to
+        build the quote.
         """
         symbol = instrument_id.symbol.value
         bid, ask = float(row.get("bid") or 0.0), float(row.get("ask") or 0.0)

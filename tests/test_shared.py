@@ -1,4 +1,27 @@
-"""What every service needs and none of them owns."""
+"""The two things six services each wrote their own copy of.
+
+**Six copies that agree today are six that can disagree tomorrow**, and both
+of these disagreed in ways that cost real time.
+
+Reading a number out of the environment: given `SOMETHING=abc` where a number
+was wanted, `agents`, `structures` and `trading` caught the `ValueError` and
+used the default silently, while `news` and `prices` did
+`float(raw) if raw else default`, which raises - and a raise at import time
+takes a service down before it starts. The same typo stopped one service and
+was invisible in another, decided by which prefix you mistyped. Neither
+behaviour leads anybody to the mistake, so the shared reader falls back *and*
+warns.
+
+Opening a SQLite file: four PRAGMA lines, copied into three stores. One of
+them, `journal_size_limit`, was missing, and `prices.db-wal` grew to 13.07 GB
+beside a 29.5 GB database on a box with 3 GB of memory. The prices service
+then died in a loop on `database is locked` - 157 failing health checks -
+while `structures` went two and a half hours without a decision.
+
+Both failures look like something else while they are happening: a setting
+that has no effect, or a collector that locks under load while its neighbour
+does not. That is what makes them worth a test rather than a convention.
+"""
 
 from __future__ import annotations
 

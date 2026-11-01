@@ -39,6 +39,9 @@ def book(**kwargs) -> Counterfactual:
 
 
 def test_a_wanted_trade_is_followed_to_its_target():
+    """The happy path, and the one that fixes the sign convention: a reward of
+    +2.0 is the 100-pip target over the 50-pip risk, so R is read off the stop
+    distance rather than off the entry price."""
     got = book()
     got.wanted(intent(), by="edge", now=0.0, hold=HOLD)
     # Fills: a buy pays the ask, so the ask has to reach the entry.
@@ -51,6 +54,9 @@ def test_a_wanted_trade_is_followed_to_its_target():
 
 
 def test_a_wanted_trade_that_stops_is_recorded_at_minus_one():
+    """Exactly -1.0 by definition, since R is denominated in the stop. A
+    stopped counterfactual recorded at its price distance instead would make
+    wide-stop strategies look like they lose less."""
     got = book()
     got.wanted(intent(), by="edge", now=0.0, hold=HOLD)
     got.observe("eurusd", 1.09980, 1.10000, now=10.0)
@@ -100,6 +106,9 @@ def test_a_timeout_is_marked_to_market_rather_than_dropped():
 
 
 def test_a_short_is_followed_on_the_other_sides():
+    """The side that gets written second and tested less. Every comparison is
+    bid-against-ask, so a short that reuses the long's sides is credited with
+    the spread twice instead of paying it twice."""
     got = book()
     got.wanted(
         intent(side=Side.SELL, entry=1.1000, stop=1.1050, target=1.0900),
@@ -137,6 +146,9 @@ def test_the_regime_is_carried_so_the_conditional_question_can_be_asked():
 
 
 def test_records_split_by_market_and_by_strategy():
+    """Both cuts, because the interesting question is the conditional one and
+    `pooled-medians-invert-subgroups` is what asking it pooled costs. An empty
+    input is an empty dict rather than an absent key."""
     rows = [
         Resolved(
             shape="untaken", feed="f", by="a", how="stop", reward=-1.0, when=0.0, market="quiet"
@@ -189,6 +201,10 @@ def test_a_stopped_trade_that_goes_nowhere_reaches_zero_and_not_a_negative():
 
 
 def test_a_shadow_tracks_the_best_it_reached_before_giving_up():
+    """From the best it saw, not the last price it was at. A stop that cost a
+    winner is only visible in the high-water mark; marking to the final quote
+    would report the same number for a trade that went nowhere and one that
+    nearly paid."""
     got = book()
     got.stopped("p1", intent(), by="edge", now=0.0, hold=HOLD)
     got.observe("eurusd", 1.10700, 1.10720, now=10.0)
@@ -201,6 +217,9 @@ def test_a_shadow_tracks_the_best_it_reached_before_giving_up():
 
 
 def test_a_shadow_can_be_forgotten_when_the_position_reopens():
+    """Idempotent on purpose. The desk calls `forget` on a reopen and on a
+    close, so a second call is a normal event and raising there would take the
+    node down for bookkeeping."""
     got = book()
     got.stopped("p1", intent(), by="edge", now=0.0, hold=HOLD)
     assert got.following == 1
@@ -210,6 +229,9 @@ def test_a_shadow_can_be_forgotten_when_the_position_reopens():
 
 
 def test_another_feeds_quote_resolves_nothing():
+    """One book follows every feed at once. A quote matched by time rather
+    than by feed would resolve a EURUSD counterfactual on a GBPUSD tick, at a
+    price that instrument never traded."""
     got = book()
     got.wanted(intent(), by="edge", now=0.0, hold=HOLD)
     got.stopped("p1", intent(), by="edge", now=0.0, hold=HOLD)

@@ -1,15 +1,19 @@
 """Breaking a result down by when it happened.
 
 **The other check that caught what DSR, PBO and SPA missed.** Six artefacts on
-this desk passed all three; surrogate reruns and an hourly breakdown are what
-exposed them. So this is not a diagnostic to run afterwards - it is one of the
-two gates worth most.
+this desk are held to have passed all three, with surrogate reruns and an
+hourly breakdown exposing them - **and that figure is unsourced**:
+`research/docs/lopez-de-prado.md` is the only deflation on record here and
+records no PBO or SPA run at all. Read it as the reason the module was written
+rather than as a measurement. So this is not a diagnostic to run afterwards -
+it is one of the two gates worth most.
 
 Why the hour specifically, measured rather than assumed:
 
 - intraday pattern lives in **volatility**, and FX peaks at 14-15 UTC at about
-  three times its quiet level. A statistic that does not control for the hour
-  is partly reading the clock.
+  three times its quiet level - `research/docs/direction-rules.md`, confirmed
+  independently in `research/docs/statespace-profile-and-legs.md`. A statistic
+  that does not control for the hour is partly reading the clock.
 - `a-pair-of-bars-needs-the-hour-of-day-null`: ordering suppresses two-bar
   statistics by 0.046 to 0.072, and **half of that is the daily cycle**. A
   generated null has none of it, which is how a generated null passes

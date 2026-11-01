@@ -15,18 +15,22 @@ nothing crashes: the container stays healthy, the bus fills, and the pipeline
 stops producing. Four hours at 11% CPU with an empty error log, across twelve
 deploys, each one restoring the same stale state and dying the same way.
 
-## Two guards, and why both
+## There were two guards, and one of them is gone
 
-[`store._schema`](store.py) is the first and the more important: it hashes the
-shape of every persisted dataclass, so a changed field invalidates the file and
-the service starts cold. Cold is slow and correct. That guard now derives its
-list by walking the package, because the version with seven hand-written names
-is what let this through - `Volatility` was not on it.
+The first and the more important was a schema hash over every persisted
+dataclass, so a changed field invalidated the file and the service started
+cold. Cold is slow and correct. It derived its list by walking the package,
+because the version with seven hand-written names is what let this through -
+`Volatility` was not on it.
 
-This module is the second. The schema stops bad state being *loaded*; this
-stops a *crash* if any ever is - a pickle that arrives by some other path, a
-schema that is itself wrong, a class the walk cannot see. Neither subsumes the
-other, and this one is cheap.
+**That guard retired with the structures store** and the ported desk has no
+equivalent: `statespace/store.py` persists counters behind a `FORMAT` number,
+which refuses a file from a newer layout but says nothing about a field added
+to a dataclass inside it. So this module is no longer the second of two.
+
+It stops a *crash* on a state that is loaded anyway - a pickle that arrives by
+some other path, a class a walk would not have seen - and it is cheap, which
+is why it stays whether or not anything upstream is checking shapes.
 """
 
 from __future__ import annotations
@@ -107,8 +111,9 @@ def _deque_bounds(cls: type) -> dict[str, int]:
 
     The bound is in the `default_factory`, not the annotation, so the only way
     to read it is to build one. Gated on the annotation first so this never
-    calls an unrelated factory - `Learned._model` builds a river pipeline, and
-    introspection has no business doing that. Cached like its neighbours.
+    calls an unrelated factory - the retired structures engine's
+    `Learned._model` built a river pipeline, and introspection has no business
+    doing that. Cached like its neighbours.
     """
     try:
         hints = typing.get_type_hints(cls)
@@ -149,12 +154,13 @@ def restore_deque(cls: type, name: str, value: Any) -> Any:
     `maxlen` would have kept had it been bounded all along.
 
     A stored deque is left exactly as it is, because pickle preserves `maxlen`
-    and the stored bound is the more trustworthy of the two: `Zma._prices` is
-    sized from the instance's `period`, so the factory's number is a placeholder
-    for a default-constructed object and not this one's bound. Forcing the
-    factory's cap onto it resized a restored window from 20 to 50. The factory
-    is therefore only a fallback, for a value that arrives carrying no bound of
-    its own - which is precisely the `list` case this exists for.
+    and the stored bound is the more trustworthy of the two: the retired
+    engine's `Zma._prices` was sized from the instance's `period`, so the
+    factory's number was a placeholder for a default-constructed object and not
+    that one's bound. Forcing the factory's cap onto it resized a restored
+    window from 20 to 50. The factory is therefore only a fallback, for a value
+    that arrives carrying no bound of its own - which is precisely the `list`
+    case this exists for.
     """
     cap = _deque_bounds(cls).get(name)
     if cap is None:

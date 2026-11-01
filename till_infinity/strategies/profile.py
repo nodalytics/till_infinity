@@ -557,9 +557,10 @@ class Profile:
 
     def risk_scale(
         self,
-        feed: str,
         features: dict[str, float],
-        positions: Sequence[object] = (),
+        feed: str,
+        *,
+        book: Sequence[tuple[str, int]] = (),
         equity: float = 0.0,
         peak: float = 0.0,
         interval: str = "",
@@ -575,18 +576,38 @@ class Profile:
 
         The product, for the callers that only need a size. `multipliers`
         returns the same values by name, for the one place that records why.
+
+        **`features` then `feed`, and everything after them by keyword.** These
+        two took their first arguments in opposite orders until 2026-11-01 -
+        this one `(feed, features)` and `multipliers` the reverse - so a call
+        written against either signature was wrong against the other, and
+        silently: both arguments are consulted with `.get` and a string has
+        none of the keys, so a swapped call sized every trade at 1.0 rather
+        than raising. `tests/test_sizing_multipliers.py` was written against
+        the wrong order and passed. The rest are keyword-only for the reason
+        `_reductions` exists: a positional list in this file has already put
+        one argument in the wrong slot.
         """
         from ..risk import scaling
 
         return scaling.combined(
-            *self.multipliers(features, feed, positions, equity, peak, interval, side).values()
+            *self.multipliers(
+                features,
+                feed,
+                book=book,
+                equity=equity,
+                peak=peak,
+                interval=interval,
+                side=side,
+            ).values()
         )
 
     def multipliers(
         self,
         features: dict,
         feed: str,
-        positions: Sequence[object] = (),
+        *,
+        book: Sequence[tuple[str, int]] = (),
         equity: float = 0.0,
         peak: float = 0.0,
         interval: str = "",
@@ -621,18 +642,16 @@ class Profile:
 
         settings = self.settings
         computed = self._reductions(
-            scaling.crowding(
-                feed,
-                # `(feed, sign)` per open position. `Position` carries the
-                # broker's symbol rather than the feed, so the caller supplies
-                # what it already knows instead of this reverse-mapping it.
-                [
-                    (str(getattr(p, "feed", "")), p.side.sign)
-                    for p in positions
-                    if getattr(p, "feed", "") and hasattr(p, "side")
-                ],
-                settings.crowding_share,
-            ),
+            # **The book arrives as `(feed, sign)` pairs, already.** This used
+            # to take position objects and dig the pairs out with
+            # `getattr(p, "feed", "")`, which is a contract only this desk's
+            # own `Position` ever satisfied. A Nautilus `Position` carries an
+            # `instrument_id` and a signed quantity and has no `feed` at all,
+            # so on the ported path the comprehension discarded every position
+            # and this read 1.0 against a full book - a multiplier that cannot
+            # fire, behind a switch that says it is off anyway.
+            # `strategies/sizes.book_of` builds the pairs now.
+            scaling.crowding(feed, book, settings.crowding_share),
             # **`ewma_tr_bps`, not `vol_bps`.** A decaying average of true range
             # forecast the next bar's movement better than every figure the desk
             # produces, at the horizon each of those was built for: against 11,797

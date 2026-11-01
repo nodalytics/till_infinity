@@ -28,17 +28,38 @@ and inert for an afternoon, and what eventually caught it was somebody reading a
 number the desk had emitted.
 
 **It recurred three times in one day after this module was written**, which is
-the more useful fact. `trading/affordable.py` shipped with no export and no
+the more useful fact. `risk/affordable.py` shipped with no export and no
 caller; `STRUCTURES_CYCLES_ACT` shipped read by nothing but its own `to_dict`;
-`trading/turning.py` shipped tested and never called from the close path. All
-three passed their own suites throughout, and none of them declared an effect -
-so this module, which exists precisely to catch them, could not. Writing the
-detector is not the same as using it, which is the same mistake one level up.
+`strategies/turning.py` shipped tested and never called from the close path.
+All three passed their own suites throughout, and none of them declared an
+effect - so this module, which exists precisely to catch them, could not.
+Writing the detector is not the same as using it, which is the same mistake one
+level up.
 
-They declare now: `structures.cycles_cap`, `trading.turn_exit` and
-`trading.unaffordable_refusal`. And `tests/test_effects.py` asserts that each
-**firing path actually reaches its declaration**, because a declaration nothing
-fires is this defect wearing a badge that says it is not.
+Two of the three declare now: `trading.turn_exit` in `strategies/turning.py`
+and `trading.unaffordable_refusal` in `risk/sizing.py`. The third,
+`structures.cycles_cap`, retired with the structures engine and declares
+nothing any more.
+
+`tests/test_effects.py` pairs the two directions by parsing the package: every
+declared effect has somewhere that fires it, and every fired effect is declared
+somewhere. **That proves a firing call is written, not that anything reaches
+it**, which is the distinction this whole module exists to make - the six
+defects above were all code that was written, correct, and reached by nothing.
+A text match cannot tell them apart; only driving the path can.
+
+Two of the five are driven: `notifications.delivered` by the bus path in
+`tests/test_notifier_actor.py`, and `trading.release_in_hold` by the gate in
+`tests/test_release_in_hold.py`, each asserting the ledger's count moved.
+`trading.turn_exit`, `trading.unaffordable_refusal` and `trading.spike_switch`
+have the written-call guarantee and no behavioural one. That is the gap, and it
+is the module's own defect one level up.
+
+The file's own history is the sharpest instance of it. It was deleted as 266
+lines when `from till_platform import effects` stopped resolving - dropped
+because an import broke, not because anything in it had stopped being true - so
+for a fortnight the module written to catch features that nothing reaches had
+no test that it does so, while this docstring claimed one.
 
 ## What this asks, and how it differs from `liveness.py`
 
@@ -105,7 +126,7 @@ class Effect:
         }
 
 
-#: Process-wide, because the services share one process and one in-process bus.
+#: Process-wide, because the whole desk is one node in one process on one bus.
 #: A plain dict rather than a lock: every write here is a single assignment or a
 #: single increment, the worst a race can cost is one lost count, and taking a
 #: lock on a hot path to protect a diagnostic would be the instrument changing

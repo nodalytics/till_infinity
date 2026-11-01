@@ -7,10 +7,17 @@ Modules never configure anything - they just do::
     log = get_logger(__name__)
     log.debug("resolved %s", symbol)
 
-The entry point (the CLI, a script, a notebook) calls :func:`setup_logging`
-once. Console output goes to stderr through rich so stdout stays clean for
-piped data; ``--log-file`` additionally writes newline-delimited JSON, which is
-what you want when a collector has been running for a week.
+An entry point - a script, a research harness, a notebook - calls
+:func:`setup_logging` once. Console output goes to stderr through rich so stdout
+stays clean for piped data; a ``log_file``, or ``TILL_LOG_FILE``, additionally
+writes newline-delimited JSON, which is what you want when something has been
+running for a week.
+
+**Nothing calls it but `tests/test_logging.py`.** The node logs through
+Nautilus's own ``LoggingConfig``, set in :mod:`till_infinity.node.live`, so what
+is left for this is the standard-library root logger that every ``get_logger``
+in the package writes to *outside* the kernel - unconfigured, which is why a
+harness that wants those records has to ask for them.
 
 Note the module name: ``import logging`` inside this package still resolves to
 the standard library, since Python 3 imports are absolute.

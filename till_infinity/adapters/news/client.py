@@ -155,8 +155,8 @@ class NewsDataClient(LiveDataClient):
         announcement at the time it was announced, then the release at its
         release time. A single row emitted at the scheduled time would carry
         the actual, which is the number everybody is waiting for - and that is
-        lookahead of the same shape as `drawing.gaps`, which emitted only the
-        gaps that went on to be filled and read +0.50R a trade as a bias.
+        lookahead of the same shape as `drawing.gaps`, which emitted only
+        *unfilled* gaps and read +0.50R a trade as a bias.
         """
         wanted = getattr(request.data_type, "type", None)
         if wanted is CalendarEvent:

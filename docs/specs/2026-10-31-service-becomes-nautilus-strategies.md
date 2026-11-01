@@ -31,10 +31,23 @@ reading the rows above:
   only caller was the CLI. It is applied in `Settings.from_env` now - not by
   the node, because `from_env` runs in six live places and a node applying a
   plan to its own instance would leave the other five on the defaults.
+* **Nothing sized a trade, so nothing could place one.** The first row's
+  "where do the stop and target go" worked and the *volume* was nobody's: a
+  5,136-bar replay accepted 25 intents and refused all 25 at
+  `(desk):zero-volume`, `Profile.risk_scale` had no caller in the package at
+  all, and the spec `Desk._spec` built left the tick value on a dataclass
+  default - 1.0, which is right for a standard lot of nearly every
+  dollar-quoted instrument the desk trades and wrong for everything else.
+  The step is in `Desk.consider` now, between the decision and the order,
+  because sizing needs the account and a producer reading bars cannot see
+  one. See `strategies/sizes.py`; `tests/test_first_trade.py` is the first
+  test in the suite that runs the whole chain.
 * **`Guard.allows` has no production caller.** Only `Guard.basket` runs,
   through `BasketExit`, so the account-level gate chain and its eighteen
   reason strings are exercised by tests alone and have never reached a
-  journal. That is a gap in the second row above, not in the table.
+  journal. That is a gap in the second row above, not in the table. It is the
+  **last** of these: with sizing wired, the risk layer's remaining absence
+  from the trading path is this one chain.
 
 The fourth row is `Trader`, and Nautilus's `ExecutionEngine`, `Cache` and
 `Portfolio` are that row. So this is mostly deletion, and the part that is
@@ -190,3 +203,80 @@ With the loop running, the desks have one synthetic end-to-end backtest
 (+990.58 on generated bars, which proves the loop and nothing about the edge)
 on top of the handler coverage. What they do not have is a traded record, and
 that is the next thing they need rather than another test.
+
+## Step 4 had not landed, 2026-11-01
+
+"Steps 1 to 5 are done" above was wrong about step 4, and the way it was wrong
+is worth more than the correction. Every piece of the exits table existed, was
+tested and was correct. None of it was **reachable**:
+
+| piece | state before |
+|---|---|
+| `exits.Exits` | no constructor call anywhere in `till_infinity/` |
+| `manage.advance`, `manage.partial` | no caller |
+| `Profile.protection`, `Profile.hold_for` | no caller |
+| `Exits.conflicts` | no caller, so the "exactly one may trail" rule was a docstring |
+| `Exits.apply` | named in the class docstring and never written |
+| `BasketExit._close` | published on `alerts`, whose only subscriber is the Telegram notifier |
+
+So the exit a trade actually got was whichever bracket its `place` happened to
+submit: the same exit for every decision, with no way for a decision to state
+one, and - because `RestingEntry.place` leaves a bare limit and its
+`on_order_filled` only forgets the wait - **no exit at all for a rest that
+filled**. The basket stop logged "closing all N position(s)", counted them
+closed, and closed none of them.
+
+The fix is the third mixin the docstrings had been describing as if it existed.
+`exits.ExitMechanism` is composed **in front of** the entry, because two of the
+three entries override `on_order_filled` without calling `super()`:
+
+    class SurpriseEdge(Surprise, ManagedExit, EdgeEntry): ...
+        #                ^decision ^exit      ^entry
+
+`VenueExit` leaves the exit where the venue holds it, which is the honest
+pairing on a deploy whose bridge is already trailing; `ManagedExit` owns the
+stop and runs `advance`, `partial` and the clocks. **Both ship with every
+policy off**, which is the finding `manage.py` records rather than a default:
+break-even and trailing each cut the loss tail and each cut winners, and
+nothing here answers which dominates. What changed is that the four
+combinations can now be run at all.
+
+Two things found on the way, each a separate reason the desk could not trade:
+
+* **`node/desks.py` built the bare entries.** `EdgeEntry`, `RestingEntry`,
+  `ArrivalEntry`, with no decision mixin in front of them - and `Desk.decide`
+  raises by design, so every registered desk raised `NotImplementedError` on
+  its first proposal. The composed leaves were tested and built by nothing.
+  `strategies/leaves.py` is now the one place a desk's three pieces are named,
+  and `tests/test_exit_mechanisms.py` points the end-to-end harness at
+  `desks.build_all()` rather than at a class a test names - which is the
+  assertion that catches a working leaf nobody builds *and* a builder that
+  builds the wrong thing, in one run.
+* **`statespace`'s side leaves could decide and not be sized.** `SideProfile`
+  is a plain class, because `statespace` may not import `strategies`, and
+  `Desk` sizes through `profile.multipliers`, which only a `Profile` has.
+  `leaves.StatespaceLongProfile` is the seam.
+
+### What is still not asymmetric, and is labelled rather than asserted
+
+The exit can now differ per rule, per trade and per **side** -
+`exits.protection_for` resolves `boom_500_index.sell` before
+`boom_500_index`, in the spelling `DEFAULT_STOP_OVERSHOOT` already uses, for
+the reason `risk/scaling.py` gives: on a jump instrument a stop on the spike
+side can only be gapped over.
+
+**The shipped table is empty and every leaf resolves both sides identically.**
+No long/short difference in *exit* behaviour has been measured here. The
+measured asymmetry next door is in the gapping - 2.0 on a boom's sell and a
+crash's buy - and converting an overshoot multiple into a trail distance is
+arithmetic nobody has done. A test asserts the table is empty, so the
+capability cannot quietly become a claim.
+
+Also still unmeasured and deliberately not wired: `Profile.protection` and
+`Profile.hold_for` remain uncalled, so no rule yet carries its own protection
+speed or hold; `Intent.trail_levels` is off because no `Book` of levels reaches
+a strategy, and a level trail with no levels is the inert shape again; and
+`Settings.max_hold` (1800s) is **not** folded into the exit clock, because
+`research/spending.md` found the holds already running short - 50 of 133 closes
+exited at 5% of their planned target when the clock ran out before the geometry
+could resolve.

@@ -1,7 +1,8 @@
-"""Opening a SQLite file the way all four stores already open it.
+"""Opening a SQLite file the way every store here already opens it.
 
 `prices`, `news` and `journal` each carried these four lines, identical to the
-character:
+character. Two of those stores survive the port - `journal/store.py` and
+`adapters/news/store.py` - and both go through `connect`:
 
     sqlite3.connect(path, check_same_thread=False, timeout=30.0)
     PRAGMA journal_mode=WAL
@@ -41,20 +42,21 @@ from pathlib import Path
 #: cap a log that the checkpointer cannot drain.
 #:
 #: The cause of the partial drain is continuous read pressure: a passive checkpoint stops at the
-#: oldest frame any live reader still needs, and `structures` reads this database without pause, so
-#: a new snapshot opens before the last one is done with. That much is mechanism. **What is not
-#: established** was whether it is a backfill-only condition. **It is - measured the same evening.**
+#: oldest frame any live reader still needs, and the structures service read this database without
+#: pause, so a new snapshot opened before the last was done with. That much is mechanism.
+#: **What is not established** was whether it is a backfill-only condition.
+#: **It is - measured the same evening.**
 #: Sampling every two minutes for 45 minutes, the log climbed 173 -> 294 MB with the reclaim point
 #: pinned at frame 11,085 the whole way, and then in a single sample:
 #:
 #:     21:32  wal=294MB  ckpt=0/74821/11085  journal 189.4 min stale
 #:     21:34  wal= 64MB  ckpt=0/18/18        journal   0.2 min stale
 #:
-#: One cause, both symptoms. `structures` finished warming, the read pressure fell, the pinned
+#: One cause, both symptoms. The service finished warming, the read pressure fell, the pinned
 #: snapshot released, a checkpoint drained the whole log, and this limit truncated it to exactly
-#: 64 MiB - where it has stayed. So the limit is the fix; it simply cannot act until a checkpoint
-#: completes, and during a cold backfill that can be three hours. **Expect a large log while
-#: `structures` warms and judge it only once the journal is current.**
+#: 64 MiB - where it stayed. So the limit is the fix; it cannot act until a checkpoint completes,
+#: and during a cold backfill that can be three hours. **Expect a large log while anything is
+#: backfilling against this file, and judge it only once that reader has caught up.**
 #:
 #: 64 MiB is large enough for a burst across thirty-odd symbols and several intervals, and small
 #: enough that opening it costs nothing on a 3 GB box. It takes effect on the next checkpoint
@@ -77,9 +79,10 @@ PRAGMAS = (
 def connect(path: Path | str, *, timeout: float = 30.0) -> sqlite3.Connection:
     """A writable connection with the settled PRAGMAs applied.
 
-    `check_same_thread=False` because every service here hands its connection
-    between the loop and whatever thread the driver used, and the alternative
-    is a connection per call on a box with one disk.
+    `check_same_thread=False` because every store here hands its connection
+    between the loop and whatever thread it was given - Nautilus's executor, in
+    the journal actor's case - and the alternative is a connection per call on a
+    box with one disk.
     """
     Path(path).parent.mkdir(parents=True, exist_ok=True)
     conn = sqlite3.connect(path, check_same_thread=False, timeout=timeout)

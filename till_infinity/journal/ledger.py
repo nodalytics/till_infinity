@@ -10,9 +10,15 @@ trades become two levels with one trade each. Asked directly, the record said
 "117 levels, 119 trades, one traded more than once" - which is a fact about
 grouping a drifting number, not about the market.
 
-`structures.levels.Level.id` is the fix and this is what reads it. Grouping is
-by identity; the price is reported as whatever the level had last, which is
-information about where it is now rather than what to add up by.
+`Intent.level_id` in `domain/models.py` is the fix and this is what reads it,
+through the `level_id` key `Intent.to_dict` writes into a journalled context.
+Grouping is by identity; the price is reported as whatever the level had last,
+which is information about where it is now rather than what to add up by.
+
+The identity it carries came from the retired structures engine's own
+`Level.id`, and nothing in the ported desk sets `level_id` yet - so every row
+currently groups under *unnamed*, which the totals report as such rather than
+hiding.
 
 ## Reads the journal and nothing else
 

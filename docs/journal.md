@@ -5,7 +5,7 @@
 > and `pyproject.toml` declares no console script on purpose: a second way to
 > run the desk is a second thing to go stale. The entry point is
 > `python -m till_infinity.node.live`, and
-> `python -m till_infinity.node.desks` says what it would run.
+> `python -m till_infinity.node.status` says whether it is up.
 
 An append-only record of what was decided, **why it was decided at that
 moment**, and what the world looked like when the decision was made.
@@ -23,10 +23,12 @@ uv run till-infinity journal export -o data/journal.jsonl
 
 Two audiences, and they want the same thing for different reasons.
 
-**The agents.** Without a journal an analyst judges every window with no memory
-of what it concluded an hour ago, so it reports the same dislocation sixty
-times and never learns that the last one resolved itself. `recent` is a tool on
-every role for exactly this.
+**The agents**, which retired to `research/retire/agents/` on 2026-10-31.
+Without a journal an analyst judged every window with no memory of what it had
+concluded an hour ago, so it reported the same dislocation sixty times and never
+learned that the last one had resolved itself; `recent` was a tool on every role
+for exactly that. The audience is gone and the argument is not - it is the
+reason the record holds *why* and not only *what*.
 
 **Whatever gets built later.** A decision, the state it was made from, and what
 happened afterwards is a labelled example. Collecting those from the start

@@ -33,31 +33,36 @@ portfolio is what makes "what is this account risking, across every venue" a
 question with an answer, and a process per service would put each one's
 positions out of the others' sight.
 
-Before starting it, ask what it would run:
+**There is no way to ask what it would run before running it.**
+`node/desks.py` builds the set and `node/live.py` refuses to start on an empty
+one - `TRADING_SYMBOLS` naming no instrument raises rather than connecting -
+but `desks.py` has no `main`, so running it as a module imports it and prints
+nothing. A dry run that reported the venues, the rules, the entries and every
+instrument is worth having, because a node that connects, reconciles, reports
+up and trades nothing is a failure this desk has had three times. It does not
+exist yet.
 
-```bash
-uv run python -m till_infinity.node.desks
-```
-
-which prints the venues, the rules, the entries and every instrument, and
-**exits non-zero if the answer is nothing** - because a node that connects,
-reconciles, reports up and trades nothing is a failure this desk has had three
-times.
-
-## One container per service
+## Compose
 
 ```bash
 cp .env.example .env
-docker compose up -d                    # collectors, levels, journal
+docker compose up -d                     # the node, unarmed
+TRADING_LIVE=1 docker compose up -d      # the node, able to place orders
 ```
 
-This is the shape the bus was designed for: they scale and fail independently,
-so a collector restarting does not take the levels model with it. Agents sit
-behind a profile because they are the only part that costs money.
+One service, named `node`, on the volume `data` mounted at `/app/.data`. Unset
+`TRADING_LIVE` and the risk engine sits in `HALTED`: the node still connects,
+reconciles, subscribes and computes, and every order is denied inside the
+engine. `docker-compose.yml` carries the argument for all of this at the top of
+the file.
 
-**It needs real memory.** Six Python processes with the modules imported cost
-about **861 MB** measured - before Redis, before any data, before the OS. On
-anything under ~2 GB use the single process instead.
+**This section used to describe six containers** - collectors, levels, journal,
+each scaling and failing independently, with agents behind a profile because
+they were the only part that cost money - and said they needed about **861 MB**
+measured, so anything under ~2 GB should use the single process instead. None
+of that is the shape any more, and the 861 MB figure was measured on six
+processes that no longer exist. What one node costs is under
+[Sizing it](#sizing-it), measured on the box that runs it.
 
 ## Continuous deployment
 
@@ -141,34 +146,43 @@ Everything comes from the environment, documented in
 [environment.md](environment.md). Real environment variables win over the
 file, so a deployment is never overridden by a stray `.env`.
 
-## The offline models are frozen
+## The offline models shipped with the image, and no longer do
 
-`till_infinity/models/*.json` ship with the image and are read by
-`shared/frozen.py` - the shock forecaster, the boosted FX envelope, the touch
-models. **The pipeline that retrained them was retired on 2026-10-28** and is in
-[`research/retire/models/`](../research/retire/models/) with its GitHub Actions
-workflow: it trained on a runner, promoted a challenger only when it beat the
-shipped model on the last fourteen days, and opened a PR so the model shipped
-like code. The gates and the first lab run are in
-[`research/docs/anomalies.md`](../research/docs/anomalies.md).
+The shock forecaster, the boosted FX envelope and the touch models were JSON
+artefacts in `till_infinity/models/`, read by `till-platform`'s `frozen.py`.
+**All of it is retired.** The pipeline that retrained them went on 2026-10-28
+to [`research/retire/models/`](../research/retire/models/) with its GitHub
+Actions workflow - it trained on a runner, promoted a challenger only when it
+beat the shipped model on the last fourteen days, and opened a PR so the model
+shipped like code. The artefacts went with it, to
+`research/retire/models/artefacts/`; the reader went to
+`research/retire/packages/till-platform/`; and every loader was in
+`structures/`, which retired the next day. The gates and the first lab run are
+in [`research/docs/anomalies.md`](../research/docs/anomalies.md).
 
-`TI_MODELS_DIR` still works and the engine still prefers a model found there
-over the shipped copy, re-reading a changed file within five minutes. Nothing
-writes into it now, so a model gets there by hand or not at all.
+So `TI_MODELS_DIR` is read by nothing and the image ships no models. The
+lesson is in `till_infinity/__init__.py`, which used to point the reader at a
+sibling directory: a `__file__`-relative path is a hidden dependency on a
+module's position, and an absent directory reads as "nothing found" rather
+than as an error.
 
-## Features that wait on memory headroom
+## Features that waited on memory headroom
 
-**The Mondrian envelope** (`STRUCTURES_ENVELOPE_MONDRIAN`) is built, tested and **off by default**.
-It keys the envelope's AgACI correction by the ZMA stretched state (research/docs/zma-conformal.md),
-which closes 1-2 points of coverage gap in stretched states at equal or better pinball. It roughly
-triples each series' envelope state (about 65 KB to 189 KB across the three horizons) and raises the
-per-bar envelope cost from about 440 us to about 815 us. On the 908 MB instance, whose container has
-been killed for memory before (see "Sizing it" above), that is not free.
+**The Mondrian envelope** was built, tested and off by default behind
+`STRUCTURES_ENVELOPE_MONDRIAN`. It keyed the envelope's AgACI correction by the
+ZMA stretched state ([`research/docs/zma-conformal.md`](../research/docs/zma-conformal.md)),
+closing 1-2 points of coverage gap in stretched states at equal or better
+pinball, and it cost: about 65 KB of envelope state per series became about
+189 KB across the three horizons, and the per-bar cost went from about 440 us
+to about 815 us. On a 908 MB instance whose container has been killed for
+memory before, that was not free, and the headroom was never confirmed.
 
-**Switching Mondrian on is one setting once memory headroom is confirmed:**
-`STRUCTURES_ENVELOPE_MONDRIAN=1` in the instance's environment, then a restart. Confirm the headroom
-first: note the container's resident size under normal load (`docker stats`), and multiply the
-followed series by about 124 KB of extra state. Then check that the total stays well inside the
+**The setting is read by nothing now.** It belonged to `structures/`, which
+retired on 2026-10-29. The measurement is kept because the trade-off is a real
+one and `statespace/` will meet it again: an envelope correction keyed by a
+state multiplies the state. The method for deciding is also still right - note
+the container's resident size under normal load, multiply the followed series
+by the extra state per series, and check the total stays well inside both the
 container's cap and the host's free memory.
 
 ## Moving to another instance
@@ -179,8 +193,11 @@ Do the first item before touching anything else.
 ### 1. `till.env` exists nowhere but the instance
 
 `/home/ubuntu/till.env` holds every live credential - the Telegram bot token
-and chat ids, the Gemini and Groq keys, the model and fallback list, the notify
-cooldown and rate. It is not in git, not in GitHub secrets, and not in the
+and chat ids, the Discord webhooks, the MT5 bridge URL and its API key, the
+notify cooldown and rate. The model-provider keys in it reach nothing now: the
+agents retired on 2026-10-31 and nothing under `till_infinity/` reads a
+provider key. A dead credential is still a credential, so it belongs rotated or
+removed rather than left in the file. It is not in git, not in GitHub secrets, and not in the
 image. `deploy.sh` writes defaults only when the file is **absent** and never
 overwrites it, which is what keeps a deploy from silently reverting a
 configured box - and also what means nothing recreates it if the instance goes
@@ -237,15 +254,20 @@ old host - `paths-ignore` skips prose, but any code change deploys.
 ### 4. Data worth carrying over
 
 ```
-journal    40M   the decision journal - irreplaceable, this is the learning history
-news      9.7M   headlines and the calendar, re-fetchable but slow
-prices    960M   candles and quotes, fully re-backfillable
-structures 14M   model state - do not bother, see below
+journal      40M   the decision journal - irreplaceable, this is the learning history
+statespace    -    online model state - do not bother, see below
+status.json   -    written fresh on every start; never carry it
+news        9.7M   headlines and the calendar. Nothing collects into it now
+prices      960M   candles and quotes. Nothing writes it now; see below
 ```
 
-`journal` is the one to move. `prices` can be re-backfilled and is most of the
-bulk; copying it is a convenience, not a requirement, and a fresh box with a
-smaller prices database is a *faster* cold start.
+**`journal` is the one to move**, and after the Nautilus port it is close to the
+only one. `prices` was the price collector's database and the collector retired
+with the CLI, so copying 960M buys a historical record and nothing a running
+node reads - the node subscribes to the venue and keeps bars in the Nautilus
+cache. `news` is the same: the adapter exists and no node registers it. Leave
+both behind unless a research question needs them, in which case they belong on
+the lab box rather than on the one that trades.
 
 Do **not** carry `structures/models.pkl`. `store._schema` fingerprints every
 persisted class, so any field added since it was written makes the service
@@ -328,6 +350,14 @@ is a failure that happened rather than a precaution: a race between two
 deploys, a disk that filled because cleanup ran after the pull, a pull
 that died on a dangling containerd lease, a window with no container at
 all.
+
+`deploy.sh` appears twice because two snapshots of it were condensed and the
+file had moved underneath between them, so the same passage sits at a
+different line in each. A third copy of the first snapshot, byte-identical,
+was removed on 2026-11-01. Where these passages talk about six services, a
+compose split and `till-infinity run`, they are describing the arrangement the
+Nautilus port retired - they are the record of why the deploy files are the
+shape they are, not instructions.
 
 ### `deploy.sh`
 
@@ -513,104 +543,6 @@ be done to satisfy the counter rather than to make anything clearer.
 transition. Splitting it would put half a state machine in another method and
 make the order the transitions happen in harder to read, not easier, which is
 the opposite of what the rule is for.
-
-### `deploy.sh`
-
-**line 2**
-
-
-  IMAGE=ghcr.io/owner/repo TAG=<sha> bash deploy.sh
-
-One container, not the compose split. Six separate services need about 861 MB
-before Redis, data or the OS - measured, not estimated - against the 908 MB
-this started on. `till-infinity run` is one process with an in-process bus,
-which is the shape that hardware could hold.
-
-The instance is larger now and the split would fit, but one process is also
-what makes the in-process bus possible, so this is no longer only a memory
-decision. The memory limit below is derived from the host rather than pinned,
-so the same script is correct on either.
-
-**line 18**
-
-them wastes a pull and produces confusing output - on 2026-09-15 a hand
-deploy and an automatic one interleaved, and the loser reported "could not
-rename the running container" while the winner was quietly succeeding. The
-outcome was correct because the rename is guarded, but nobody reading the
-output could tell that.
-
-**line 61**
-
-`set -e` ends the script above the line that would have fixed it. That is how
-this box reached 99% full with five 973 MB images on a 6.7 GB disk.
-
-`-af` with no age filter, because an age filter is the same bug in slower
-form - several deploys in one day are all newer than any window worth setting.
-Docker never removes the image a running container is using, so the version
-currently serving is safe; what is lost is a local copy of the *previous*
-one, and that lives in the registry, which is where a rollback should come
-from anyway.
-
-**line 77**
-
-
-  Error response from daemon: lease does not exist: not found
-
-It is transient - the same pull succeeds immediately afterwards - but the
-deploy job fails, and a failed deploy is the quietest failure here: the
-previous image keeps running and keeps reporting healthy, so the only symptom
-is that a change nobody doubted is not actually live. That went unnoticed for
-twenty minutes once.
-
-**line 100**
-
-Removing it here leaves a window with no container, and two things can go
-wrong in that window. The new one may fail to start, and then the desk is
-down with nothing to put back. Or another deploy can land inside it, in which
-case `docker run` below fails on a name conflict and this script exits
-reporting success over somebody else's container. Both were reached in
-practice on 2026-09-15.
-
-Stopped first, because two containers both holding broker sessions would both
-place orders. The rename costs nothing and buys an undo.
-
-**line 124**
-
-`-prev` to restore, which left the desk with no container at all - exactly
-the outcome the rollback exists to prevent, reached by the rollback itself.
-There is no previous container whenever another deploy has just replaced it,
-which on this box is a normal race rather than an unusual one.
-
-A container that started and looks unhealthy is worth keeping if the
-alternative is nothing: it may recover, its logs can be read, and it can be
-replaced deliberately. Nothing recovers from nothing.
-
-**line 144**
-
-left the host itself enough to breathe. Hard-coding it means a bigger machine
-runs the service in a 640MB box and wastes the rest, while a smaller one
-would be over-committed on the first deploy and nobody would notice until the
-kills started.
-
-70% of total, floored at 512m so a tiny instance still starts and can say why
-it is unhappy.
-
-**line 167**
-
-tunnel bound to the docker bridge. Without this the container cannot
-resolve the host at all and TRADING_MT5_URL has nowhere to point.
-Costs nothing when trading is off, which is the default.` \
-
-**line 182**
-
-`.State.Running` reads true for the instants it is up - so a crash-looper
-passes a naive check and the rollback gets deleted underneath it. A restart
-count above zero this soon is a container that has already died once.
-**Given time to settle, and asked twice.** Twenty seconds was not enough: a
-healthy container failed this check on 2026-09-15 and was deleted for it. The
-desk loads a 145MB state file at start, so a single sample taken while that
-is happening says nothing. `tr -d` because a stray newline in the captured
-value made the failure message unreadable and the comparison meaningless.
 
 ### `deploy.sh`
 

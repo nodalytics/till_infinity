@@ -414,10 +414,24 @@ def detector_reader(
 
 
 def _interval(bar_type: BarType) -> str:
+    """What this actor calls the bar's clock, as a deploy writes it.
+
+    The seven time clocks are tabulated, because their names are not derivable
+    - `1-HOUR` is `1h` and nothing in the spec says so.
+
+    **An activity clock's name is derived instead**, so `500-TICK-MID` folds
+    under `500tick`. A clock is a fold key here, and a tick clock is a
+    different clock from a time clock rather than a variant of one - which is
+    the point of having it: `node/desks.spec_for` is the only thing that can
+    produce one, and it writes the same name back.
+    """
     spec = str(bar_type.spec)
     for key, name in INTERVALS.items():
         if spec.startswith(key):
             return name
+    parts = spec.split("-")
+    if len(parts) >= 2 and parts[0].isdigit() and parts[1] not in UNIT_SECONDS:
+        return f"{parts[0]}{parts[1].lower()}"
     raise ValueError(f"{bar_type} has no statespace interval - known: {sorted(INTERVALS.values())}")
 
 
@@ -427,12 +441,24 @@ def _seconds(bar_type: BarType) -> float:
     `str(spec)` is `<step>-<unit>-<price type>`, so `4-HOUR-LAST` is four
     hours. Multiplying rather than tabulating means a step this desk has never
     used - 3-MINUTE, 2-HOUR - works without an edit.
+
+    **An activity clock has no length and gets `0.0`, which means the fold
+    reads the bar's close as its time.** A `Bar` carries only `ts_event`, the
+    close, so the open of a 500-tick bar is not recoverable from it - there is
+    no duration to subtract. Zero is the honest answer rather than a wrong one,
+    and the consequence has to be stated because it is the kind of thing that
+    invents structure: a tick clock's timestamps sit up to one bar later than a
+    time clock's, so **a cross-clock comparison has to align on the close**.
+    `the-q-clock-is-an-activity-clock` already requires matching spans and bar
+    counts across clocks; this adds matching the edge they are stamped at.
     """
     parts = str(bar_type.spec).split("-")
-    if len(parts) < 2 or not parts[0].isdigit() or parts[1] not in UNIT_SECONDS:
+    if len(parts) < 2 or not parts[0].isdigit():
         raise ValueError(
             f"{bar_type} has no length this actor can read - units: {sorted(UNIT_SECONDS)}"
         )
+    if parts[1] not in UNIT_SECONDS:
+        return 0.0
     return int(parts[0]) * UNIT_SECONDS[parts[1]]
 
 

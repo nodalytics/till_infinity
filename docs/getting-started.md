@@ -5,14 +5,38 @@
 > and `pyproject.toml` declares no console script on purpose: a second way to
 > run the desk is a second thing to go stale. The entry point is
 > `python -m till_infinity.node.live`, and
-> `python -m till_infinity.node.desks` says what it would run.
+> `python -m till_infinity.node.status` says whether it is up.
 
-From nothing to a database of cross-broker prices.
+From nothing to a database of cross-broker prices - which is **not** what this
+software does any more.
+
+Steps 2 to 10 below are a tutorial for the collector-and-services arrangement
+that retired on 2026-11-01. They are kept because the measured facts in them
+are still facts about those sources, and because the order of the questions is
+still the right order. What they are not is a way to start.
+
+To actually start, there are three commands and the first one is step 1 below:
+
+```bash
+uv sync
+cp .env.example .env                           # then set TRADING_SYMBOLS and a venue
+uv run python -m till_infinity.node.live       # the node
+uv run python -m till_infinity.node.status     # up, fresh, and trading something?
+```
+
+The node subscribes to the venue rather than collecting into a database, so
+there is no history to pull and nothing to keep current: it connects,
+reconciles against the broker, folds what arrives and refuses to start if
+`TRADING_SYMBOLS` names no instrument. Unarmed - `TRADING_LIVE` unset - it does
+all of that and places no order. See [the README](../README.md) for the shape
+and [environment.md](environment.md) for the settings that matter.
 
 ## 1. Install
 
-Requires [uv](https://docs.astral.sh/uv/). Python 3.11 is pinned in
-`.python-version`, so uv will fetch it if you do not have it.
+Requires [uv](https://docs.astral.sh/uv/). Python 3.13 is pinned in
+`.python-version`, so uv will fetch it if you do not have it. 3.12 is the
+floor: every `nautilus_trader` release that does not abort inside
+`BacktestEngine.run()` requires it.
 
 ```bash
 uv sync                 # runtime + dev dependencies
@@ -217,7 +241,7 @@ export STRUCTURES_SIGMA=4          # how far off consensus is unusual
 
 Full lists in [prices.md](prices.md#environment), [news.md](news.md#environment),
 [notifications.md](notifications.md#setup), [bus.md](bus.md),
-[agents.md](agents.md#environment), [structures.md](structures.md#environment),
+[agents.md](../research/retire/agents/agents.md), [structures.md](structures.md#environment),
 [journal.md](journal.md#environment) and [logging.md](logging.md).
 
 ## Troubleshooting

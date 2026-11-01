@@ -43,7 +43,7 @@ from .bars import (
 )
 
 # ==========================================================================
-# from cusum.py
+# the CUSUM filter
 # ==========================================================================
 
 EVENTS_KEPT = 64
@@ -124,9 +124,10 @@ class Cusum(Indicator, Restorable):
     #: through `unit_from` instead, which is the default.
     unit: float = 0.0
     #: Where a per-bar unit comes from. The **range**, because the range-based
-    #: estimator beats close-to-close as a volatility driver by a ratio of
-    #: 0.648 within strata on FX and on 371 of 392 equities, and the advantage
-    #: grows as the window shortens - which is the regime a one-bar unit is in.
+    #: estimator beats close-to-close as a volatility driver: the range-vs-close
+    #: ratio reads 0.648 within strata on FX and 0.667 on 371 of 392 equities,
+    #: and it grows as the window shortens - which is the regime a one-bar unit
+    #: is in. `candle-screen.md` in research/docs.
     unit_from: Reading | None = Reading.RANGE
     #: EWMA half-life in bars for `unit_from`. Zero uses each bar's own
     #: reading, which is noisier but carries no warmup.
@@ -144,7 +145,7 @@ class Cusum(Indicator, Restorable):
     _tick_scale: float = field(default=0.0, repr=False)
     #: Which feed has fed this instance: "bars" or "ticks". One Cusum has one
     #: pair of accumulators, so two feeds would interleave two clocks into
-    #: them - see `_feed`.
+    #: them - see `bars.check_feed`, which is what refuses the second.
     _fed: str = field(default="", repr=False)
 
     #: The fields a reset keeps. Everything else is state - note that `up` and
@@ -248,8 +249,9 @@ class Cusum(Indicator, Restorable):
         # detector has never seen anything*, and these two lines called it for
         # a while after the rename: every event wiped the whole detector, so
         # `has_inputs` and `initialized` went back to False and the filter
-        # never accumulated past its first event. The module docstring warned
-        # about exactly this and the call sites were missed anyway.
+        # never accumulated past its first event. The distinction is written
+        # up in this package's `__init__` and in `bars.reset_state`, and these
+        # call sites were missed anyway.
         if self.up >= self.threshold:
             run = self.up
             self.restart()
@@ -380,7 +382,7 @@ class Ensemble(Restorable):
 
 
 # ==========================================================================
-# from speeds.py
+# the speeds
 # ==========================================================================
 
 WARMUP = 12.0
@@ -400,6 +402,10 @@ class Speeds(Indicator):
     #: 2026-09-10, `momentum-scalp` was tracking **253 feeds and the busiest had
     #: seven observations**, none at 48. Its refusals were 99.2% `warmup` across
     #: every day it has run, so the strategy had never formed a view at all.
+    #: That reading survives only in the retired suite's own record of it,
+    #: `test_the_speeds_warm_at_a_threshold_the_book_can_actually_reach` in
+    #: `research/retire/structures/strategies/test_scalper_strategies.py`; it
+    #: was never written up in `research/docs`.
     #:
     #: The arithmetic is the problem. These are observations of *published level
     #: calls*, not bars, and the book produces single digits per feed per week -
@@ -492,7 +498,7 @@ class Speeds(Indicator):
 
 
 # ==========================================================================
-# from ticks.py
+# tick momentum
 # ==========================================================================
 
 #: Half-life in ticks for the flow average. Ticks, not seconds, because the
@@ -612,10 +618,13 @@ class TickMomentum(Indicator):
         """Share of recent revisions that moved one side only, in 0..1.
 
         Zero on a trade-based feed, where there are no revisions to count.
-        **A rate over the ticks that arrived**, which on MT5 is a sample - see
-        the module docstring. The measured figure on this desk's terminal is
-        22.8%, so a reading far from that says something about the feed before
-        it says anything about the market.
+        **A rate over the ticks that arrived**, which on MT5 is a sample
+        unless the terminal's tick-feed Expert Advisor is attached to the
+        symbol - see `adapters/mt5/config.py` on `quote_source`. The measured
+        figure on this desk's terminal is 22.8%, carried as an established
+        claim in `node.closed` and measured nowhere else, so a reading far
+        from that says something about the feed before it says anything about
+        the market.
         """
         return self._one_sided
 

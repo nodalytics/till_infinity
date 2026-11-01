@@ -1,8 +1,18 @@
 # 0003. Python and Go, with Rust deferred
 
-- **Status:** Accepted (product owner, 2026-10-28)
+- **Status:** Accepted (product owner, 2026-10-28); the layout it depends on
+  is superseded
 - **Date:** 2026-10-28
-- **Depends on:** 0002 (services are self-contained)
+- **Depends on:** 0002 (services are self-contained), which the Nautilus port
+  superseded on 2026-11-01
+
+> **The language choice stands; the thing it was to be delivered in does not.**
+> This ADR assumes 0002's `services/` layout, and there is no such directory
+> any more. Go has not been written: `research/services/ticks/` is where the
+> tick service went, unstarted, and every part in the table below is Python
+> today. The pressure that motivated it - two cores, and tick arrivals one to
+> two orders of magnitude above bars - has not gone away, so the decision is
+> live and unexercised rather than wrong.
 
 ## Context
 

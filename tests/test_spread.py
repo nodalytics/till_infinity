@@ -1,4 +1,24 @@
-"""Our rolling spread, and the upstream one it exists because of."""
+"""Why this desk carries its own spread average instead of Nautilus's.
+
+`nautilus_trader.indicators.spread_analyzer.SpreadAnalyzer.average` **stops
+moving once its window fills** - measured on 1.221.0. `handle_quote_tick`
+appends the new spread and then calls `fast_mean_iterated(..., drop_left=False)`,
+which subtracts `values[-1]`, the value it just appended, from `next_value`:
+so every update after the window is full adds zero. `drop_left=False` is also
+the wrong end for a `maxlen` deque, which evicts from the left.
+
+The reading it gives is not obviously broken. It is the spread from whenever
+the window happened to fill, carried forward for ever, and it looks like a
+plausible number for the instrument - which is why a cost gate built on it
+would pass ideas through a widening market without anything appearing wrong.
+`exotic-spreads-are-a-whole-bar-range` is what that costs: on the exotics a
+round trip runs 0.40 to 0.97 of a bar's range, so a frozen average is the
+difference between an idea and no idea.
+
+The upstream behaviour is pinned here as well as ours. If Nautilus fixes it
+these tests fail, which is the only way a workaround gets removed rather than
+outliving its reason.
+"""
 
 from __future__ import annotations
 
@@ -81,6 +101,14 @@ class TestOursTracks:
             assert rolling.average == pytest.approx(analyzer.average, abs=1e-9)
 
     def test_the_window_is_bounded(self):
+        """Checked on the readings rather than on `maxlen`.
+
+        `restore-drops-deque-maxlen` is the recorded version of this going
+        wrong: a capped deque came back from a restore unbounded, and nothing
+        about the declaration had changed. An average computed over a window
+        that silently grew is a slower average, which is indistinguishable
+        from a quieter market.
+        """
         rolling = RollingSpread(3)
         for bid, ask in WIDENING:
             rolling.update(bid, ask)

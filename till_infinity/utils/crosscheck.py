@@ -21,9 +21,12 @@ resemble the desk, and nothing was checking.
 
 Comparing mean R would fire on every healthy replay. The two are **different
 populations by construction**: a replay walks every published call, and
-`risk.py` refuses the expensive ones before they become trades - the desk pays a
-median 0.081R of spread where the replayed population averages 0.363R. Those
-means *should* differ.
+`risk/guard.py`'s two spread gates - `max_spread_fraction` on the reward and
+`max_spread_risk_fraction` on the risk - refuse the expensive ones before they
+become trades, so the desk pays a median 0.081R of spread where the replayed
+population averages 0.363R. Those means *should* differ. Both figures are from
+`research/specs/2026-09-11-live-crosscheck-design.md`, as is every other number
+in this docstring.
 
 What should not differ is **how trades end**. Same entries, same policy, same
 instrument: the exit-kind mix, the hold duration and the distribution of
@@ -47,7 +50,7 @@ is deliberately studying something else, and only its author knows which.
 And passing is necessary rather than sufficient. Both look-aheads found on
 2026-09-11 would have produced a perfectly plausible exit mix while paying
 prices the market never offered. **This is a check on resemblance, not on
-honesty**, and `shared/replay.py` remains the answer to the second.
+honesty**, and `utils/replay.py` remains the answer to the second.
 """
 
 from __future__ import annotations

@@ -7,9 +7,11 @@ of no skill, correcting for three things at once: how many candidates were
 tried, how long the track record is, and how non-normal the returns are.
 
 All three bite on this desk, and the third hardest. Traded markets here run
-kurtosis between 20 and 74 against a Gaussian's 3, so the variance of a Sharpe
-estimate is far larger than the normal-theory formula implies - a Sharpe that
-looks comfortable on 500 fat-tailed returns is not.
+kurtosis between 20 and 74 against a Gaussian's 3 - the 47-74 band is
+`research/docs/pattern-fingerprint.md`'s and the 20 is
+`research/docs/dispersion-noise.md`'s 20.07 - so the variance of a Sharpe
+estimate is far larger than the normal-theory formula implies, and a Sharpe
+that looks comfortable on 500 fat-tailed returns is not.
 
     PSR(SR*) = Phi( (SR - SR*) * sqrt(T - 1)
                     / sqrt(1 - g3*SR + (g4 - 1)/4 * SR^2) )
@@ -306,10 +308,11 @@ def minimum_track_record(returns: Sequence[float], target: float = 0.95) -> floa
 # multiple-testing correction applies once to the *whole search*. Four
 # correlated statistics with four thresholds gives an effective trial count
 # nobody can compute, and requiring all four to pass mostly costs power rather
-# than buying strictness. The desk's own record says it plainly: several
-# candidates passed DSR, PBO and SPA, and what exposed them was running the
-# strategy on surrogates and breaking the results down by hour. More metrics
-# did not help; a different *kind* of test did.
+# than buying strictness. The desk holds that several candidates passed DSR,
+# PBO and SPA and were exposed only by running the strategy on surrogates and
+# breaking the results down by hour: more metrics did not help, a different
+# *kind* of test did. That claim is **unsourced** - `surrogates.py` says where
+# it was looked for - and the correlation argument above stands without it.
 #
 # So these two exist to be read by a person, in units a person reads, beside
 # the one deflated statistic the gate uses.

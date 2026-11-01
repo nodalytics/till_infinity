@@ -97,5 +97,5 @@ class FakeCarrier:
         return f"till:{topic}"
 
     def payloads(self, topic: str) -> list[dict[str, Any]]:
-        """Just the payloads on one topic, which is what most tests want."""
+        """The payloads alone, on one topic, which is what most tests want."""
         return [m.payload for m in self.published if m.topic == topic]

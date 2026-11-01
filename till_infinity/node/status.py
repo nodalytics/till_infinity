@@ -2,8 +2,9 @@
 
 ## Why a file at all
 
-`Dockerfile`'s `HEALTHCHECK` runs `till-infinity health`, and that command had
-nothing to read. The history in `lifecycle.py` says why it matters: three
+`Dockerfile`'s `HEALTHCHECK` used to run `till-infinity health`, and that
+command had nothing to read - it now runs `python -m till_infinity.node.status`,
+which reads this. The history in `lifecycle.py` says why it matters: three
 deploys on 2026-10-09 were built, tagged, deployed, health-checked and
 reported up **while running none of the code they claimed**, because every
 check read our own side of the wire. One of them was then measured as having

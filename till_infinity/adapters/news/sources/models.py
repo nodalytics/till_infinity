@@ -241,7 +241,7 @@ class WriteResult:
 
 @dataclass(frozen=True, slots=True)
 class FeedInfo:
-    """Summary of what is stored for one source, for `news info`."""
+    """Summary of what is stored for one source, as `store.Store.feeds` reports it."""
 
     kind: str
     source: str

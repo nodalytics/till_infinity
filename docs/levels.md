@@ -2060,7 +2060,7 @@ price respects more often. The outcome machinery to answer that already exists.
 
 ### Built and run, 2026-08-14 - and it did not settle it
 
-[`runs.py`](../till_infinity/structures/runs.py) segments a series into runs
+[`runs.py`](../research/retire/structures/engine/drawing/runs.py) segments a series into runs
 and emits the boundaries as ordinary `Point`s, so `form`, `as_of` and the whole
 outcome machinery cannot tell which formation produced them.
 `Engine(formation="run")` switches between them, which is what makes the

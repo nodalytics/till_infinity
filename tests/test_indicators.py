@@ -4,7 +4,7 @@ Three kinds of test here, in order of how much they would cost to lose:
 
 1. **The framework contract.** Every detector is a `nautilus_trader` `Indicator`
    and an `Actor` can register it. If that breaks, the engine stops feeding them
-   and nothing fails loudly - the indicators simply never update.
+   and nothing fails loudly - the indicators never update.
 2. **The two traps.** `reset` means Nautilus's thing and not `restart`, and a
    scale has to be in the right units. Both are silent when wrong.
 3. **The readings.** That each detector measures what its research says it
@@ -241,6 +241,8 @@ def test_every_catalogued_default_is_dimensionally_sound(name):
     data supports about one.
     """
     _, sources = ind.BAR_DETECTORS[name]
+    # `pips` and `bjorgum` list none: they read bars directly rather than one
+    # selectable reading, so their cells here are empty on purpose.
     for source in sources:
         detector = ind.build_detector(name, source)
         assert detector.source is source
@@ -395,6 +397,7 @@ def test_a_bar_cannot_both_open_a_gap_and_fill_it():
     detector = ind.Gaps()
     for one in _push():
         detector.handle_bar(one)
+    assert detector.live, "no gap formed, so the ordering is untested"
     for gap in detector.live:
         assert gap.filled_at is None or gap.filled_at > gap.when
 
@@ -687,7 +690,13 @@ def test_speeds_keys_itself_by_bar_type():
         detector.handle_bar(one)
     assert detector.ready(str(BAR_TYPE))
     assert not detector.ready(str(other)), "an unseen feed is not warm"
-    assert detector.agree(str(BAR_TYPE), 1) in (True, False)
+    # A planted upward drift: all three half-lives see it, so agreement holds
+    # one way and not the other. An unseen feed agrees with nothing, which is
+    # what stops a second instrument reading off this one's series.
+    assert detector.agree(str(BAR_TYPE), 1) is True
+    assert detector.agree(str(BAR_TYPE), -1) is False
+    assert detector.agree(str(other), 1) is False
+    assert detector.agree(str(other), -1) is False
 
 
 # ------------------------------------------------------------- slope momentum
@@ -934,19 +943,32 @@ def test_a_run_of_bars_inside_a_zone_is_one_visit():
 
 def test_an_unresolved_visit_is_not_counted_as_a_hold():
     """A visit whose outcome is not yet known is not a visit that held, and
-    recording it as one makes a hold rate a measure of the window running out."""
+    recording it as one makes a hold rate a measure of the window running out.
+
+    **The length is load-bearing, and it was wrong.** At 200 bars this
+    construction produces one zone and *no* visits at all, so both loops below
+    were empty, `break_rate` was None and the guard on it skipped the only
+    remaining assertion - the test asserted nothing and passed. 400 is the
+    shortest run that leaves a visit still open at the end, which is the
+    situation being described, so the counts are asserted before they are
+    used rather than left to a conditional.
+    """
     detector = ind.BjorgumLevels()
-    for one in _gold(n=200):
+    for one in _gold(n=400):
         detector.handle_bar(one)
-    for zone in detector.zones:
-        for visit in zone.visits:
-            if visit.broke_atr is None:
-                assert visit.broke_edge is None or visit.broke_edge is True
+
+    open_visits = [v for z in detector.zones for v in z.visits if v.broke_atr is None]
+    assert open_visits, "no unresolved visit, so the claim is untested"
+    for visit in open_visits:
+        assert visit.broke_edge is None or visit.broke_edge is True
 
     rate = detector.break_rate()
     counted = [v for z in detector.zones for v in z.visits if v.broke_atr is not None]
-    if rate is not None:
-        assert rate == pytest.approx(sum(1 for v in counted if v.broke_atr) / len(counted))
+    assert rate is not None, "no resolved visit, so there is no rate to check"
+    # Over the resolved visits alone, so the open one is in neither half of
+    # the fraction - which is what stops the rate drifting towards whatever
+    # the window happened to cut off.
+    assert rate == pytest.approx(sum(1 for v in counted if v.broke_atr) / len(counted))
 
 
 def test_bjorgum_features_are_absent_rather_than_zero():

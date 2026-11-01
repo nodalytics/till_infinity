@@ -8,15 +8,23 @@ the decision knew nothing about how it would be placed, and the thing that
 placed it knew nothing about what it was.
 
 Here the decision is a mixin with no base of its own, the entry mechanisms are
-in `entries.py`, and a concrete strategy is the composition:
+in `entries.py`, the exit mechanisms are in `exits.py`, and a concrete strategy
+is the composition of all three:
 
-    class SurpriseEdge(Surprise, EdgeEntry): ...
-    class SurpriseResting(Surprise, RestingEntry): ...
+    class SurpriseEdge(Surprise, ManagedExit, EdgeEntry): ...
+    class SurpriseResting(Surprise, ManagedExit, RestingEntry): ...
 
 Each leaf **is** a `nautilus_trader` `Strategy`, so the framework assigns it a
 `strategy_id` and carries it on every order, fill and position. One decision
 across three mechanisms is three classes and no flags, and *which* mechanism
 took a trade is a fact the engine records rather than something we remember.
+
+**The exit was the half that was only claimed.** This docstring said a free
+pairing is "what entries and exits are asymmetric means in code" while the
+exit was whatever bracket the entry happened to submit inside `place` -
+identical for every decision, with no way for a decision to state one.
+`exits.ExitMechanism` is the missing third piece and composes the same way;
+`leaves.py` is where every triple this node builds is written out.
 
 ## What this decides, and what it does not
 
@@ -37,6 +45,7 @@ from typing import Any, ClassVar
 
 from ..domain.models import Intent, Refusal, Side
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
+from .exits import ManagedExit
 from .profile import Profile
 
 
@@ -181,13 +190,13 @@ class Surprise:
         )
 
 
-class SurpriseEdge(Surprise, EdgeEntry):
+class SurpriseEdge(Surprise, ManagedExit, EdgeEntry):
     """Surprise, taken at market. The pairing with the fewest moving parts."""
 
 
-class SurpriseResting(Surprise, RestingEntry):
+class SurpriseResting(Surprise, ManagedExit, RestingEntry):
     """Surprise, left as a limit at the entry it named."""
 
 
-class SurpriseArrival(Surprise, ArrivalEntry):
+class SurpriseArrival(Surprise, ManagedExit, ArrivalEntry):
     """Surprise, parked until price comes to it and a bar confirms."""

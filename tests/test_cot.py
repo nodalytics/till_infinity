@@ -71,6 +71,10 @@ def test_every_inverted_feed_is_a_market_we_map():
 
 
 def test_every_inverted_feed_really_has_the_dollar_first():
+    """An emptied `INVERTED` satisfies this and the check above it both, so
+    the count is pinned: three dollar-first pairs are mapped, and losing one
+    would turn its signal round rather than switch it off."""
+    assert len(INVERTED) == 3, sorted(INVERTED)
     for feed in INVERTED:
         assert feed.startswith("usd"), feed
 
@@ -81,11 +85,17 @@ def test_every_inverted_feed_really_has_the_dollar_first():
 def test_positions_are_a_share_of_open_interest():
     """Raw contract counts are not comparable between a market with two
     million outstanding and one with twenty-two thousand, nor with themselves a
-    year later."""
-    got = parse(CAD)
-    for o in got:
-        if o.series.endswith("_net"):
-            assert -1.0 <= o.value <= 1.0
+    year later.
+
+    The net rows are counted before they are checked: a parser that stopped
+    emitting them would otherwise leave the loop empty and the bound
+    unexercised, which is the same green-and-silent shape as a parse returning
+    nothing at all.
+    """
+    nets = [o for o in parse(CAD) if o.series.endswith("_net")]
+    assert len(nets) == 2, "both speculative categories, or there is nothing to bound"
+    for o in nets:
+        assert -1.0 <= o.value <= 1.0
 
 
 def test_open_interest_is_carried_as_well():

@@ -2,10 +2,10 @@
 
 **Exception text is not safe to log.** `httpx` puts the URL in its errors, the
 push stream's URL carried `api_key=` in the query string, and a log file here
-is pasted into issues on a public repo. The transport is being changed to send
-the key in a header only, but a URL can reach a log from more than one place
-(a library's message, a redirect, a proxy error), so the text is scrubbed at
-the point it is written as well.
+is pasted into issues on a public repo. The transport now sends the key in a
+header only - see `bridge.py` - but a URL can reach a log from more than one
+place (a library's message, a redirect, a proxy error), so the text is scrubbed
+at the point it is written as well.
 """
 
 from __future__ import annotations

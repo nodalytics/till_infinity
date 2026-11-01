@@ -157,10 +157,12 @@ log = get_logger(__name__)
 #: works - see `utils/effects.py`, which exists because that happened six
 #: times in a week.
 #:
-#: **The re-declaration has no caller today.** `trading.service` did it and is
-#: retired; nothing in `node/` has taken it over, so this reports `enabled`
-#: false whatever the configuration says. The counter is still right, because
-#: `fired` is called at the refusal.
+#: The re-declaration is `Guard.__post_init__`. It was `trading.service`,
+#: which retired, and for a fortnight nothing took it over - so this reported
+#: `enabled` false whatever the configuration said, while the counter stayed
+#: right because `fired` is called at the refusal. A switched-on gate that
+#: reports itself off is the same blind spot one level in: the report is what
+#: somebody reads to decide whether the gate is worth keeping.
 effects.declare("trading.release_in_hold", enabled=False)
 
 
@@ -237,6 +239,19 @@ class Guard:
     #: survive a deploy: a peak that resets on restart makes the give-back rule
     #: measure from wherever the desk happened to reboot.
     basket_peak: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Say what the envelope switched on, where the envelope arrives.
+
+        `effects.declare` is meant to be called where a flag is **read** and
+        not where the work happens, so that a feature which is on and reached
+        by nothing still has a record. For this gate those two places are the
+        same line - `allows` reads the flag and refuses on it - and that line
+        has no production caller, so declaring there would report nothing at
+        all. Construction is the earliest point the configured value is known,
+        and it is reached once per `Guard`.
+        """
+        effects.declare("trading.release_in_hold", enabled=self.envelope.release_in_hold)
 
     def state(self) -> dict[str, object]:
         """The day's running total, for keeping across a restart.

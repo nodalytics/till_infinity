@@ -1,8 +1,22 @@
 # 0004. Risk rules have one owner, and a proposal carries measurements rather than decisions
 
-- **Status:** Accepted (2026-10-28)
+- **Status:** Accepted (2026-10-28), and now enforced by the layout rather
+  than by a rule
 - **Date:** 2026-10-28
-- **Depends on:** 0002, 0003
+- **Depends on:** 0002 (superseded 2026-11-01), 0003
+
+> **The rule held and got an owner with a name.** "One service owns risk" was
+> written when the owner was `trading/`, which no longer exists. Gates, stop
+> distance, target distance and size are derived in `till_infinity/risk/` -
+> `guard.py`, `plans.py`, `sizing.py` - which sits above Nautilus and imports
+> no strategy. The seam is `risk/envelope.py`, a frozen projection of the
+> fields the gates read that declares no defaults, so a number cannot come to
+> live in two places.
+>
+> Two names below have moved. `strategies/dispersing.py` is
+> `strategies/surprise.py`, where the rule is spelled `statespace-surprise`,
+> and `stop_vol` and `target_r` are its constants as this ADR required.
+> `statespace/proposing.py` is where it was.
 
 ## Context
 

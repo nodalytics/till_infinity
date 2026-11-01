@@ -1,10 +1,12 @@
 """Null models: the same strategy on data that has had one property removed.
 
-**These are the checks to trust most, and that is a measured claim rather than
-a preference.** Six artefacts on this desk passed DSR, PBO and SPA. What
-exposed them was rerunning the strategy on surrogates and breaking the result
-down by hour - so a battery that stops at the selection statistics is a
-battery that has already been fooled here.
+**These are the checks to trust most**, on the desk's own account: six
+artefacts are held to have passed DSR, PBO and SPA, and what exposed them was
+rerunning the strategy on surrogates and breaking the result down by hour - so
+a battery that stops at the selection statistics is a battery that has already
+been fooled here. **The six are unsourced.** The only deflation written up is
+`research/docs/lopez-de-prado.md`, which names no PBO or SPA run, so this is a
+reason to keep the surrogates rather than a measurement of what they caught.
 
 Each surrogate removes exactly one thing and keeps the rest. That is the whole
 design, and `a-control-is-only-for-a-named-property` is why: a control has to

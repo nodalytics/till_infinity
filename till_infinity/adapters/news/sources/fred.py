@@ -52,7 +52,11 @@ than a proxy that is current.
 
 It does not forecast. Nothing here says a widening breakeven means buy dollars;
 this package collects and the models decide, which is the same division every
-other source in `news` keeps. `structures/macro.py` is the model.
+other source in `adapters/news` keeps. The model that read these series was
+`structures/macro.py`, retired to
+`research/retire/structures/engine/context/macro.py`; nothing in the live tree
+subscribes to `MacroObservation` yet, so what is here is collected and stored
+rather than traded on.
 
 `FRED_API_KEY` is required and there is no keyless fallback: the keyless
 endpoint returns 400, and a source that silently collects nothing is worse than

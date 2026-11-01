@@ -151,14 +151,27 @@ def test_the_lifecycle_hooks_are_the_frameworks_own(hook):
     assert hook in vars(Notifier), f"{hook} is not overridden here"
 
 
-def test_state_is_saved_and_loaded_through_the_frameworks_hooks():
-    """`on_save` returns `dict[str, bytes]` because that is what Nautilus
-    persists; anything else is silently not saved."""
+def test_saved_state_is_the_shape_nautilus_persists(monkeypatch):
+    """`dict[str, bytes]`, and **anything else is silently not saved** - no
+    exception, no warning, just a cooldown window that is empty on every boot.
+
+    Asserted on an actor that has something to save. The version of this test
+    before it looped over the state of a *fresh* actor, which is `{}` by
+    design, so the loop body never ran and the shape was never checked at all.
+    `on_save` is declared on `Actor` and not invented here, which is the half
+    a type claim cannot cover.
+    """
     assert hasattr(Actor, "on_save")
     assert hasattr(Actor, "on_load")
-    actor = Notifier(NotifierConfig())
-    assert actor.on_save() == {}  # nothing to save before a start
-    for key, value in Notifier(NotifierConfig()).on_save().items():
+
+    unstarted = Notifier(NotifierConfig())
+    assert unstarted.on_save() == {}, "nothing to save before a start"
+
+    actor, msgbus, _sender = build(monkeypatch, dedupe_seconds=600.0)
+    msgbus.publish(topic="alerts", msg=alert(fields={"shape": "trade", "instrument": "gold"}))
+    state = actor.on_save()
+    assert state, "a sent alert leaves a cooldown window to persist"
+    for key, value in state.items():
         assert isinstance(key, str)
         assert isinstance(value, bytes)
 

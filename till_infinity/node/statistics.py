@@ -248,10 +248,11 @@ def register(
     correction applies once to the whole search, and four correlated statistics
     with four thresholds gives an effective trial count nobody can compute -
     requiring all four to pass costs power rather than buying strictness. The
-    desk's own record is explicit: several candidates passed DSR, PBO and SPA,
-    and what exposed them was running the strategy on **surrogates** and
-    breaking the results down **by hour**. More metrics did not help; a
-    different *kind* of test did.
+    desk holds that several candidates passed DSR, PBO and SPA and were exposed
+    only by **surrogates** and a breakdown **by hour** - more metrics did not
+    help, a different *kind* of test did. That claim is **unsourced**, and
+    `surrogates.py` says where it was looked for; the split above stands on the
+    correlation argument without it.
 
     ## Redundant descriptions yes, redundant probabilities no
 

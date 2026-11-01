@@ -31,16 +31,13 @@ def test_the_bus_calls_we_publish_through_exist_on_nautilus():
     assert hasattr(Strategy, "msgbus")
 
 
-def test_the_dict_flavoured_methods_still_do_not_exist():
-    """A regression guard pointing the other way.
-
-    If a future Nautilus adds `publish_data_dict`, this fails and someone
-    should decide whether to use it - rather than three modules quietly
-    calling it again because the name reads plausibly.
-    """
-    for name in ("publish_data_dict", "subscribe_data_dict", "on_data_dict"):
-        assert not hasattr(Actor, name), f"Actor gained {name}: revisit utils/topics.py"
-        assert not hasattr(Strategy, name), f"Strategy gained {name}"
+# The guard pointing the other way - that Nautilus has not since *added*
+# `publish_data_dict` and friends - lived here too, asserting exactly what
+# `test_nautilus_api.test_the_names_the_sweep_found_still_do_not_exist` already
+# asserts for `Actor` and `Strategy`. Two people wrote the same test from the
+# same incident. The parametrised one survived because it covers the two names
+# this file never knew about, `Actor.create_task` and
+# `LiveExecutionClient._uuid4`.
 
 
 def test_nothing_in_the_tree_calls_the_methods_that_do_not_exist():
@@ -82,6 +79,14 @@ def test_an_undeclared_topic_is_refused_both_ways():
 
 
 def test_a_declared_topic_reaches_the_bus():
+    """The power assertion for the refusal above: a `publish` that refused
+    everything would satisfy it.
+
+    The bus here is a stub, deliberately - what is under test is the registry
+    helper, not Nautilus. That the real `MessageBus` records a subscription is
+    `test_notifier_actor.test_the_subscription_is_registered_on_nautilus_own_bus`,
+    which is the half a stub cannot answer.
+    """
     sent: list[tuple[str, object]] = []
     taken: list[tuple[str, object]] = []
 
@@ -101,7 +106,15 @@ def test_a_declared_topic_reaches_the_bus():
     assert taken == [("journal", print)]
 
 
-def test_every_declared_topic_is_a_distinct_dotted_name():
+def test_every_declared_topic_is_a_distinct_lowercase_name():
+    """Two constants with one string is a subscriber receiving another
+    subject's messages, and neither end can tell.
+
+    Not "dotted", which this was called: `alerts` and `journal` carry no dot,
+    because they are single subjects rather than families. The properties
+    actually held are the ones a typo breaks - distinct, non-empty, and with
+    no stray whitespace or capital to make two spellings of one topic.
+    """
     assert len(set(topics.DECLARED)) == len(topics.DECLARED)
     for name in topics.DECLARED:
         assert name

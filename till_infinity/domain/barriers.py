@@ -10,7 +10,7 @@ one question that decides whether a trade is worth taking:
 
     P(target before stop | the stop and target I just chose)
 
-`research/spending.md` measured the consequence. Across 133 real-market closes
+`research/docs/spending.md` measured the consequence. Across 133 real-market closes
 the entries are **1.7 points** off break-even at the payoff they plan, and the
 geometry around them gives away half of it: wins come in at 54% of their risk
 where losses come in at 78%, and **50 of 133 trades exit on the clock at 5% of
@@ -38,7 +38,7 @@ on one-minute closes.
 price is watched more finely: the shift scales as `sigma * sqrt(dt)`, and at
 `n` ticks a bar it falls by `sqrt(n)`.
 
-**A real stop is hit on a tick, not on a close.** `research/deriving.md` section
+**A real stop is hit on a tick, not on a close.** `research/docs/deriving.md` section
 one walks non-overlapping windows on one-minute closes, so its whole published
 table - including the 30.7% - is the *close-monitored* answer, and the desk does
 not trade on closes. At thirty ticks a bar the shift falls from 0.5826 to
@@ -58,8 +58,8 @@ below the one the research page gives - a seventh of the hit rate.
 
 ## Where this is validated and where it is a prior
 
-**Derived and confirmed on the Volatility indices**, which `research/generators.md`
-and `research/twins.md` establish as geometric Brownian motion with a published
+**Derived and confirmed on the Volatility indices**, which `research/docs/generators.md`
+and `research/docs/twins.md` establish as geometric Brownian motion with a published
 sigma, H = 0.50 and kurtosis 3.00. There the assumption is not an assumption.
 
 **On real markets it is a better prior than the continuous form and was not
@@ -68,7 +68,7 @@ prior was right about its own limits.
 
 ## Measured, 2026-09-12, four arms on 19 feeds out of sample
 
-`research/grounding.md` tested the law against the closed form, an exact
+`research/docs/grounding.md` tested the law against the closed form, an exact
 propagation of the same Gaussian law, the feed's own return histogram, and a
 learned volatility-regime operator. Then again at **tick** resolution on
 `feed.py`'s millisecond stamps, which is the scale this module's headline
@@ -172,10 +172,10 @@ def duration(
 
 
 #: How much longer a real trade takes than `duration` says, measured as
-#: `(predicted bars, multiple)` on 19 real feeds by `research/grounding.md`.
+#: `(predicted bars, multiple)` on 19 real feeds by `research/docs/grounding.md`.
 #:
 #: **Not an approximation error, and the control is what proves it.** The same
-#: table on feeds `research/deriving.md` proves Brownian reads 1.111, 1.047,
+#: table on feeds `research/docs/deriving.md` proves Brownian reads 1.111, 1.047,
 #: 1.047, 1.053, 1.091 - **flat in geometry**, which is what the closed form's
 #: own known error looks like. The real-feed column is not flat: it grows
 #: monotonically and reaches **1.958 at ten sigmas, on 19 feeds out of 19**.
@@ -206,9 +206,10 @@ SLOWER_ON_FEED: tuple[tuple[float, float], ...] = (
 #: The distinction decides which duration to use, and it is not cosmetic: the
 #: Brownian form is *exact* on the generated side - every interval covers zero on
 #: the six Volatility indices - and understates the real side by 25% to 96%. The
-#: same names drive `research/spending.md`'s split of the book.
+#: same names drive `research/docs/spending.md`'s split of the book.
 #:
-#: A wider pattern than `structures/vol/stated.NAMED`, which matches only the
+#: A wider pattern than the `NAMED` of the retired
+#: `research/retire/structures/engine/vol/stated.py`, which matched only the
 #: families that publish a volatility in their name. This one has to catch every
 #: feed whose process is the venue's rather than a market's.
 GENERATED = re.compile(r"^(volatility|jump|boom|crash|step|range_break)_", re.I)
@@ -369,7 +370,7 @@ def reachable(target_units: float, stop_units: float) -> bool:
 
     Under `MIN_UNITS` the answer is dominated by the volatility estimate's own
     error rather than by the geometry, and a confident-looking number there is
-    the failure this repository keeps cataloguing in `research/inert.md`.
+    the failure this repository keeps cataloguing in `research/docs/inert.md`.
     """
     return min(abs(float(target_units)), abs(float(stop_units))) >= MIN_UNITS
 

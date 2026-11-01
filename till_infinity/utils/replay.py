@@ -22,8 +22,8 @@ no test gate. That rationale is right for about a hundred of the 103 harnesses -
 they are written to be read beside their results and thrown away when the
 question is answered. It is wrong for the forward walk, which is the function
 that decides what ships: `exits.py` scored ride's exit at +0.655R against
-+0.099R over 30,875 calls, and that is why `SweepAware` carries its current exit
-in production today.
++0.099R over 30,875 calls, and that is why `sweep-aware` carries its current
+exit in production today.
 
 So the walk lives here, linted and tested, and the harnesses import it.
 
@@ -40,9 +40,9 @@ So the walk lives here, linted and tested, and the harnesses import it.
    over 18 synthetic cells, "always stop" is **0.47 to 0.68 accurate** and on
    btc **0.415 - worse than a coin.** Because it always says the same thing its
    error is a one-sided bias rather than noise, worth **-9 to -44 points of risk
-   per resolved trade**, and `research/calibrating.md` puts the largest claim on
-   `research/spending.md`'s strategy table at 34 points. **The bias is the size
-   of the findings and it points the same way every time.**
+   per resolved trade**, and `research/docs/calibrating.md` puts the largest
+   claim on `research/docs/spending.md`'s strategy table at 34 points. **The
+   bias is the size of the findings and it points the same way every time.**
 
    It costs a *fresh* entry nothing: at `target_mult` 6.0, this module's own
    default, **0.00% of bars are ambiguous** on every feed tested. It binds once
@@ -91,10 +91,11 @@ def _number(source: Mapping[str, Any], key: str, default: float = 0.0) -> float:
 
 
 #: The Broadie-Glasserman-Kou continuity correction, in units of the bar's own
-#: range. Duplicated from `trading/barriers.SHIFT` rather than imported: `shared`
-#: sits **under** `trading` and a module here reaching up into it would invert
-#: the layering for one constant. The tests assert the two agree, so a change to
-#: either fails rather than drifts.
+#: range. Duplicated from `domain/barriers.py`'s `SHIFT` rather than imported:
+#: `utils` sits **under** `domain` - `domain/models.py` reads `utils.intervals`
+#: - and a module here reaching back up would invert the layering for one
+#: constant. The tests assert the two agree, so a change to either fails rather
+#: than drifts.
 SHIFT = 0.5826
 
 
@@ -128,7 +129,7 @@ def _risk_price(trade: Trade, policy: Mapping[str, Any], unit: float) -> float |
 def _trail_step(trade: Trade, policy: Mapping[str, Any], unit: float, risk: float) -> float:
     """How far behind the extreme the stop sits, in price.
 
-    `wick_trail` reproduces what `manage.stop_for` actually applies rather than
+    `wick_trail` reproduces what `manage.advance` actually applies rather than
     what the strategy asks for: the trail is widened to clear the level's own
     wicks, and **that rule has no ceiling**. Over 47,233 level calls the
     computed trail is the 0.5v floor only 59% of the time, exceeds 1v on 30.2%,

@@ -2,15 +2,17 @@
 
 This is a **contract**, which is why it is here rather than in a service. An
 interval is a string on the bus - `"5m"`, `"1h"` - and every service that reads
-one has to agree on what it means. `trading` converts holds and half-lives with
-it, `notifications` rate-limits with it, and the structures engine decayed level
-evidence with it.
+one has to agree on what it means. `strategies/profile.py` and `domain/models.py`
+convert holds and half-lives with it, `notifications/filters.py` rate-limits
+with it, and the structures engine decayed level evidence with it.
 
 It lived in `structures/levels.py` until 2026-10-28, which made four services
-import a level model to find out how long five minutes is. `shared/` holds the
+import a level model to find out how long five minutes is. `utils/` holds the
 things that must be identical on both sides of a boundary, and a unit of time
-is the plainest example there is - the more so with a Go service coming, where
-this table has to exist in both languages and agree.
+is the plainest example there is. [ADR 0003](../../docs/adr/0003-python-and-go.md)
+is still accepted and names a Go tick service, which would need this table in
+both languages agreeing; no Go has been written, so that is a reason to keep
+the table honest rather than a thing it is waiting for.
 
 **Spellings are not aliases to normalise away.** `1d`/`daily` and `1w`/`weekly`
 are both in use on the bus, from different producers, and a reader that knows

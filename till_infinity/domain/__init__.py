@@ -11,15 +11,19 @@ What is here:
 
 | module | what it is |
 | --- | --- |
-| `models` | `Intent`, `Position`, `Side`, `Spec` - the shapes an order and a holding take |
+| `models` | `Intent`, `Position`, `Side`, `SymbolSpec` - the shapes an order and a holding take |
 | `rollover` | which instruments roll, and when. A property of the contract |
 | `swap` | the financing an overnight hold pays. A property of the venue |
+| `barriers` | what a stop-and-target geometry is worth before anything is traded |
 
-**All of it is transitional.** Under Nautilus these are the engine's own:
-`Order`, `Position`, `OrderSide`, and an `Instrument` that carries its own
-rollover and financing. The package shrinks to nothing as the port proceeds,
-which is the right shape for it - a domain layer that has to be *maintained*
-beside a framework's own is a second model of the same thing.
+**Three of the four are transitional.** Under Nautilus `models`, `rollover` and
+`swap` are the engine's own: `Order`, `Position`, `OrderSide`, and an
+`Instrument` that carries its own rollover and financing. Those three shrink to
+nothing as the port proceeds, which is the right shape for them - a domain
+layer that has to be *maintained* beside a framework's own is a second model of
+the same thing. `barriers` is not in that set. It is first-passage arithmetic
+against this desk's own measurements, and the framework has nothing that
+replaces it.
 """
 
 from ..domain.models import Intent, Position, Side

@@ -1,4 +1,23 @@
-"""The multiple-testing layer, the stability tests, and the unattended loop."""
+"""The multiple-testing layer, the stability tests, and the unattended loop.
+
+Three subjects in one file because they are one decision: what a candidate has
+to survive before the ladder gives it money, and what bounds the ladder when
+nobody is watching. `CEILING` is 0.60 and no amount of passing can lift it.
+
+**Two of the tests in here used to assert differences that could not exist**,
+and both failures had the same shape: a test about dependence run on data with
+no dependence in it. `test_the_day_block_interval_is_wider_when_days_are_clustered`
+used i.i.d. returns, where resampling by day and resampling by point are the
+same operation. `test_a_ruinous_era_fails_even_with_a_majority_positive` used
+`[0.1] * 500` for a good era, and a constant series has no Sharpe at all, so
+the era it meant to call strong scored zero. Both passed. Neither could have
+failed for its own reason, and the surrogate and clock work in
+`test_surrogates.py` is the generalisation of the lesson: a null that cannot
+move the statistic is not a null.
+
+So the fixtures here carry the structure the assertion is about, and the two
+tests that learned it say so in their own docstrings.
+"""
 
 from __future__ import annotations
 
@@ -51,16 +70,27 @@ def passing_gate(seed: int = 1) -> Gate:
 
 
 class TestTheBootstrapIsStationary:
-    def test_it_returns_the_right_length(self):
+    def test_a_resample_is_as_long_as_the_sample_it_came_from(self):
+        """A short draw would quietly compute every statistic on fewer
+        observations than the one it is being compared against."""
         assert len(stationary_bootstrap(100, rng=random.Random(1))) == 100
 
-    def test_indices_are_in_range(self):
+    def test_every_index_can_be_used_to_index_the_sample(self):
+        """The wraparound is the reason this is worth asserting: blocks run off
+        the end on purpose, and an off-by-one there is an `IndexError` in the
+        caller rather than here."""
         picks = stationary_bootstrap(50, rng=random.Random(2))
         assert all(0 <= i < 50 for i in picks)
 
     def test_it_draws_blocks_rather_than_points(self):
         """Resampling observations independently destroys the serial
-        dependence that makes the null fair."""
+        dependence that makes the null fair.
+
+        100 of 199 adjacent pairs is an arbitrary threshold - a little over
+        half - and it is far from either thing it separates. Measured at this
+        seed: `block=20` keeps 187 pairs consecutive and `block=1`, which is
+        the i.i.d. draw, keeps none.
+        """
         picks = stationary_bootstrap(200, block=20, rng=random.Random(3))
         consecutive = sum(1 for a, b in itertools.pairwise(picks) if b == a + 1)
         assert consecutive > 100
@@ -94,7 +124,15 @@ class TestSPAAndRomanoWolfAnswerDifferentQuestions:
 
 
 class TestFalseDiscoveryRates:
-    def test_bh_is_monotone_and_bounded(self):
+    def test_a_smaller_raw_p_never_earns_a_larger_q(self):
+        """The step-up runs from the largest p down and takes a running
+        minimum, so an inversion here would mean a candidate was rejected
+        while a weaker one beside it survived.
+
+        The bound is the second half and it is not decoration: a q above 1 is
+        not a probability, and `benjamini_yekutieli` multiplies by a harmonic
+        sum greater than 1, so it is the arm where the clamp has to work.
+        """
         got = benjamini_hochberg([0.001, 0.008, 0.02, 0.2, 0.7])
         assert got == sorted(got)
         assert all(0.0 <= q <= 1.0 for q in got)
@@ -107,19 +145,25 @@ class TestFalseDiscoveryRates:
             b >= h for b, h in zip(benjamini_yekutieli(ps), benjamini_hochberg(ps), strict=True)
         )
 
-    def test_an_empty_set_is_empty(self):
+    def test_no_candidates_is_an_empty_answer_rather_than_an_error(self):
+        """A sweep that produced nothing reaches here on a quiet day, and the
+        caller zips the q-values back against its candidates."""
         assert benjamini_hochberg([]) == []
         assert benjamini_yekutieli([]) == []
 
 
 class TestMinimumBacktestLength:
-    def test_more_trials_need_more_history(self):
+    def test_a_wider_search_needs_a_longer_history_to_support_it(self):
         assert minimum_backtest_length(1_000, 1.0) > minimum_backtest_length(10, 1.0)
 
-    def test_a_higher_target_needs_less(self):
+    def test_a_stronger_target_sharpe_needs_less_of_it(self):
         assert minimum_backtest_length(100, 2.0) < minimum_backtest_length(100, 1.0)
 
-    def test_the_two_directions_agree(self):
+    def test_the_two_directions_are_inverses_of_each_other(self):
+        """They are asked at different moments - how long must I wait, and how
+        many ideas may I try with what I have - and an answer that disagreed
+        with its own inverse would let a sweep be sized past what the history
+        supports."""
         years = minimum_backtest_length(100, 1.5)
         assert supportable_trials(years, 1.5) == pytest.approx(100, rel=0.01)
 
@@ -129,7 +173,10 @@ class TestMinimumBacktestLength:
         observation count, so more ticks per month do not help."""
         assert supportable_trials(1 / 12, 1.5) < 2
 
-    def test_one_trial_needs_nothing(self):
+    def test_a_single_untested_idea_needs_no_history_to_justify_itself(self):
+        """Zero rather than a small positive number, because there is no
+        selection to correct for: the length this returns pays for the search,
+        and a search of one is free."""
         assert minimum_backtest_length(1, 1.0) == 0.0
 
 
@@ -217,13 +264,22 @@ class TestTheUnattendedLoop:
         assert len(step(ladder)) == 0
         assert second <= first
 
-    def test_the_ceiling_is_not_crossed(self):
+    def test_forty_passing_candidates_cannot_lift_the_ceiling(self):
+        """`CEILING` is 0.60 and the gates are statistical, so they will
+        eventually pass something that should not have passed. The bound is
+        the thing that is not allowed to move when they do.
+
+        The tolerance is floating-point slack on a sum of allocations, not a
+        permitted overshoot.
+        """
         ladder = self._ladder(count=40)
         for _ in range(5):
             step(ladder)
         assert ladder.allocated() <= CEILING + 1e-9
 
-    def test_a_held_candidate_says_why(self):
+    def test_a_held_candidate_says_why_it_is_held(self):
+        """An unattended loop that stops promoting and does not say what it is
+        waiting for cannot be distinguished from one that has crashed."""
         ladder = self._ladder()
         step(ladder)
         held = [d for d in ladder.log if d.action == "held"]
@@ -238,7 +294,9 @@ class TestTheUnattendedLoop:
         ladder.enter("a")
         assert ladder.episodes["a"] == 0
 
-    def test_retiring_frees_capital_for_the_next_candidate(self):
+    def test_retiring_frees_the_capital_for_the_next_candidate(self):
+        """Otherwise the ceiling is reached once and the ladder never promotes
+        again - a loop that looks healthy and has quietly stopped."""
         ladder = self._ladder(count=15)
         step(ladder)
         step(ladder)
@@ -247,7 +305,10 @@ class TestTheUnattendedLoop:
         assert ladder.allocated() < before
         assert ladder.candidates["a"].rung is Rung.RETIRED
 
-    def test_a_revived_candidate_must_pass_again(self):
+    def test_a_revived_candidate_arrives_with_no_gates_passed(self):
+        """A candidate comes back because the market changed or the idea was
+        re-specified. Carrying its old gate results over would promote it on
+        evidence gathered about a different thing."""
         ladder = self._ladder(count=3)
         step(ladder)
         take_off(ladder, "a", Retirement.REFUTED, evidence="null test p=0.41")
@@ -283,7 +344,10 @@ class TestTheUnattendedLoop:
             bad.write_text("{not json")
             assert Ladder.load(bad).candidates == {}
 
-    def test_the_report_names_the_ceiling(self):
+    def test_the_report_names_the_ceiling_it_is_measured_against(self):
+        """An allocated figure on its own is unreadable: 40% is most of the way
+        to the bound or a third of it depending on a number the reader does not
+        have."""
         ladder = self._ladder()
         step(ladder)
         assert any("ceiling" in line for line in report(ladder))

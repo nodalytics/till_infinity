@@ -35,7 +35,7 @@ from till_infinity.utils.state import Restorable
 from .bars import NANOS, Reading, bar_input, check_feed, check_scale, reset_state, tick_input
 
 # ==========================================================================
-# from changepoint.py
+# the Bayesian detector
 # ==========================================================================
 
 EXISTENCE_HALF_LIFE_HOURS = 7 * 24.0
@@ -178,9 +178,10 @@ class Changepoint(Indicator):
     #: Where a per-bar unit comes from. The **relative** range, because the
     #: source is a return and a return is dimensionless: scaling it by a price
     #: range would be wrong by a factor of the price. The range-based estimator
-    #: beats close-to-close as a volatility driver by a ratio of 0.648 within
-    #: strata on FX and on 371 of 392 equities, and the advantage grows as the
-    #: window shortens - which is the regime a one-bar unit is in.
+    #: beats close-to-close as a volatility driver: the range-vs-close ratio
+    #: reads 0.648 within strata on FX and 0.667 on 371 of 392 equities, and it
+    #: grows as the window shortens - which is the regime a one-bar unit is in.
+    #: `candle-screen.md` in research/docs.
     unit_from: Reading | None = Reading.RELATIVE_RANGE
     #: EWMA half-life in bars for `unit_from`. Zero uses each bar's own
     #: reading.
@@ -302,10 +303,10 @@ class Changepoint(Indicator):
 
     @property
     def rate(self) -> float:
-        """**Zero, always.** See the module docstring: a change-point model
-        claims the quantity is piecewise constant, so a rate is not part of
-        what it asserts and inventing one would be reporting a trend the model
-        does not have."""
+        """**Zero, always.** A change-point model claims the quantity is
+        piecewise constant - see `at_time` on what that costs and buys - so a
+        rate is not part of what it asserts and inventing one would be
+        reporting a trend the model does not have."""
         return 0.0
 
     @property
@@ -323,7 +324,11 @@ class Changepoint(Indicator):
         `hazard / (1 - hazard)` whatever the data does - a reading that
         obliterates every existing run scales both arms down together. Measured
         on a clean step from 100 to 107, `P(r = 0)` read **0.004 before, during
-        and after**, while the expected run length fell from 57.7 to 1.1.
+        and after**, while the expected run length fell from 57.7 to 1.1. The
+        shape of that is pinned in the suite - a 100-to-107 step with the run
+        length asserted above 40 before and under 5 after - but the three
+        figures themselves are written up nowhere, so read them as a note of
+        one run rather than as a published measurement.
 
         So the detection is in the posterior's mass moving to *small* run
         lengths, not in its mass at exactly zero. This reports that, and
@@ -636,7 +641,7 @@ class Changepoint(Indicator):
 
 
 # ==========================================================================
-# from focus.py
+# the exact CUSUM
 # ==========================================================================
 
 THRESHOLD = 12.0
@@ -651,7 +656,9 @@ class Focus(Indicator, Restorable):
     """
 
     threshold: float = THRESHOLD
-    #: Look for an increase in the mean. See the module docstring.
+    #: Look for an increase in the mean. One-sided on purpose, and `update` is
+    #: where that is spelled out: a candidate whose sum runs the other way is
+    #: evidence of a fall, which is a different question and a second instance.
     up: bool = True
     #: How the stream is scaled. Observations are divided by this before the
     #: Gaussian statistic is applied, so a threshold means the same thing on
@@ -678,9 +685,10 @@ class Focus(Indicator, Restorable):
     #: Where a per-bar unit comes from. The **relative** range, because the
     #: source is a return and a return is dimensionless: scaling it by a price
     #: range would be wrong by a factor of the price. The range-based estimator
-    #: beats close-to-close as a volatility driver by a ratio of 0.648 within
-    #: strata on FX and on 371 of 392 equities, and the advantage grows as the
-    #: window shortens - which is the regime a one-bar unit is in.
+    #: beats close-to-close as a volatility driver: the range-vs-close ratio
+    #: reads 0.648 within strata on FX and 0.667 on 371 of 392 equities, and it
+    #: grows as the window shortens - which is the regime a one-bar unit is in.
+    #: `candle-screen.md` in research/docs.
     unit_from: Reading | None = Reading.RELATIVE_RANGE
     #: EWMA half-life in bars for `unit_from`. Zero uses each bar's own
     #: reading, which is noisier but carries no warmup.

@@ -42,8 +42,10 @@ so that they can be argued with rather than discovered inside a condition:
 The bridge returns the forming bar as the most recent element, and a forming
 bar is not evidence: its close is the current price, so "closed away from the
 level" is a statement about this instant that the next tick can withdraw. Every
-function here takes already-closed bars, and `recent` is the thing responsible
-for dropping the live one.
+function here takes already-closed bars, and `Candles` is what drops the live
+one: with `confirm` set it refuses a bar Nautilus marks `is_revision`, which is
+what a forming bar's updates are, so `Candles.bars` only ever holds closed
+bars.
 """
 
 from __future__ import annotations

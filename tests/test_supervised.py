@@ -148,6 +148,9 @@ class TestLabelsMustSeeForward:
         assert "8 bars" in said, said
 
     def test_regime_works_once_the_horizon_is_long_enough(self, one_file: Path):
+        """Power for the refusal above: the family has to decline the short
+        horizon and still work, or declining would be indistinguishable from
+        being broken."""
         panel = candles.build([one_file], family="regime", horizon=20, band=1.0, verbose=False)
         assert len(panel) > 100
 
@@ -208,11 +211,17 @@ class TestTheSplitsHoldTheBoundary:
 
 class TestTheNullIsTheRightShape:
     def test_a_block_shuffle_keeps_the_class_balance(self, one_file: Path):
+        """A null with a different class mix is a different problem, and a
+        classifier scores differently on it for reasons that have nothing to
+        do with the structure being tested."""
         panel = candles.build([one_file], family="banded", horizon=5, band=1.0, verbose=False)
         shuffled = splits.block_shuffle(panel.y, panel.when, panel.horizon)
         assert np.array_equal(np.bincount(shuffled), np.bincount(panel.y))
 
-    def test_it_actually_moves_the_labels(self, one_file: Path):
+    def test_the_shuffle_moves_enough_labels_to_be_a_null(self, one_file: Path):
+        """Balance alone is satisfied by returning the labels untouched, which
+        would make every null test read as a pass. 0.1 is an arbitrary floor
+        well under what a real shuffle moves, and well above zero."""
         panel = candles.build([one_file], family="banded", horizon=5, band=1.0, verbose=False)
         shuffled = splits.block_shuffle(panel.y, panel.when, panel.horizon)
         assert (shuffled != panel.y).mean() > 0.1, "the null is not a null"
@@ -233,6 +242,9 @@ class TestBarsAreRepairedAndCounted:
         assert bars[1, 3] == 100.0, "the low should not have moved"
 
     def test_the_repair_count_reaches_the_panel(self, tmp_path: Path):
+        """Counted at the loader and then dropped is the same as not counting:
+        the number has to arrive where somebody reads it, because a feed
+        needing repairs on 6% of rows is a feed to question."""
         rows = fake_bars()
         rows[50] = (rows[50][0], 100.0, 101.0, 99.0, 140.0, 1.0)
         path = write_bars(tmp_path / "h_1d_test.csv.gz", rows)
@@ -320,10 +332,45 @@ class TestGapsAreLevelsUntilPriceReturns:
         standing = candles.standing_gaps(bars, candles.true_range(bars))
         assert standing[2, 0] == 0.0
 
-    def test_size_and_shape_are_both_present(self):
+    def test_size_and_shape_are_carried_as_two_different_measurements(self, one_file: Path):
         """A doji and a huge indecisive bar have identical shape fractions, so
         size in true ranges has to be carried separately or the operator's
-        long-candle rule cannot be expressed at all."""
+        long-candle rule cannot be expressed at all.
+
+        **A name in `FEATURE_NAMES` is not a feature.** This checked only that
+        the four strings were in the list, which a column of constants or of
+        NaNs would satisfy - the same shape as a `hasattr` passing on a method
+        that raises. So the names are resolved against a built panel and each
+        column has to vary, and the two pairs have to disagree: measured here,
+        `body_frac` against `body_tr` correlates 0.923 and `upper_wick`
+        against `upper_wick_tr` 0.583. The 0.99 bound is arbitrary and sits
+        clear of both; at 1.0 the pair would be one column under two names.
+
+        The count of 34 is a tripwire rather than a measurement - it is tied
+        to the panel's own width here, so adding a feature without widening
+        the panel fails.
+        """
+        panel = candles.build([one_file], family="banded", horizon=5, band=1.0, verbose=False)
+        assert len(panel) > 100
+        where = {name: i for i, name in enumerate(panel.names)}
+
         for name in ("body_frac", "body_tr", "upper_wick", "upper_wick_tr"):
             assert name in candles.FEATURE_NAMES, name
+            assert name in where, f"{name} is declared but is not a panel column"
+            assert panel.x[:, where[name]].astype(float).std() > 0.0, (
+                f"{name} is a constant column, so it carries no information"
+            )
+
+        for shape, size in (("body_frac", "body_tr"), ("upper_wick", "upper_wick_tr")):
+            r = abs(
+                float(
+                    np.corrcoef(
+                        panel.x[:, where[shape]].astype(float),
+                        panel.x[:, where[size]].astype(float),
+                    )[0, 1]
+                )
+            )
+            assert r < 0.99, f"{shape} and {size} correlate {r:.3f} - they are one measurement"
+
         assert len(candles.FEATURE_NAMES) == 34, len(candles.FEATURE_NAMES)
+        assert panel.x.shape[1] == len(candles.FEATURE_NAMES)

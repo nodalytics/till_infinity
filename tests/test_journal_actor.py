@@ -206,6 +206,9 @@ def test_it_does_not_journal_the_frameworks_own_order_and_position_events(tmp_pa
 
 
 def test_an_entry_published_on_the_bus_reaches_the_store(tmp_path):
+    """The end to end, and the only test here that proves the actor is wired
+    at all. Everything below it measures how the record is shaped; this one
+    measures that there is a record."""
     _, actor = journal_actor(tmp_path)
     entry = decision("Refused gold at the spread", actor="EdgeEntry-GOLD", tags=("gold",))
 
@@ -470,7 +473,11 @@ def test_an_outcome_inherits_tags_from_a_decision_in_the_same_batch(tmp_path):
     assert [str(e.kind) for e in tagged] == ["outcome", "decision"]
 
 
-def test_explicit_outcome_tags_win(tmp_path):
+def test_an_outcome_that_states_its_own_tags_keeps_them(tmp_path):
+    """Tags are inherited from the parent decision so an outcome can be found
+    by the same search, but a stated tag is a publisher saying something the
+    parent did not know - and overwriting it would make the inheritance
+    lossy in the one case where it carries new information."""
     _, actor = journal_actor(tmp_path)
     made = decision("Alerted on gold", tags=("gold",), time=1_000.0)
 

@@ -44,7 +44,7 @@ reading is always at least three days old.
 
 Whether a three-day-old weekly number is worth anything is exactly the sort of
 question this repository answers by measuring rather than arguing. See
-research/positioning.md. What is not in doubt is that it is the only
+research/docs/positioning.md. What is not in doubt is that it is the only
 *observed* rather than inferred supply-and-demand data reachable from here.
 """
 
@@ -79,7 +79,7 @@ log = get_logger(__name__)
 #: to the twelve markets that matter, incremental fetching by report date, and
 #: the whole history behind one endpoint rather than a zip per year.
 #:
-#: Not adopted, because the lead correlations in research/positioning.md are
+#: Not adopted, because the lead correlations in research/docs/positioning.md are
 #: all inside the noise band: this data has no measured predictive content, and
 #: hardening the pipeline of something nothing consumes is work spent on the
 #: wrong end.

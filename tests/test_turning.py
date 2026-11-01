@@ -114,7 +114,14 @@ class TestScoring:
         assert not got.reached
 
     def test_every_row_admits_it_is_an_upper_bound(self):
-        assert tn.score(ride(), best_r=2.0, took_r=1.0).optimistic
+        """Asserted on the serialised row, which is the half that can break.
+
+        `optimistic` is a field with a default, so reading it back off the
+        object restates the default. What matters is that it survives into the
+        dict the journal stores: a reader comparing this model against the
+        exits actually taken has no way to know the comparison ignores the
+        fill unless the row says so, and the row is all they get.
+        """
         assert tn.score(ride(), best_r=2.0, took_r=1.0).to_dict()["optimistic"] is True
 
 

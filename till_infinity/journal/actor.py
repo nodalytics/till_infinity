@@ -124,10 +124,12 @@ class JournalConfig(ActorConfig, frozen=True):
     #: eviction `deque` performs silently is a lost record nobody counted -
     #: past this the entry is refused and `tally` says how many.
     #:
-    #: 2,000 is about two hours of the live desk's journalled rate (hundreds a
-    #: day of the refusals worth reading back, per `strategies/desk.py`), so
-    #: reaching it means the writer has been failing for hours, not that a
-    #: burst arrived.
+    #: 2,000 is headroom rather than a measured multiple of anything: the
+    #: journalled rate has never been measured, and the figure the desk does
+    #: have is for the refusals that are *not* journalled - `strategies/desk.py`
+    #: puts those at hundreds a day and journals the narrower set deliberately.
+    #: So reaching this cap means the writer has been failing for a long time
+    #: rather than that a burst arrived, and how long is not known.
     max_pending: int = 2_000
     #: Consecutive failed flushes before the component degrades.
     #:

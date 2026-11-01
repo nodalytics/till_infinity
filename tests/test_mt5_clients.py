@@ -260,16 +260,21 @@ def test_the_fake_bridge_has_the_surface_of_the_real_one():
 def test_a_transport_that_streams_does_so_with_the_signature_the_client_calls():
     """`stream(symbols)` is the contract between `data.py` and a transport.
 
-    Skipped until a transport defines it - the HTTP bridge and the rpyc proxy
-    are owned elsewhere - and then checked, so the client cannot call a
-    `stream` whose signature differs from the one these tests exercise.
+    Every push test below runs against `FakeBridge.stream`, so the thing worth
+    holding is that a real transport's `stream` takes what the fake takes. The
+    emptiness check is the point of the first assertion: this test used to
+    skip when no transport defined the method, which meant deleting
+    `Bridge.stream` would have turned the whole push contract green by
+    reporting itself as not applicable yet.
+
+    Which transports have one is `test_mt5_transport.py`'s question - `Proxy`
+    deliberately has none - so this asserts only that somebody does.
     """
     from till_infinity.adapters.mt5.proxy import Proxy
 
     expected = list(inspect.signature(FakeBridge.stream).parameters)
-    present = [cls for cls in (Bridge, Proxy) if hasattr(cls, "stream")]
-    if not present:
-        pytest.skip("no transport defines stream yet")
+    present = [cls for cls in (Bridge, Proxy) if "stream" in vars(cls)]
+    assert present, "no transport defines stream, so the signature check below is vacuous"
     for cls in present:
         assert list(inspect.signature(cls.stream).parameters) == expected, cls.__name__
         assert inspect.isasyncgenfunction(cls.stream), cls.__name__
@@ -279,15 +284,18 @@ def test_a_transport_that_moves_a_resting_order_does_so_with_the_signature_the_c
     """`modify_order(ticket, price)` is the contract `execution.py` calls.
 
     A resting order is moved by `PUT /orders/{ticket}`, not by the position
-    route. Until a transport defines it the client refuses the modify, and
-    this skips; once one does, its signature is held to the fake's.
+    route, and the two routes take different arguments - so a signature that
+    drifts from the fake's is a modify that silently sends a stop where a
+    price belongs.
+
+    Asserted rather than skipped for the reason given above: a guard that
+    tolerates nothing being present cannot fail when something is removed.
     """
     from till_infinity.adapters.mt5.proxy import Proxy
 
     expected = list(inspect.signature(FakeBridge.modify_order).parameters)
-    present = [cls for cls in (Bridge, Proxy) if hasattr(cls, "modify_order")]
-    if not present:
-        pytest.skip("no transport defines modify_order yet")
+    present = [cls for cls in (Bridge, Proxy) if "modify_order" in vars(cls)]
+    assert present, "no transport defines modify_order, so there is nothing to hold"
     for cls in present:
         assert list(inspect.signature(cls.modify_order).parameters) == expected, cls.__name__
 
@@ -487,22 +495,17 @@ class TestTheAdapterOverridesNamesNautilusActuallyCalls:
             f"{name} falls through to the framework's NotImplementedError"
         )
 
-    def test_the_event_generators_the_client_calls_exist_on_the_framework(self):
-        for name in (
-            "generate_order_submitted",
-            "generate_order_accepted",
-            "generate_order_rejected",
-            "generate_order_filled",
-            "generate_order_canceled",
-            "generate_order_updated",
-            "generate_order_modify_rejected",
-            "generate_order_cancel_rejected",
-            "_send_order_status_report",
-            "_set_account_id",
-        ):
-            assert hasattr(LiveExecutionClient, name), name
-        assert hasattr(LiveMarketDataClient, "_handle_data")
-        assert hasattr(LiveMarketDataClient, "_handle_bars")
+    # **`test_the_event_generators_the_client_calls_exist_on_the_framework`
+    # went as a duplicate.** It was a hand-kept roster of twelve framework
+    # names behind bare `hasattr`, and
+    # `test_nautilus_api.test_nothing_calls_a_nautilus_method_that_does_not_exist`
+    # already resolves `MT5ExecutionClient` and `MT5DataClient` against these
+    # same two bases and checks every `self.x()` call in them - so eleven of
+    # the twelve were covered automatically, by a check that cannot go stale.
+    # The twelfth, `_send_order_status_report`, is called nowhere in the tree,
+    # and a list entry for a method we do not use protects nothing. What the
+    # roster could not do is check a *signature*, which is the mistake this
+    # adapter actually made, and the test below does that.
 
     def test_generate_order_filled_is_called_by_keyword_with_every_required_argument(self):
         """The positional call left out `trade_id` and shifted the rest.
@@ -919,6 +922,15 @@ class TestAQuoteSourceThisTransportCannotHonourIsRefused:
             await rig.client._connect()
 
     async def test_poll_and_ticks_need_no_stream(self):
+        """Power for the refusal above, which would otherwise be satisfied by a
+        client that refused every stream-less transport outright.
+
+        The rpyc proxy has no stream and is a perfectly good transport for the
+        two sampling sources, so the refusal has to be specific to `push`.
+        There is nothing to assert beyond the connect completing: the failure
+        this is written against is an exception.
+        """
+
         class NoStream(FakeBridge):
             stream = None
 
@@ -1126,6 +1138,16 @@ class TestPushedTicks:
 
     @pytest.mark.parametrize("flags", [2, 4, 130, 134])
     async def test_flags_do_not_filter_a_pushed_tick(self, flags):
+        """The four values are the observed ones, and the reason not to read
+        them: 2 and 4 are a bid-only and an ask-only revision, 130 and 134 are
+        the same two with the **undocumented bit 128** set.
+
+        `adapters/mt5/__init__.py` records what that cost - a filter written
+        as `flags in (2, 4)` under-reports, because the one-sided revision
+        actually arrives as 130. A pushed frame already carries both sides, so
+        the fix is to stop consulting the bitfield rather than to enumerate
+        it, and this holds the client to that for every value seen in the wild.
+        """
         rig = await self._run([[self._frame(_now_ms() + 5_000, flags=flags)]])
         assert len(rig.published(QuoteTick)) == 1
         await stop(rig)
@@ -1308,8 +1330,27 @@ class TestSubmittingAnOrder:
         body = rig.bridge.called("order")[0][0][0]
         assert (body["magic"], body["deviation"], body["type_filling"]) == (424_242, 7, "FOK")
 
-    def test_the_default_magic_is_777_701(self):
+    def test_the_default_magic_is_the_one_the_desk_attributes_by(self):
+        """**The magic is the only thing that says a fill was ours**, so the
+        two places that spell it have to agree.
+
+        `adapters/mt5/config.py` declares `magic: int = 777_701` as a literal
+        and `strategies/config.py` declares `DEFAULT_MAGIC = 777_701`
+        separately - the adapter's docstring names `DEFAULT_MAGIC` without
+        importing it. Nothing else holds the copies together, and the recorded
+        cost of them drifting is `judge-the-desk-on-the-broker-not-the-journal`:
+        off by one relabels every strategy as its neighbour, so the fills come
+        back attributed to a desk that did not place them.
+
+        Asserted against the constant rather than only against the literal,
+        because a test that repeats the number cannot notice the number moving.
+        """
+        from till_infinity.strategies.config import DEFAULT_MAGIC
+
         assert MT5ExecClientConfig().magic == MAGIC
+        assert MT5ExecClientConfig().magic == DEFAULT_MAGIC, (
+            "the adapter stamps orders with a magic the strategies no longer use"
+        )
 
     async def test_the_comment_fits_the_mt5_limit(self):
         """MT5 truncates or rejects a comment past 31 characters."""
@@ -1501,6 +1542,16 @@ class TestSubmittingAnOrder:
         assert not rig.bridge.called("order")
 
     async def test_an_order_for_an_instrument_not_yet_loaded_loads_it_and_goes_through(self):
+        """One of the defects this file was written for: the execution client's
+        provider was never loaded.
+
+        The data client loads instruments on connect and the execution client
+        did not, so its provider was empty and the first order of a session
+        looked exactly like the refusal above - a rejection reading "not a
+        symbol" for a symbol the terminal lists perfectly well. The pair of
+        tests has to stay a pair for that reason: either one alone passes for
+        the wrong provider.
+        """
         rig = make_exec(FakeBridge(order=REJECTION), loaded=False)
         await rig.client._submit_order(_submit(rig, _market()))
         assert rig.bridge.called("order")
@@ -2216,6 +2267,15 @@ class TestCredentialsStayOutOfLoggedText:
         assert redact("a key", ("ke",)) == "a key"
 
     async def test_a_connect_failure_does_not_carry_the_key(self):
+        """**Scrubbing the message is not enough if the original is chained.**
+
+        `raise ConnectionError(scrubbed) from error` produces a clean message
+        and a traceback that prints "The above exception was the direct cause"
+        followed by the unscrubbed original - so the key reaches the log by the
+        one route nobody thinks to check. The cause has to be dropped and the
+        implicit context suppressed, which is what the last two assertions are
+        for; the first alone passes on a chained raise.
+        """
         error = httpx.ConnectError(f"All connection attempts failed: ?api_key={self.KEY}")
         rig = make_data(FakeBridge(ping=error), api_key=self.KEY)
         with pytest.raises(ConnectionError) as caught:
@@ -2311,6 +2371,18 @@ class TestFillReports:
         assert str(report.commission.currency) == "USD"
 
     async def test_the_window_is_the_last_day_plus_a_minute_of_slack(self):
+        """The minute is on the *end* of the window, and it is for the
+        terminal's clock rather than for the network.
+
+        `clocks.py` measures the gap between a tick's stamp and its arrival
+        and deliberately never applies it, so the broker's clock is free to
+        sit ahead of ours - usually by a whole timezone. A window ending at
+        `now` would then miss a deal the server stamped in our future, and a
+        missed fill reconciles as an order that never filled.
+
+        Both numbers are the shipped ones in `execution.py`; a day is the
+        reconciliation horizon and the minute is slack, not a measurement.
+        """
         rig = make_exec()
         before = int(rig.clock.timestamp_ns() / 1e9)
         await rig.client.generate_fill_reports()
@@ -2367,6 +2439,15 @@ class TestTheFactoriesWireTheClientsUp:
         assert client.id == ClientId("MT5")
 
     async def test_the_exec_factory_builds_a_netting_exec_client(self):
+        """**MT5 nets**, and telling Nautilus otherwise would make its position
+        book disagree with the terminal's.
+
+        On a netting account a buy against an open short reduces that short;
+        under `HEDGING` Nautilus would carry both as separate positions, so
+        exposure would read as the sum of two legs the broker has already
+        offset. The factory is where the choice is made, and it is not a
+        setting - it is what this venue does.
+        """
         from nautilus_trader.model.enums import OmsType
 
         client = await self._build(MT5LiveExecClientFactory, MT5ExecClientConfig())
@@ -2513,10 +2594,9 @@ class TestTheBridgeSpeaksTheWireProtocol:
         with pytest.raises(BridgeError, match="not open"):
             _ = bridge.session
 
-    async def test_open_is_idempotent(self):
-        bridge = Bridge("http://bridge:8000")
-        await bridge.open()
-        first = bridge.session
-        await bridge.open()
-        assert bridge.session is first
-        await bridge.close()
+    # **`test_open_is_idempotent` went as a duplicate.** Session handling does
+    # not cross the network, which is this class's subject, and
+    # `test_mt5_adapter.TestTheSessionIsOpenedDeliberately` holds the same
+    # property plus two things this copy did not: that the API key reaches the
+    # session's headers, and that `session` raises again after a close. The
+    # double-close case above is the one part that was only here, so it stays.

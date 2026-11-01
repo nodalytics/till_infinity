@@ -14,7 +14,8 @@ socket, and the whole MT5 surface.
 **Both answer the same methods, so nothing above this file knows which is
 running.** That is the point of the module. The old arrangement made the
 transport a system-wide concept: `TRADING_BACKEND` was read in
-`strategies/config.py`, `broker.choose` ranked four backends, and a strategy
+`strategies/config.py`, `broker.choose` ranked four backends - that ranker is
+retired to `research/retire/strategies/venues/broker.py` - and a strategy
 could in principle have asked which one it was on. A venue's wire protocol is
 not a trading concept, and anything that can ask about it eventually branches
 on it.

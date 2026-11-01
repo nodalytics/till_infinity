@@ -87,16 +87,32 @@ async def test_context_is_copied_in_not_referenced(book):
     assert jr.get(book.path, entry.id).context["spread_bps"] == 30.0
 
 
-async def test_an_unserialisable_context_does_not_lose_the_entry(book):
-    entry = decision(context={"when": object()})
+async def test_an_unserialisable_context_value_costs_that_value_and_nothing_else(book):
+    """A record is written by whatever decided, and callers put live objects in
+    a context dict without meaning to - a `Decimal`, a Nautilus `Price`, a
+    bound method. **The entry is the thing that must survive**, because the
+    reason it was written is the one thing that cannot be reconstructed later.
+
+    The old assertion here was `jr.get(...) is not None`, which held equally if
+    the whole context had been thrown away.
+    """
+    entry = decision(context={"when": object(), "spread_bps": 30.0})
     await book.write(entry)
-    assert jr.get(book.path, entry.id) is not None
+
+    stored = jr.get(book.path, entry.id)
+    assert stored.context["spread_bps"] == 30.0, "a sibling key is not collateral"
+    assert str(stored.context["when"]).startswith("<object object"), (
+        "coerced to its repr rather than dropped, so a reader can see what was there"
+    )
+    assert stored.rationale == "r"
 
 
 # ---------------------------------------------------------------- outcomes
 
 
 async def test_an_outcome_pairs_with_its_decision(book):
+    """The pairing is the whole value of the record: a decision with no outcome
+    cannot be scored, and an outcome with no decision cannot be attributed."""
     made = decision("Alerted on gold", tags=("gold",))
     await book.write(made)
     await book.write(
@@ -129,7 +145,10 @@ async def test_an_observation_is_kept_as_a_negative_example(book):
 # ----------------------------------------------------------------- reading
 
 
-async def test_filters_compose(book):
+async def test_two_filters_narrow_rather_than_either_one_winning(book):
+    """`read(actor=..., tag=...)` is how a review of one agent's gold calls is
+    pulled, and an `OR` there returns the other agent's work as though it
+    were the same agent's."""
     await book.write(
         [
             decision("gold thing", actor="agents/risk", tags=("gold",)),
@@ -146,11 +165,14 @@ async def test_filters_compose(book):
 
 
 async def test_a_tag_filter_does_not_match_a_longer_tag(book):
+    """Tags are stored as one JSON blob, so a substring match is the easy
+    mistake: `tag="gold"` would pull every `golden-cross` with it."""
     await book.write(decision("a", tags=("golden-cross",)))
     assert jr.read(book.path, tag="gold") == []
 
 
 async def test_reads_are_newest_first(book):
+    """What an operator asking "what just happened" means by a limit."""
     await book.write([Entry(title=f"e{n}", time=float(n)) for n in range(10)])
     entries = jr.read(book.path, limit=3)
     assert [e.title for e in entries] == ["e9", "e8", "e7"]
@@ -175,7 +197,10 @@ async def test_an_explicit_limit_is_honoured_past_the_display_ceiling(book):
     assert jr.read(book.path, limit=total)[-1].title == "e0"
 
 
-async def test_hours_filters_by_age(book):
+async def test_hours_filters_by_age_and_not_by_row_order(book):
+    """Entries carry the time the decision was made, not the time they were
+    written - the Actor buffers for up to `flush_seconds` - so an age filter
+    reading insertion order would answer a different question."""
     import time as clock
 
     await book.write(
@@ -188,6 +213,8 @@ async def test_hours_filters_by_age(book):
 
 
 def test_reading_a_journal_that_does_not_exist_says_so(tmp_path):
+    """An empty list would read as "nothing was recorded", which is the same
+    answer a working journal gives on a quiet day."""
     with pytest.raises(FileNotFoundError, match="nothing has been recorded"):
         jr.read(tmp_path / "missing.db")
 
@@ -196,6 +223,9 @@ def test_reading_a_journal_that_does_not_exist_says_so(tmp_path):
 
 
 async def test_export_is_oldest_first_for_a_sequence_model(book, tmp_path):
+    """The opposite order to a read, deliberately. A read answers "what just
+    happened"; an export is training input, and a sequence model fed newest
+    first learns the reverse of the process."""
     await book.write([Entry(title=f"e{n}", time=float(n)) for n in range(3)])
     out = tmp_path / "journal.jsonl"
     assert jr.export(book.path, target=out) == 3
@@ -206,6 +236,8 @@ async def test_export_is_oldest_first_for_a_sequence_model(book, tmp_path):
 
 
 async def test_export_round_trips_a_full_entry(book, tmp_path):
+    """Asserted as one whole dict rather than field by field, so a field added
+    to `Entry` and forgotten in `export` fails here."""
     entry = decision(
         "Alerted",
         rationale="why",
@@ -251,6 +283,11 @@ async def test_writing_to_a_journal_that_was_never_opened_raises_here(tmp_path):
 
 
 def test_a_junk_row_does_not_break_a_read(tmp_path):
+    """One bad row must not cost the rest of the journal.
+
+    The row below is what a half-written entry or an older schema leaves: a
+    kind nothing recognises and a context that is not JSON. A read that raised
+    would make the whole record unreachable from the one place that reads it."""
     path = tmp_path / "j.db"
     conn = sqlite3.connect(path)
     conn.executescript(jr.store.SCHEMA)
@@ -268,6 +305,9 @@ def test_a_junk_row_does_not_break_a_read(tmp_path):
 
 
 def test_the_id_ignores_incidental_whitespace():
+    """The id is a hash of the content, and it is what makes a re-judged window
+    one entry rather than two. A title retyped with a double space would
+    otherwise be a new decision."""
     a = Entry(title="Gold  dislocated ", actor="x", time=1.0)
     b = Entry(title="gold dislocated", actor="x", time=1.0)
     assert a.id == b.id
@@ -277,6 +317,9 @@ def test_the_id_ignores_incidental_whitespace():
 
 
 def test_a_sender_cannot_claim_an_id_that_is_not_its_content():
+    """**The id is recomputed on arrival, never read off the wire.** Taking the
+    sender's word for it would let one publisher overwrite another's entry by
+    naming its id - or, through the deduplication above, suppress it."""
     payload = Entry(title="real", actor="a", time=1.0).to_dict()
     payload["id"] = "deadbeefdeadbeef"
     assert Entry.from_message(payload).id != "deadbeefdeadbeef"
@@ -287,10 +330,15 @@ def test_a_sender_cannot_claim_an_id_that_is_not_its_content():
     [None, "text", 42, {}, {"title": "  "}, {"kind": "decision"}],
 )
 def test_junk_on_the_wire_is_dropped_not_written(payload):
+    """A titleless or blank entry in the record is worse than a missing one: it
+    is a decision nobody can read, counted among the ones they can."""
     assert Entry.from_message(payload) is None
 
 
 def test_hostile_fields_are_coerced_rather_than_trusted():
+    """The bus is in-process, so this is not about an attacker - it is about a
+    publisher with the wrong type, which is the same thing to a reader
+    expecting a dict and getting a list."""
     rebuilt = Entry.from_message(
         {"title": "x", "context": ["not", "a", "dict"], "tags": "gold", "confidence": "high"}
     )

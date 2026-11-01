@@ -111,7 +111,7 @@ from .candles import Bar as Ohlc
 from .trend import REACH, Pivot, pivots
 
 # ==========================================================================
-# from levels.py
+# the level book
 # ==========================================================================
 
 ZONE_SIGMA = 2.0
@@ -636,7 +636,7 @@ class Levels(Indicator):
 
     **Touches are confirmed pivots, not bar closes near a price.** A level is a
     price *price turned at*, and a turn is only knowable after it is confirmed -
-    `trendlines.pivots` is reused for exactly that reason, so this book and the
+    `trend.pivots` is reused for exactly that reason, so this book and the
     trendlines are built from the same causal primitive rather than from two
     definitions of a turn that can disagree.
     """
@@ -901,7 +901,7 @@ def compare(
 
 
 # ==========================================================================
-# from bjorgum.py
+# the Bjorgum zones
 # ==========================================================================
 
 LEFT = 20
@@ -991,8 +991,9 @@ class Detect(StrEnum):
 class Visit:
     """One separate visit to a zone, and how it resolved.
 
-    `broke` is None while the visit is still open or still inside its
-    `FORWARD` window - **not False**. A visit whose outcome is not yet known is
+    `broke_edge` and `broke_atr` are both None while the visit is still open or
+    still inside its `FORWARD` window - **not False**. A visit whose outcome is
+    not yet known is
     not a visit that held, and recording it as one is how a hold rate becomes a
     measurement of how often the window ran out.
     """
@@ -1524,7 +1525,7 @@ class BjorgumLevels(Indicator):
 
 
 # ==========================================================================
-# from pips.py
+# the pips skeleton
 # ==========================================================================
 
 DEFAULT_CONFIRM = 3
@@ -1929,7 +1930,7 @@ class Pips(Indicator):
 
 
 # ==========================================================================
-# from structure.py
+# displacement and its origin
 # ==========================================================================
 
 PUSH_MIN = 2
@@ -2336,7 +2337,7 @@ class Displacement(Indicator):
 
 
 # ==========================================================================
-# from gaps.py
+# the gaps
 # ==========================================================================
 
 GAP_SPAN = 2
@@ -2355,7 +2356,8 @@ KEEP_FILLED = 64
 class Gap:
     """One imbalance: the band, when it opened, and when it closed.
 
-    Mutable, unlike `impulse.Gap`, because the whole point here is that a gap
+    Mutable, unlike the batch `Imbalance` below, because the whole point here
+    is that a gap
     has a life: it opens, it is live for a while, and it may close. An
     immutable one would have to be replaced to record its own fill, and the
     replacement is where a list of "open gaps" quietly becomes a list of "gaps
@@ -2558,7 +2560,7 @@ class Gaps(Indicator):
 
 
 # ==========================================================================
-# from impulse.py
+# the batch readings
 # ==========================================================================
 
 NAN = float("nan")
@@ -2580,7 +2582,8 @@ class Imbalance:
 
     #: Index of the middle bar - the one that displaced.
     at: int
-    #: +1 when the gap points up (price left a hole above it), -1 down.
+    #: +1 when the gap points up - the hole is below the price that left it,
+    #: the demand side - and -1 down. The same sign convention as `Gap.side`.
     side: int
     #: The edges of the hole, low first.
     low: float

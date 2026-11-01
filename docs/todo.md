@@ -5,11 +5,18 @@
 > and `pyproject.toml` declares no console script on purpose: a second way to
 > run the desk is a second thing to go stale. The entry point is
 > `python -m till_infinity.node.live`, and
-> `python -m till_infinity.node.desks` says what it would run.
+> `python -m till_infinity.node.status` says whether it is up.
 
 Ordered by what would change the numbers most. Each entry says where the detail
 lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
+
+Entries written before 2026-11-01 name the module paths of the pre-port layout -
+`structures/`, `prices/`, `trading/`, `context/`, `learning/`. Those packages
+are in `research/retire/` and their successors are `statespace/`,
+`adapters/mt5/`, `strategies/` and `indicators/`. The measurements and the
+orders of work are unaffected by the move; only the paths are stale, and they
+have not been rewritten because a backlog is a record of what was thought when.
 
 
 ## Residual time is the hold clock, and the hold clock is where the money went
@@ -1614,7 +1621,7 @@ since the failure discards a whole judgement rather than truncating it. The
 wake gate also now reports its closest approach at INFO rather than DEBUG, so a
 gate that declines can be told from one that never ran.
 
-Full account in [agents.md](agents.md), "Why agents appeared never to wake".
+Full account in [agents.md](../research/retire/agents/agents.md), "Why agents appeared never to wake".
 Still to confirm: that a window survives end to end now, which needs half an
 hour without a deploy.
 

@@ -44,8 +44,17 @@ Those are wrapped as opaque `{"~": "raw", "b": <pickle bytes>}`.
 The distinction is the point. Pickling *river's* classes records *river's*
 paths, and this project does not move those. Pickling *our* classes recorded
 *ours*, which is what made a refactor unsafe. So the fragility that remains is
-tied to a dependency's version - which `store`'s fingerprint already checks
-and refuses on - rather than to our own file layout.
+tied to a dependency's version - which the structures store's fingerprint
+checked and refused on - rather than to our own file layout.
+
+## Nothing in the ported desk calls this
+
+Everything above is written in the present tense and describes the retired
+structures engine's state file. The desk that replaced it persists through
+Nautilus's cache and, for statespace, through `statespace/store.py`'s counters:
+no module under `till_infinity` imports this one. It is kept because the state
+files it was written for still exist on disk and are still the only way to read
+them, and because `ALIASES` is the record of which classes moved where.
 """
 
 from __future__ import annotations
@@ -73,10 +82,10 @@ RAW = "raw"
 #: which for a 58MB state is a warm-up nobody chose.
 #:
 #: **2026-10-31: the indicators were grouped the way Nautilus groups its own.**
-#: `cusum.py`, `speeds.py` and `ticks.py` became `indicators/momentum.py`, and
-#: `focus.py` folded into `indicators/changepoint.py`. The key is the module
-#: *basename*, so moving a file between packages costs nothing and renaming
-#: one costs exactly these four lines. Every class here is `Restorable` and
+#: `cusum.py` and `speeds.py` became `indicators/momentum.py`, and `focus.py`
+#: folded into `indicators/changepoint.py`. The key is the module *basename*, so
+#: moving a file between packages costs nothing and renaming one costs exactly
+#: these four lines. Every class here is `Restorable` and
 #: holds live filter state - `Cusum`'s accumulators, `Focus`'s pruned hull -
 #: so without the aliases a restored desk would silently start those detectors
 #: from zero, which reads as a quiet market rather than as a failure.

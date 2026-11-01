@@ -64,6 +64,11 @@ JOURNAL = "journal"
 #: Every topic this desk declares. A publisher using a name not in here is
 #: publishing where nothing listens, which is the failure a registry catches
 #: and a literal does not.
+#:
+#: **Declared is not the same as wired.** Only `ALERTS` and `JOURNAL` have a
+#: publisher and a subscriber in the ported desk; the rest were the retired
+#: services' and are kept because the names are the contract a producer would
+#: have to publish on. Declaring one does not mean something is listening.
 DECLARED: tuple[str, ...] = (
     ALERTS,
     ARTICLES,

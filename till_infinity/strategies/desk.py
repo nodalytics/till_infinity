@@ -65,7 +65,9 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy as NautilusStrategy
 
 from ..domain.models import Intent, Refusal, SymbolSpec, Tick
+from ..risk import sizing
 from ..utils.topics import PROPOSALS, subscribe
+from . import sizes
 from .config import Settings
 from .counterfactual import Counterfactual, Resolved
 
@@ -119,6 +121,16 @@ class Desk(NautilusStrategy):
         self.refused = 0
         self.taken = 0
         self.detectors: dict[str, Any] = {}
+        #: The highest account equity this strategy has seen, which is what
+        #: `scaling.by_drawdown` tapers against. Equity is account-wide, so
+        #: every strategy on one account converges on the same figure.
+        #:
+        #: **It is a high-water mark since start-up, not since the account's
+        #: peak**, so a restart after a drawdown forgets the peak and sizes
+        #: full. Said here rather than hidden: the alternative is persisting a
+        #: peak, and a stale persisted peak would taper a recovered account
+        #: for ever. The multiplier is off by default either way.
+        self._peak = 0.0
         self.counterfactual = Counterfactual()
         #: What the counterfactual has resolved, newest last. Kept rather than
         #: only logged so a run can be asked what its declined trades were
@@ -249,7 +261,68 @@ class Desk(NautilusStrategy):
             # Debug and not the journal: this is the normal case, hundreds a
             # day, and recording all of it buries what matters.
             self.log.debug(f"{self.label} declined: {verdict.detail}")
-        return verdict
+            return verdict
+        if not isinstance(verdict, Intent):
+            return verdict
+        return self._sized(verdict, spec, payload)
+
+    def _sized(self, intent: Intent, spec: SymbolSpec, payload: dict[str, Any]) -> Intent | Refusal:
+        """The accepted intent with a volume on it, or why it cannot have one.
+
+        **Here and not in the three `place` methods.** Every entry mechanism
+        needs a size, `consider` is the one thing all three run, and `Trader`
+        is the record of what the alternative costs: the figure that has to be
+        right to the cent was computed at three call sites and `share_of_risk`
+        was folded into two of them.
+
+        Here rather than in `decide` for a different reason. A decision is
+        about the market and a size is about the account, and the producer that
+        publishes the reading cannot see the account at all - which is why
+        `Surprise.decide` reading `features["volume"]` was never going to
+        return anything. See `sizes.py`.
+        """
+        equity = self._equity()
+        self._peak = max(self._peak, equity)
+        found = sizes.size(
+            intent,
+            spec=spec,
+            settings=self.settings,
+            equity=equity,
+            profile=getattr(self, "profile", None),
+            peak=self._peak,
+            # The whole book, not this strategy's: a shared currency leg is
+            # crowded by whoever is on it. `_already_held` has already refused
+            # this instrument, so this is every *other* position.
+            book=sizes.book_of(self.cache.positions_open()),
+        )
+        if isinstance(found, Refusal):
+            return self._refuse(found, payload)
+
+        # The broker's own minimum stop distance, checked before the order
+        # rather than discovered by its retcode. This fires only where the
+        # venue stated a `stops_level` and the geometry is inside it, in which
+        # case the order would be rejected anyway - so it changes a venue
+        # rejection into a record that says which number was breached.
+        breach = sizing.respects_stops_level(spec, found.entry, found.stop, found.target)
+        if breach:
+            refusal = Refusal(gate="stops-level", detail=breach, feed=found.feed)
+            return self._refuse(refusal, payload)
+        return found
+
+    def _refuse(self, refusal: Refusal, payload: dict[str, Any]) -> Refusal:
+        """Count, record and return a desk-level refusal of a wanted trade.
+
+        Journalled rather than only counted, because these are exactly the
+        case `_journal` was written for: an instrument the desk *does* trade,
+        on a signal its rule *accepted*, refused for a reason nothing else
+        holds. A rule declining on probability is the filter working; a trade
+        the rule wanted and the account could not afford is a different fact
+        and a rarer one.
+        """
+        self.refused += 1
+        self._count(f"(desk):{refusal.gate}")
+        self._journal(refusal, payload)
+        return refusal
 
     def _journal(self, refusal: Refusal, payload: dict[str, Any]) -> None:
         """Record one refusal, for the half of it nothing else holds.
@@ -365,20 +438,46 @@ class Desk(NautilusStrategy):
         Built from the cache rather than carried in config, so the venue is the
         authority on its own tick size and volume step - which is the thing
         `Trader` kept a parallel copy of and had to refresh.
+
+        **Three fields used to be left on their dataclass defaults** - the tick
+        value at 1.0, `stops_level` at zero and `tradable` at `True` - so the
+        money conversion was a coincidence that happens to hold on the majors
+        and two of `_undealable`'s gates could not fire. See `sizes.spec_of`.
         """
         instrument = self.cache.instrument(self._cfg.instrument_id)
         if instrument is None:
             return None
-        return SymbolSpec(
-            symbol=instrument.id.symbol.value,
-            digits=instrument.price_precision,
-            point=float(instrument.price_increment),
-            tick_size=float(instrument.price_increment),
-            volume_min=float(instrument.min_quantity or 0.0),
-            volume_max=float(instrument.max_quantity or 0.0),
-            volume_step=float(instrument.size_increment),
-            tradable=True,
-        )
+        return sizes.spec_of(instrument, rate=self._rate(instrument))
+
+    def _rate(self, instrument: Any) -> float:
+        """The instrument's quote currency in the account's, for sizing.
+
+        1.0 where they are the same, which is the common case and the only one
+        that needs no data: a dollar account trading dollar-quoted instruments.
+
+        **0.0 where a conversion is needed and none is available**, which makes
+        `lots` refuse with a reason rather than size against an invented rate.
+        A yen pair mis-converted is wrong by a factor of 150, and the direction
+        of the error depends on which way the mistake went - so there is no
+        safe guess, only a refusal or a number the venue supplied.
+
+        A multi-currency account reports no base currency. There is nothing to
+        convert *to* in that case, so this returns 1.0 and the figures stay in
+        the quote currency, which is what the balances are held in too.
+        """
+        account = self.portfolio.account(self._cfg.instrument_id.venue)
+        wanted = getattr(account, "base_currency", None) if account is not None else None
+        quote = instrument.quote_currency
+        if wanted is None or wanted == quote:
+            return 1.0
+        found = self.cache.get_xrate(self._cfg.instrument_id.venue, quote, wanted)
+        if not found:
+            self.log.warning(
+                f"no {quote}/{wanted} rate for {self._cfg.instrument_id}: "
+                f"it cannot be sized until one is cached"
+            )
+            return 0.0
+        return float(found)
 
     def _tick(self) -> Tick | None:
         """The last quote, in this desk's shape."""
@@ -407,10 +506,13 @@ class Desk(NautilusStrategy):
     def _feed_name(self) -> str:
         """The feed name the rules key on, from the instrument.
 
-        Lower-cased with the separator dropped, which is what the desk's own
-        feed names look like: `EUR/USD` is `eurusd`.
+        One derivation, shared with the book `crowding` reads - see
+        `sizes.feed_of`. It used to be a lower-case with the slash dropped,
+        which is right for `EUR/USD` and leaves `Volatility 75 Index` with its
+        spaces, so the counterfactual never resolved a synthetic: it compares
+        this against the feed the producer published, and that one is slugged.
         """
-        return self._cfg.instrument_id.symbol.value.lower().replace("/", "")
+        return sizes.feed_of(self._cfg.instrument_id)
 
     def _count(self, key: str) -> None:
         self.passed_over[key] = self.passed_over.get(key, 0) + 1

@@ -61,7 +61,7 @@ The pieces, in dependency order:
 | `profile` | the numbers a decision runs on, and the helpers measured on them |
 | `surprise` | the one registered decision: is this reading worth trading |
 | `entries` | the three mechanisms that place it - at market, resting, on arrival |
-| `exits` | moving a stop, banking, turning out, and letting a stale one go |
+| `exits` | the two mechanisms that hold it - the venue's bracket, or ours |
 | `basket` | the one exit that is portfolio-wide, so an Actor rather than a strategy |
 | `desk` | the gate sequence, in the order it is applied, and the journal reasons |
 | `counterfactual` | what would have happened to the ones it refused |
@@ -74,6 +74,13 @@ The pieces, in dependency order:
 | `turning` | the cycle reading as an entry, gated on its own record |
 | `valuation` | asking what a thing is worth, rather than which way it goes |
 | `report` | scoring the closed trades, and refusing to when there are too few |
+
+`leaves` is not in the table and is not re-exported here, deliberately: it is
+the one module that names every **(decision, exit, entry)** this node builds,
+and it reaches into `statespace` for the two side decisions. Importing it from
+here would put the whole statespace fold behind `import till_infinity.strategies`
+for every caller, including the ones that only want `Settings`. `node/desks.py`
+imports it directly, which is the only thing that needs it.
 """
 
 from __future__ import annotations
@@ -116,6 +123,15 @@ from .config import (
 from .context import Context, Release
 from .desk import Desk, DeskConfig
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
+from .exits import (
+    ExitMechanism,
+    Exits,
+    ManagedExit,
+    Plan,
+    Protection,
+    VenueExit,
+    protection_for,
+)
 from .manage import Move, advance
 from .profile import Profile
 from .report import Report, Trade
@@ -143,13 +159,18 @@ __all__ = [
     "Desk",
     "DeskConfig",
     "EdgeEntry",
+    "ExitMechanism",
+    "Exits",
     "Intent",
+    "ManagedExit",
     "Move",
     "Order",
     "OrderResult",
+    "Plan",
     "Position",
     "Priced",
     "Profile",
+    "Protection",
     "Refusal",
     "Release",
     "Report",
@@ -169,12 +190,14 @@ __all__ = [
     "TurnOutcome",
     "TurnTally",
     "Valuation",
+    "VenueExit",
     "Verdict",
     "advance",
     "feed_for",
     "magic_for",
     "ours",
     "price_it",
+    "protection_for",
     "report",
     "resolve_symbols",
     "strategy_for",

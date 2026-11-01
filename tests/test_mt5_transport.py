@@ -90,6 +90,13 @@ def test_only_the_bridge_can_push():
 
 
 def test_both_transports_satisfy_the_protocol():
+    """The check `transport.py` made `Transport` `runtime_checkable` for.
+
+    It overlaps the surface test above, which compares the same member names
+    on the two classes. What it adds is the object `connect` hands back rather
+    than the class it was built from, so a factory that wrapped or decorated a
+    transport would have to produce something still conforming.
+    """
     data = MT5DataClientConfig()
     rpyc = MT5ExecClientConfig(transport="rpyc", rpyc_host="127.0.0.1")
     assert isinstance(connect(data), Transport)
@@ -218,6 +225,7 @@ class FakeMT5:
     TRADE_ACTION_DEAL = 1
     TRADE_ACTION_PENDING = 5
     TRADE_ACTION_SLTP = 6
+    TRADE_ACTION_MODIFY = 7
     TRADE_ACTION_REMOVE = 8
     ORDER_TYPE_BUY = 0
     ORDER_TYPE_SELL = 1
@@ -669,11 +677,32 @@ def test_a_resting_order_is_moved_by_its_own_route():
     assert sent == [("/orders/4242", {"price": 1.2345})]
 
 
-def test_both_transports_can_move_a_resting_order():
-    """The surface test again, for the method added after it: a transport
-    missing this is an `AttributeError` on the one path that moves a limit."""
-    assert hasattr(Bridge, "modify_order")
-    assert hasattr(Proxy, "modify_order")
+def test_the_proxy_moves_a_resting_order_with_modify_and_not_sltp():
+    """The same confusion as the test above, on the other transport.
+
+    `TRADE_ACTION_SLTP` takes a *position* and sets its stop and target;
+    `TRADE_ACTION_MODIFY` takes an order and moves its price. The two differ
+    by one in the terminal's constants - 6 and 7 - and sending the first
+    posted a limit price as a target and left the order where it was.
+
+    This was `assert hasattr(Bridge, "modify_order")` and
+    `assert hasattr(Proxy, "modify_order")`, which a method raising on every
+    call passes. **`Proxy.modify_order` had no test that called it**, and
+    `FakeMT5` did not carry `TRADE_ACTION_MODIFY` - so the one assertion that
+    would have caught a wrong action could not have been written.
+    """
+    made, module = proxy(order_send=Sent(10009, 1, 4242, 0.0, 1.2345, "done"))
+    answer = asyncio.run(made.modify_order(4242, 1.2345))
+
+    sent = module.requests[0]
+    assert sent["action"] == FakeMT5.TRADE_ACTION_MODIFY
+    assert sent["action"] != FakeMT5.TRADE_ACTION_SLTP
+    assert sent["order"] == 4242, "the order's ticket, not a position's"
+    assert sent["price"] == 1.2345
+    # And it comes back in the bridge's envelope, so `execution.py` cannot
+    # tell which transport answered.
+    assert answer["success"] is True
+    assert answer["result"]["retcode"] == 10009
 
 
 def test_a_failed_listing_is_not_an_empty_one():
@@ -785,18 +814,31 @@ def test_nothing_applies_the_measurement_by_itself():
     glitch that produced a bad minimum would re-date the whole feed. The
     configured value stays authoritative.
 
-    Asserted on the source because the property is an absence - there is no
-    call to make that proves a thing does not happen.
+    The absences are asserted on the source, because there is no call to make
+    that proves a thing does not happen. The presence is not: `assert "def saw"
+    in source` used to stand here, and a line existing is not a line running.
     """
     from pathlib import Path
 
-    import till_infinity.adapters.mt5.clocks as module
+    from till_infinity.adapters.mt5 import clocks as module
 
     source = Path(module.__file__).read_text()
-    assert "def saw" in source
     # No setter, no mutation of a config, nothing returning a corrected stamp.
     assert "server_offset_seconds =" not in source
     assert "def apply" not in source
+
+    # The measurement is a query, taken and handed back. `data.py` reads it
+    # into a log line and nothing else, so asking twice has to give the same
+    # answer and leave the estimate alone - an accessor that consumed or
+    # corrected anything would be applying it by another name.
+    seen = module.Clocks()
+    for step in range(module.LEAST):
+        at = step * 250_000_000
+        seen.saw(at, at + 2 * 3600 * 1_000_000_000)
+    before = (seen.least, seen.samples, seen.told)
+    assert seen.disagrees(0.0) == seen.disagrees(0.0) == pytest.approx(7200.0)
+    assert seen.describe(0.0) == seen.describe(0.0)
+    assert (seen.least, seen.samples, seen.told) == before
 
 
 def test_a_tick_timestamp_stays_an_integer_through_the_offset():

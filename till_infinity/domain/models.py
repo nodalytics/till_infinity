@@ -78,7 +78,7 @@ class SymbolSpec:
     #: `swap_short` in the unit `swap_mode` names (1 points, 5 annual interest % of the current
     #: price - the two this broker uses), and `swap_triple_day` the weekday the rollover is
     #: charged three times (MetaTrader's 0 Sunday .. 6 Saturday; 7, on the 24/7 synthetics, none).
-    #: `swap_mode` -1 means the broker did not say. See `trading/swap.py`.
+    #: `swap_mode` -1 means the broker did not say. See `swap.py`, beside this file.
     swap_long: float = 0.0
     swap_short: float = 0.0
     swap_mode: int = -1
@@ -205,12 +205,15 @@ class Intent:
     reason: str = ""
     interval: str = ""
     confluence: tuple[str, ...] = ()
-    #: The signal's features, copied in. See `journal.decide` on why context is
-    #: copied rather than pointed at.
+    #: The signal's features, copied in. See `journal.models.Entry.__post_init__`
+    #: on why context is copied rather than pointed at.
     features: dict[str, float] = field(default_factory=dict)
     #: Which level this trade is about, by identity rather than by price.
-    #: Copied from the signal so a closed trade can be added up against the
-    #: level that produced it - see `structures.levels.Level.id`.
+    #: Copied from the signal, which carries it as `level_id` - see
+    #: `statespace.proposing` for the contract - so a closed trade can be added
+    #: up against the level that produced it. `journal.ledger` is what does the
+    #: adding up, and `indicators.levels.Level` carries no identity of its own:
+    #: the name travels with the signal, not with the level object.
     level_id: str = ""
     risk_money: float = 0.0
     #: The stop in the units the rules that placed it are written in, and the
@@ -302,14 +305,14 @@ class Intent:
         # **How much of its own geometry the clock actually allows**, as a ratio.
         # Under 1.0 the hold expires before the barriers can be expected to
         # resolve, so the trade is scored as though it finished when it was
-        # interrupted. `research/spending.md` found that on **50 of 133**
+        # interrupted. `research/docs/spending.md` found that on **50 of 133**
         # real-market closes, exiting at 5% of the planned target - the largest
         # exit category on the book, and the one nobody could see was a timeout
         # rather than an outcome.
         #
         # Recorded, not enforced. Lengthening a hold or shortening a target both
         # move money, and the band evidence behind the far-target reading is
-        # weakened by `research/calibrating.md` - the monotone ordering arises in
+        # weakened by `research/docs/calibrating.md` - the monotone ordering arises in
         # 15.4% of null books - so this earns its place in the journal first.
         from till_infinity.utils.intervals import SECONDS
 

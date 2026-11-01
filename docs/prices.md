@@ -1,7 +1,14 @@
 # Prices
 
-`till_infinity.prices` fetches OHLCV candles and realtime bid/ask for the same
-instrument across many brokers, then stores them.
+`till_infinity.prices` fetched OHLCV candles and realtime bid/ask for the same
+instrument across many brokers, then stored them. It retired with the CLI on
+2026-11-01 and is in `research/retire/prices/`; the node subscribes to a
+Nautilus `LiveMarketDataClient` in `adapters/mt5/` instead.
+
+This document is kept because what was measured about each source is still
+true of that source, and because the reasoning about quote transports is now
+the adapter's. Where it names a file or a variable, it is naming the retired
+collector's unless it says otherwise.
 
 The point of tracking one instrument across brokers is that the *differences*
 are the signal: cross-broker spread, which venue leads, where quotes diverge.
@@ -212,7 +219,7 @@ PRICES_BROKER_SYMBOLS="Volatility 75 Index,Step Index,Boom 1000 Index"
 The broker's own name is the symbol, verbatim - nothing is guessed or probed.
 The feed name is a slug of it (`volatility_75_index`), because feed names
 travel through journal keys and log lines. A name the account does not carry
-simply never quotes and says so once.
+never quotes, and says so once.
 
 **It polls, and since 2026-11-01 it does not have to.** This said "there is
 no stream", and that was true when it was written: forty-seven routes, and the
@@ -229,8 +236,9 @@ polls". That is true of the *Python* side: `symbol_info_tick` is a question
 and there is no callback to register.
 
 Inside the terminal the limitation does not exist. `OnTick` is a real
-callback, so `MT5/ea/TillTickFeed.mq5` pushes every tick out over a socket and
-the bridge relays it. **A symbol with that EA attached is pushed at the rate
+callback, so an Expert Advisor - `ea/TillTickFeed.mq5` in the
+`nodalytics/metatrader-terminal` repository, not this one - pushes every tick
+out over a socket and the bridge relays it. **A symbol with that EA attached is pushed at the rate
 the market moves; a symbol without one is still polled.**
 
 Why it is worth the trouble: a poll is a *sample*. A quote that moved and
@@ -406,6 +414,8 @@ await stream(settings=Settings(), feeds=resolve_symbols(("gold",)), sink=on_quot
 
 ## Layout
 
+All under `research/retire/prices/`, which is where the package went.
+
 | file | |
 |---|---|
 | `models.py` | `Bar`, `Quote`, `Symbol`, `Interval`, keys |
@@ -417,7 +427,16 @@ await stream(settings=Settings(), feeds=resolve_symbols(("gold",)), sink=on_quot
 | `store.py` | SQLite and JSONL |
 | `service.py` | concurrent sweeps, retries |
 
+The live feed is `adapters/mt5/`: `bridge.py` and `proxy.py` are the two
+transports, `data.py` is the data client, and `providers.py` builds the
+instruments from what the terminal reports.
+
 ## Environment
+
+**Nothing under `till_infinity/` reads any of these.** They configured the
+retired collector and are listed so an old `.env` can be read, not so one can
+be written. The node's own variables are in
+[environment.md](environment.md).
 
 `PRICES_DIR`, `PRICES_DB`, `PRICES_BACKFILL_BARS`, `PRICES_LIVE_BARS`,
 `PRICES_CYCLE_S`, `PRICES_QUOTE_POLL`, `PRICES_QUOTE_CONCURRENCY`,

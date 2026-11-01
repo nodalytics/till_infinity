@@ -129,17 +129,15 @@ INSTRUMENTS: dict[str, str] = {
     "euraud": "EURAUD",
 }
 
-#: Keys the notification filter routes on. Rendered nowhere: every publisher
-#: that sets them already names them in the title, so printing `instrument:
-#: gold` under a headline containing "gold" is the machine talking to itself.
-#: Fields the filter routes on, which are therefore **not** printed in the
-#: body. `interval` joined them when the alert layout started carrying the
-#: timeframe itself: it was arriving twice, once inside the message and once
-#: as a bare `interval: 15m` line underneath the closing rule.
+#: Keys the notification filter routes on, and therefore **not** printed in the
+#: body: every publisher that sets them already names them in the title, so
+#: printing `instrument: gold` under a headline containing "gold" is the machine
+#: talking to itself. `interval` joined them when the alert layout started
+#: carrying the timeframe itself: it was arriving twice, once inside the message
+#: and once as a bare `interval: 15m` line underneath the closing rule.
 #: `ref` is an alert's own identity for the repeat check, for a publisher whose
 #: alerts share a shape and instrument but are different findings (the retired
-#: `mcfl`: two
-#: alts each sending "BTC long" inside the cooldown). Routing only, never shown.
+#: `mcfl`: two alts each sending "BTC long" inside the cooldown).
 ROUTING: frozenset[str] = frozenset(
     {"shape", "instrument", "venue", "direction", "interval", "ref"}
 )

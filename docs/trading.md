@@ -5,35 +5,50 @@
 > and `pyproject.toml` declares no console script on purpose: a second way to
 > run the desk is a second thing to go stale. The entry point is
 > `python -m till_infinity.node.live`, and
-> `python -m till_infinity.node.desks` says what it would run.
+> `python -m till_infinity.node.status` says whether it is up.
 
-Turning level calls into positions, on MetaTrader 5 or on paper.
+Turning level calls into positions on MetaTrader 5.
 
 This is the only part of the project that can lose money. Everything about how
-it is built follows from that: it is off unless asked for, on paper unless
-separately armed, refuses far more often than it acts, and writes down both.
+it is built follows from that: it refuses far more often than it acts, it does
+not arm itself, and it writes down both.
+
+The `trading` service this describes retired to `research/retire/strategies/`
+on 2026-11-01. The gates, the reasons and the arithmetic carried over to
+`till_infinity/strategies/` as one `Strategy` per rule, entry and instrument,
+and the limits to `till_infinity/risk/`; what did not carry over is the service
+itself, the paper book and the two-switch arrangement below.
 
 ```
-structures ──▶ structures.signals ──▶ trading ──┬──▶ broker (mt5 | bridge | paper)
-prices     ──▶ prices.quotes     ──┘            ├──▶ alerts
-                                                └──▶ journal
+statespace ──▶ readings ──▶ Strategy per (rule, entry, instrument) ──┬──▶ MT5ExecClient
+                                                                     ├──▶ alerts
+                                                                     └──▶ journal
 ```
 
-## Two switches, and neither implies the other
+## One switch, and it used to be two
 
 ```bash
-TRADING_ENABLED=1 uv run till-infinity run      # the service starts, on paper
-TRADING_ENABLED=1 TRADING_LIVE=1 ...            # and orders reach the account
+TRADING_LIVE=1 uv run python -m till_infinity.node.live
 ```
 
-`TRADING_ENABLED` starts the service. `TRADING_LIVE` arms it. Configuring a
-terminal does **not** arm it, and neither does anything else - there is exactly
-one variable that puts money at risk, and it is printed at start-up whichever
-way it is set.
+`TRADING_LIVE` arms the desk, and it is the whole decision. Configuring a
+terminal does **not** arm it and neither does anything else.
 
-On paper the whole path runs: symbols resolved against the broker, positions
-sized against real equity, stops and targets placed, fills simulated against
-the live bid/ask, outcomes journalled. What does not happen is the order.
+**It used to need `TRADING_ENABLED` as well**, which started the service at
+all, and unset it meant a paper book: the whole path ran - symbols resolved
+against the broker, positions sized against real equity, stops and targets
+placed, fills simulated against the live bid/ask, outcomes journalled - and
+only the order did not happen. That is gone with the service. Unarmed now means
+Nautilus's risk engine sits in `HALTED`: the node connects, reconciles,
+subscribes and computes, and every order is denied inside the engine, below the
+strategies and above the client. The reads still happen, which is how the desk
+is observed; nothing is simulated.
+
+The switch going missing is on record. When `service.py` retired, the node
+registered the MT5 execution client unconditionally, so a host with
+`TRADING_SYMBOLS` set and `TRADING_LIVE` unset sent **real orders** where the
+same environment used to paper-trade. Found by review rather than by a test,
+which is why there is now a test per state.
 
 ## Windows and Linux
 
@@ -76,6 +91,12 @@ remote-code-execution service by design. Bind it to localhost or a private
 network and tunnel over SSH if the terminal is elsewhere. The HTTP bridge is
 the one that can safely face a network; RPyC is the faster and more complete
 one behind a boundary you control.
+
+That was advice and nothing enforced it, so the client would have connected to
+any address on the internet. It is now a refusal: `adapters/mt5/proxy.py`
+rejects a non-loopback `TRADING_RPYC_HOST` unless `TRADING_RPYC_TUNNELLED` is
+also set. The variable does not make the tunnel - it makes somebody assert that
+one exists, which is the most a library can do about a premise it cannot check.
 
 ### Two bridges, one client
 
@@ -1720,7 +1741,13 @@ All of it still passes through the notification layer's own filter. Trade
 alerts carry shape `trade`, so if `NOTIFY_SHAPES` has been narrowed, `trade`
 has to be in it or none of these arrive however they are set here.
 
-## Running it
+## Running it, as it was
+
+**These are the retired commands.** One node runs all of it now -
+`TRADING_LIVE=1 uv run python -m till_infinity.node.live` - and there is no
+separate trader to attach, no shared bus to attach it to and no `doctor`. Kept
+because what the trader waited for, and what it said at start-up rather than
+sitting silent, is the behaviour the strategies still have to have.
 
 ```bash
 # everything together, on paper

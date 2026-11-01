@@ -385,7 +385,7 @@ are the questions this data can answer.
 Every one of these arrives with the number its backtest promised and is then
 scored on **live** resolutions, with ensemble weight coming from the live
 separation rather than the claim
-([`structures/context/registry.py`](../till_infinity/structures/context/registry.py)).
+([`structures/context/registry.py`](../research/retire/structures/engine/context/registry.py)).
 The reason is this folder's own record: point estimates from backtests decay
 here, repeatedly, and nothing was previously arranged to notice. A signal that
 stops separating now loses its vote without anyone editing a table.

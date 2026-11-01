@@ -167,7 +167,14 @@ def test_a_caption_is_cut_between_lines_and_never_inside_markup():
     assert short == "<b>t</b>\nshort"
 
 
-def test_an_alert_payload_carries_its_picture_through_the_bus():
+def test_a_picture_name_off_the_bus_cannot_escape_its_directory():
+    """**The name arrives from another process and is used as a filename.**
+
+    So `../../etc/passwd.png` is the case that matters: the payload is JSON on
+    a message bus, nothing upstream validates it, and the name reaches both a
+    multipart filename and Telegram's `sendPhoto`. It is flattened rather than
+    refused, because an alert is worth more than its attachment's name.
+    """
     payload = {
         "title": "t",
         "image": {"name": "../../etc/passwd.png", "data": base64.b64encode(PNG).decode()},

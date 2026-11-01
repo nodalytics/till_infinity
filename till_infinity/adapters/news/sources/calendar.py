@@ -99,7 +99,12 @@ def parse_tradingview(payload: Any) -> list[Event]:
 
 
 class ForexFactoryCalendar(Source):
-    """This week and next, from ForexFactory's public JSON."""
+    """This week only, from ForexFactory's public JSON.
+
+    It used to be this week and next. `ff_calendar_nextweek.json` and
+    `ff_calendar_lastweek.json` both 404 now, so `FOREXFACTORY_URLS` holds the
+    one file that answers and TradingView covers the forward window.
+    """
 
     name = "forexfactory"
     slow = True

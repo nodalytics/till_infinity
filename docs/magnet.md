@@ -3,7 +3,7 @@
 Practitioners say key levels and round numbers **pull** price toward them.
 [behaviours.md](behaviours.md) §3 filed that as the one claim on the list that
 could be settled cheaply, because the baseline it has to beat is already
-written down: [timing.py](../till_infinity/structures/timing.py) says how long a
+written down: [timing.py](../research/retire/structures/engine/context/timing.py) says how long a
 driftless walk takes to cover a distance, and therefore how often it covers it
 inside a horizon. Attraction means arrivals beat that. No attraction means they
 do not.
@@ -79,7 +79,7 @@ Once the warm-up and the trailing horizon are removed that leaves **22,219
 evaluation bars**, spanning 2008 to 2026 on gold and the FX pairs, 2015 on BTC
 and 2016 on the indices - several regimes each rather than one market.
 
-The production [engine](../till_infinity/structures/engine.py) is replayed bar
+The production [engine](../research/retire/structures/engine/engine.py) is replayed bar
 by bar over each history. At every bar, once volatility is warm and 300 bars
 have passed:
 
@@ -421,4 +421,4 @@ beaten.
 - [behaviours.md](behaviours.md) §3, the proposal this settles.
 - [levels.md](levels.md) §7d, the first-passage arithmetic, and §2, the
   point-in-time guard the design leans on.
-- [timing.py](../till_infinity/structures/timing.py), `probability_within`.
+- [timing.py](../research/retire/structures/engine/context/timing.py), `probability_within`.

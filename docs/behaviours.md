@@ -104,7 +104,7 @@ answers that without any new collection.
 
 **The behaviour.** Price is drawn toward round numbers and heavy volume nodes.
 
-**What we do now.** [timing.py](../till_infinity/structures/timing.py) answers
+**What we do now.** [timing.py](../research/retire/structures/engine/context/timing.py) answers
 *when* price will reach a level **given that it does**, as quantiles over a
 diffusion where time goes as the square of distance. It says nothing about
 whether arrival is more likely than drift alone implies.

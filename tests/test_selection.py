@@ -35,9 +35,16 @@ class TestCorrelation:
         assert correlation(series, [-x for x in series]) == pytest.approx(-1.0, abs=1e-12)
 
     def test_independent_series_are_near_zero(self):
+        """0.05 is arbitrary, but it is set against known arithmetic: the
+        standard error of a correlation on 5,000 points is about 0.014, so the
+        bound is roughly three and a half of them. These two seeds read
+        0.036."""
         assert abs(correlation(noise(5_000, 3), noise(5_000, 4))) < 0.05
 
     def test_a_constant_series_correlates_with_nothing(self):
+        """Zero rather than a division by its own zero standard deviation. A
+        flat candidate in a sweep is a real occurrence - a filter that never
+        triggered - and it must not take the trial count with it."""
         assert correlation([1.0] * 50, noise(50, 5)) == 0.0
 
 
@@ -54,6 +61,9 @@ class TestEffectiveTrials:
         base = noise(500, 11)
         trials = [[x + 0.1 * random.gauss(0, 1) for x in base] for _ in range(20)]
         got = effective_trials(trials)
+        # Measured at 1.01 on this seed: twenty variants of one series count as
+        # one trial, which is the floor. 5.0 is the arbitrary bound; the floor
+        # is what the function actually does here.
         assert got < 5.0
         assert got >= 1.0
 
@@ -64,7 +74,10 @@ class TestEffectiveTrials:
         trials = [a, [-x for x in a]]
         assert effective_trials(trials) <= 2.0
 
-    def test_one_trial_is_one(self):
+    def test_one_trial_and_no_trials_both_count_as_one(self):
+        """An empty sweep is the awkward one. Zero effective trials would make
+        the deflation divide by nothing, and a search of none has nothing to
+        correct for anyway."""
         assert effective_trials([noise(100, 17)]) == 1.0
         assert effective_trials([]) == 1.0
 
@@ -103,9 +116,20 @@ class TestProbabilityOfOverfitting:
 
 
 class TestHaircutSharpe:
-    def test_a_single_trial_barely_cuts_a_strong_sharpe(self):
+    def test_a_single_trial_does_not_cut_a_strong_sharpe_at_all(self):
+        """Not "barely": the cut at one trial is exactly zero, because
+        `expected_max_sharpe` returns 0.0 for a single trial by construction.
+        A hypothesis stated before the data was seen pays no selection
+        penalty, and that is the anchor the whole haircut is measured from.
+
+        **The `0.25` bound below does not separate one trial from many** - the
+        500-trial case measures 0.2344 and would satisfy it too - so the
+        exact-zero assertion is what makes this test discriminating, and
+        `test_many_trials_cut_the_same_sharpe_hard` carries the comparison.
+        """
         got = haircut_sharpe(noise(1_000, 21, edge=0.2), trials=1)
         assert got.adjusted > 0.0
+        assert got.cut == 0.0
         assert got.cut < 0.25
 
     def test_many_trials_cut_the_same_sharpe_hard(self):
@@ -117,15 +141,31 @@ class TestHaircutSharpe:
         assert many.cut > few.cut
 
     def test_enough_trials_remove_it_entirely(self):
+        """100,000 is past any sweep this desk would run, and it is there to
+        check the floor rather than a realistic search: the adjusted Sharpe
+        clamps at zero instead of going negative, which would read as an edge
+        in the other direction."""
         got = haircut_sharpe(noise(500, 23, edge=0.05), trials=100_000)
         assert got.adjusted == 0.0
         assert got.passes is False
 
     def test_the_bar_is_t_above_three_not_two(self):
         """Harvey and Liu's own argument: given how many strategies have been
-        tested on the same data, a t of 2 is what noise produces."""
+        tested on the same data, a t of 2 is what noise produces.
+
+        **Seed 29 is load-bearing.** This sample reads t = 2.02, which is the
+        band between the two bars, so the comparison below can tell them
+        apart: at 3.0 it does not pass and at 2.0 it would. On a sample
+        outside that band the test would hold for either bar and assert
+        nothing - hence the first assertion, which fails loudly if the fixture
+        ever drifts out of the gap rather than passing silently.
+        """
         returns = noise(400, 29, edge=0.1)
         got = haircut_sharpe(returns, trials=1)
+        assert 2.0 < got.t_statistic < 3.0, (
+            f"t of {got.t_statistic} is outside the 2-to-3 band, so this "
+            f"test can no longer tell the two bars apart"
+        )
         assert got.passes == (got.adjusted > 0 and got.t_statistic > 3.0)
 
     def test_it_takes_a_fractional_trial_count(self):
@@ -173,6 +213,8 @@ class TestLoAdjustedSharpe:
         assert lo_adjusted_sharpe(series) > sharpe(series)
 
     def test_no_lags_is_the_iid_answer(self):
+        """The degenerate case has to be an identity, or the correction is
+        adding something of its own at every horizon."""
         from till_infinity.node.metrics import sharpe
 
         returns = noise(500, 53, edge=0.1)

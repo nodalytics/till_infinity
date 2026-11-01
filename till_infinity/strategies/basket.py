@@ -65,6 +65,14 @@ class BasketExit(Actor):
         #: tuning the wrong one would look exactly like tuning the right one.
         #: Nothing here needs the rest of the configuration.
         self.guard = Guard(Settings.from_env().envelope())
+        #: Positions this has **asked** to be closed, which is not the same as
+        #: positions that came off. It can only publish - see `_close` - so the
+        #: close itself belongs to the owning strategy, and the owner's
+        #: `(exit):basket` tally is where the two numbers can be compared.
+        #:
+        #: Worth the distinction: until `exits.ExitMechanism` subscribed,
+        #: nothing acted on the request at all. This logged "closing all N
+        #: position(s)", counted them here, and closed none of them.
         self.closed = 0
         self.failed = 0
         self.looks = 0
@@ -164,6 +172,13 @@ class BasketExit(Actor):
         Nautilus method**. It would have raised the first time a node ran, and
         the test passed because it stubbed the name rather than checking one
         existed.
+
+        **And for a long time nothing was on the other end.** `alerts` had one
+        subscriber, the Telegram notifier, so this published a close request
+        that became a message and never an order: the log said "closing all N
+        position(s)" and the counter agreed with it. `exits.ExitMechanism`
+        subscribes now, filtered on `strategy_id`, which is what makes the
+        request an exit rather than a notification.
         """
         topics.publish(
             self,

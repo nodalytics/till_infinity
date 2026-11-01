@@ -1,3 +1,21 @@
+"""Two shapes that must not share a write path, and the polling that proves it.
+
+A headline is immutable: it is published once and never changes, so re-polling
+a feed costs an ignored insert. A calendar entry is the opposite - it exists for
+days as a forecast and the number that matters appears the instant the print
+lands, which is the whole reason the calendar is polled again at all.
+
+**Collapse the two onto one rule and one of them breaks in a way nothing
+reports.** `INSERT OR IGNORE` for both means the actual never lands and the
+desk trades a forecast it already had. An unconditional upsert for both means
+every poll counts as an update, so `touched` stops answering whether anything
+changed and the only signal that a feed has gone stale is gone.
+
+The IMF and FRED rows are a third shape again, keyed on `(source, series,
+time)` rather than an id, because an observation is identified by the period it
+describes and providers revise them in place.
+"""
+
 import time
 
 import pytest
@@ -25,7 +43,9 @@ def event(ident: str, **kw) -> Event:
 
 
 @pytest.mark.asyncio
-async def test_a_headline_is_stored_once(tmp_path):
+async def test_a_re_polled_feed_adds_only_what_is_new(tmp_path):
+    """Every poll re-sends the whole front page, so the insert count is what
+    says whether a feed is producing or stuck."""
     async with SqliteStore(tmp_path / "n.db") as store:
         assert (await store.write_articles([article("a"), article("b")])).inserted == 2
         # The same feed re-polled five minutes later carries the same stories.
@@ -34,7 +54,9 @@ async def test_a_headline_is_stored_once(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_the_same_id_from_two_publishers_is_two_rows(tmp_path):
+async def test_the_same_id_from_two_publishers_is_two_stories(tmp_path):
+    """Publishers number their own output, so ids collide across them. Keyed on
+    the id alone, the second publisher's story would be silently discarded."""
     async with SqliteStore(tmp_path / "n.db") as store:
         result = await store.write_articles(
             [article("1", source="forexlive"), article("1", source="fxstreet")]
@@ -65,7 +87,9 @@ async def test_an_event_is_rewritten_when_the_print_lands(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_upcoming_filters_by_time_and_importance(tmp_path):
+async def test_upcoming_looks_forward_only_and_respects_the_floor(tmp_path):
+    """A released entry is history and an embargo on it stands the desk aside
+    for something that already happened."""
     now = time.time()
     async with SqliteStore(tmp_path / "n.db") as store:
         await store.write_events(
@@ -80,7 +104,9 @@ async def test_upcoming_filters_by_time_and_importance(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_latest_articles_are_newest_first(tmp_path):
+async def test_the_newest_headline_is_the_first_one_read(tmp_path):
+    """Anything reading a window of recent news takes a prefix of this, so the
+    order decides what it sees rather than how much."""
     async with SqliteStore(tmp_path / "n.db") as store:
         await store.write_articles(
             [article("old", published=1000.0), article("new", published=2000.0)]
@@ -90,7 +116,9 @@ async def test_latest_articles_are_newest_first(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_symbols_survive_the_round_trip(tmp_path):
+async def test_the_symbols_a_story_names_survive_the_round_trip(tmp_path):
+    """They are stored as one column and they are what routes an alert to an
+    instrument, so a split that does not invert loses the routing."""
     async with SqliteStore(tmp_path / "n.db") as store:
         await store.write_articles(
             [article("s", source="tradingview", symbols=("OANDA:XAUUSD", "TVC:GOLD"))]
@@ -100,7 +128,9 @@ async def test_symbols_survive_the_round_trip(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_feeds_summary_counts_both_kinds(tmp_path):
+async def test_the_feed_summary_answers_which_source_has_gone_quiet(tmp_path):
+    """`last_time` per source is the only reading that distinguishes a dead
+    provider from a slow news day."""
     async with SqliteStore(tmp_path / "n.db") as store:
         await store.write_articles([article("a", published=500.0)])
         await store.write_events([event("e", time=900.0)])
@@ -110,7 +140,9 @@ async def test_feeds_summary_counts_both_kinds(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_jsonl_writes_one_file_per_source(tmp_path):
+async def test_the_jsonl_store_keeps_each_source_in_its_own_file(tmp_path):
+    """One file per source, so a provider can be re-read or thrown away without
+    touching the others."""
     async with JsonlStore(tmp_path) as store:
         await store.write_articles([article("a"), article("b", source="fxstreet")])
         await store.write_events([event("e")])
@@ -180,7 +212,9 @@ async def test_a_failing_source_is_retried_then_counted(tmp_path):
     assert summary.articles.inserted == 1  # the healthy source still landed
 
 
-def test_build_sources_rejects_an_unknown_name(tmp_path):
+def test_an_unknown_source_name_is_refused_rather_than_silently_skipped(tmp_path):
+    """A typo in the source list would otherwise be a provider that stopped
+    being polled, which reads downstream as a quiet feed."""
     settings = Settings(data_dir=tmp_path)
     assert {s.name for s in build_sources(None, settings)} == {
         "rss",
@@ -193,13 +227,15 @@ def test_build_sources_rejects_an_unknown_name(tmp_path):
         build_sources(("bloomberg",), settings)
 
 
-def test_open_store_rejects_an_unknown_kind(tmp_path):
+def test_an_unknown_store_kind_is_refused_rather_than_defaulted(tmp_path):
+    """Falling back to a default would be a collector writing somewhere nobody
+    reads."""
     assert open_store("both", database=tmp_path / "n.db", data_dir=tmp_path).name == "multi"
     with pytest.raises(ValueError, match="unknown store"):
         open_store("parquet", database=tmp_path / "n.db", data_dir=tmp_path)
 
 
-def test_slow_sources_run_on_the_slow_clock(tmp_path):
+def test_the_sources_that_barely_move_are_polled_on_the_slow_clock(tmp_path):
     """Calendars barely move between prints, and IMF reserves are monthly."""
     settings = Settings(data_dir=tmp_path)
     slow = {s.name for s in build_sources(None, settings) if s.slow}

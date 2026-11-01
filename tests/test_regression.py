@@ -1,4 +1,25 @@
-"""The regression channel, and the ways a slope can lie."""
+"""The regression channel, and the ways a slope can lie.
+
+A slope is read as a direction, and there are three ways it can be one without
+meaning one. It can be the slope of a cloud, which is why nothing is reported
+without an r2 beside it. It can be an artefact of the units, which is why every
+slope is divided by a volatility estimate before anybody sees it - the same
+shape on an index at 122,000 and a rate at 0.65 has to read the same. And it
+can be the slope of a window the reader did not think they were asking about.
+
+**That third one is what this file was written for.** The module shipped with
+`SPAN` 20 and `MIN_R2` 0.25, which were this desk's reasoning about holding
+periods, while the chart a person is actually looking at is one of two
+TradingView scripts specifying 100 and `|R| > 0.8`. So the alert and the human
+disagreed about what "rising" meant, and neither was wrong about its own
+window. `research/docs/lrc-retest.md` has the reference; the constants are now
+100 and 0.64, and `test_the_constants_are_the_reference_indicators_and_not_mine`
+is what stops them drifting back.
+
+The thresholds moved with them, from per-bar to per-window, for the same
+reason: 0.1 volatility units a bar is two units across 20 bars and twenty
+across 200, and the old constants called both of those the same thing.
+"""
 
 from __future__ import annotations
 
@@ -42,6 +63,8 @@ def bars(closes, *, spread=1.0):
 
 
 def test_a_straight_line_is_fitted_exactly():
+    """The arithmetic, pinned on the one input whose answer is known by hand:
+    slope 2, intercept 10, r2 1, and no residual width at all."""
     got = fit(bars([10 + 2 * i for i in range(20)]), span=20)
     assert got is not None
     assert math.isclose(got.slope, 2.0)
@@ -75,7 +98,10 @@ def test_a_flat_series_explains_nothing_rather_than_everything():
     assert got.r2 == 0.0
 
 
-def test_too_few_bars_has_no_fit():
+def test_too_few_bars_is_no_fit_rather_than_a_fit_of_what_is_there():
+    """A two-bar line is exact and means nothing, so the honest answer is
+    absence - which `features` then turns into an empty dict rather than a
+    journal row of NaNs."""
     assert fit(bars([1.0, 2.0]), span=20) is None
     assert fit(bars([1.0, 2.0, 3.0]), span=20) is None
 
@@ -105,6 +131,9 @@ def test_noise_around_a_line_keeps_the_slope_and_loses_the_r2():
 
 
 def test_the_channel_is_symmetric_about_the_line():
+    """A band drawn off-centre would make one side of the channel reachable
+    sooner than the other, and the place within it is read as a signed
+    distance."""
     got = fit(bars([10 + 2 * i + (1.0 if i % 2 else -1.0) for i in range(20)]), span=20)
     assert got is not None
     low, high = got.band(2.0)
@@ -126,6 +155,8 @@ def test_place_is_in_residual_sigmas_and_nan_without_a_channel():
 
 
 def test_true_range_reaches_across_the_gap_to_the_previous_close():
+    """The whole difference from a bar range. A series of gaps measured
+    high-minus-low reports a calm market, and the gaps are the movement."""
     got = true_ranges(
         [Bar(open=10, high=11, low=9, close=10), Bar(open=20, high=21, low=19, close=20)]
     )
@@ -134,7 +165,10 @@ def test_true_range_reaches_across_the_gap_to_the_previous_close():
     assert got[1] == 11.0
 
 
-def test_atr_needs_a_full_window():
+def test_an_atr_short_of_its_window_is_nan_rather_than_a_partial_average():
+    """It is the divisor every slope is scaled by. An average of four bars
+    standing in for fourteen reads as a quieter market than it is, and a
+    quieter market makes every slope look steeper."""
     assert math.isnan(atr(bars([1.0] * 5), n=14))
     assert math.isclose(atr(bars([1.0] * 14, spread=2.0), n=14), 2.0)
 
@@ -159,7 +193,9 @@ def test_an_absent_scale_is_nan_not_zero():
 # ---------------------------------------------------------------- the arrow
 
 
-def test_the_arrow_follows_the_slope():
+def test_the_arrow_follows_the_slope_through_all_five_states():
+    """Including `FLAT` at exactly zero, which is the one a sign test would
+    get wrong in whichever direction it rounded."""
     assert arrow(0.5, span=20) == RISING_FAST
     assert arrow(0.1, span=20) == RISING
     assert arrow(0.0, span=20) == FLAT
@@ -172,7 +208,9 @@ def test_a_steep_slope_through_a_cloud_reads_flat():
     assert arrow(0.5, r2=0.05, span=20) == FLAT
 
 
-def test_an_absent_reading_reads_flat():
+def test_an_absent_reading_reads_flat_rather_than_propagating_a_nan():
+    """`FLAT` is what a caller can act on - by not acting. A NaN arrow reaches
+    a card and a comparison, and compares false against everything."""
     assert arrow(float("nan")) == FLAT
     assert arrow(0.5, r2=float("nan"), span=20) == FLAT
 

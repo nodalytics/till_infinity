@@ -9,9 +9,10 @@ the stored row at its scheduled time hands a strategy the outcome *before* it
 happened. That is not a subtle leak: it is the number everybody is waiting for.
 
 `open-gap-filters-are-lookahead` is the same mistake already made here once -
-`drawing.gaps` emits only gaps that *went on to* be filled, and used as a bias
-it read +0.50R a trade. A stored calendar row is lookahead in exactly that
-way, and for the same reason: it was written after the fact.
+`drawing.gaps` emitted only *unfilled* gaps, so reading it as of a time before
+the fill was known said which gaps would survive, and used as a bias it read
++0.50R a trade. A stored calendar row is lookahead in exactly that way, and for
+the same reason: it was written after the fact.
 
 So an entry is published twice:
 

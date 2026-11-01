@@ -29,7 +29,7 @@ from nautilus_trader.config import (
     LoggingConfig,
     RiskEngineConfig,
 )
-from nautilus_trader.model.data import Bar
+from nautilus_trader.model.data import Bar, QuoteTick
 
 from till_infinity.adapters.mt5 import MT5
 
@@ -98,7 +98,27 @@ def venue(
 
 
 def data(instrument_id: str, bar_spec: str, start: str | None = None, end: str | None = None):
-    """One instrument's bars out of the catalogue."""
+    """One instrument's data out of the catalogue - bars, or the ticks behind them.
+
+    **An internally aggregated run is fed quotes, not bars.** `INTERNAL` means
+    Nautilus builds the bars itself, from the tick stream, so a data config
+    that loaded `Bar` would hand an aggregator the output it was supposed to
+    produce: the aggregator would receive nothing, the desks would receive no
+    bars, and the run would report a result computed from no trades. The spec
+    string already says which it is, so nothing has to be passed twice.
+
+    This is the half of internal aggregation that only shows up in a backtest.
+    Live, the adapter publishes quotes whatever the bar type is; here the
+    catalogue has both and the config chooses.
+    """
+    if bar_spec.strip().upper().endswith("INTERNAL"):
+        return BacktestDataConfig(
+            catalog_path=str(catalogue()),
+            data_cls=QuoteTick,
+            instrument_id=instrument_id,
+            start_time=start,
+            end_time=end,
+        )
     return BacktestDataConfig(
         catalog_path=str(catalogue()),
         data_cls=Bar,

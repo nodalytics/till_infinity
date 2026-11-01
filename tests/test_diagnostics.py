@@ -34,6 +34,8 @@ SAMPLE = [1.8, -1.0, 2.0, -1.0, -1.0, 1.5, -1.0, 2.2, -1.0, 1.0] * 12
 
 
 def test_expectancy_is_the_mean_in_r():
+    """And an empty record is 0.0 rather than an error: a strategy that has
+    not traded has an expectancy of nothing, which a report can print."""
     assert metrics.expectancy(SAMPLE) == pytest.approx(0.35)
     assert metrics.expectancy([]) == 0.0
 
@@ -126,6 +128,9 @@ def test_a_scratch_counts_on_neither_side():
 
 
 def test_payoff_is_none_where_either_side_is_empty():
+    """A payoff needs both sides to divide. Zero would read as a strategy with
+    no reward rather than one with no losses yet, and the no-losses case is
+    where a short sample looks best."""
     assert metrics.payoff([1.0, 2.0]) is None
     assert metrics.payoff([-1.0, -2.0]) is None
     assert metrics.win_rate([]) is None
@@ -156,6 +161,9 @@ def test_the_interval_is_bootstrapped_because_there_is_no_closed_form():
 
 
 def test_the_interval_is_reproducible_for_a_given_seed():
+    """A bootstrap whose answer moves between two calls on one sample cannot
+    be compared across candidates, which is the only thing the ladder does
+    with it."""
     a = metrics.profit_factor_interval(SAMPLE, draws=200, seed=7)
     b = metrics.profit_factor_interval(SAMPLE, draws=200, seed=7)
     assert a == b
@@ -167,13 +175,36 @@ def test_no_interval_where_most_resamples_have_no_losses():
     assert metrics.profit_factor_interval([1.0], draws=100) is None
 
 
-def test_the_interval_uses_the_stationary_bootstrap_not_an_iid_one():
-    """Trade outcomes cluster, and drawing independently would narrow the
-    interval by assuming the clustering away."""
-    import inspect
+def test_a_clustered_record_gets_a_wider_interval_than_an_independent_draw():
+    """**Trade outcomes cluster, and an i.i.d. draw narrows the interval by
+    assuming that away.** Which is the direction that costs money: a confident
+    interval around a profit factor is what a search uses to decide a
+    candidate is real.
 
-    source = inspect.getsource(metrics.profit_factor_interval)
-    assert "stationary_bootstrap" in source
+    `block` is the mean run length the resample preserves, so `block=1` *is*
+    the i.i.d. bootstrap - `stationary_bootstrap` draws a fresh index with
+    probability `1/block`. The series below is the extreme clustered case,
+    sixty-four wins then sixty-four losses, where an independent draw always
+    sees about half of each and a long block sees mostly one. Widths at seed 7
+    over 600 draws: 1.92, 3.20, 7.17, 12.31. The shipped default of
+    `block=10` reads 8.88, which is 4.6 times the independent one.
+
+    This replaced `assert "stationary_bootstrap" in inspect.getsource(...)`,
+    which asserted that a line existed rather than that it ran.
+    """
+    clustered = [3.0] * 64 + [-1.0] * 64
+
+    def width(**kwargs) -> float:
+        got = metrics.profit_factor_interval(clustered, draws=600, seed=7, **kwargs)
+        assert got is not None
+        return got[1] - got[0]
+
+    widths = [width(block=block) for block in (1, 2, 8, 32)]
+    assert widths == sorted(widths), widths
+    assert widths[0] < widths[-1] / 4, widths
+    # The default is not a fourth reading of the same thing: it pins that the
+    # shipped call is the dependent one, which is the property under test.
+    assert width() > 3 * widths[0]
 
 
 # ------------------------------------------------------------- the gate split
@@ -186,6 +217,8 @@ def test_exactly_one_statistic_gates():
 
 
 def test_no_diagnostic_is_also_a_gate():
+    """A statistic in both lists would be reported as a description and
+    enforced as a threshold, and only one of those is a decision."""
     assert not set(GATES) & set(DIAGNOSTICS)
 
 
@@ -308,6 +341,8 @@ def test_the_tracking_error_is_reported_in_its_own_right():
     """It is the half a person can act on: a high ratio off a tiny tracking
     error is a strategy that barely deviates, which is a different thing to
     own from one that deviates a lot and is right."""
+    # 0.005430 is this fixture's own computed value, not a measured fact from
+    # any market - it is here so the second assertion's identity has an anchor.
     assert metrics.tracking_error(RETURNS, BOOK) == pytest.approx(0.005430, abs=1e-5)
     assert metrics.tracking_error(RETURNS, [0.0] * len(RETURNS)) == pytest.approx(
         metrics.moments(RETURNS)[1], abs=1e-9
@@ -327,21 +362,32 @@ def test_the_deflated_ratio_against_zero_is_the_deflated_sharpe():
     assert found == round(metrics.deflated_sharpe(RETURNS, trials), 6)
 
 
-def test_the_deflated_ratio_is_below_the_undeflated_one():
-    """Which is the point of deflating: a candidate selected as the best of
-    many trials shows a ratio inflated by the selection, and at a target
-    Sharpe of 1.5 a month of data supports about one trial."""
+def test_the_deflated_ratio_is_a_probability_and_not_a_smaller_ratio():
+    """**The two cannot be ordered, which is the trap in the name.**
+
+    This test used to be called `test_the_deflated_ratio_is_below_the_
+    undeflated_one`, and it never asserted that - because it is not true. On
+    the fixtures here the plain ratio reads 0.437 and the deflated one 0.629,
+    so the deflated figure is the *larger* number. Deflating a ratio does not
+    return a ratio: `DIR` is the probability that the true information ratio
+    beats the benchmark once the search is paid for, and comparing it against
+    the ratio itself is comparing a probability with a slope.
+
+    So what is held here is the type and the range, plus the one ordering that
+    does exist: eight trials buy less than certainty.
+    """
     from till_infinity.node.statistics import DeflatedInformationRatio, InformationRatio
 
     book = series(BOOK)
     plain = InformationRatio(book).calculate_from_returns(series(RETURNS))
     trials = [0.1, -0.2, 0.35, 0.05, -0.1, 0.22, 0.4, -0.05]
     deflated = DeflatedInformationRatio(book, trials).calculate_from_returns(series(RETURNS))
-    # Different scales - one is a ratio, the other a probability - so what is
-    # asserted is that the probability is not a certainty, which is what a
-    # search of eight trials buys.
     assert 0.0 <= deflated <= 1.0
     assert plain > 0.0
+    # Measured at 0.629. Strictly below 1.0, which the bound above permits and
+    # the sentence above it claimed: a search of eight trials cannot leave a
+    # certainty behind.
+    assert deflated < 1.0
 
 
 def test_the_deflated_ratio_refuses_without_a_benchmark_or_without_trials():

@@ -192,7 +192,7 @@ def chunks(items: list, budget: Budget) -> list[list]:
 
 
 def describe() -> str:
-    """One line for a log or a CLI, naming the limit rather than the number."""
+    """One line for a log or a terminal, naming the limit rather than the number."""
     budget = measure()
     if not budget.may_run:
         return f"sweeps refused here: {budget.why}"

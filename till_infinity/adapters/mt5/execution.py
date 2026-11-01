@@ -61,11 +61,15 @@ _POSITION_SIDES = {0: PositionSide.LONG, 1: PositionSide.SHORT}
 #: MT5 trade server return codes this client acts on.
 #:
 #: **0 is not one of them.** The first version accepted it as "no code sent",
-#: and `Bridge._send` reads a 404 as `None`, which every write method turns
-#: into `{}` - so an empty body parsed to retcode 0, 0 was OK, and "the bridge
-#: did not answer" was indistinguishable from "done". A real `order_send`
-#: never returns 0. A request is confirmed by a *positive* code, never by the
-#: absence of a failure.
+#: and `Bridge._send` then read a 404 as `None` on every route, which every
+#: write method turned into `{}` - so an empty body parsed to retcode 0, 0 was
+#: OK, and "the bridge did not answer" was indistinguishable from "done". A
+#: real `order_send` never returns 0. A request is confirmed by a *positive*
+#: code, never by the absence of a failure.
+#:
+#: Both halves were fixed. `_send` now takes `empty_on_404` and only the tick
+#: and bar history routes pass it, so a 404 on a write raises; and 0 is refused
+#: here whatever the transport does.
 DONE = 10009
 PLACED = 10008
 #: Placed or done: the terminal has the request.

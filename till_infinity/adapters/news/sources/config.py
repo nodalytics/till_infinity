@@ -86,7 +86,11 @@ def _env_float(default: float, name: str) -> float:
 
 @dataclass(slots=True)
 class Settings:
-    """Everything tunable, resolved once and threaded through the service."""
+    """Everything tunable, resolved once and threaded through every source.
+
+    Read once by the news client and handed to each source it builds, so a
+    deployment's settings cannot differ between two providers in one pass.
+    """
 
     data_dir: Path = field(default_factory=lambda: Path(DEFAULT_DATA_DIR))
     database: Path | None = None
@@ -112,8 +116,9 @@ class Settings:
     fred_api_key: str = ""
     #: Which providers to poll. Empty means `DEFAULT_SOURCES`.
     #:
-    #: A setting because it was not one: `stack` called `collect` without a
-    #: source list, so the default won and nothing a deployment said could
+    #: A setting because it was not one: the retired bus service's `stack`
+    #: (`research/retire/bus/stack.py`) called `collect` without a source
+    #: list, so the default won and nothing a deployment said could
     #: change it. `fred` was configured on a live box, the key was present, the
     #: name was in the environment - and the source was never constructed, with
     #: no error to say so, because nothing read it.

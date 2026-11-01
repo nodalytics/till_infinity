@@ -42,6 +42,9 @@ def noise(n: int, seed: int, edge: float = 0.0) -> list[float]:
 
 class TestEachSurrogateRemovesOneThing:
     def test_sign_flip_keeps_magnitudes(self):
+        """It is the direction null, so it has to remove direction and nothing
+        else. A version that also changed the sizes would be testing the claim
+        against a different market."""
         series = noise(200, 1)
         flipped = sign_flip(series, rng=random.Random(2))
         assert sorted(abs(x) for x in flipped) == sorted(abs(x) for x in series)
@@ -55,19 +58,30 @@ class TestEachSurrogateRemovesOneThing:
         assert len(set(flipped[5:])) == 1
 
     def test_the_vol_path_walk_preserves_the_path_exactly(self):
+        """The volatility path is the one thing this desk has repeatedly found
+        real, so a null meant to test something else must leave it in place -
+        otherwise every reading is explained by the volatility it destroyed."""
         series = noise(200, 4)
         walked = vol_path_walk(series, rng=random.Random(5))
         assert [abs(x) for x in walked] == [abs(x) for x in series]
 
     def test_block_shuffle_preserves_every_value(self):
+        """A null that changes the marginal distribution is testing two things
+        at once, and the one it was not asked about is the fat tails - which
+        run kurtosis 20 to 74 on traded feeds."""
         series = noise(200, 6)
         assert sorted(block_shuffle(series, rng=random.Random(7))) == sorted(series)
 
     def test_time_shift_rotates_rather_than_drops(self):
+        """A shift that truncated would hand the null a shorter sample than the
+        observed one, and a shorter sample has a wider spread - so the null
+        would lose on length rather than on structure."""
         assert time_shift([1.0, 2.0, 3.0], lag=1) == [2.0, 3.0, 1.0]
         assert sorted(time_shift(noise(50, 8), lag=7)) == sorted(noise(50, 8))
 
     def test_iaaft_keeps_the_distribution(self):
+        """Its whole purpose: matched amplitude spectrum *and* matched marginal,
+        which is what makes it the strict null the cheaper shuffles are not."""
         series = noise(256, 9)
         got = iaaft(series, iterations=20, rng=random.Random(10))
         assert sorted(got) == pytest.approx(sorted(series), abs=1e-9)
@@ -105,7 +119,7 @@ class TestANullThatCannotMoveTheStatisticSaysSo:
 
 
 class TestADirectionalClaimCannotBeJudgedByRemovingDirection:
-    def test_the_refusal_is_a_refusal(self):
+    def test_a_directional_claim_cannot_be_tested_by_removing_direction(self):
         """Trading direction *is* trading geometry, so a null that removes
         direction answers a different question and reports a confident
         failure either way."""
@@ -116,6 +130,9 @@ class TestADirectionalClaimCannotBeJudgedByRemovingDirection:
             against_nulls(noise(200, 17), sharpe, draws=5, nulls=only_directional, directional=True)
 
     def test_the_other_arms_survive_the_refusal(self):
+        """The refusal is per-null, not per-run. Refusing the whole battery
+        because one arm does not apply would leave a directional claim with no
+        null at all, which is worse than the wrong null."""
         arms = against_nulls(noise(400, 18, edge=0.1), sharpe, draws=10, directional=True)
         assert all("direction" not in a.name for a in arms)
         assert arms
@@ -123,6 +140,8 @@ class TestADirectionalClaimCannotBeJudgedByRemovingDirection:
 
 class TestThePlaceboKeepsTheGeometry:
     def test_it_returns_as_many_anchors_as_the_detector_found(self):
+        """A placebo with a different count is a different sample size, and the
+        comparison would read that difference as an effect."""
         assert len(placebo_anchors(1_000, 7, rng=random.Random(19))) == 7
 
     def test_distances_are_matched_not_random(self):
@@ -132,11 +151,17 @@ class TestThePlaceboKeepsTheGeometry:
         assert [end - start for start, end in pairs] == [10, 50, 200]
 
     def test_a_distance_longer_than_the_series_is_dropped(self):
+        """Dropped rather than clipped. A clipped placebo is distance-matched to
+        a distance nothing was measured over, which is the error the matching
+        exists to prevent."""
         assert distance_matched(100, [500], rng=random.Random(21)) == []
 
 
 class TestTheClockBreakdown:
-    def test_a_spread_result_is_spread(self):
+    def test_a_result_present_in_every_hour_reads_as_spread(self):
+        """The negative control for the concentration measure. 1/24 is the
+        floor by construction - twenty-four equal cells - so this is what the
+        statistic must read when there is nothing to find."""
         stamps = [i * HOUR for i in range(240)]
         values = [1.0] * 240
         got = by_clock(stamps, values)
@@ -173,6 +198,9 @@ class TestTheClockBreakdown:
         assert effective_observations(concentrated) < effective_observations(spread)
 
     def test_too_few_cells_cannot_tell_spread_from_concentration(self):
+        """Six samples all landing in one hour is an unanswerable question, and
+        answering it as "concentrated" would condemn a result for a sampling
+        artefact."""
         stamps = [i * DAY for i in range(6)]  # all the same hour
         ok, why = stable_across(by_clock(stamps, [1.0] * 6))
         assert ok is False
@@ -192,9 +220,13 @@ class TestTheClockBreakdown:
 
 class TestTheClosedRegister:
     def test_a_closed_shape_claim_is_flagged(self):
+        """The register exists because this desk re-proposed refuted ideas. The
+        engulfing-candle claim is the one it did twice."""
         assert warn("an engulfing candle shape predicts continuation")
 
     def test_shape_transitions_are_their_own_entry(self):
+        """Separate from the shape claim because they were refuted separately,
+        and a reader proposing one needs the result for that one."""
         entry = check("transitions between candle shapes predict the next move")
         assert entry is not None
         assert "transitions" in entry.claim
@@ -206,6 +238,8 @@ class TestTheClosedRegister:
         assert established("dispersion is forecastable from the bar range") is not None
 
     def test_an_open_question_passes_through(self):
+        """A register that warned about everything would be read as noise and
+        then ignored, which is the same as not having one."""
         assert warn("the spread widens before a release") == ""
 
     def test_geometric_and_topological_claims_need_different_nulls(self):

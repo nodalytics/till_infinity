@@ -106,11 +106,72 @@ def test_one_desk_per_rule_entry_and_instrument(monkeypatch):
     built, clipped = desks.build("MT5")
     assert len(built) == 4, "two symbols x one rule x two entries"
     assert not clipped
-    assert {type(s).__name__ for s in built} == {"EdgeEntry", "RestingEntry"}
+    assert {type(s).__name__ for s in built} == {"SurpriseEdge", "SurpriseResting"}
+
+
+def test_what_is_built_can_actually_decide_and_exit(monkeypatch):
+    """**The composed leaf, not the bare entry.**
+
+    This built `EdgeEntry` itself, with no decision mixin in front of it, and
+    `Desk.decide` raises by design - so every desk this node registered raised
+    `NotImplementedError` on the first proposal it was handed, and nothing said
+    so because a node that judges nothing looks exactly like a quiet market.
+    The composed leaves existed and were tested; they were built by nothing.
+
+    The same held on the exit side: without an `ExitMechanism` in the bases a
+    position has no book tracking it, so no stop moves, nothing banks, no stale
+    clock runs and the basket close - which is published, not submitted -
+    reaches nobody.
+    """
+    from till_infinity.strategies.desk import Desk
+    from till_infinity.strategies.exits import ExitMechanism
+
+    monkeypatch.setenv("TRADING_ENTRIES", "edge resting arrival")
+    built, _ = desks.build("MT5")
+    assert built
+    for strategy in built:
+        name = type(strategy).__name__
+        # `Desk.decide` is the one that raises, so inheriting it *is* the bug.
+        assert type(strategy).decide is not Desk.decide, f"{name} has no decision"
+        assert isinstance(strategy, ExitMechanism), f"{name} has no exit"
+        assert strategy.label != name, f"{name} has no profile to name itself by"
+
+
+def test_an_unknown_rule_raises_rather_than_running_nothing(monkeypatch):
+    """A typo that silently runs nothing is a node that reports up and trades
+    nothing, which is on record from three deploys that were built, tagged,
+    health-checked and ran none of the code they claimed."""
+    monkeypatch.setenv("TRADING_STRATEGIES", "statespace-surprize")
+    with pytest.raises(ValueError, match=r"not a\s+decision rule"):
+        desks.rules()
+
+
+def test_the_exit_override_replaces_the_rule_s_own_everywhere(monkeypatch):
+    """`TRADING_EXITS=venue` is for the deploy that cannot switch the bridge's
+    own trailing handler off: `manage.py` says three things can move a stop and
+    exactly one may, so a desk whose stop the bridge is already trailing must
+    not also run `advance`."""
+    from till_infinity.strategies.exits import ManagedExit, VenueExit
+
+    monkeypatch.setenv("TRADING_ENTRIES", "edge")
+    assert desks.exits() == "", "each rule keeps its own by default"
+    assert all(isinstance(s, ManagedExit) for s in desks.build("MT5")[0])
+
+    monkeypatch.setenv("TRADING_EXITS", "venue")
+    assert desks.exits() == "venue"
+    swapped = desks.build("MT5")[0]
+    assert swapped
+    for strategy in swapped:
+        assert isinstance(strategy, VenueExit)
+        assert not isinstance(strategy, ManagedExit)
+
+    monkeypatch.setenv("TRADING_EXITS", "trailing")
+    with pytest.raises(ValueError, match=r"not an exit mechanism|exactly one"):
+        desks.exits()
 
 
 def test_every_desk_gets_a_distinct_tag(monkeypatch):
-    """Left unset they are all `EdgeEntry-None` and share an order-id tag, so
+    """Left unset they are all `SurpriseEdge-None` and share an order-id tag, so
     Nautilus generates colliding client order ids and the `strategy_id` that
     was the whole argument for the carve-up names several desks at once."""
     monkeypatch.setenv("TRADING_ENTRIES", "edge resting")
@@ -201,22 +262,34 @@ def test_the_live_and_backtest_sets_name_the_same_desks(monkeypatch):
     assert [str(s.config.bar_type) for s in live] == [c.config["bar_type"] for c in back]
 
 
-def test_the_importable_paths_resolve_to_the_real_classes(monkeypatch):
-    """A path that does not import is a backtest that fails at run time, which
-    is the one place a typo is most expensive."""
-    import importlib
+def test_the_importable_paths_build_what_a_backtest_would_build(monkeypatch):
+    """A path that does not resolve is a backtest that fails at run time,
+    which is the one place a typo is most expensive.
+
+    Resolved through Nautilus's own factories rather than by hand. **These are
+    the functions `BacktestNode` calls**, so they settle the whole question
+    and not the importable half of it: the config dict has to satisfy the
+    config class, and the strategy has to accept that config. A path can
+    import and still not build - a required field left out of the dict is the
+    common way - and `hasattr` on the resolved module, which is what used to
+    stand here, cannot see any of it.
+    """
+    from nautilus_trader.common.actor import Actor
+    from nautilus_trader.common.config import ActorFactory
+    from nautilus_trader.trading.config import StrategyFactory
+    from nautilus_trader.trading.strategy import Strategy
 
     monkeypatch.setenv("TRADING_ENTRIES", "edge resting arrival")
     back, _ = desks.importable("MT5")
+    assert back, "nothing to resolve, so nothing was asserted"
     for config in back:
-        module, name = config.strategy_path.split(":")
-        assert hasattr(importlib.import_module(module), name), config.strategy_path
-        module, name = config.config_path.split(":")
-        assert hasattr(importlib.import_module(module), name), config.config_path
+        made = StrategyFactory.create(config)
+        assert isinstance(made, Strategy), config.strategy_path
+        assert type(made).__name__ == config.strategy_path.rsplit(":", 1)[1]
+        assert type(made.config).__name__ == config.config_path.rsplit(":", 1)[1]
 
     for actor in desks.importable_actors("MT5"):
-        module, name = actor.actor_path.split(":")
-        assert hasattr(importlib.import_module(module), name)
+        assert isinstance(ActorFactory.create(actor), Actor), actor.actor_path
 
 
 def test_the_basket_is_an_actor_rather_than_a_desk():
@@ -528,8 +601,8 @@ def test_two_synthetics_get_different_strategy_ids(monkeypatch, loop):
     assert len(built) == 2
     ids = {str(strategy.id) for strategy in built}
     assert ids == {
-        "EdgeEntry-Volatility 75 Index-E270",
-        "EdgeEntry-Volatility 100 Index-E270",
+        "SurpriseEdge-Volatility 75 Index-E270",
+        "SurpriseEdge-Volatility 100 Index-E270",
     }
     # The tag suffix is per-entry, so the symbol is what distinguishes these.
     # Both halves matter: a tag-only id would collide across symbols, and a

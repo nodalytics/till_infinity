@@ -1,4 +1,28 @@
-"""Candlestick confirmation, and the ways a pattern can lie."""
+"""Candlestick confirmation, and the three ways a pattern reads as its opposite.
+
+A level says *where* a trade is worth taking and not *when*, and the gap
+between those two is where this repo's record has been expensive: trades
+entered because price was near a level and stopped because it had not finished
+going the other way first. A pattern is a claim about the second question.
+
+Each shape here has a plausible definition that inverts at exactly the shape
+it is meant to describe, and all three are checked below.
+
+* A **wick measured against the body** rather than the range. The textbook
+  phrasing is "the wick is twice the body", and a textbook hammer has a tiny
+  body - that is what makes it a hammer. So the body-relative rule either
+  admits everything once the body is small enough, or guards against that by
+  refusing small bodies and throws away the best examples.
+* An **engulfing read on ranges** rather than bodies. A bar whose range covers
+  the previous range is a wider bar; only a body that covers the previous body
+  and closes the other way is a reversal.
+* **A wick through the level that closes back the wrong side of it.** That is
+  support breaking, drawn in the shape of support holding, and it is the one
+  this module would be worth having for on its own.
+
+**The pattern is worthless away from the level**, so every check takes the
+level as an argument and a shape that did not reach it does not count.
+"""
 
 from __future__ import annotations
 

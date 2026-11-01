@@ -26,8 +26,9 @@ combination is the signature of fitting the selection rather than the market.
 
 **Lo's correction matters here specifically.** Autocorrelated returns inflate
 a naive Sharpe, and this desk measures size autocorrelation of 0.21 on traded
-markets - so a Sharpe computed as though returns were independent reads high
-before any selection effect is considered.
+markets against 0.00-0.13 on the synthetics -
+`research/docs/pattern-fingerprint.md` - so a Sharpe computed as though returns
+were independent reads high before any selection effect is considered.
 """
 
 from __future__ import annotations

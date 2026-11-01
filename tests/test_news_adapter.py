@@ -101,7 +101,10 @@ class TestMacroObservationsCarryPublicationTime:
         assert got.ts_event == NS
         assert got.period == "2026-09"
 
-    def test_it_renders_readably(self):
+    def test_it_names_the_series_and_the_period_in_one_line(self):
+        """The `repr` is hand-written, and it is what a node logs when an
+        observation arrives. A dataclass dump would print the nanosecond
+        stamps and bury the two fields a reader is checking."""
         got = MacroObservation(
             series="DGS10", value=4.25, period="2026-10-30", ts_event=NS, ts_init=NS, unit="%"
         )
@@ -191,7 +194,9 @@ class TestHistoryIsServedPointInTime:
         assert got[1].actual == pytest.approx(1234.0)
         assert got[1].forecast == pytest.approx(5.0)
 
-    def test_the_importance_floor_filters(self):
+    def test_an_entry_below_the_floor_is_not_carried(self):
+        """The floor is what keeps a bank holiday off the bus. Applied to the
+        wrong side of the comparison it would carry only the holidays."""
         client = self._client(self._store([self._row()]))
         client._floor = Importance.HIGH
         assert client._carried(Importance.LOW, "US") is False
@@ -271,7 +276,10 @@ class TestTheSweepPublishesEachStageOnceAndOnlyWhenKnowable:
         await client._sweep(self.NOW)
         assert published == []
 
-    async def test_a_second_sweep_publishes_nothing_again(self):
+    async def test_a_second_sweep_republishes_nothing(self):
+        """The sweep re-reads a forward window every time it runs, so without
+        a record of what it has already emitted an embargo would re-fire on
+        every pass - an alert per sweep rather than per release."""
         client, published = self._client([self._row()])
         await client._sweep(self.NOW)
         await client._sweep(self.NOW)

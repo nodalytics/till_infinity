@@ -6,8 +6,8 @@ outcome is a *new* entry pointing back at the decision it judges. A journal you
 can edit is not a journal - the value of "why we thought that at the time" is
 entirely in nobody having tidied it up afterwards.
 
-Reads open the file `mode=ro`, the same guarantee the agents' data views give,
-so an analyst reading its own history cannot rewrite it.
+Reads open the file `mode=ro`, enforced at the driver rather than by
+remembering, so nothing that analyses history can rewrite it.
 """
 
 from __future__ import annotations
@@ -32,7 +32,7 @@ DEFAULT_DB = ".data/journal/journal.db"
 
 #: How many entries a listing shows before it stops being readable. A display
 #: ceiling, not a storage one - `read` honours whatever limit it is given, and
-#: this is the default the CLI reaches for.
+#: this is the default `export` reaches for when a caller names none.
 MAX_ROWS = 500
 
 SCHEMA = """

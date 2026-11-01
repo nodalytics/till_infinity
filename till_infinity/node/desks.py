@@ -34,11 +34,36 @@ places at market and needs nothing from the venue beyond an order - the other
 two depend on a venue minimum and on bars respectively, and a default that
 quietly needs more than the simplest case is a default that fails on the
 narrowest venue.
+
+`TRADING_EXITS` is the second, and it is **empty by default on purpose**: each
+rule declares its own exit in `strategies/leaves.py`, because how long to hold
+and whether a stop trails are statements about the thesis rather than about the
+deploy. See `exits` below for the one case the override is for.
+
+## What a desk is, and where that is written down
+
+A desk is a **(decision, exit, entry, instrument)**, and the first three are
+composed into one class in `strategies/leaves.py`. This file builds those
+classes; it does not know how they are put together.
+
+It used to build the bare entries - `EdgeEntry`, `RestingEntry`,
+`ArrivalEntry` - with no decision mixin in front of them. `Desk.decide` raises
+by design, so **every desk this node registered raised `NotImplementedError`
+on the first proposal it was handed**: a node that came up, tagged itself,
+passed its health check and could not judge a signal. Fixed on 2026-11-01.
+
+That fix changes every `strategy_id`, from `EdgeEntry-EURUSD-E270` to
+`SurpriseEdge-EURUSD-E270`, and `_tag` says at length why a changing id is a
+hazard - Nautilus matches an external order back to a strategy by it, so a
+renamed desk orphans whatever the previous run left open. It is safe here for
+exactly one reason, and the reason is the bug: a desk that raised before it
+could place has nothing open to orphan.
 """
 
 from __future__ import annotations
 
 import os
+import re
 import zlib
 
 from nautilus_trader.common.actor import Actor
@@ -49,23 +74,14 @@ from nautilus_trader.trading.strategy import Strategy
 
 from till_infinity.adapters.mt5 import MT5
 from till_infinity.strategies.basket import BasketConfig, BasketExit
-from till_infinity.strategies.entries import (
-    ArrivalEntry,
-    ArrivalEntryConfig,
-    EdgeEntry,
-    EdgeEntryConfig,
-    RestingEntry,
-    RestingEntryConfig,
-)
+from till_infinity.strategies.leaves import ENTRIES, EXITS, RULES, leaf
 
 from . import sizing
 
-#: The entry mechanisms, by the name an operator writes.
-ENTRIES: dict[str, tuple[type[Strategy], type]] = {
-    "edge": (EdgeEntry, EdgeEntryConfig),
-    "resting": (RestingEntry, RestingEntryConfig),
-    "arrival": (ArrivalEntry, ArrivalEntryConfig),
-}
+#: Re-exported so an operator greps one name. The registries live in
+#: `strategies/leaves.py`, because what a desk *is* - which decision, which
+#: exit, which entry - is a question about `strategies` and not about a node.
+__all__ = ["ENTRIES", "EXITS", "RULES"]
 
 #: Strategies per core, when nothing says otherwise. Each one holds a window
 #: of bars and a handful of indicators, so the cost is memory and a fold per
@@ -122,8 +138,47 @@ def _names(value: str | None) -> tuple[str, ...]:
 
 
 def rules() -> tuple[str, ...]:
-    """The decision rules to run. `TRADING_STRATEGIES`."""
-    return _names(os.environ.get("TRADING_STRATEGIES")) or ("statespace-surprise",)
+    """The decision rules to run. `TRADING_STRATEGIES`.
+
+    Unknown names raise, for the same reason `entries` does: a typo that
+    silently runs nothing is a node that reports up and trades nothing, which
+    is on record from three deploys that were built, tagged, health-checked and
+    ran none of the code they claimed.
+    """
+    asked = _names(os.environ.get("TRADING_STRATEGIES")) or ("statespace-surprise",)
+    unknown = [name for name in asked if name not in RULES]
+    if unknown:
+        raise ValueError(
+            f"TRADING_STRATEGIES names {', '.join(unknown)}, which is not a "
+            f"decision rule. Known: {', '.join(RULES)}."
+        )
+    return asked
+
+
+def exits() -> str:
+    """The exit mechanism to override every rule's own with. `TRADING_EXITS`.
+
+    Empty by default, meaning **each rule keeps the exit it declared** - the
+    exit is a statement about the thesis, so `strategies/leaves.py` is where it
+    is chosen rather than a deploy.
+
+    The override exists for one real case. `manage.py` records three things
+    that can move a stop on this desk - the MT5 bridge's own twenty-second
+    trailing handler, Nautilus's native trailing order, and `advance` - and
+    exactly one may, because two on different clocks give whichever wrote last.
+    A deploy that cannot switch the bridge's handler off says
+    `TRADING_EXITS=venue` and gets the stop left where the venue holds it.
+    """
+    asked = _names(os.environ.get("TRADING_EXITS"))
+    if not asked:
+        return ""
+    if len(asked) > 1 or asked[0] not in EXITS:
+        raise ValueError(
+            f"TRADING_EXITS={os.environ.get('TRADING_EXITS')!r} names "
+            f"{len(asked)} mechanism(s). It takes exactly one of "
+            f"{', '.join(sorted(EXITS))}, and it replaces every rule's own."
+        )
+    return asked[0]
 
 
 def entries() -> tuple[str, ...]:
@@ -199,20 +254,111 @@ SPECS: dict[str, str] = {
 }
 
 
-def bar_type(symbol: str, venue: str, interval: str) -> BarType:
-    """The bar type a desk subscribes to.
+#: The units in `SPECS`, which are the ones a venue can publish.
+TIME_UNITS: frozenset[str] = frozenset(spec.split("-")[1] for spec in SPECS.values())
 
-    `EXTERNAL` because the venue aggregates: an `INTERNAL` bar type would have
-    Nautilus build bars from ticks, and on a venue whose tick stream is
-    *sampled* - which MT5's is - those bars would be built from a sample and
-    would not match the venue's own.
+#: Activity clocks Nautilus will build, by the suffix a deploy writes:
+#: `TRADING_INTERVALS=500tick` is a bar every 500 ticks.
+CLOCKS: dict[str, str] = {"tick": "TICK"}
+
+#: Activity clocks Nautilus will build and **this venue cannot feed**.
+#:
+#: Nautilus aggregates `VOLUME` and `VALUE` bars, and they are the clocks this
+#: desk's own measurements favour - volume time absorbs 76% of what the Q clock
+#: does, and still pays on top of it. They are refused anyway, because the
+#: measurement was made on the lab's cached data and the live feed has no sizes
+#: to build them from: `adapters/mt5/data.py` records that an MT5 tick's trade
+#: fields read **0 or a constant 5000**, which is why it publishes a `QuoteTick`
+#: with a placeholder size and never a `TradeTick`.
+#:
+#: So a `VOLUME` bar of 500 here would be a 500-tick bar with a scale factor,
+#: carrying the name of a clock that was measured somewhere else. That is worse
+#: than not having it: the bars would arrive, the fold would run, and the result
+#: would be read as the measured clock.
+UNFED: dict[str, str] = {"vol": "VOLUME", "value": "VALUE"}
+
+#: How the bars are built. `TRADING_BAR_SOURCE`, `external` by default.
+SOURCES: tuple[str, ...] = ("external", "internal")
+
+
+def spec_for(interval: str) -> str:
+    """Nautilus's bar specification for the name a deploy writes.
+
+    Either one of `SPECS`' seven time clocks, or `<count><clock>` for an
+    activity clock - `500tick`. A count is accepted rather than tabulated, for
+    the reason `statespace._seconds` gives about `3-MINUTE`: a step nobody has
+    used yet should not need an edit here.
     """
-    spec = SPECS.get(interval)
-    if spec is None:
+    name = interval.strip().lower()
+    found = SPECS.get(name)
+    if found is not None:
+        return found
+
+    match = re.fullmatch(r"(\d+)(tick|vol|value)", name)
+    if match is None:
         raise ValueError(
             f"{interval!r} is not an interval this node can subscribe to. "
-            f"Known: {', '.join(SPECS)}."
+            f"Known: {', '.join(SPECS)}, or a count and a clock - "
+            f"{', '.join(f'500{clock}' for clock in CLOCKS)}."
         )
+    count, clock = match.groups()
+    if clock in UNFED:
+        raise ValueError(
+            f"{interval!r} asks for {UNFED[clock]} bars, which Nautilus will "
+            f"build and this venue cannot feed: an MT5 tick's trade fields read "
+            f"0 or a constant 5000, so there is no size to aggregate and a "
+            f"{UNFED[clock]} bar would be a {count}-tick bar with a scale "
+            f"factor. Use {count}tick, or a venue that publishes trade ticks."
+        )
+    return f"{count}-{CLOCKS[clock]}"
+
+
+def source() -> str:
+    """Whether Nautilus builds the bars or the venue does. `TRADING_BAR_SOURCE`."""
+    asked = (os.environ.get("TRADING_BAR_SOURCE") or "external").strip().lower()
+    if asked not in SOURCES:
+        raise ValueError(
+            f"TRADING_BAR_SOURCE={asked!r} is not a bar source. One of: {', '.join(SOURCES)}."
+        )
+    return asked
+
+
+def bar_type(symbol: str, venue: str, interval: str, *, aggregate: str | None = None) -> BarType:
+    """The bar type a desk subscribes to, and who aggregates it.
+
+    **`EXTERNAL` is still the default, and its old reason is now only half
+    true.** It used to read: the venue aggregates, and an `INTERNAL` bar type
+    would have Nautilus build bars from a *sampled* tick stream, which MT5's
+    is. The EA changed that for part of the book - `MT5/ea/TillTickFeed.mq5`
+    pushes from `OnTick`, which fires for every tick the terminal sees - but
+    `OnTick` only fires for the symbol its chart is on, so the stream is
+    complete where an EA is attached and still a 0.25s poll everywhere else.
+    That is a per-feed property, so it is a switch and not a new default: a
+    deploy that knows its feed is pushed says `TRADING_BAR_SOURCE=internal`.
+
+    **An internal bar type is `MID`, never `LAST`, and this is the detail that
+    would make the whole thing silently inert.** Checked in Nautilus's
+    `data/engine.pyx`: `_subscribe_bar_aggregator` subscribes to **trade
+    ticks** when an internally aggregated bar type's price type is `LAST`, and
+    to quote ticks for anything else. The MT5 adapter publishes `QuoteTick`
+    and never a `TradeTick`, so `LAST-INTERNAL` would subscribe to a stream
+    nothing produces: no bars, no error, a desk that is subscribed and inert.
+    `MID` is therefore chosen here rather than left to configuration. A venue
+    that does publish trade ticks would want `LAST`, and that belongs with
+    that venue's kind in `node/venues.py` when one has an adapter.
+
+    An activity clock forces internal whatever the setting says, because no
+    venue publishes one. That cannot surprise a deploy: nothing but this
+    function can produce an activity clock in the first place.
+    """
+    spec = spec_for(interval)
+    chosen = aggregate or source()
+    if chosen not in SOURCES:
+        raise ValueError(f"{chosen!r} is not a bar source. One of: {', '.join(SOURCES)}.")
+    if spec.split("-")[1] not in TIME_UNITS:
+        chosen = "internal"
+    if chosen == "internal":
+        return BarType.from_str(f"{symbol}.{venue}-{spec}-MID-INTERNAL")
     return BarType.from_str(f"{symbol}.{venue}-{spec}-LAST-EXTERNAL")
 
 
@@ -255,9 +401,16 @@ def build(
     """
     taken, clipped = _wanted(venue=venue, budget=budget, limit=limit)
     interval = intervals()[0]
+    chosen = exits()
     built: list[Strategy] = []
     for rule, entry, symbol in taken:
-        strategy, config = ENTRIES[entry]
+        # **The composed leaf, not the bare entry.** This built `EdgeEntry`
+        # itself until 2026-11-01, with no decision mixin in front of it -
+        # and `Desk.decide` raises by design, so every desk this node
+        # registered raised `NotImplementedError` on the first proposal it was
+        # handed. The leaves existed, were tested, and were built by nothing.
+        strategy = leaf(rule, entry, chosen)
+        _, config = ENTRIES[entry]
         built.append(
             strategy(
                 config(
@@ -425,9 +578,11 @@ def importable(
     """
     taken, clipped = _wanted(venue=venue, budget=budget, limit=limit)
     interval = intervals()[0]
+    chosen = exits()
     out: list[ImportableStrategyConfig] = []
     for rule, entry, symbol in taken:
-        strategy, config = ENTRIES[entry]
+        strategy = leaf(rule, entry, chosen)
+        _, config = ENTRIES[entry]
         out.append(
             ImportableStrategyConfig(
                 strategy_path=f"{strategy.__module__}:{strategy.__name__}",

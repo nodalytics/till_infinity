@@ -1,4 +1,25 @@
-"""Bringing a node up, and what a stop does to a book."""
+"""That "up" is a claim somebody checked, and that a stop says what it did.
+
+**A launch that reports success without checking is the failure this file
+exists to catch.** Three deploys on 2026-10-09 were built, tagged, deployed,
+health-checked and reported up while running none of the code they claimed.
+One of them was then measured as having no effect, which is exactly what code
+that is not running looks like - and the measurement was the only thing that
+noticed. Every probe in the old arrangement read our own side of the wire, so
+a node that had never spoken to the venue passed all of them.
+
+So `up` is a sequence of claims, each carrying the source that made it, and
+the one that decides is the venue's own answer rather than ours. A stall names
+the step it stalled on, because "failed to start" is not an answer: a bridge
+that is down, a backfill that is slow and a strategy that has not armed yet
+take three different actions, and the third is usually to wait.
+
+Coming down is the other half. The engine will take a stop as permission to do
+whatever it likes to the book, so the policy is explicit and the plan is
+ordered: orders cancelled before positions are closed, and the venue asked to
+confirm before the process goes away. A stop that leaves a resting order
+nobody supervises is worse than no stop at all.
+"""
 
 from __future__ import annotations
 
@@ -62,7 +83,7 @@ class TestUpMeansEveryClaimInOrder:
         await wait_until_up(checks, deadline=2, interval=0, now=clock())
         assert reached == []
 
-    async def test_a_probe_that_raises_has_simply_not_passed_yet(self):
+    async def test_a_probe_that_raises_has_not_passed_yet(self):
         """The bridge refusing a connection is a normal state during startup,
         not a reason to abandon the launch."""
         calls = {"n": 0}

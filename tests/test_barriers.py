@@ -128,6 +128,10 @@ def test_a_stop_that_beats_its_own_price_is_not_a_monitoring_rate():
 
 
 def test_barriers_inside_the_volatility_estimates_own_error_are_declined():
+    """A geometry smaller than the error on the number that sized it is not a
+    tight trade, it is an unmeasurable one - and both extremes are refused,
+    because a stop a hundred times the unit is the same complaint with the
+    arguments swapped."""
     assert barriers.reachable(1.0, 1.0)
     assert not barriers.reachable(0.05, 3.0)
     assert not barriers.reachable(3.0, 0.01)
@@ -251,8 +255,6 @@ class TestConditionalSlowdown:
     def test_an_average_entry_changes_nothing(self):
         """The whole point of a *conditional* correction: at the long mean it is
         inert, so a caller with no unusual volatility is left where it was."""
-        from till_infinity.domain import barriers
-
         assert barriers.conditional_slowdown(0.01, 0.01) == pytest.approx(1.0)
         assert barriers.conditional_slowdown(0.01, 0.01, generated=True) == pytest.approx(1.0)
 
@@ -262,8 +264,6 @@ class TestConditionalSlowdown:
         A short estimate above its longer mean sized the barriers too wide for
         the volatility that follows, so the trade runs **longer**.
         """
-        from till_infinity.domain import barriers
-
         assert barriers.conditional_slowdown(0.02, 0.01) > 1.0
         assert barriers.conditional_slowdown(0.005, 0.01) < 1.0
 
@@ -275,8 +275,6 @@ class TestConditionalSlowdown:
         derived constants, and a fitted drift away from them would mean the
         derivation stopped applying.
         """
-        from till_infinity.domain import barriers
-
         for scale in (0.5, 0.8, 1.25, 2.0):
             assert barriers.conditional_slowdown(scale * 0.01, 0.01) == pytest.approx(scale)
             assert barriers.conditional_slowdown(
@@ -292,8 +290,6 @@ class TestConditionalSlowdown:
         spread collapses to +0.01 under full shrinkage where a traded feed's
         over-corrects to -0.48.
         """
-        from till_infinity.domain import barriers
-
         assert barriers.conditional_slowdown(
             0.02, 0.01, generated=True
         ) > barriers.conditional_slowdown(0.02, 0.01)
@@ -305,8 +301,6 @@ class TestConditionalSlowdown:
         caller's problem at the worst moment; one that returned a wild number
         would be worse. Returning 1.0 leaves the existing behaviour exactly.
         """
-        from till_infinity.domain import barriers
-
         for short, long_run in ((0.0, 0.01), (0.01, 0.0), (-0.01, 0.01), (0.01, -0.01)):
             assert barriers.conditional_slowdown(short, long_run) == pytest.approx(1.0)
 
@@ -317,10 +311,20 @@ class TestConditionalSlowdown:
         to use the conditional term changes how long the desk expects to hold -
         which is a decision to take deliberately, not a side effect of adding
         the function.
+
+        Pinned two ways rather than by looking for the name in the source.
+        **The signature is the stronger half:** `conditional_slowdown` needs
+        two volatility estimates and `duration_on_feed` is given neither, so
+        the correction is not reachable from it whatever the body says.
         """
         import inspect
 
         from till_infinity.domain import barriers
 
-        source = inspect.getsource(barriers.duration_on_feed)
-        assert "conditional_slowdown" not in source
+        asked = set(inspect.signature(barriers.duration_on_feed).parameters)
+        needs = set(inspect.signature(barriers.conditional_slowdown).parameters)
+        assert not (asked & needs), sorted(asked & needs)
+
+        # And the answer is still the unconditional one, term for term.
+        bars = barriers.duration(2.0, 1.0)
+        assert barriers.duration_on_feed(2.0, 1.0) == pytest.approx(bars * barriers.slowdown(bars))

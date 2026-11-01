@@ -37,6 +37,13 @@ def written(tmp_path, **fields):
 
 
 def test_a_node_that_is_up_and_trading_is_healthy(tmp_path):
+    """The control, and the strategy count is part of it.
+
+    `docker inspect` keeps a probe's output, so "4 strategies" is what tells
+    somebody reading an unhealthy container later that the node had built its
+    desks at all. A probe that answered a bare `True` would make every
+    refusal below indistinguishable from a working one.
+    """
     ok, reason = status.healthy(written(tmp_path))
     assert ok is True
     assert "4 strategies" in reason

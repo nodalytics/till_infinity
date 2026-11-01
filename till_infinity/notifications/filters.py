@@ -9,10 +9,12 @@ Level routing was the only filter there was - `info`, `warning`, `critical` -
 and it is the wrong axis on its own. A stale feed and a level call can both be
 `warning` while being completely different things to a reader.
 
-Four filters, each answering a question the others cannot:
+Five filters, each answering a question the others cannot:
 
 - **shape** - a kind of finding. "I want level calls, not every wide spread."
 - **instrument** - "gold and BTC only."
+- **interval** - a floor on the timeframe, because sub-15m is where the noise
+  and the losses both live. See `Filter.floor`.
 - **repeat** - the same finding again inside a cooling-off window. A stale feed
   is one situation, not one situation per second.
 - **rate** - a ceiling per hour, whatever else got through. The backstop for
@@ -167,8 +169,8 @@ class Filter:
         # down, which is the same mistake `UNCAPPED` was added for.
         #
         # `read_level` and not a string comparison. The bus contract
-        # (`shared/contracts/bus/alerts.json`) says a level may be "a name or
-        # its ordinal", and `== "critical"` matched only the name - so a
+        # (`research/shared/contracts/bus/alerts.json`) says a level may be
+        # "a name or its ordinal", and `== "critical"` matched only the name - so a
         # publisher sending `level: 2`, which the contract explicitly allows,
         # got no bypass and was filtered like a topic preference. The same
         # defect this whole gate was written for, in the other encoding. One

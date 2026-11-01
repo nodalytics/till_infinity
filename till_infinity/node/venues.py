@@ -5,15 +5,17 @@ built, which made "multi-venue" mean "several MT5 accounts". It is a real
 arrangement - a demo beside a live one, two brokers both on MT5 - but it is
 not the question somebody asks when they say multi-venue.
 
-**Nautilus ships eighteen adapters** and they all follow one naming
+**Nautilus ships an adapter per venue** and they all follow one naming
 convention: a module under `nautilus_trader.adapters.<kind>` exporting
 `<Name>LiveDataClientFactory`, `<Name>LiveExecClientFactory`,
 `<Name>DataClientConfig` and `<Name>ExecClientConfig`. So this resolves them
 **by shape rather than by a table of names**: the four classes are found by
 what they are called, not by a mapping somebody has to extend. Adding Binance
-is then a value in `TRADING_VENUES`, not a code change, and the eighteen
+is then a value in `TRADING_VENUES`, not a code change, and the ones shipped
 include `binance`, `bybit`, `kraken`, `okx`, `deribit`, `hyperliquid`,
-`polymarket`, `interactive_brokers`, `databento` and `sandbox`.
+`polymarket`, `interactive_brokers`, `databento` and `sandbox`. No count is
+written down here on purpose: `available()` reads the list off the installed
+package, and a number in prose would go stale on the next version bump.
 
     TRADING_VENUES="MT5,BINANCE"
     TRADING_SYMBOLS_MT5="EURUSD,XAUUSD"

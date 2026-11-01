@@ -103,6 +103,9 @@ class TestTheRefusalsComeOutUnchanged:
     """The one thing a move of this file must not change."""
 
     def test_every_gate_name_is_the_one_it_was(self):
+        """A renamed gate breaks nothing that runs, which is why it needs a
+        test. The refusal reason is what the journal records, so the record
+        stops being readable back while the desk keeps trading."""
         source = GUARD.read_text()
         named = set(re.findall(r'_no\(\s*"([a-z_]+)"', source))
         # `fx_window` returns the gate name rather than refusing itself.
@@ -133,6 +136,8 @@ class TestTheRefusalsComeOutUnchanged:
         repository has four recorded instances of a guard going quiet when its
         subject moved.
         """
+        # Both counts are of the tuples at the top of this file, not of
+        # anything measured - they exist so an emptied scan cannot pass.
         assert len(GATES) == 18
         assert len(ORDER) == 17
         assert set(ORDER) - {"fx_window", "swap"} < set(GATES)
@@ -201,6 +206,9 @@ class TestTheEnvelopeIsTheConfigurationSubset:
         )
 
     def test_it_is_frozen(self):
+        """A gate that could write to its own limits is a limit that means
+        nothing, and the journal's refusals could not be recomputed from the
+        envelope they were taken under."""
         made = Settings().envelope()
         with pytest.raises(Exception, match=r"cannot assign|frozen"):
             made.max_positions = 99  # type: ignore[misc]
@@ -218,6 +226,13 @@ class TestTheContextArrivesAsAProtocol:
         assert isinstance(Context(), Conditions)
 
     def test_the_protocol_names_exactly_what_the_guard_calls(self):
+        """Exactly, in both directions.
+
+        A question the guard asks that the contract does not name is one the
+        implementation can stop answering with nothing failing - and because
+        every context-driven check fails open, that is a gate going quiet
+        rather than a traceback.
+        """
         asked = set(re.findall(r"self\.context\.([a-z_]+)\(", GUARD.read_text()))
         named = {name for name in dir(Conditions) if not name.startswith("_")}
         assert asked == named, (
@@ -248,16 +263,23 @@ class TestTheAccountsLimitsStayTheAccounts:
     """
 
     def test_a_strategy_can_only_govern_the_per_trade_gates(self):
+        """Seventeen strategies with a daily loss budget each is an account
+        that can lose seventeen times the limit it was configured with."""
         tunable = {f.name for f in fields(Limits)} - {"by"}
         assert tunable == set(PER_STRATEGY), (
             f"Limits exposes {sorted(tunable)} and PER_STRATEGY names {sorted(PER_STRATEGY)}"
         )
 
     def test_no_account_level_limit_can_be_overridden_by_one(self):
+        """The same property from the other side, so adding a field to
+        `Limits` cannot quietly hand a strategy an account-level lever."""
         reachable = {f.name for f in fields(Limits)}
         assert not (ACCOUNT_LEVEL & reachable), sorted(ACCOUNT_LEVEL & reachable)
 
     def test_both_sets_name_real_limits(self):
+        """Power for the two above. A name in neither set matching any field
+        would make both of them vacuous, which is how these two guards came to
+        say "so a test can assert" with no test asserting."""
         declared = {f.name for f in fields(Envelope)}
         assert declared >= PER_STRATEGY, sorted(PER_STRATEGY - declared)
         assert declared >= ACCOUNT_LEVEL, sorted(ACCOUNT_LEVEL - declared)

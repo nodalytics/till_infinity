@@ -67,7 +67,7 @@ class TestPrecisionComesFromTheInstrument:
     tick size.
     """
 
-    def test_price_precision_is_honoured(self):
+    def test_a_price_carries_exactly_the_digits_the_instrument_declares(self):
         row = {"time": 1, "open": 1.123456789, "high": 1.2, "low": 1.0, "close": 1.15}
         bar = _bar(bar_type(), row, Instrument(price=5), 60.0)
         assert str(bar.open) == "1.12346"
@@ -83,7 +83,13 @@ class TestPrecisionComesFromTheInstrument:
         row = {"time": 1, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.15, "tick_volume": 0.45}
         assert float(_bar(bar_type(), row, Instrument(size=2), 60.0).volume) == 0.45
 
-    def test_the_failure_it_is_guarding_against(self):
+    def test_a_size_precision_of_zero_is_what_lost_the_volume(self):
+        """Power for the test above, on the one number that caused it.
+
+        A test that a volume survives proves nothing unless the same volume
+        demonstrably dies at the precision that was shipped - otherwise it
+        could be passing because 0.45 is unremarkable.
+        """
         row = {"time": 1, "open": 1.1, "high": 1.2, "low": 1.0, "close": 1.15, "tick_volume": 0.45}
         assert float(_bar(bar_type(), row, Instrument(size=0), 60.0).volume) == 0.0
 
