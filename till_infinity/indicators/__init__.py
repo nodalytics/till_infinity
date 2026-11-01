@@ -148,6 +148,7 @@ redesign.
 
 from __future__ import annotations
 
+import importlib
 import inspect
 from collections.abc import Callable
 
@@ -225,6 +226,60 @@ BAR_DETECTORS: dict[str, tuple[Callable[..., object], tuple[Reading, ...]]] = {
 }
 
 
+#: The framework's own indicators, by a short name a config can carry.
+#:
+#: **Take these rather than writing them.** The audit above found two of
+#: Nautilus's arithmetically wrong and the rest sound, so a strategy wanting a
+#: moving average, an RSI, an ATR, a Bollinger band or a fuzzy candle should
+#: name one here. The tuple is the default arguments; a config may override the
+#: first with `name:n`, which is the period for every one of them.
+#:
+#: `EfficiencyRatio` and `SpreadAnalyzer` are deliberately absent - they are
+#: the two that are wrong, and `trend.ratio` and `spread.RollingSpread` replace
+#: them.
+FRAMEWORK: dict[str, tuple[str, str, tuple]] = {
+    # name          module                  class                     defaults
+    "sma": ("averages", "SimpleMovingAverage", (20,)),
+    "ema": ("averages", "ExponentialMovingAverage", (20,)),
+    "hma": ("averages", "HullMovingAverage", (20,)),
+    "rsi": ("momentum", "RelativeStrengthIndex", (14,)),
+    "roc": ("momentum", "RateOfChange", (14,)),
+    "stochastics": ("momentum", "Stochastics", (14, 3)),
+    "atr": ("volatility", "AverageTrueRange", (14,)),
+    "bollinger": ("volatility", "BollingerBands", (20, 2.0)),
+    "donchian": ("volatility", "DonchianChannel", (20,)),
+    "keltner": ("volatility", "KeltnerChannel", (20, 2.0)),
+    "macd": ("trend", "MovingAverageConvergenceDivergence", (12, 26)),
+    "linreg": ("trend", "LinearRegression", (20,)),
+    "swings": ("trend", "Swings", (5,)),
+    "aroon": ("trend", "AroonOscillator", (14,)),
+    "obv": ("volume", "OnBalanceVolume", ()),
+    "vwap": ("volume", "VolumeWeightedAveragePrice", ()),
+    "fuzzy": ("fuzzy_candlesticks", "FuzzyCandlesticks", (10,)),
+}
+
+
+def framework(name: str, period: int | None = None) -> object:
+    """One of Nautilus's own indicators, by short name.
+
+    `period` replaces the first default argument, which is the period for every
+    entry in `FRAMEWORK`. An indicator taking none - `vwap`, `obv` with its
+    default - ignores it rather than raising, because a config that names a
+    period for something periodless has made a harmless mistake and should not
+    stop a node.
+    """
+    if name not in FRAMEWORK:
+        raise ValueError(
+            f"{name!r} is not a framework indicator. Known: {', '.join(sorted(FRAMEWORK))}."
+        )
+    module, cls_name, defaults = FRAMEWORK[name]
+    cls = getattr(importlib.import_module(f"nautilus_trader.indicators.{module}"), cls_name)
+    args = list(defaults)
+    if period is not None and args:
+        args[0] = period
+    return cls(*args)
+
+
 def build_detector(name: str, source: Reading | None = None, **kwargs: object) -> object:
     """One catalogued detector on one source, scaled correctly for it.
 
@@ -233,8 +288,22 @@ def build_detector(name: str, source: Reading | None = None, **kwargs: object) -
     detector whose threshold is in the wrong units - and trials are the scarce
     thing: at a target Sharpe of 1.5, one month of data supports about one.
     """
+    if name in FRAMEWORK:
+        # **The framework's, where it has one.** A strategy may use ours and
+        # Nautilus's as it wishes, and one entry point resolving both means a
+        # config names an indicator without naming where it came from.
+        if source is not None:
+            raise ValueError(
+                f"{name!r} is one of Nautilus's indicators and takes no "
+                f"`source`: it reads the bar the engine gives it. A period "
+                f"goes in the name, as {name}:20."
+            )
+        return framework(name, kwargs.get("period"))  # type: ignore[arg-type]
     if name not in BAR_DETECTORS:
-        raise ValueError(f"{name!r} is not a detector. Known: {sorted(BAR_DETECTORS)}.")
+        raise ValueError(
+            f"{name!r} is not a detector. Ours: {sorted(BAR_DETECTORS)}. "
+            f"Nautilus's: {sorted(FRAMEWORK)}."
+        )
     build, sources = BAR_DETECTORS[name]
     if not sources:
         # A shape detector: no `Reading` applies, so there is nothing to pick.

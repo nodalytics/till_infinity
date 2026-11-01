@@ -3687,3 +3687,19 @@ what would kill it; none of them exists in the code.
   coverage panel needs, so it is on that critical path rather than beside it. See
   [conformal.md](../research/docs/conformal.md) and
   [the viewer spec](specs/2026-09-29-analogue-viewer-design.md).
+
+## Clean the comments
+
+Asked 2026-11-01. The docstrings and comments across the tree have grown by
+accretion - each one true when written, several now describing a shape that has
+since moved. The Nautilus port in particular left prose referring to `service`,
+to the bus, to a Go service and to an ABC that no longer exist, and the
+profile's helpers carry notes written when they lived on a different class.
+
+Worth a pass that keeps the *measurements* and the reasons - those are the
+value - and drops the archaeology: a comment explaining why a thing is not
+something it was never going to be is noise once the alternative is gone.
+
+Not urgent, and not to be done by a blanket rewrite: several of these comments
+are the only record of a measurement, and a pass that trims by length would
+delete exactly those.

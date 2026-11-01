@@ -98,6 +98,35 @@ def bar(close: float, ts: int = 0) -> Bar:
     )
 
 
+class _Deciding(EdgeEntry):
+    """An entry with a decision, since `Desk` deliberately has none.
+
+    A test subclass rather than a stubbed attribute: `Desk.decide` raises by
+    design now, so a test that needs a decision supplies one the way a real
+    strategy does - by composition.
+    """
+
+    def decide(self, payload):
+        return intent()
+
+
+class _Unwanting(EdgeEntry):
+    """Declines to judge the signal at all - not its shape or feed."""
+
+    def wants(self, payload) -> bool:
+        return False
+
+    def decide(self, payload):
+        raise AssertionError("should not be asked")
+
+
+class _Declining(EdgeEntry):
+    """Judges it and says no, under its own gate."""
+
+    def decide(self, payload):
+        return Refusal(gate="probability", detail="too low")
+
+
 def intent(**kwargs) -> Intent:
     base = {
         "feed": "eurusd",
@@ -126,29 +155,40 @@ def test_an_entry_is_a_real_nautilus_strategy():
     engine.dispose()
 
 
-def test_starting_builds_the_rule_and_registers_the_detectors():
-    """An unknown detector or rule must fail at wiring time: one the config
-    asked for and the strategy quietly did not build is a sweep reporting a
-    null for a question it never asked."""
-    engine, strategy = engine_with(config(indicators=("cusum", "trend:typical")))
+def test_starting_registers_the_detectors_ours_and_the_frameworks():
+    """An unknown detector must fail at wiring time: one the config asked for
+    and the strategy quietly did not build is a sweep reporting a null for a
+    question it never asked.
+
+    Both sources, one syntax: `trend:typical` names one of ours and the float
+    it reads, `rsi:7` one of Nautilus's and its period.
+    """
+    engine, strategy = engine_with(config(indicators=("cusum", "trend:typical", "rsi:7")))
     engine.trader.start()
-    assert strategy.rule is not None
-    assert strategy.rule.name == "statespace-surprise"
-    assert set(strategy.detectors) == {"cusum", "trend:typical"}
-    assert len(strategy.registered_indicators) == 2
+    assert set(strategy.detectors) == {"cusum", "trend:typical", "rsi:7"}
+    assert len(strategy.registered_indicators) == 3
+    assert strategy.detectors["rsi:7"].period == 7, "the period reached the framework's own"
     engine.dispose()
 
 
-def test_an_unknown_rule_is_refused_by_the_registry():
-    """And the registry owns the message, listing what it does have.
-
-    `Desk.on_start` had its own check for this and it was dead code: `build`
-    raises first. A second check would either never run or would disagree with
-    the registry about what exists.
-    """
-    engine, _ = engine_with(config(rule="no-such-rule"))
-    with pytest.raises(ValueError, match="unknown strategy: no-such-rule"):
+def test_an_unknown_indicator_is_refused_with_both_catalogues():
+    engine, _ = engine_with(config(indicators=("no-such-detector",)))
+    with pytest.raises(ValueError, match="is not a detector"):
         engine.trader.start()
+    engine.dispose()
+
+
+def test_a_desk_with_no_decision_says_so_rather_than_doing_nothing():
+    """What replaced the abstract method.
+
+    A `Strategy` ABC made the decision a hierarchy; a `Desk` with no mixin is
+    a strategy nobody gave a decision to, and it should say which mixin is
+    missing rather than silently refusing every signal.
+    """
+    engine, strategy = engine_with(config())
+    engine.trader.start()
+    with pytest.raises(NotImplementedError, match="compose it with a mixin"):
+        strategy.decide({"feed": "eurusd"})
     engine.dispose()
 
 
@@ -183,9 +223,8 @@ def test_a_signal_for_an_untraded_instrument_is_counted_not_refused():
 def test_a_missing_quote_is_a_refusal_with_its_gate():
     """The misleading silence `Trader` recorded: an instrument the desk *does*
     trade, refused for a reason nothing recorded."""
-    engine, strategy = engine_with(config())
+    engine, strategy = engine_with(config(), build=_Deciding)
     engine.trader.start()
-    strategy.rule.wants = lambda payload: True
     got = strategy.consider({"feed": "eurusd"})
     assert isinstance(got, Refusal)
     assert got.gate == "no-quote"
@@ -196,9 +235,8 @@ def test_a_missing_quote_is_a_refusal_with_its_gate():
 def test_a_crossed_quote_is_a_bad_tick_and_not_a_tight_spread():
     """Folding it in would make the cost read *better* than the truth, which is
     the one direction of error that lets an idea through."""
-    engine, strategy = engine_with(config())
+    engine, strategy = engine_with(config(), build=_Deciding)
     engine.trader.start()
-    strategy.rule.wants = lambda payload: True
     strategy.cache.add_quote_tick(quote(1.10050, 1.10000))
     got = strategy.consider({"feed": "eurusd"})
     assert isinstance(got, Refusal)
@@ -208,25 +246,22 @@ def test_a_crossed_quote_is_a_bad_tick_and_not_a_tight_spread():
 
 def test_a_rule_that_does_not_want_the_signal_is_counted_and_not_journalled():
     """Hundreds a day. Journalling all of it buries the refusals that matter."""
-    engine, strategy = engine_with(config())
+    engine, strategy = engine_with(config(), build=_Unwanting)
     engine.trader.start()
-    strategy.rule.wants = lambda payload: False
     assert strategy.consider({"feed": "eurusd"}) is None
-    assert strategy.passed_over == {"statespace-surprise:unwanted": 1}
+    assert strategy.passed_over == {"_Unwanting:unwanted": 1}
     assert strategy.refused == 0, "an unwanted signal is not a refusal"
     engine.dispose()
 
 
 def test_a_declined_signal_counts_the_rules_own_gate():
-    engine, strategy = engine_with(config())
+    engine, strategy = engine_with(config(), build=_Declining)
     engine.trader.start()
-    strategy.rule.wants = lambda payload: True
-    strategy.rule.consider = lambda *a, **k: Refusal(gate="probability", detail="too low")
     strategy.cache.add_quote_tick(quote(1.10000, 1.10010))
     got = strategy.consider({"feed": "eurusd"})
     assert isinstance(got, Refusal)
     assert strategy.refused == 1
-    assert strategy.passed_over == {"statespace-surprise:probability": 1}
+    assert strategy.passed_over == {"_Declining:probability": 1}
     engine.dispose()
 
 
@@ -650,3 +685,79 @@ def test_following_can_be_switched_off_but_is_on_by_default():
     strategy._follow(Refusal(gate="g", detail="d"), {"feed": "eurusd", "intent": intent()})
     assert strategy.counterfactual.following == 0
     engine.dispose()
+
+
+# ------------------------------------------------------ decision x mechanism
+
+
+def test_one_decision_composes_with_every_mechanism():
+    """What replaced the ABC.
+
+    A `Strategy` ABC fixed the pair in the wrong direction: the decision knew
+    nothing about how it would be placed, and the thing that placed it knew
+    nothing about what it was. A mixin with no base lets any decision compose
+    with any entry, which is what "entries and exits are asymmetric" means in
+    code - and each leaf is a Nautilus `Strategy`, so the framework records
+    *which* pairing took a trade.
+    """
+    from nautilus_trader.trading.strategy import Strategy
+
+    from till_infinity.strategies.surprise import (
+        Surprise,
+        SurpriseArrival,
+        SurpriseEdge,
+        SurpriseResting,
+    )
+
+    for built, mechanism in (
+        (SurpriseEdge, EdgeEntry),
+        (SurpriseResting, RestingEntry),
+        (SurpriseArrival, ArrivalEntry),
+    ):
+        assert issubclass(built, Surprise), built
+        assert issubclass(built, mechanism), built
+        assert issubclass(built, Strategy), "the leaf is the framework's class"
+        # The decision comes before the mechanism, so `decide` is the mixin's
+        # and `place` is the entry's.
+        assert built.decide is Surprise.decide
+        assert built.place is mechanism.place
+
+
+def test_the_decision_mixin_carries_no_nautilus_base():
+    """Which is what makes it composable. A mixin that subclassed `Strategy`
+    would force a second base into every pairing and the MRO would decide the
+    mechanism rather than the class name."""
+    from nautilus_trader.common.actor import Actor
+    from nautilus_trader.trading.strategy import Strategy
+
+    from till_infinity.strategies.surprise import Surprise
+
+    assert Surprise.__mro__ == (Surprise, object)
+    assert not issubclass(Surprise, Strategy)
+    assert not issubclass(Surprise, Actor)
+
+
+def test_the_label_names_the_decision_and_not_the_class():
+    """A gate tally keyed on the class name would say `SurpriseEdge` and
+    `SurpriseResting` were different strategies refusing for different
+    reasons, when they are one decision placed two ways."""
+    from till_infinity.strategies.surprise import SurpriseEdge, SurpriseResting
+
+    base = {"instrument_id": EURUSD.id, "bar_type": BAR_TYPE}
+    edge = SurpriseEdge(EdgeEntryConfig(order_id_tag="A", **base))
+    rest = SurpriseResting(RestingEntryConfig(order_id_tag="B", **base))
+    assert edge.label == rest.label == "statespace-surprise"
+
+
+def test_the_profile_keeps_the_measured_numbers():
+    """The ABC's abstract surface went; its arithmetic did not."""
+    from till_infinity.strategies.surprise import SurpriseEdge
+
+    profile = SurpriseEdge(
+        EdgeEntryConfig(order_id_tag="C", instrument_id=EURUSD.id, bar_type=BAR_TYPE)
+    ).profile
+    assert profile.reward_floor == 1.70
+    assert profile.least_surprise == 3.5
+    assert profile.cost_share == 0.10
+    for helper in ("floored_target", "protection", "risk_scale", "share_of_risk", "hold_for"):
+        assert hasattr(profile, helper), helper

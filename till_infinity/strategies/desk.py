@@ -67,7 +67,6 @@ from nautilus_trader.trading.strategy import Strategy as NautilusStrategy
 from ..domain.models import Intent, Refusal, SymbolSpec, Tick
 from .config import Settings
 from .counterfactual import Counterfactual, Resolved
-from .strategies import strategy as rules
 
 
 class DeskConfig(StrategyConfig, frozen=True):
@@ -75,8 +74,10 @@ class DeskConfig(StrategyConfig, frozen=True):
 
     instrument_id: InstrumentId
     bar_type: BarType
-    #: The decision rule this entry asks. A name from `rules.catalogue()`;
-    #: `statespace-surprise` is the one registered rule today.
+    #: Kept for configs that name a rule. **Read by nothing**: the decision
+    #: is the class, composed from a mixin in `surprise.py`, so which rule runs
+    #: is which class `node/desks.py` built rather than a string looked up in
+    #: a registry. Left in place so an existing config still loads.
     rule: str = "statespace-surprise"
     #: Detectors from `till_infinity.indicators` to register, as `name` or
     #: `name:source`. Empty by default - an indicator nothing reads still
@@ -112,7 +113,6 @@ class Desk(NautilusStrategy):
         super().__init__(config)
         self._cfg = config
         self.settings = Settings.from_env()
-        self.rule: rules.Strategy | None = None
         #: Every gate that has fired, by `rule:gate`. Counted, not journalled.
         self.passed_over: dict[str, int] = {}
         self.refused = 0
@@ -133,10 +133,6 @@ class Desk(NautilusStrategy):
         bar. The two orders are indistinguishable on a live feed and differ in
         a backtest, which delivers the first bar immediately.
         """
-        # `build` raises on an unknown name, listing what it has, so there is
-        # no guard here: a second check would either be dead or would disagree
-        # with the registry about what exists.
-        self.rule = rules.build([self._cfg.rule], self.settings)[0]
         self._register()
         self.subscribe_bars(self._cfg.bar_type)
         self.subscribe_quote_ticks(self._cfg.instrument_id)
@@ -166,26 +162,54 @@ class Desk(NautilusStrategy):
         asked for and the strategy quietly did not build is a sweep reporting a
         null for a question it never asked.
         """
-        from ..indicators import build_detector
+        from ..indicators import FRAMEWORK, build_detector
 
         for entry in self._cfg.indicators:
-            name, _, source = entry.partition(":")
-            detector = build_detector(name, source or None)
+            name, _, rest = entry.partition(":")
+            # **Ours and Nautilus's, named the same way.** `cusum:typical`
+            # picks one of our detectors and the float it reads; `rsi:7` picks
+            # one of the framework's and its period. One syntax, because a
+            # strategy using both should not have to say which is which.
+            if name in FRAMEWORK:
+                detector = build_detector(name, period=int(rest) if rest else None)
+            else:
+                detector = build_detector(name, rest or None)
             self.register_indicator_for_bars(self._cfg.bar_type, detector)
             self.detectors[entry] = detector
             self.log.info(f"registered {entry} for {self._cfg.bar_type}")
 
     # ------------------------------------------------------------- the gates
 
-    def consider(self, payload: dict[str, Any]) -> Intent | Refusal | None:
-        """One signal against this strategy's rule. The gates, in order.
+    def wants(self, payload: dict[str, Any]) -> bool:  # noqa: ARG002
+        """Is this signal this strategy's to judge at all?
 
-        `None` means *not for us* - no instrument, nothing to record. A
-        `Refusal` means *for us and declined*, and carries the gate that
-        declined it. An `Intent` means place it.
+        Default yes. A decision mixin overrides it so a signal on a shape or
+        feed it does not cover costs nothing and is not counted as a refusal -
+        it was never this strategy's to decline.
         """
-        if self.rule is None:
-            return None
+        return True
+
+    def decide(self, payload: dict[str, Any]) -> Intent | Refusal | None:
+        """The decision. Supplied by a mixin - see `surprise.Surprise`.
+
+        **Not an abstract method on a base class, which is what this
+        replaced.** A `Strategy` ABC with an abstract `consider` made the
+        decision a hierarchy, and the mechanism that placed it a separate one;
+        a mixin with no base lets any decision compose with any entry, which
+        is what "entries and exits are asymmetric" means in code.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no decision: compose it with a mixin "
+            f"that supplies `decide`, as `surprise.SurpriseEdge` does."
+        )
+
+    def consider(self, payload: dict[str, Any]) -> Intent | Refusal | None:
+        """One signal, through the gates in order, then the decision.
+
+        `None` means *not for us* - no instrument, not our shape, nothing to
+        record. A `Refusal` means *for us and declined*, and carries the gate
+        that declined it. An `Intent` means place it.
+        """
         spec = self._spec()
         if spec is None:
             # Counted, not journalled: an instrument this desk does not trade
@@ -194,9 +218,8 @@ class Desk(NautilusStrategy):
             self._count("(desk):untraded")
             return None
 
-        self.rule.observe(payload)
-        if not self.rule.wants(payload):
-            self._count(f"{self.rule.name}:unwanted")
+        if not self.wants(payload):
+            self._count(f"{self.label}:unwanted")
             return None
 
         tick = self._tick()
@@ -208,22 +231,25 @@ class Desk(NautilusStrategy):
             self._count(f"(desk):{refusal.gate}")
             return refusal
 
-        verdict = self.rule.consider(
-            payload,
-            spec=spec,
-            tick=tick,
-            equity=self._equity(),
-            positions=[],
-            peak=self._equity(),
-        )
+        verdict = self.decide(payload)
         if isinstance(verdict, Refusal):
             self.refused += 1
-            self._count(f"{self.rule.name}:{verdict.gate}")
+            self._count(f"{self.label}:{verdict.gate}")
             # Debug and not the journal: this is the normal case, hundreds a
             # day, and recording all of it buries what matters.
-            self.log.debug(f"{self.rule.name} declined: {verdict.detail}")
-            return verdict
+            self.log.debug(f"{self.label} declined: {verdict.detail}")
         return verdict
+
+    @property
+    def label(self) -> str:
+        """What this strategy is called in a gate tally.
+
+        The profile's name where a decision mixin supplies one, and the class
+        name otherwise - so a tally is readable either way rather than keyed on
+        `None`.
+        """
+        profile = getattr(self, "profile", None)
+        return getattr(profile, "name", "") or type(self).__name__
 
     def _undealable(self, spec: SymbolSpec, tick: Tick | None) -> Refusal | None:
         """Is the instrument dealable at all, right now?
@@ -360,14 +386,14 @@ class Desk(NautilusStrategy):
         nothing is recorded: **a counterfactual invented from a refusal with no
         entry would be following a trade nobody specified.**
         """
-        if not self._cfg.follow_untaken or self.rule is None:
+        if not self._cfg.follow_untaken:
             return
         intent = payload.get("intent")
         if not isinstance(intent, Intent):
             return
         self.counterfactual.wanted(
             intent,
-            by=self.rule.name,
+            by=self.label,
             now=self.clock.timestamp(),
             hold=self._cfg.follow_hours * 3_600.0,
             regime=float(payload.get("regime") or 0.0),
