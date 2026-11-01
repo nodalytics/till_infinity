@@ -32,14 +32,26 @@ a decision, an exit or a managed stop does can route around it. **A strategy
 in this package may therefore assume it is allowed to try, and must not
 assume its order went anywhere.**
 
-**`sizing` and `affordable` left for `risk/` on 2026-11-01**, which is why the
-table below is two rows shorter than the package. Both answer account
+**`sizing` and `affordable` left for `risk/` on 2026-11-01**, which is part of
+why the table below is four rows shorter than the directory. Both answer account
 questions - how many lots a risk budget buys, and whether the account survives
 the smallest position an instrument permits - and neither reads a signal, so
 neither was a strategy's business. They are not re-exported here either: a name
-re-exported from two packages is a name whose owner nobody can tell. They are
-in `till_infinity.risk` now, and `risk/__init__.py` records which of the other
-candidates stayed and what stopped them.
+re-exported from two packages is a name whose owner nobody can tell.
+
+**`guard` and `plans` followed them the same day**, which is the move
+`risk/__init__.py` had written down as blocked. What unblocked it is
+`Settings.envelope()` in `config.py`: the twenty-two numbers those two need,
+projected into a frozen `risk.envelope.Envelope` and handed down as an
+argument. `guard` also needed five methods of `context`, and takes a
+structural protocol instead - so the context still answers the questions and
+the import still points downhill. `Guard`, `Plan` and `PLANS` are gone from
+the names below on the same rule as `sizing`.
+
+What stayed, and why, is worth knowing before offering `risk/` anything else:
+`sessions` and `spreads` are not risk at all. Tradable hours and what a round
+trip costs are *inputs* to a decision, and neither can refuse anything on its
+own.
 
 The pieces, in dependency order:
 
@@ -53,10 +65,8 @@ The pieces, in dependency order:
 | `basket` | the one exit that is portfolio-wide, so an Actor rather than a strategy |
 | `desk` | the gate sequence, in the order it is applied, and the journal reasons |
 | `counterfactual` | what would have happened to the ones it refused |
-| `plans` | risk limits as named, internally consistent bundles |
 | `floors` | pushing a target out until it pays for its own risk |
 | `context` | what the rest of the system knows: the calendar, the venues, the regime |
-| `guard` | may this account take another trade right now |
 | `book` | the levels seen so far, for the ones that trade toward a level |
 | `sessions` | which hours a feed is worth trading in |
 | `spreads` | what a round trip costs, in the units the decision uses |
@@ -106,9 +116,7 @@ from .config import (
 from .context import Context, Release
 from .desk import Desk, DeskConfig
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
-from .guard import Guard
 from .manage import Move, advance
-from .plans import PLANS, Plan
 from .profile import Profile
 from .report import Report, Trade
 from .surprise import Surprise, SurpriseArrival, SurpriseEdge, SurpriseResting
@@ -126,7 +134,6 @@ __all__ = [
     "NATIVE",
     "OPTIONAL_SYMBOLS",
     "PAPER",
-    "PLANS",
     "RPYC",
     "SUFFIXES",
     "Account",
@@ -136,12 +143,10 @@ __all__ = [
     "Desk",
     "DeskConfig",
     "EdgeEntry",
-    "Guard",
     "Intent",
     "Move",
     "Order",
     "OrderResult",
-    "Plan",
     "Position",
     "Priced",
     "Profile",

@@ -31,8 +31,14 @@ from till_infinity.utils.env import env as _env
 from till_infinity.utils.env import flag as _flag
 from till_infinity.utils.env import number as _float
 from till_infinity.utils.env import whole as _int
+from till_infinity.utils.logging import get_logger
 
+from ..risk import plans
+from ..risk.envelope import Envelope
+from ..risk.plans import DEFAULT_PLAN, Plan
 from ..utils import slugify
+
+log = get_logger(__name__)
 
 #: Broker names for each instrument the price side tracks, best first.
 #:
@@ -1380,6 +1386,54 @@ class Settings:
     def base_url(self) -> str:
         return f"{self.url.rstrip('/')}{self.api_path}" if self.url else ""
 
+    def envelope(self) -> Envelope:
+        """The risk-shaped subset of this, for `risk/` to be handed.
+
+        **This method is what let `guard.py` and `plans.py` move.** Both are
+        risk by subject - "may this account, right now, take another trade"
+        and "how much may be lost, per trade and per day" are two rows of the
+        division in `docs/specs/2026-10-31-service-becomes-nautilus-strategies.md`
+        - and both were stuck here because the numbers they need are twenty-two
+        fields of this object, out of a file that is mostly about what to trade
+        and on which terminal. `risk` may not import `strategies`, so the
+        projection has to be written on this side of the line.
+
+        One place, and a method rather than a function, because there must be
+        exactly one way to ask: an `Envelope` built field-by-field at a call
+        site is an `Envelope` that can be built differently at the next one.
+        `risk.envelope.Envelope` declares no defaults, so a field added there
+        is a `TypeError` here until this names it - which is the only
+        mechanical guard there can be against the two drifting apart.
+
+        **Call it after the plan**, not before. The plan and the environment
+        resolve into this object; the `Envelope` is frozen, so it is a
+        snapshot of the result and not a live view of it.
+        """
+        return Envelope(
+            risk_plan=self.risk_plan,
+            risk_fraction=self.risk_fraction,
+            min_probability=self.min_probability,
+            max_positions=self.max_positions,
+            max_per_symbol=self.max_per_symbol,
+            daily_loss_fraction=self.daily_loss_fraction,
+            max_currency_exposure=self.max_currency_exposure,
+            min_reward_to_risk=self.min_reward_to_risk,
+            max_spread_fraction=self.max_spread_fraction,
+            max_spread_risk_fraction=self.max_spread_risk_fraction,
+            max_swap_fraction=self.max_swap_fraction,
+            loss_cooldown=self.loss_cooldown,
+            quiet_hours=self.quiet_hours,
+            fx_quiet_ny=self.fx_quiet_ny,
+            fx_sunday_open_min=self.fx_sunday_open_min,
+            release_in_hold=self.release_in_hold,
+            release_hold_cap_s=self.release_hold_cap_s,
+            basket_stop_fraction=self.basket_stop_fraction,
+            basket_momentum=self.basket_momentum,
+            basket_give_back=self.basket_give_back,
+            basket_spare_progress=self.basket_spare_progress,
+            basket_take_fraction=self.basket_take_fraction,
+        )
+
     @classmethod
     def from_env(cls) -> Settings:
         # Registered before the settings exist, so the instrument, its exposure
@@ -1546,6 +1600,41 @@ class Settings:
             paper_equity=_float("TRADING_PAPER_EQUITY", 10_000.0),
             paper_spread_bps=_float("TRADING_PAPER_SPREAD_BPS", 2.0),
         )
+
+
+def apply_plan(settings: Settings, name: str | None = None) -> Plan:
+    """Resolve the named risk plan and write it into `settings`.
+
+    **The write lives here and the numbers live in `risk/plans.py`**, which is
+    the split that let that file move. A plan is a coherent bundle of limits -
+    this package's `risk_plan` names one - and `Plan.values` hands back what it
+    would set, with every field the environment has set directly left out. The
+    `setattr` is this layer's because this layer owns the object: `risk` may
+    not import `strategies`, and a writer into a configuration object has to be
+    able to see one.
+
+    Mutating is deliberate, and the reason is unchanged from when `Plan.apply`
+    did it: `Settings` is what the rest of the desk already holds a reference
+    to by the time a plan is chosen, so returning a second, differently
+    configured one would leave the first in service with nothing to say so.
+
+    **Nothing calls this.** The caller was the CLI, retired to
+    `research/retire/bus/`, and the node has not taken it over - so
+    `TRADING_RISK_PLAN` is read, printed and not applied, and the desk trades
+    the defaults this dataclass declares. Those happen to be `standard`'s
+    twelve numbers exactly, which is why it has gone unnoticed; naming
+    `conservative` or `aggressive` today changes nothing.
+    """
+    plan = plans.get(name or settings.risk_plan or DEFAULT_PLAN)
+    for tunable, value in plan.values().items():
+        setattr(settings, tunable, value)
+    settings.risk_plan = plan.name
+    kept = plans.overridden()
+    if kept:
+        log.info("trading: risk plan %s, overridden for %s", plan.name, ", ".join(kept))
+    else:
+        log.info("trading: risk plan %s", plan)
+    return plan
 
 
 def feed_for(symbol: str) -> str:

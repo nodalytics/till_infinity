@@ -26,19 +26,29 @@ dozen consecutive losses to reach it - so that moving between them changes how
 much is at stake without changing how the account behaves on a bad run. What
 actually varies is how selective the entry is: the conservative plan demands a
 higher probability and a better reward-to-risk, and therefore trades less.
+
+## Nothing applies these today, and that is a live gap
+
+`TRADING_RISK_PLAN` is read into `Settings.risk_plan` by `from_env` and then
+nothing acts on it. The applier is `strategies.config.apply_plan` and it has
+no caller: the one that existed was the CLI, which is retired to
+`research/retire/bus/`, and the node has not taken it over. So whichever plan
+is named, the desk trades the defaults the `Settings` dataclass declares - and
+those are `standard`'s numbers, which is why it has not been noticed.
+
+This is worth stating here rather than only in a report, because the shape is
+the one this repository keeps finding: a setting that is read, printed at
+start-up and never applied looks from the outside exactly like a setting that
+works.
 """
 
 from __future__ import annotations
 
 import os
 from collections.abc import Mapping
-from dataclasses import dataclass, fields
+from dataclasses import dataclass
 
-from till_infinity.utils.logging import get_logger
-
-from .config import Settings
-
-log = get_logger(__name__)
+from .envelope import Envelope
 
 #: Each tunable, and the environment variable that sets it directly. A plan
 #: only fills in what the environment has not, so this table is the authority
@@ -83,23 +93,28 @@ class Plan:
         """Consecutive full-risk losses before the daily stop. The sanity check."""
         return self.daily_loss_fraction / self.risk_fraction if self.risk_fraction else 0.0
 
-    def apply(self, settings: Settings, environ: Mapping[str, str] | None = None) -> list[str]:
-        """Write this plan into `settings`. Returns the fields it did not touch.
+    def values(self, environ: Mapping[str, str] | None = None) -> dict[str, float]:
+        """What this plan sets, as field -> value, with the overrides left out.
 
-        Mutates rather than returning a copy, because `Settings` is what every
-        other part of the module already holds a reference to by the time a
-        plan is chosen - handing back a second one would leave the first in
-        service, configured differently, with nothing to say so.
+        **This used to write straight into the strategies `Settings` object**,
+        and that is what kept this file out of `risk/`: a writer into a
+        configuration object has to be able to see one, and this package may
+        not import the layer that owns it.
+
+        The mutation is still the right shape and still happens - `Settings`
+        is what every other part of the desk already holds a reference to by
+        the time a plan is chosen, so handing back a second one would leave
+        the first in service, configured differently, with nothing to say so.
+        What changed is **who** performs it: `strategies.config.apply_plan`
+        does the `setattr`, because that is the layer that owns the object.
+        This returns the numbers and knows nothing about where they land.
         """
         env = os.environ if environ is None else environ
-        skipped: list[str] = []
-        for field, variable in CONTROLS.items():
-            if variable in env:
-                skipped.append(field)
-                continue
-            setattr(settings, field, getattr(self, field))
-        settings.risk_plan = self.name
-        return skipped
+        return {
+            field: getattr(self, field)
+            for field, variable in CONTROLS.items()
+            if variable not in env
+        }
 
     def __str__(self) -> str:
         return (
@@ -109,28 +124,39 @@ class Plan:
         )
 
 
-def describe_effective(settings: Settings, environ: Mapping[str, str] | None = None) -> str:
+def overridden(environ: Mapping[str, str] | None = None) -> list[str]:
+    """The `CONTROLS` fields the environment has set, so a plan cannot."""
+    env = os.environ if environ is None else environ
+    return [field for field, variable in CONTROLS.items() if variable in env]
+
+
+def describe_effective(envelope: Envelope, environ: Mapping[str, str] | None = None) -> str:
     """The risk envelope the desk will actually trade with, not the plan's own.
 
     `str(plan)` prints the named plan, and every field the environment
     overrides is then wrong on screen: `trading doctor` reported `0.25%/trade,
     4 open, p>58%` for a desk running 0.5%, 34 open and no probability floor.
     That is the one readout somebody checks before trusting the limits, so it
-    has to describe the settings after the plan and the environment have both
+    has to describe the limits after the plan and the environment have both
     been applied - and say which of the two each number came from.
+
+    It takes an `Envelope` rather than the plan because that is the projection
+    of what was actually resolved, and it is why `risk_fraction`,
+    `min_probability` and `risk_plan` are in that object at all: a plan exists
+    to keep size, the daily stop and selectivity consistent, so the readout
+    that checks the consistency has to see all three.
     """
-    env = os.environ if environ is None else environ
-    overridden = [field for field, variable in CONTROLS.items() if variable in env]
-    risk = settings.risk_fraction
-    halt = settings.daily_loss_fraction / risk if risk else 0.0
+    risk = envelope.risk_fraction
+    halt = envelope.daily_loss_fraction / risk if risk else 0.0
     text = (
-        f"{settings.risk_plan}: {risk:.2%}/trade, {settings.daily_loss_fraction:.1%}/day "
-        f"({halt:.0f} losses), {settings.max_positions} open, "
-        f"{settings.max_per_symbol} per symbol, p>{settings.min_probability:.0%}, "
-        f"RR>{settings.min_reward_to_risk:.1f}"
+        f"{envelope.risk_plan}: {risk:.2%}/trade, {envelope.daily_loss_fraction:.1%}/day "
+        f"({halt:.0f} losses), {envelope.max_positions} open, "
+        f"{envelope.max_per_symbol} per symbol, p>{envelope.min_probability:.0%}, "
+        f"RR>{envelope.min_reward_to_risk:.1f}"
     )
-    if overridden:
-        text += f" (from the environment: {', '.join(overridden)})"
+    kept = overridden(environ)
+    if kept:
+        text += f" (from the environment: {', '.join(kept)})"
     return text
 
 
@@ -205,27 +231,17 @@ def get(name: str) -> Plan:
     return found
 
 
-def apply(settings: Settings, name: str | None = None) -> Plan:
-    """Resolve and apply the configured plan. Logs what the environment kept."""
-    plan = get(name or settings.risk_plan or DEFAULT_PLAN)
-    kept = plan.apply(settings)
-    if kept:
-        log.info("trading: risk plan %s, overridden for %s", plan.name, ", ".join(kept))
-    else:
-        log.info("trading: risk plan %s", plan)
-    return plan
-
-
 def catalogue() -> dict[str, Plan]:
     return dict(PLANS)
 
 
-def _fields_are_covered() -> bool:
-    """Every Plan number is a Settings field. Guards against a rename drifting.
-
-    Called by the tests rather than at import: a mismatch here means a plan
-    silently stops setting something, which is exactly the class of failure
-    that would otherwise be found by a live account behaving unexpectedly.
-    """
-    names = {f.name for f in fields(Settings)}
-    return all(field in names for field in CONTROLS)
+# **`_fields_are_covered` left with the move, and it was never wired up.** It
+# asserted that every `CONTROLS` key is a field of the strategies `Settings`
+# dataclass - a real invariant, because a plan that silently stops setting
+# something is found by a live account behaving unexpectedly - and its own
+# docstring said it was "called by the tests rather than at import". Nothing
+# called it, here or in `tests/`. It cannot live in this package now (it took
+# `dataclasses.fields` to a class upstairs) and it should not have been a
+# private function in the first place, so it is a test:
+# `test_plans.py::test_every_control_is_a_settings_field`, which also checks
+# the environment variable each one names.

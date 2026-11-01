@@ -8,8 +8,8 @@ import pytest
 
 from till_infinity.domain import swap as sw
 from till_infinity.domain.models import Intent, Side, SymbolSpec
+from till_infinity.risk.guard import Guard
 from till_infinity.strategies import Settings
-from till_infinity.strategies.guard import Guard
 
 
 def utc(text: str) -> float:
@@ -88,7 +88,7 @@ def desk(**over) -> Guard:
     made = Settings()
     for k, v in over.items():
         setattr(made, k, v)
-    guard = Guard(made, currency="USD")
+    guard = Guard(made.envelope(), currency="USD")
     guard.roll(10_000.0, now=TUE - HOUR)
     return guard
 

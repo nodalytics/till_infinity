@@ -38,9 +38,9 @@ from nautilus_trader.common.actor import Actor
 from nautilus_trader.common.config import ActorConfig
 from nautilus_trader.model.enums import PriceType
 
+from ..risk.guard import Guard
 from ..utils import topics
 from .config import Settings
-from .guard import Guard
 
 
 class BasketConfig(ActorConfig, frozen=True):
@@ -59,8 +59,12 @@ class BasketExit(Actor):
     def __init__(self, config: BasketConfig) -> None:
         super().__init__(config)
         self._cfg = config
-        self.settings = Settings.from_env()
-        self.guard = Guard(settings=self.settings)
+        #: The policy, and the limits it reads, in one place. **Not a
+        #: `Settings` beside it:** the `Envelope` is a frozen projection, so
+        #: an actor holding both would have two homes for one number and
+        #: tuning the wrong one would look exactly like tuning the right one.
+        #: Nothing here needs the rest of the configuration.
+        self.guard = Guard(Settings.from_env().envelope())
         self.closed = 0
         self.failed = 0
         self.looks = 0

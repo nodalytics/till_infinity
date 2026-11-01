@@ -23,6 +23,29 @@ limit is a fact about today and cannot be walked forward by a recovery.
 nothing on a target of forty and fatal on a target of five, and a scalper's
 targets are small by construction. Everything else in this project is measured
 against what it is trying to earn; so is this.
+
+## Why this file is here on the second attempt
+
+"May *this account, right now* take another one" is `risk`'s row in
+`docs/specs/2026-10-31-service-becomes-nautilus-strategies.md` verbatim, and
+this file was still a strategy's for a day because it could not be moved
+without bringing the desk's whole configuration with it. It read nineteen
+fields of the strategies `Settings` object and five methods of the context
+that consumes the bus, and this package may import neither - risk applies
+across strategies, so a second strategy package could not share a `risk` that
+reached into the first.
+
+Both couplings are now arguments rather than reaches. The nineteen fields
+arrive as an `Envelope`, which is `envelope.py`: the risk-shaped subset of the
+configuration, projected by `Settings.envelope()` upstairs so the dependency
+points down. The five methods arrive as a `Conditions`, the structural
+protocol below, satisfied by the implementation in the layer above without
+either file naming the other.
+
+Nothing about the gates changed in the move. The order is the same, the
+eighteen reason strings are the same - `tests/test_risk_envelope.py` holds
+them as data, because the refusals are the journal's whole value and a
+renamed gate breaks reading the record back.
 """
 
 from __future__ import annotations
@@ -30,6 +53,7 @@ from __future__ import annotations
 import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
+from typing import Protocol, runtime_checkable
 from zoneinfo import ZoneInfo
 
 from till_infinity.utils import effects
@@ -37,28 +61,83 @@ from till_infinity.utils.logging import get_logger
 
 from ..domain import rollover, swap
 from ..domain.models import Intent, Position, Refusal, SymbolSpec, Tick, money
-from ..risk import exposure as ex
-from .config import Settings
-from .context import Context
+from . import exposure as ex
+from .envelope import Envelope
 
 NEW_YORK = ZoneInfo("America/New_York")
 
 
-def fx_window(settings: Settings, feed: str, when: float) -> tuple[str, str] | None:
+class Scheduled(Protocol):
+    """One calendar release, reduced to what the two news gates read off it.
+
+    Three attributes, because that is all they use: the currency to match
+    against the instrument's legs, the time to measure the window from, and a
+    title for the refusal. Importance is not here - whatever supplies these
+    has already dropped the rows not worth standing aside for, and a test
+    against it here would silently do nothing.
+    """
+
+    @property
+    def title(self) -> str: ...
+
+    @property
+    def currency(self) -> str: ...
+
+    @property
+    def when(self) -> float: ...
+
+
+@runtime_checkable
+class Conditions(Protocol):
+    """What the rest of the system knows, as the five questions a gate asks.
+
+    **Structural on purpose, and that is the whole unblocking.** The
+    implementation is the desk's calendar-and-venue context, which consumes
+    the news rows, the peer quotes and the drift signals off the bus - and it
+    lives in the layer above, because risk applies across strategies and a
+    second strategy package could not share a `risk` that reached into the
+    first. So the contract is named here and satisfied there, with neither
+    file importing the other.
+
+    It is the same arrangement `scaling.by_regime` already uses for a regime:
+    this package consumes a condition and never produces one. A fitted model
+    reached from here would make the component that has to stay auditable the
+    one with the most moving parts.
+
+    `runtime_checkable` so `tests/` - which may import both - can assert that
+    the implementation still answers all five. That checks the names and not
+    the signatures, which is enough to catch the rename that would otherwise
+    turn every one of these gates off at once: `Guard` holds this optional and
+    **every check it drives fails open**, so a method that stopped existing
+    would be a silently missing gate rather than a traceback.
+    """
+
+    def blackout(self, feed: str, now: float | None = ...) -> Scheduled | None: ...
+
+    def ahead(self, feed: str, horizon: float, now: float | None = ...) -> Scheduled | None: ...
+
+    def drifting(self, feed: str, now: float | None = ...) -> float: ...
+
+    def widened(self, feed: str, now: float | None = ...) -> int: ...
+
+    def dislocation(self, feed: str, tick: Tick, now: float | None = ...) -> str: ...
+
+
+def fx_window(envelope: Envelope, feed: str, when: float) -> tuple[str, str] | None:
     """`(gate, detail)` if an FX entry at `when` falls in New York's quiet hours or the Sunday
     open, else None. Anchored to New York so it follows daylight saving; FX only, because Deriv
     and metals did not suffer these hours (`research/docs/vetoes.md`)."""
     if not rollover.is_fx(feed):
         return None
     local = datetime.fromtimestamp(when, UTC).astimezone(NEW_YORK)
-    span = settings.fx_quiet_ny
+    span = envelope.fx_quiet_ny
     if span and span[0] <= local.hour < span[1]:
         return (
             "fx_quiet_hour",
             f"{local:%H:%M} New York is inside FX's quiet hours "
             f"({span[0]:02d}:00-{span[1]:02d}:00: the close and the rollover)",
         )
-    minutes = settings.fx_sunday_open_min
+    minutes = envelope.fx_sunday_open_min
     if minutes > 0 and local.weekday() == 6:
         after = (local.hour - 17) * 60 + local.minute
         if 0 <= after < minutes:
@@ -72,11 +151,16 @@ def fx_window(settings: Settings, feed: str, when: float) -> tuple[str, str] | N
 
 log = get_logger(__name__)
 
-#: Declared off and re-declared from the live setting in `trading.service`, the
-#: same shape `trading.spike_switch` uses. The point of declaring it at all is
-#: that a gate which is switched on and refuses nothing looks exactly like a
-#: gate that works - see `shared/effects.py`, which exists because that happened
-#: six times in a week.
+#: Declared off here and re-declared from `Envelope.release_in_hold` by
+#: whatever switches it on. The point of declaring it at all is that a gate
+#: which is switched on and refuses nothing looks exactly like a gate that
+#: works - see `utils/effects.py`, which exists because that happened six
+#: times in a week.
+#:
+#: **The re-declaration has no caller today.** `trading.service` did it and is
+#: retired; nothing in `node/` has taken it over, so this reports `enabled`
+#: false whatever the configuration says. The counter is still right, because
+#: `fired` is called at the refusal.
 effects.declare("trading.release_in_hold", enabled=False)
 
 
@@ -108,11 +192,11 @@ class Limits:
     #: Reward-to-risk floor. Zero means `min_reward_to_risk`.
     min_reward_to_risk: float = 0.0
 
-    def cooldown(self, settings: Settings) -> float:
-        return self.loss_cooldown or settings.loss_cooldown
+    def cooldown(self, envelope: Envelope) -> float:
+        return self.loss_cooldown or envelope.loss_cooldown
 
-    def reward_floor(self, settings: Settings) -> float:
-        return self.min_reward_to_risk or settings.min_reward_to_risk
+    def reward_floor(self, envelope: Envelope) -> float:
+        return self.min_reward_to_risk or envelope.min_reward_to_risk
 
 
 #: Every field a strategy may govern for itself, as a set, so a test can assert
@@ -129,10 +213,10 @@ ACCOUNT_LEVEL: frozenset[str] = frozenset(
 class Guard:
     """The day's state, and the decision to take another trade or not."""
 
-    settings: Settings
+    envelope: Envelope
     #: What the rest of the system knows. Optional, so a Guard can be tested
     #: and used without one - every check it drives fails open.
-    context: Context | None = None
+    context: Conditions | None = None
     #: The account's currency, for the running total. Empty prints a bare
     #: number, which is what an account that never reported one deserves.
     currency: str = ""
@@ -157,7 +241,7 @@ class Guard:
     def state(self) -> dict[str, object]:
         """The day's running total, for keeping across a restart.
 
-        Only what the *day* accumulated. `settings` and `context` are rebuilt
+        Only what the *day* accumulated. `envelope` and `context` are rebuilt
         from configuration and must not come from a file, or a change to either
         would be silently ignored until somebody deleted one.
         """
@@ -217,7 +301,7 @@ class Guard:
 
     @property
     def daily_loss_limit(self) -> float:
-        return self.opening_equity * self.settings.daily_loss_fraction
+        return self.opening_equity * self.envelope.daily_loss_fraction
 
     def basket(
         self,
@@ -254,7 +338,7 @@ class Guard:
         if opening <= 0:
             return ""
         self.basket_peak = max(self.basket_peak, net)
-        loss = self.settings.basket_stop_fraction
+        loss = self.envelope.basket_stop_fraction
         if loss > 0 and net <= -loss * opening:
             return (
                 f"the open book is {money(net, self.currency)}, past the "
@@ -264,18 +348,18 @@ class Guard:
         # Give-back waits for profit to be handed back; `cusum` measures net
         # directional progress without a window, so a book the market has turned
         # against is readable before the money is gone.
-        heat = self.settings.basket_momentum
+        heat = self.envelope.basket_momentum
         if heat > 0 and against >= heat:
             return (
                 f"momentum has run {against:.2f}v against the open book, past the "
                 f"{heat:.2f}v it tolerates, with the book at {money(net, self.currency)}"
             )
-        give = self.settings.basket_give_back
+        give = self.envelope.basket_give_back
         # Only once there was a profit worth protecting. A peak of nothing would
         # make this fire on the first tick a book went red, which is the stop's
         # job and at the stop's threshold, not this one's.
         if give > 0 and self.basket_peak > 0 and net <= self.basket_peak * (1.0 - give):
-            spare = self.settings.basket_spare_progress
+            spare = self.envelope.basket_spare_progress
             # Nearly home is a reason to wait, not to close. The dip may be the
             # last pullback before the targets, and closing pays the spread on
             # every leg to avoid it. Only the give-back is spared: the stop is a
@@ -286,7 +370,7 @@ class Guard:
                 f"the open book peaked at {money(self.basket_peak, self.currency)} "
                 f"and is {money(net, self.currency)}, having given back {give:.0%}"
             )
-        take = self.settings.basket_take_fraction
+        take = self.envelope.basket_take_fraction
         if take > 0 and net >= take * opening:
             return f"the open book is {money(net, self.currency)}, at the {take:.1%} basket target"
         return ""
@@ -302,7 +386,7 @@ class Guard:
         target. A trade planned to close before the rollover pays nothing and is not looked at.
         See `swap.py`.
         """
-        limit = self.settings.max_swap_fraction
+        limit = self.envelope.max_swap_fraction
         if limit <= 0 or hold <= 0 or intent.reward <= 0:
             return None
         cost = swap.expected(spec, intent.feed, intent.side, intent.entry, when, hold)
@@ -352,8 +436,8 @@ class Guard:
         # spread at 21:00 UTC - and 14% of closed trades were opened in that window
         # for 45% of the loss. `max_spread_fraction` cannot catch it, since it
         # compares the spread to the reward and a distant target passes however
-        # wide the quote is. See `Settings.quiet_hours`.
-        quiet = self.settings.quiet_hours
+        # wide the quote is. See `Envelope.quiet_hours`.
+        quiet = self.envelope.quiet_hours
         if quiet:
             hour = datetime.fromtimestamp(when, UTC).hour
             if hour in quiet:
@@ -364,7 +448,7 @@ class Guard:
                     f"the rollover and nothing opens here",
                 )
 
-        fx_closed = fx_window(self.settings, intent.feed, when)
+        fx_closed = fx_window(self.envelope, intent.feed, when)
         if fx_closed:
             return self._no(fx_closed[0], intent.feed, fx_closed[1])
 
@@ -385,8 +469,8 @@ class Guard:
             # and then holds through it for two hours. Ordered after `news`
             # because when both apply, being *inside* the window is the more
             # specific thing to say.
-            if self.settings.release_in_hold and hold > 0:
-                reach = min(hold, self.settings.release_hold_cap_s)
+            if self.envelope.release_in_hold and hold > 0:
+                reach = min(hold, self.envelope.release_hold_cap_s)
                 coming = self.context.ahead(intent.feed, reach, when)
                 if coming is not None:
                     effects.fired("trading.release_in_hold")
@@ -422,15 +506,15 @@ class Guard:
                 if off:
                     return self._no("dislocated", intent.feed, off)
 
-        if len(positions) >= self.settings.max_positions:
+        if len(positions) >= self.envelope.max_positions:
             return self._no(
                 "max_positions",
                 intent.feed,
-                f"{len(positions)} open, limit is {self.settings.max_positions}",
+                f"{len(positions)} open, limit is {self.envelope.max_positions}",
             )
 
         same = [p for p in positions if p.symbol == intent.symbol]
-        if len(same) >= self.settings.max_per_symbol:
+        if len(same) >= self.envelope.max_per_symbol:
             return self._no(
                 "already_open",
                 intent.feed,
@@ -438,7 +522,7 @@ class Guard:
             )
 
         lost = self.last_loss.get(intent.feed)
-        cooldown = mine.cooldown(self.settings)
+        cooldown = mine.cooldown(self.envelope)
         if lost and when - lost < cooldown:
             left = cooldown - (when - lost)
             return self._no("cooldown", intent.feed, f"{left:.0f}s left after a loss")
@@ -455,7 +539,7 @@ class Guard:
         # - it refused 40,421 of 47,676 calls to gain nothing. See
         # research/replay.md and todo 0f, whose original figures were computed
         # on realised push rather than R and overstated this fivefold.
-        floor = mine.reward_floor(self.settings)
+        floor = mine.reward_floor(self.envelope)
         if floor > 0 and intent.reward_to_risk < floor:
             return self._no(
                 "reward_to_risk",
@@ -465,20 +549,20 @@ class Guard:
 
         if tick is not None and intent.reward > 0:
             share = tick.spread / intent.reward
-            if share > self.settings.max_spread_fraction:
+            if share > self.envelope.max_spread_fraction:
                 return self._no(
                     "spread",
                     intent.feed,
                     f"spread is {share:.0%} of the target, limit is "
-                    f"{self.settings.max_spread_fraction:.0%}",
+                    f"{self.envelope.max_spread_fraction:.0%}",
                 )
         # **And against the risk**, which is the denominator the damage was
         # measured in. Scaling the permitted spread with the target lets a
         # distant target buy the right to pay more; a spread that is half the
         # stop distance is half the stop distance wherever the target sits. 49
         # trades passed the reward test while expensive against risk, at -0.471R
-        # and 53% stopped, for -502.70. See `Settings.max_spread_risk_fraction`.
-        limit = self.settings.max_spread_risk_fraction
+        # and 53% stopped, for -502.70. See `Envelope.max_spread_risk_fraction`.
+        limit = self.envelope.max_spread_risk_fraction
         if tick is not None and limit > 0 and intent.risk > 0:
             share = tick.spread / intent.risk
             if share > limit:
@@ -514,7 +598,7 @@ class Guard:
         been sized - the limit is in money at risk, and until the volume is
         known there is no number to add to the book.
         """
-        limit = self.settings.max_currency_exposure * self.opening_equity
+        limit = self.envelope.max_currency_exposure * self.opening_equity
         if limit <= 0:
             return None
 
@@ -544,7 +628,7 @@ class Guard:
         if limit > 0 and self.realised <= -limit and not self.halted:
             self.halted = (
                 f"down {abs(self.realised):.2f} today, past the "
-                f"{self.settings.daily_loss_fraction:.1%} limit of {limit:.2f}"
+                f"{self.envelope.daily_loss_fraction:.1%} limit of {limit:.2f}"
             )
             log.warning("trading: halted for %s - %s", self.day, self.halted)
 

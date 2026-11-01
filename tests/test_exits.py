@@ -7,6 +7,8 @@ ordering, and the two rules that are about *whether a rule applies at all*.
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 from nautilus_trader.model.data import QuoteTick
 from nautilus_trader.model.enums import OrderSide
@@ -291,7 +293,12 @@ def test_one_leg_refusing_does_not_strand_the_rest():
     actor = BasketExit(BasketConfig(venue="SIM"))
     # The real policy, made to fire rather than stubbed: `Guard.basket` is
     # read-only, and a basket stop of 1% on a 100k book trips at -1,000.
-    actor.settings.basket_stop_fraction = 0.01
+    #
+    # Tuned on the guard's own `Envelope` and not on a `Settings` beside it.
+    # It used to be the latter, which worked only because the guard held a
+    # live reference to the configuration object - and reaching through one
+    # object to retune another is how a test ends up asserting nothing.
+    actor.guard.envelope = replace(actor.guard.envelope, basket_stop_fraction=0.01)
     actor.guard.opening_equity = 100_000.0
     actor._equity = lambda: 100_000.0
 
@@ -345,7 +352,7 @@ def test_a_book_priced_at_its_own_opening_price_would_never_trip():
     from till_infinity.strategies.basket import BasketConfig, BasketExit
 
     actor = BasketExit(BasketConfig(venue="SIM"))
-    actor.settings.basket_stop_fraction = 0.01
+    actor.guard.envelope = replace(actor.guard.envelope, basket_stop_fraction=0.01)
     actor.guard.opening_equity = 100_000.0
     actor._equity = lambda: 100_000.0
     published: list[object] = []
@@ -382,7 +389,7 @@ def test_a_position_that_has_not_quoted_is_skipped_and_said_out_loud():
     from till_infinity.strategies.basket import BasketConfig, BasketExit
 
     actor = BasketExit(BasketConfig(venue="SIM"))
-    actor.settings.basket_stop_fraction = 0.01
+    actor.guard.envelope = replace(actor.guard.envelope, basket_stop_fraction=0.01)
     actor.guard.opening_equity = 100_000.0
     actor._equity = lambda: 100_000.0
     import till_infinity.strategies.basket as basket_module

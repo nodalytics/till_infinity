@@ -20,9 +20,9 @@ from __future__ import annotations
 import datetime as dt
 
 from till_infinity.domain.models import Intent, Side
+from till_infinity.risk.guard import Guard
 from till_infinity.strategies import Settings
 from till_infinity.strategies.context import Context
-from till_infinity.strategies.guard import Guard
 from till_infinity.utils import effects
 
 HOUR = 3600.0
@@ -55,7 +55,7 @@ def desk(ctx: Context | None = None, **over) -> Guard:
     made.release_in_hold = True
     for k, v in over.items():
         setattr(made, k, v)
-    guard = Guard(made, context=ctx, currency="USD")
+    guard = Guard(made.envelope(), context=ctx, currency="USD")
     guard.roll(10_000.0, now=at(9))
     return guard
 
@@ -183,7 +183,7 @@ def test_the_gate_is_off_by_default():
     ctx = context(("US", now + 40 * 60, "CPI"))
     off = Settings()
     assert off.release_in_hold is False
-    guard = Guard(off, context=ctx, currency="USD")
+    guard = Guard(off.envelope(), context=ctx, currency="USD")
     guard.roll(10_000.0, now=at(9))
     assert guard.allows(intent(), positions=[], now=now, hold=2 * HOUR) is None
 

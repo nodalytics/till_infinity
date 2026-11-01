@@ -8,22 +8,29 @@ in New York time so daylight saving cannot move the window.
 from __future__ import annotations
 
 import datetime as dt
+from dataclasses import replace
 
 from till_infinity.domain.models import Intent, Side
+from till_infinity.risk.envelope import Envelope
+from till_infinity.risk.guard import Guard, fx_window
 from till_infinity.strategies import Settings
 from till_infinity.strategies.config import _ny_span
-from till_infinity.strategies.guard import Guard, fx_window
 
 
 def utc(text: str) -> float:
     return dt.datetime.fromisoformat(text).replace(tzinfo=dt.UTC).timestamp()
 
 
-def desk(**over) -> Guard:
+def limits(**over) -> Envelope:
+    """The shipped limits, tuned, and projected the way production projects them."""
     made = Settings()
     for k, v in over.items():
         setattr(made, k, v)
-    guard = Guard(made, currency="USD")
+    return made.envelope()
+
+
+def desk(**over) -> Guard:
+    guard = Guard(limits(**over), currency="USD")
     guard.roll(10_000.0, now=utc("2026-07-15 09:00"))
     return guard
 
@@ -48,7 +55,7 @@ def gate(guard: Guard, when: float, **kw) -> str | None:
 
 
 def test_fx_quiet_hours_follow_new_york_through_daylight_saving():
-    s = Settings()
+    s = limits()
     # July: New York is UTC-4, so 16:00-18:59 New York is 20:00-22:59 UTC
     assert fx_window(s, "eurusd", utc("2026-07-15 20:05"))[0] == "fx_quiet_hour"
     assert fx_window(s, "eurusd", utc("2026-07-15 22:55"))[0] == "fx_quiet_hour"
@@ -60,21 +67,21 @@ def test_fx_quiet_hours_follow_new_york_through_daylight_saving():
 
 
 def test_other_markets_are_left_alone():
-    s = Settings()
+    s = limits()
     for feed in ("xauusd", "volatility_75_index", "boom_1000_index", "btcusd"):
         assert fx_window(s, feed, utc("2026-07-15 21:00")) is None, feed
 
 
 def test_the_sunday_open_is_vetoed_when_quiet_hours_are_off():
-    s = Settings()
-    s.fx_quiet_ny = ()
+    s = limits(fx_quiet_ny=())
     # Sunday 2026-07-19: the open is 17:00 New York, 21:00 UTC
     assert fx_window(s, "eurusd", utc("2026-07-19 21:10"))[0] == "fx_sunday_open"
     assert fx_window(s, "eurusd", utc("2026-07-19 21:59"))[0] == "fx_sunday_open"
     assert fx_window(s, "eurusd", utc("2026-07-19 22:01")) is None
     assert fx_window(s, "eurusd", utc("2026-07-15 21:10")) is None  # a Wednesday
-    s.fx_sunday_open_min = 0
-    assert fx_window(s, "eurusd", utc("2026-07-19 21:10")) is None
+    # `replace` rather than assignment: the limits a gate reads are frozen, so
+    # that the refusal in the journal can be recomputed from them later.
+    assert fx_window(replace(s, fx_sunday_open_min=0.0), "eurusd", utc("2026-07-19 21:10")) is None
 
 
 def test_the_guard_refuses_fx_in_the_window_and_nothing_else():

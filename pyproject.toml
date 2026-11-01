@@ -177,7 +177,11 @@ max-returns = 8
 # The gate chain in `Guard.allows` is one return per refusal, which is the
 # design: each gate names itself and stops. Collapsing eighteen reasons into
 # fewer exits would trade a readable refusal for a lint score.
-"till_infinity/strategies/guard.py" = ["PLR0911"]
+# Repointed on 2026-11-01 when `guard.py` moved to `risk/`, which is the
+# failure `test_every_lint_exemption_points_at_files_that_exist` exists for:
+# a path-scoped ignore stops applying when the path moves, and reads like a
+# rule while enforcing nothing.
+"till_infinity/risk/guard.py" = ["PLR0911"]
 # A Nautilus adapter implements signatures the framework defines, and some of
 # their arguments do not apply to this venue: `filters` on
 # `InstrumentProvider` (the bridge lists what the terminal lists, and there is

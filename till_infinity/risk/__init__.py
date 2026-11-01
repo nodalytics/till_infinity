@@ -24,39 +24,72 @@ and the engine is the last-line notional and rate cap.
   a signal exists, so it is a catalogue rather than a refusal |
 | exposure budget across correlated feeds | `exposure` | the engine caps per
   order, not per book |
+| may this account, right now, take another trade | `guard` | the spec's row
+  for this package, word for word |
+| the limits as named, coherent bundles | `plans` | ten numbers that have to
+  agree are not ten settings |
+| the twenty-two numbers all of that reads | `envelope` | so none of it has to
+  see the desk's configuration object |
 
 **`node/promotion.py`'s `Allocation.limits()` is what makes the first row
 real.** A cap we apply ourselves is a cap a new code path can miss; one in
 `LiveRiskEngineConfig` is applied where every order passes. So that policy is
 *compiled into* the engine's configuration rather than enforced beside it.
 
-## What the 2026-11-01 move brought here, and what it could not
+## What the 2026-11-01 move brought here, and what `envelope.py` unblocked
 
-`sizing` and `affordable` came from `strategies/`. Both answer account
-questions rather than signal questions, and - the part that actually decided
-it - both import nothing above `domain`, so they arrive without pointing back
-up at the layer they left.
+`sizing` and `affordable` came first. Both answer account questions rather
+than signal questions, and - the part that actually decided it - both import
+nothing above `domain`, so they arrived without pointing back up at the layer
+they left.
 
-Four candidates stayed, in three groups, each for a reason worth writing down
-rather than re-litigating:
+`guard` and `plans` came second, and could not have without `envelope.py`.
+The record of why is worth keeping, because the obstruction was real: this
+file was placed here once and sent back, and the next attempt was refused
+rather than forced, which was the right call both times.
 
-* **`guard`** is the hard case, because "may this account, right now, take
-  another trade" is this package's row verbatim. It needs nineteen fields of
-  `strategies.config.Settings` and five methods of
-  `strategies.context.Context` - the news blackout, the release inside the
-  hold, drift, a wide peer quote and a dislocation - and this package
-  importing that one is a cycle and a failing
-  `test_a_layer_only_imports_what_is_below_it`. **This is the second attempt:**
-  `tests/test_service_boundaries.py` already records `guard.py` being placed
-  here once and sent back, with the same import as the symptom.
+* **`guard`** is this package's row verbatim, and it read nineteen fields of
+  the strategies `Settings` object and five methods of the context that
+  consumes the bus - the news blackout, the release inside the hold, drift, a
+  wide peer quote and a dislocation. `tests/test_service_boundaries.py`
+  records it being placed here once and sent back, with that import as the
+  symptom.
 * **`plans`** names the limits as coherent bundles, which is this package's
-  subject, and then *writes them into* `Settings` - `Plan.apply` sets the
-  twelve fields of `CONTROLS` on it plus `risk_plan`, and
-  `_fields_are_covered` calls `dataclasses.fields` on it.
-  A writer into the strategies configuration object has to be able to see one.
-* **`sessions`** and **`spreads`** are not risk at all. Tradable hours and what
-  a round trip costs are *inputs* to a decision - read by `strategies.context`
-  and by `guard`'s spread gates - and neither can refuse anything on its own.
+  subject, and then *wrote them into* `Settings`: `Plan.apply` set the twelve
+  fields of `CONTROLS` plus `risk_plan`, and `_fields_are_covered` called
+  `dataclasses.fields` on the class. A writer into a configuration object has
+  to be able to see one.
+
+Both blockers had one shape - the limit is an account fact, but the *number*
+lived in 1,583 lines of `TRADING_*` knobs about what to trade and on which
+terminal - and each half needed a different answer:
+
+* **The read** is `envelope.Envelope`: a frozen dataclass carrying exactly the
+  twenty-two fields this package reads, built by `Settings.envelope()`
+  upstairs and handed in as an argument. It declares **no defaults**, so the
+  numbers have one home and a field added here fails at the projection until
+  the projection names it.
+* **The context** is `guard.Conditions`, a structural protocol naming the five
+  methods. The implementation stays upstairs and satisfies it without either
+  file importing the other, exactly as `scaling.by_regime` takes a regime as a
+  plain `float`.
+* **The write** split in two. `Plan.values` returns what the plan would set
+  and knows nothing about where it lands; `strategies.config.apply_plan` does
+  the `setattr`, because that is the layer that owns the object. The mutation
+  survives for its original reason - `Settings` is what the desk already holds
+  a reference to - and only the direction of the dependency changed.
+
+**`sessions` and `spreads` are still not risk** and did not come. Tradable
+hours and what a round trip costs are *inputs* to a decision - read by the
+strategies' context and by `guard`'s spread gates - and neither can refuse
+anything on its own.
+
+**One thing the move exposed rather than fixed.** `apply_plan` has no caller:
+the CLI that called it is retired and the node has not taken it over. So
+`TRADING_RISK_PLAN` is read into `Settings.risk_plan`, printed at start-up and
+never applied, and the desk trades the `Settings` defaults - which are
+`standard`'s twelve numbers exactly, which is why nobody noticed. Naming
+`conservative` today changes nothing.
 
 ## A regime is consumed here, never produced here
 
@@ -74,8 +107,12 @@ component that has to stay auditable the one with the most moving parts.
 down. Two things about that path are worth knowing before anyone relies on it.
 `regime_band` defaults to 0.0 and `by_regime` returns 1.0 on a non-positive
 width, so the lever is **off as shipped**; and its only call site sits in
-`Profile.risk_scale`, whose lazy import of this package is written one dot too
-deep and raises `ImportError` - so the path is doubly dead today.
+`Profile.risk_scale`, which is gated on `SIZING_MULTIPLIERS` and returns 1.0
+without it. The lazy import that used to be written one dot too deep - three
+dots, `ImportError: attempted relative import beyond top-level package`, so
+the whole eight-multiplier path raised - **is fixed**, and the switch is still
+off. Corrected here on 2026-11-01: this paragraph still said the path was
+"doubly dead", which was true of the import and has not been since.
 
 **`by_regime` cannot both have mean one and only reduce.** Measured over
 200,000 lognormal(0, 0.5) ratios: the mean multiplier is 1.0000 at the shipped
@@ -88,12 +125,14 @@ be able to exceed one. The two rules contradict each other and nothing here
 asserts either, because choosing between them is a decision about what the
 desk wants rather than a property of the code.
 
-Both blockers have the same shape: the limit is an account fact, but the
-*number* lives in `Settings`, which is 1,583 lines of `TRADING_*` knobs about
-what to trade and on which terminal. Until either a risk-shaped subset of that
-configuration exists, or the gates take their values as arguments, `guard` and
-`plans` cannot move without dragging the whole desk's configuration behind
-them.
+## What this package may still not have
+
+The envelope is a subset of the configuration, not a second configuration.
+Anything that would need the *rest* of `Settings` - which symbols resolve on
+which terminal, which decisions are registered, where state is written - does
+not become importable because this file exists, and the honest answer for such
+a module is that it belongs upstairs. `test_risk_imports_no_layer_above_it` is
+what makes the next attempt argue the case rather than add an import.
 """
 # **Nothing is imported eagerly here, and that is not a style choice.**
 #
@@ -109,6 +148,6 @@ them.
 # per class is how a reader can tell which `Sizing` a state file means. Callers
 # import the submodule they want:
 #
-#     from till_infinity.risk import affordable, exposure, scaling, sizing
+#     from till_infinity.risk import affordable, envelope, exposure, guard, plans
 
 __all__: list[str] = []

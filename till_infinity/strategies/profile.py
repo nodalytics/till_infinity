@@ -40,9 +40,9 @@ from typing import Any, ClassVar
 from till_infinity.utils.logging import get_logger
 
 from ..domain.models import Side, SymbolSpec
+from ..risk.guard import Limits
 from .config import Settings
 from .floors import Floors
-from .guard import Limits
 
 log = get_logger(__name__)
 
