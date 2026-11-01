@@ -233,7 +233,13 @@ def test_each_venue_gets_its_own_basket_actor(monkeypatch, loop):
     node = live.build()
     try:
         actors = {str(actor.id) for actor in node.trader.actors()}
-        assert actors == {"BasketExit-MT5", "BasketExit-DERIV"}
+        # The basket watcher is per venue; the journal and the notifier are
+        # one each for the node, because a record is not a venue's concern.
+        assert {name for name in actors if name.startswith("BasketExit")} == {
+            "BasketExit-MT5",
+            "BasketExit-DERIV",
+        }
+        assert {"JournalActor", "Notifier"} <= actors
     finally:
         node.dispose()
 

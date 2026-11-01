@@ -66,11 +66,93 @@ RISK_SHARE_BY_STYLE: dict[str, float] = {
 }
 
 
+#: Whether the sizing multipliers run at all. `SIZING_MULTIPLIERS`, off.
+#:
+#: **They have never run.** `risk_scale` and `spike_scale` both imported
+#: `scaling` as `from ...risk import scaling` - three dots, which raises
+#: `ImportError: attempted relative import beyond top-level package` - so
+#: every call raised and the whole eight-multiplier path was dead. The only
+#: coverage was a `hasattr` check, which a broken method passes.
+#:
+#: The import is now correct, and the multipliers stay **off** rather than
+#: switching on with it. Turning eight reductions on at once would change
+#: every position size on the next deploy, with no measurement of their joint
+#: effect and no baseline to compare against - and `refit-the-parameter-a-
+#: lever-multiplies` is what that costs: a multiplier whose mean is not one
+#: changes the average too, and it once reversed a +1192 result to -24.
+#:
+#: So this is the deliberate switch, and `1.0` is what the desk has actually
+#: been trading. Enabling it is a measurement, not a configuration change.
+MULTIPLIERS_ON = "SIZING_MULTIPLIERS"
+
+#: The eight reductions, by the name used to switch each one on.
+#:
+#: **Named individually rather than as one flag**, because turning eight
+#: levers on together cannot be measured. Each is an independent reason to be
+#: smaller - `scaling.combined` multiplies them, so the order is irrelevant -
+#: and `refit-the-parameter-a-lever-multiplies` is the reason to add them one
+#: at a time: a multiplier whose mean is not one changes the average too, and
+#: it once reversed a +1192 result to -24. Eight at once is one trial with
+#: eight confounded parameters, and at a target Sharpe of 1.5 a month of data
+#: supports about one trial.
+#:
+#: `share` is the odd one out and is listed anyway: it is this strategy's
+#: structural share rather than a reading of the current bar, so it is
+#: constant per strategy - but it still multiplies the size, so hiding it
+#: behind a different switch would make the product harder to account for
+#: than keeping it here.
+MULTIPLIERS: tuple[str, ...] = (
+    "crowding",
+    "volatility",
+    "regime",
+    "spike",
+    "edge",
+    "drawdown",
+    "slippage",
+    "interval",
+    "share",
+)
+
+
+def multipliers_on() -> frozenset[str]:
+    """Which sizing reductions are enabled. `SIZING_MULTIPLIERS`, none.
+
+    A list of names, or `all`. Read per call rather than cached, so a test can
+    set it without reaching into module state and so a reload is never needed
+    to change it.
+
+    An unknown name raises. A typo that silently disabled a multiplier would
+    be invisible in exactly the way this whole path was invisible for as long
+    as it raised `ImportError` - and the failure would be a position sized
+    larger than intended, which is the wrong direction to be quiet about.
+    """
+    from ..utils.env import names
+
+    asked = names(MULTIPLIERS_ON)
+    if not asked:
+        return frozenset()
+    if len(asked) == 1 and asked[0].lower() == "all":
+        return frozenset(MULTIPLIERS)
+    wanted = frozenset(name.strip().lower() for name in asked)
+    unknown = wanted - set(MULTIPLIERS)
+    if unknown:
+        raise ValueError(
+            f"{MULTIPLIERS_ON} names {sorted(unknown)}, which is not a sizing "
+            f"multiplier. One of: {', '.join(MULTIPLIERS)}, or `all`."
+        )
+    return wanted
+
+
 def spike_scale(features: object, settings: object) -> float:
     """The risk switch for one signal's features. One function so the three places
     that size a trade - `risk_scale`, the consensus path and parallel mode - cannot
-    disagree about it. See `scaling.by_spike`."""
-    from ...risk import scaling
+    disagree about it. See `scaling.by_spike`.
+
+    Returns `1.0` unless `SIZING_MULTIPLIERS` is set - see `MULTIPLIERS_ON`.
+    """
+    if "spike" not in multipliers_on():
+        return 1.0
+    from ..risk import scaling
 
     readings = features if isinstance(features, dict) else {}
     found = readings.get("tr_percentile")
@@ -486,11 +568,59 @@ class Profile:
         """Every sizing reduction at once, as one multiplier in [0, 1].
 
         See `trading-strategies-strategy.md` in research/docs.
+
+        Returns `1.0` while `SIZING_MULTIPLIERS` names nothing - see
+        `MULTIPLIERS_ON`. That is what the desk has been trading, because this
+        whole path raised `ImportError` on every call until 2026-11-01.
+
+        The product, for the callers that only need a size. `multipliers`
+        returns the same values by name, for the one place that records why.
         """
-        from ...risk import scaling
+        from ..risk import scaling
+
+        return scaling.combined(
+            *self.multipliers(features, feed, positions, equity, peak, interval, side).values()
+        )
+
+    def multipliers(
+        self,
+        features: dict,
+        feed: str,
+        positions: Sequence[object] = (),
+        equity: float = 0.0,
+        peak: float = 0.0,
+        interval: str = "",
+        side: object = None,
+    ) -> dict[str, float]:
+        """Every reduction, **by name**, with the disabled ones at 1.0.
+
+        Returned as a mapping rather than a product so each one can be
+        recorded against the decision it sized. That is the difference between
+        enabling these and measuring them: a single number says a trade was
+        made smaller, and nine named numbers say which readings did it and by
+        how much. The journal is the record and the `why` is its whole value
+        ([ADR 0005](../../docs/adr/0005-the-journal-is-the-record-not-the-hot-path.md)),
+        and a product discards exactly that.
+
+        Disabled terms are `1.0` rather than absent, so the keys are the same
+        on every call and a reader comparing two decisions is not comparing
+        two different shapes.
+        """
+        on = multipliers_on()
+        found = dict.fromkeys(MULTIPLIERS, 1.0)
+        if not on:
+            # **Returns before reading anything.** The off path must not touch
+            # `self.settings` or the features, because it is the path that
+            # runs in production: a profile that happens to lack a setting
+            # would otherwise raise here rather than size normally, and that
+            # is the shape of the bug being fixed - a sizing path that cannot
+            # be called at all.
+            return found
+
+        from ..risk import scaling
 
         settings = self.settings
-        return scaling.combined(
+        computed = self._reductions(
             scaling.crowding(
                 feed,
                 # `(feed, sign)` per open position. `Position` carries the
@@ -547,6 +677,41 @@ class Profile:
             # of them and forgotten in the third.
             self.share_of_risk,
         )
+        found.update({name: value for name, value in computed.items() if name in on})
+        return found
+
+    def _reductions(
+        self,
+        crowding: float,
+        volatility: float,
+        regime: float,
+        spike: float,
+        edge: float,
+        drawdown: float,
+        slippage: float,
+        interval: float,
+        share: float,
+    ) -> dict[str, float]:
+        """The nine computed values, named.
+
+        A function whose only job is to attach names to positional arguments,
+        because the call above reads as nine expressions in a fixed order and
+        **a positional list is how an argument comes to be in the wrong
+        slot** - the `generate_order_filled` call in the MT5 execution client
+        was shifted by one missing positional and crashed every fill. Named
+        here once, so no caller counts commas.
+        """
+        return {
+            "crowding": crowding,
+            "volatility": volatility,
+            "regime": regime,
+            "spike": spike,
+            "edge": edge,
+            "drawdown": drawdown,
+            "slippage": slippage,
+            "interval": interval,
+            "share": share,
+        }
 
     @property
     def ceiling(self) -> float:

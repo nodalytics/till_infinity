@@ -225,10 +225,12 @@ class Desk(NautilusStrategy):
         tick = self._tick()
         if refusal := self._undealable(spec, tick):
             self._count(f"(desk):{refusal.gate}")
+            self._journal(refusal, payload)
             return refusal
 
         if refusal := self._already_held():
             self._count(f"(desk):{refusal.gate}")
+            self._journal(refusal, payload)
             return refusal
 
         verdict = self.decide(payload)
@@ -239,6 +241,55 @@ class Desk(NautilusStrategy):
             # day, and recording all of it buries what matters.
             self.log.debug(f"{self.label} declined: {verdict.detail}")
         return verdict
+
+    def _journal(self, refusal: Refusal, payload: dict[str, Any]) -> None:
+        """Record one refusal, for the half of it nothing else holds.
+
+        **Exactly the split the module docstring describes**, implemented at
+        last: these two gates refuse an instrument the desk *does* trade, for
+        a reason no other record carries - the terminal called it untradable,
+        the quote was missing, a sibling strategy already held it. Nautilus
+        persists orders, fills and positions; it does not persist why there
+        was no order - see
+        [ADR 0005](../../docs/adr/0005-the-journal-is-the-record-not-the-hot-path.md).
+
+        The per-decision refusals are deliberately **not** here. They are
+        hundreds a day - a strategy declining on probability or interval is
+        the filter working - and journalling them would bury these.
+
+        **Nothing published here before.** `JournalActor` subscribed to a
+        topic with no producer and every reason went to a debug log, which is
+        the mirror of the failure the desk has already paid for twice: a
+        subscriber with no publisher and a publisher with no subscriber look
+        identical from either side, and both look like a quiet market.
+
+        Failures are swallowed on purpose. This runs on the stack of a live
+        decision - Nautilus's bus calls handlers inline - so a journal that
+        cannot write must not stop a trade. The actor counts its own failures
+        and degrades; that is where a write problem becomes visible.
+        """
+        from ..journal.actor import publish
+        from ..journal.models import Entry, Kind
+
+        try:
+            publish(
+                self,
+                Entry(
+                    title=f"{refusal.gate} on {refusal.feed or self.label}",
+                    kind=Kind.DECISION,
+                    actor=str(self.id),
+                    rationale=refusal.detail,
+                    context={
+                        "gate": refusal.gate,
+                        "feed": refusal.feed,
+                        "rule": self.label,
+                        "interval": str(payload.get("interval") or ""),
+                    },
+                    tags=("refusal", refusal.gate),
+                ),
+            )
+        except Exception as exc:  # a record that cannot be written is not a halt
+            self.log.debug(f"journal refused {refusal.gate}: {exc}")
 
     @property
     def label(self) -> str:

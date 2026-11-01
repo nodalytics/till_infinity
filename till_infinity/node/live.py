@@ -232,13 +232,43 @@ def _arm(node: TradingNode) -> bool:
 
 
 def _actors() -> list[Actor]:
-    """The actors: the basket watcher, and statespace where it is configured.
+    """The actors: the basket watchers, the record, the alerts, and statespace.
 
-    `STATESPACE_BARS` names the bar types it folds. Absent, it is not added -
-    a node may trade without it, and an actor subscribed to nothing is a fold
-    that never runs pretending to be a model that does.
+    `STATESPACE_BARS` names the bar types statespace folds. Absent, it is not
+    added - a node may trade without it, and an actor subscribed to nothing is
+    a fold that never runs pretending to be a model that does.
+
+    **The journal and the notifier are added by default and switched off by
+    name**, which is the opposite of statespace and deliberately so. A node
+    that trades without a record is the state this desk has been in since the
+    port - both actors existed and neither was ever registered, so every
+    refusal reason went to a debug log and every alert to nothing - and the
+    failure is silent in both cases. An opt-in record is a record nobody
+    turns on.
     """
     found: list[Actor] = list(desks.actors_all())
+    if not flag("JOURNAL_OFF"):
+        from till_infinity.journal.actor import JournalActor, JournalConfig
+
+        found.append(
+            JournalActor(
+                JournalConfig(
+                    path=os.environ.get("JOURNAL_DB") or JournalConfig().path,
+                    flush_seconds=float(os.environ.get("JOURNAL_FLUSH_SECONDS", "5.0")),
+                )
+            )
+        )
+    if not flag("ALERTS_OFF"):
+        from till_infinity.notifications.actor import Notifier, NotifierConfig
+
+        found.append(
+            Notifier(
+                NotifierConfig(
+                    minimum_level=os.environ.get("ALERTS_MINIMUM_LEVEL")
+                    or NotifierConfig().minimum_level,
+                )
+            )
+        )
     bars = tuple(
         part for part in (os.environ.get("STATESPACE_BARS") or "").replace(",", " ").split() if part
     )

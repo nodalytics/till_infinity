@@ -761,3 +761,99 @@ def test_the_profile_keeps_the_measured_numbers():
     assert profile.cost_share == 0.10
     for helper in ("floored_target", "protection", "risk_scale", "share_of_risk", "hold_for"):
         assert hasattr(profile, helper), helper
+
+
+# ------------------------------------------------- the refusal reaches the record
+
+
+def test_a_desk_level_refusal_is_published_to_the_journal():
+    """**The producer that was missing.** `JournalActor` subscribed to a topic
+    nothing published to, so every desk-level refusal reason went to a debug
+    log and the record stayed empty.
+
+    That is the mirror of a failure this desk has paid for twice: a subscriber
+    with no publisher and a publisher with no subscriber look identical from
+    either side, and both look like a quiet market.
+
+    Only these gates, deliberately. They refuse an instrument the desk *does*
+    trade for a reason nothing else carries - the terminal called it
+    untradable, the quote was missing, a sibling already held it. The
+    per-decision refusals stay at debug: hundreds a day, and journalling them
+    would bury these.
+    """
+    from till_infinity.journal.models import Entry
+    from till_infinity.strategies.desk import Desk
+    from till_infinity.utils.topics import JOURNAL
+
+    seen: list[dict] = []
+
+    class Collector:
+        """Enough of a component for `topics.publish`, and nothing more."""
+
+        class _Bus:
+            @staticmethod
+            def publish(topic, msg):
+                seen.append((topic, msg))
+
+        msgbus = _Bus()
+        id = "EdgeEntry-EURUSD-E270"
+
+        class _Log:
+            @staticmethod
+            def debug(*_args):
+                pass
+
+        log = _Log()
+        label = "statespace-surprise"
+
+    Desk._journal(
+        Collector(),
+        Refusal(gate="no-quote", detail="no quote for EURUSD", feed="eurusd"),
+        {"interval": "15m"},
+    )
+
+    assert len(seen) == 1
+    topic, payload = seen[0]
+    assert topic == JOURNAL
+    # Round-trips through the wire shape the actor actually receives, rather
+    # than asserting on the `Entry` we happen to have built here.
+    entry = Entry.from_message(payload)
+    assert entry.context["gate"] == "no-quote"
+    assert entry.context["feed"] == "eurusd"
+    assert entry.rationale == "no quote for EURUSD"
+    assert "refusal" in entry.tags
+    # The strategy id, because `judge-the-desk-on-the-broker-not-the-journal`
+    # is about exactly this: a record whose actor is wrong is worse than none.
+    assert entry.actor == "EdgeEntry-EURUSD-E270"
+
+
+def test_a_journal_that_cannot_write_does_not_stop_a_decision():
+    """Nautilus's bus calls handlers inline, so this runs on the stack of a
+    live decision. A record that cannot be written must not be a halt - the
+    actor counts its own failures and degrades, which is where a write problem
+    becomes visible."""
+    from till_infinity.strategies.desk import Desk
+
+    noted: list[str] = []
+
+    class Broken:
+        class _Bus:
+            @staticmethod
+            def publish(topic, msg):
+                raise RuntimeError("the bus is gone")
+
+        msgbus = _Bus()
+        id = "EdgeEntry-EURUSD-E270"
+
+        class _Log:
+            @staticmethod
+            def debug(message):
+                noted.append(str(message))
+
+        log = _Log()
+        label = "statespace-surprise"
+
+    # Returns rather than raising, and says so once.
+    Desk._journal(Broken(), Refusal(gate="untradable", detail="not tradable"), {})
+    assert noted
+    assert "untradable" in noted[0]

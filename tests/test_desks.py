@@ -250,8 +250,14 @@ def test_the_live_node_builds_with_its_desks_on_it(monkeypatch, loop):
         # `BasketExit-MT5` and not `BasketExit`: the id carries the venue
         # because Nautilus requires actor ids to be unique in a trader, and
         # two venues both adding a bare `BasketExit` is refused.
+        #
+        # `JournalActor` and `Notifier` are here because they are **on by
+        # default**: both existed and neither was ever registered, so every
+        # refusal reason went to a debug log and every alert to nothing.
         assert {str(a.id) for a in node.trader.actors()} == {
             "BasketExit-MT5",
+            "JournalActor",
+            "Notifier",
             "StatespaceActor",
         }
     finally:
@@ -271,9 +277,38 @@ def test_a_live_node_with_no_desks_refuses_to_build(monkeypatch, loop):
 
 def test_statespace_is_only_added_when_it_is_configured(monkeypatch, loop):
     """An actor subscribed to nothing is a fold that never runs pretending to
-    be a model that does."""
+    be a model that does.
+
+    **Statespace is opt-in and the record is opt-out**, which is the opposite
+    way round and deliberate: a node that trades without a record is the state
+    this desk was in since the port, and an opt-in record is a record nobody
+    turns on. So the journal and the notifier are present here and statespace
+    is not.
+    """
     monkeypatch.delenv("STATESPACE_BARS", raising=False)
     monkeypatch.setenv("LOG_LEVEL", "ERROR")
+
+    from till_infinity.node import live
+
+    node = live.build()
+    try:
+        assert {str(a.id) for a in node.trader.actors()} == {
+            "BasketExit-MT5",
+            "JournalActor",
+            "Notifier",
+        }
+    finally:
+        node.dispose()
+
+
+def test_the_record_can_be_switched_off_by_name(monkeypatch, loop):
+    """Off by name rather than on by name. A deploy that genuinely wants no
+    record says so, and the failure of forgetting is then a loud duplicate
+    rather than a silent absence."""
+    monkeypatch.delenv("STATESPACE_BARS", raising=False)
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+    monkeypatch.setenv("JOURNAL_OFF", "1")
+    monkeypatch.setenv("ALERTS_OFF", "1")
 
     from till_infinity.node import live
 
