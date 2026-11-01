@@ -135,6 +135,7 @@ from .exits import (
 from .manage import Move, advance
 from .profile import Profile
 from .report import Report, Trade
+from .structure import Fold, Structure, StructureEdge
 from .surprise import Surprise, SurpriseArrival, SurpriseEdge, SurpriseResting
 from .turning import TurnExit, TurnOutcome, TurnTally
 from .valuation import Priced, Valuation, price_it
@@ -161,6 +162,7 @@ __all__ = [
     "EdgeEntry",
     "ExitMechanism",
     "Exits",
+    "Fold",
     "Intent",
     "ManagedExit",
     "Move",
@@ -179,6 +181,8 @@ __all__ = [
     "Settings",
     "Side",
     "Speeds",
+    "Structure",
+    "StructureEdge",
     "Surprise",
     "SurpriseArrival",
     "SurpriseEdge",

@@ -98,35 +98,49 @@ def venue(
 
 
 def data(instrument_id: str, bar_spec: str, start: str | None = None, end: str | None = None):
-    """One instrument's data out of the catalogue - bars, or the ticks behind them.
+    """One instrument's data out of the catalogue - the bars **and** the quotes.
 
-    **An internally aggregated run is fed quotes, not bars.** `INTERNAL` means
-    Nautilus builds the bars itself, from the tick stream, so a data config
-    that loaded `Bar` would hand an aggregator the output it was supposed to
-    produce: the aggregator would receive nothing, the desks would receive no
-    bars, and the run would report a result computed from no trades. The spec
-    string already says which it is, so nothing has to be passed twice.
+    A list, because a desk needs both and they are two configs.
 
-    This is the half of internal aggregation that only shows up in a backtest.
-    Live, the adapter publishes quotes whatever the bar type is; here the
-    catalogue has both and the config chooses.
+    **An externally aggregated run used to load bars alone, and every desk
+    refused every proposal.** `Desk._undealable` refuses on a missing quote,
+    `Surprise.decide` refuses earlier still on its own, and `cache.quote_tick`
+    returns `None` for the whole run when nothing put a quote in it - measured
+    on a ten-bar probe: ten bars delivered, zero with a cached quote. So
+    `desk_config()` at its default spec built the production desks over a
+    stream they could not trade, and reported a result computed from no
+    trades. That is the failure this desk has on record more than any other,
+    and it was one line.
+
+    **An internally aggregated run is fed quotes only.** `INTERNAL` means
+    Nautilus builds the bars itself from the tick stream, so a config that also
+    loaded `Bar` would hand the aggregator the output it exists to produce. The
+    spec string already says which it is, so nothing has to be passed twice.
+
+    A catalogue with no quotes still produces no trades, and that is then
+    visible: the config asked for them and they were not there, rather than
+    nobody having asked.
     """
-    if bar_spec.strip().upper().endswith("INTERNAL"):
-        return BacktestDataConfig(
-            catalog_path=str(catalogue()),
-            data_cls=QuoteTick,
-            instrument_id=instrument_id,
-            start_time=start,
-            end_time=end,
-        )
-    return BacktestDataConfig(
+    quotes = BacktestDataConfig(
         catalog_path=str(catalogue()),
-        data_cls=Bar,
+        data_cls=QuoteTick,
         instrument_id=instrument_id,
-        bar_spec=bar_spec,
         start_time=start,
         end_time=end,
     )
+    if bar_spec.strip().upper().endswith("INTERNAL"):
+        return [quotes]
+    return [
+        BacktestDataConfig(
+            catalog_path=str(catalogue()),
+            data_cls=Bar,
+            instrument_id=instrument_id,
+            bar_spec=bar_spec,
+            start_time=start,
+            end_time=end,
+        ),
+        quotes,
+    ]
 
 
 def run_config(
@@ -155,7 +169,7 @@ def run_config(
             strategies=list(strategies),
         ),
         venues=[venue(name=venue_name or instrument_id.rsplit(".", 1)[-1])],
-        data=[data(instrument_id, bar_spec, start, end)],
+        data=data(instrument_id, bar_spec, start, end),
     )
 
 

@@ -58,18 +58,18 @@ the report can say where the test goes blind.
 | arm | asymmetry premium | p |
 |---|---|---|
 | real | +0.0960 | - |
-| shuffled, 40 draws | mean +0.0733, max +0.1252 | **0.244** |
-| walk, 40 draws | mean +0.0393, max +0.2321 | 0.146 |
+| shuffled, 40 draws | mean +0.0731, max +0.1229 | **0.244** |
+| walk, 40 draws | mean +0.0394, max +0.2307 | 0.146 |
 
 Null. And the symmetric reading is null on the same arm - best symmetric
-+0.2243 real against a shuffled mean of +0.2464, p = 0.683 - while it clears
++0.2243 real against a shuffled mean of +0.2463, p = 0.683 - while it clears
 the iid walk at p = 0.024, which is the trap the shuffled arm exists to catch:
 an iid walk has no volatility clustering, so its event rate and its forward
 moves differ from a market's for a mechanical reason that has nothing to do
 with the threshold.
 
-Power: a planted one-sided effect of 0.25v returns a premium of +0.1049, which
-is where the real reading sits, and 0.10v returns +0.0457, which is inside the
+Power: a planted one-sided effect of 0.25v returns a premium of +0.1050, which
+is where the real reading sits, and 0.10v returns +0.0455, which is inside the
 shuffled twin's own spread. So this test resolves a one-sided effect of about a
 quarter of a volatility unit and is blind below a tenth of one.
 
@@ -516,7 +516,11 @@ def backtest() -> None:
             StatespaceConfig(
                 bar_types=(str(bar_type),),
                 feeds={"EUR/USD": FEED},
-                indicators=("cusum:typical",) if declared else (),
+                # The same declaration the desks get, not a symmetric one:
+                # `StatespaceActor._register` is a second registrar with its
+                # own catalogue check, so a grammar that reached only
+                # `Desk._register` would raise here.
+                indicators=(declared,) if declared else (),
             )
         )
         engine.add_actor(actor)

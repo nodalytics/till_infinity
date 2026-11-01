@@ -224,9 +224,27 @@ def test_an_internal_run_is_fed_quotes_rather_than_bars():
     from till_infinity.node import backtest
 
     internal = backtest.data("EURUSD.SIM", "15-MINUTE-MID-INTERNAL")
-    assert internal.data_cls is QuoteTick
-    assert internal.bar_spec is None
+    assert [config.data_cls for config in internal] == [QuoteTick]
+    assert internal[0].bar_spec is None
+
+
+def test_an_external_run_is_fed_the_quotes_as_well_as_the_bars():
+    """**And every desk refused every proposal until it was.**
+
+    `Desk._undealable` refuses on a missing quote and `Surprise.decide`
+    refuses earlier still on its own, so a run fed bars alone has
+    `cache.quote_tick()` returning `None` throughout - measured on a ten-bar
+    probe: ten bars delivered, zero with a cached quote. `desk_config()` at its
+    default spec therefore built the production desks over a stream they could
+    not trade and printed a result computed from no trades.
+
+    A catalogue with no quotes in it still produces no trades. The difference
+    is that the config asked for them, so their absence is visible rather than
+    nobody having asked.
+    """
+    from till_infinity.node import backtest
 
     external = backtest.data("EURUSD.SIM", "15-MINUTE-LAST-EXTERNAL")
-    assert external.data_cls is Bar
-    assert external.bar_spec == "15-MINUTE-LAST-EXTERNAL"
+    assert [config.data_cls for config in external] == [Bar, QuoteTick]
+    assert external[0].bar_spec == "15-MINUTE-LAST-EXTERNAL"
+    assert external[1].bar_spec is None

@@ -61,6 +61,17 @@ STATESPACE_SIGNALS = "statespace.signals"
 ALERTS = "alerts"
 JOURNAL = "journal"
 
+#: What the promotion ladder decided, for the one thing it cannot do itself.
+#:
+#: `node/pipeline.step` decides and does not act, deliberately - "the node
+#: holds the `Trader`, so this decides and the caller acts". An `Actor` cannot
+#: reach the `Trader` either: it has the bus, the cache, the clock and the
+#: portfolio, and stopping a strategy is a `Trader` call. So the actor publishes
+#: here and `node/live` subscribes a handler that holds both the trader and the
+#: risk engine. One hop, and it puts the capital change where the engine is
+#: rather than behind a second copy of the arithmetic.
+LADDER = "ladder"
+
 #: Every topic this desk declares. A publisher using a name not in here is
 #: publishing where nothing listens, which is the failure a registry catches
 #: and a literal does not.
@@ -71,6 +82,7 @@ JOURNAL = "journal"
 #: have to publish on. Declaring one does not mean something is listening.
 DECLARED: tuple[str, ...] = (
     ALERTS,
+    LADDER,
     ARTICLES,
     BARS,
     DISPERSION,

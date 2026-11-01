@@ -15,6 +15,7 @@ read our own side of the wire.
 from __future__ import annotations
 
 import os
+from decimal import Decimal
 
 from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import (
@@ -27,11 +28,13 @@ from nautilus_trader.config import (
 )
 from nautilus_trader.live.node import TradingNode
 from nautilus_trader.model.enums import TradingState
+from nautilus_trader.model.identifiers import StrategyId
 
 from till_infinity.adapters.mt5 import MT5DataClientConfig, MT5ExecClientConfig
-from till_infinity.node import desks, venues
+from till_infinity.node import desks, ladder, venues
 from till_infinity.statespace.actor import StatespaceActor, StatespaceConfig
 from till_infinity.utils.env import flag
+from till_infinity.utils.topics import LADDER
 
 #: The venue's magic, and **no longer how a strategy is identified.**
 #:
@@ -194,7 +197,114 @@ def build() -> TradingNode:
         node.trader.add_actor(actor)
 
     node.build()
+    _supervise(node)
     return node
+
+
+def _supervise(node: TradingNode) -> None:
+    """Let the promotion ladder reach the trader and the risk engine.
+
+    **The one thing `LadderActor` cannot do itself.** Nautilus gives an actor
+    the bus, the cache, the clock and the portfolio; changing a notional cap is
+    `RiskEngine.set_max_notional_per_order` and stopping one strategy is
+    `Trader.stop_strategy`, and an actor has neither object. So the actor
+    publishes its decisions and this subscribes a handler closed over both -
+    which also puts the conversion from a share to a notional where the account
+    is, rather than in a second copy of the arithmetic beside the loop.
+
+    Subscribed after `node.build()`, because the kernel's risk engine and
+    trader are what the closure captures and they are built with it.
+
+    Does nothing when the ladder is not running, which is the default: an
+    unsubscribed topic with no publisher is the quiet state, not a broken one.
+    """
+    from . import ladder as rungs
+
+    if not rungs.wanted():
+        return
+
+    def apply(message: object) -> None:
+        """One ladder decision, applied to the engine.
+
+        Every failure is caught. This runs on the publishing actor's stack -
+        Nautilus's bus calls handlers inline - so a cap that cannot be applied
+        must not take down the pass that decided it, and the allocation already
+        in force stays in force, which is the safe direction.
+        """
+        if not isinstance(message, dict):
+            return
+        name = str(message.get("candidate") or "")
+        action = str(message.get("action") or "")
+        try:
+            if action in ("REDUCING", "HALTED"):
+                # **Stopping the one strategy, not the node.** `retire`'s
+                # docstring describes `TradingState.REDUCING` followed by
+                # `stop_strategy`, and that is right for a node-level
+                # wind-down and wrong for one leg: the trading state is global,
+                # so putting the engine in `REDUCING` to retire one candidate
+                # would stop every other strategy opening a position. A
+                # breached limit is the exception and keeps the global halt,
+                # because that is what a breach means.
+                if action == "HALTED":
+                    node.kernel.risk_engine.set_trading_state(TradingState.HALTED)
+                    node.kernel.logger.error(
+                        f"ladder halted the node over {name}: a risk limit was breached"
+                    )
+                node.trader.stop_strategy(StrategyId(name))
+                node.kernel.logger.warning(f"ladder stopped {name}")
+                return
+
+            share = float(message.get("share") or 0.0)
+            if share <= 0.0:
+                return
+            # The cap is per instrument and the ladder decides per strategy, so
+            # it is applied to the instruments that strategy trades. One
+            # position per instrument is already the desk's rule - see
+            # `Desk._already_held` - so the two keyings do not collide in
+            # practice, and where they would the tighter cap is the one that
+            # should win.
+            for config in (s.config for s in node.trader.strategies() if str(s.id) == name):
+                instrument_id = getattr(config, "instrument_id", None)
+                if instrument_id is None:
+                    continue
+                account = node.portfolio.account(instrument_id.venue)
+                balance = account.balance_total() if account is not None else None
+                if balance is None:
+                    node.kernel.logger.warning(
+                        f"ladder cannot cap {name}: {instrument_id.venue} reports no balance"
+                    )
+                    continue
+                instrument = node.cache.instrument(instrument_id)
+                # **The engine denominates the cap in the instrument's quote
+                # currency** - `risk/engine.pyx` builds
+                # `Money(float(setting), instrument.quote_currency)` - and the
+                # share is of an account balance. Where those two currencies
+                # differ the number needs the same conversion `Desk._rate`
+                # does, and a cap applied without it is wrong by the rate. Not
+                # applied rather than guessed: an unguarded instrument is
+                # visible in this log, and a cap 150 times the wrong size is
+                # not visible anywhere.
+                if instrument is None or instrument.quote_currency != balance.currency:
+                    node.kernel.logger.warning(
+                        f"ladder cannot cap {name} on {instrument_id}: the account is in "
+                        f"{balance.currency} and the instrument is quoted in "
+                        f"{getattr(instrument, 'quote_currency', 'an unknown currency')}"
+                    )
+                    continue
+                # A `Decimal`, not a `Money`. The setter documents "integer,
+                # float, string, or Decimal" and the config path calls
+                # `Decimal(value)` on what it is given, so a currency in the
+                # value is an `InvalidOperation` rather than a unit.
+                cap = Decimal(f"{float(balance.as_double()) * share:.2f}")
+                node.kernel.risk_engine.set_max_notional_per_order(instrument_id, cap)
+                node.kernel.logger.info(
+                    f"ladder capped {name} on {instrument_id} at {cap} "
+                    f"{balance.currency} ({share:.0%} of the account)"
+                )
+        except Exception as exc:  # a cap that cannot be applied is not a halt
+            node.kernel.logger.error(f"ladder could not apply {action} to {name}: {exc}")
+
+    node.kernel.msgbus.subscribe(LADDER, apply)
 
 
 def _arm(node: TradingNode) -> bool:
@@ -297,6 +407,14 @@ def _actors() -> list[Actor]:
                 )
             )
         )
+    if ladder.wanted():
+        # **Opt-in, unlike the journal and the notifier beside it.** Those two
+        # are on by default because a node that trades without a record is the
+        # worse failure. This one changes how much of the account a strategy
+        # may use, so it is off until asked - the same argument as
+        # `TRADING_LIVE`, and the reason `_supervise` is what finally lets it
+        # reach the engine.
+        found.append(ladder.LadderActor(ladder.configured()))
     bars = tuple(
         part for part in (os.environ.get("STATESPACE_BARS") or "").replace(",", " ").split() if part
     )

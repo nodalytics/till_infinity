@@ -359,7 +359,23 @@ class Allocation:
         if share <= 0.0:
             return {}
         cap = equity * share
-        return {str(i): f"{cap:.2f} {currency}" for i in instruments}
+        # **A bare number, and it used to carry the currency.** `RiskEngine`
+        # reads this mapping with `Decimal(value)` - `risk/engine.pyx:196` -
+        # so `"5000.00 USD"` raised `decimal.InvalidOperation` and a node
+        # configured from this function could not be constructed at all. It had
+        # never fired, because nothing on the live path had ever called the
+        # ladder; wiring the loop into `node/live` is what found it.
+        #
+        # The currency is not lost, it was never the engine's to read: the cap
+        # is denominated in the **instrument's quote currency**, which
+        # `engine.pyx` supplies itself with
+        # `Money(float(setting), instrument.quote_currency)`. So `currency`
+        # here is what the *caller's* equity is in, and an instrument quoted in
+        # anything else needs the conversion `Desk._rate` does before the
+        # number means what it says. `node/live._supervise` refuses to apply a
+        # cap across that mismatch rather than guessing the rate.
+        _ = currency
+        return {str(i): f"{cap:.2f}" for i in instruments}
 
 
 def may_promote(candidate: Candidate, *, episodes_seen: int) -> tuple[bool, str]:

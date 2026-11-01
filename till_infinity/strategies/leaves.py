@@ -61,6 +61,7 @@ from .entries import (
 )
 from .exits import ExitMechanism, ManagedExit, VenueExit
 from .profile import Profile
+from .structure import StructureEdge
 from .surprise import SurpriseArrival, SurpriseEdge, SurpriseResting
 
 # --------------------------------------------------- the statespace side leaves
@@ -176,6 +177,12 @@ LEAVES: dict[tuple[str, str], type[Desk]] = {
     ("statespace-short", "edge"): StatespaceShortEdge,
     ("statespace-short", "resting"): StatespaceShortResting,
     ("statespace-short", "arrival"): StatespaceShortArrival,
+    # **One entry, deliberately.** `smc_bos_c_L50|M15|N20|time` says "at
+    # market, on the open of the first minute after the M15 close", so a rest
+    # at a named price and a wait for an arrival are both a different rule.
+    # Listed for the edge alone, `desks.build` refuses the other two by name -
+    # which is the behaviour this table exists for.
+    ("smc-bos-causal", "edge"): StructureEdge,
 }
 
 #: The rules a deployment may name in `TRADING_STRATEGIES`.
@@ -254,5 +261,6 @@ __all__ = [
     "StatespaceShortEdge",
     "StatespaceShortProfile",
     "StatespaceShortResting",
+    "StructureEdge",
     "leaf",
 ]
