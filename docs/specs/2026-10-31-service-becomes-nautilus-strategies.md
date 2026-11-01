@@ -138,3 +138,22 @@ same time, which is why they are still here.
 
 Each step keeps the suite green, and none of them is finished until the
 behaviour it replaces has a test that would have caught its absence.
+
+## Step 6 is held, as of 2026-11-01
+
+Steps 1 to 5 are done and the desks are wired into both nodes. **The
+retirement is not**, and the reason is not the port:
+`nautilus_trader`'s `BacktestEngine.run()` aborts on this workstation with
+`double free or corruption (out)` and exit 134, reproduced with one bar, no
+strategy and without importing `till_infinity` at all. See
+[`backtest-loop-aborts-here.md`](../backtest-loop-aborts-here.md) for the
+bisection.
+
+So the ported desks have handler-level coverage - 1625 tests - and **no proven
+engine loop**. All 1625 pass because none of them enters it. Retiring
+`service.py` now would swap a path that has traded for a path whose loop has
+never completed, which would leave the desk with no proven way to trade at
+all. The ported desks are additive and cost nothing by sitting alongside, so
+they wait.
+
+What unblocks it is one run of a twenty-line bare engine on another host.
