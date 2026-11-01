@@ -258,6 +258,16 @@ def _actors() -> list[Actor]:
                 )
             )
         )
+    if not flag("STATUS_OFF"):
+        # **What the container's `HEALTHCHECK` reads.** Without it the probe
+        # has no source and can only prove a process is alive, which Docker
+        # already knew - and the three deploys on 2026-10-09 were health
+        # checked exactly that way while running none of the code they
+        # claimed. On by default for the same reason as the journal: a check
+        # nobody turns on is a check nobody has.
+        from till_infinity.node.status import Heartbeat, HeartbeatConfig
+
+        found.append(Heartbeat(HeartbeatConfig(path=os.environ.get("TILL_STATUS_PATH") or None)))
     if not flag("ALERTS_OFF"):
         from till_infinity.notifications.actor import Notifier, NotifierConfig
 

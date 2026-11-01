@@ -1,5 +1,14 @@
 # What each level made or lost
 
+> **The `till-infinity` commands below no longer exist.** The 2,852-line CLI
+> retired to `research/retire/bus/` with the services it drove, and
+> `pyproject.toml` declares no console script on purpose: a second way to run
+> the desk is a second thing to go stale. The node module is the entry
+> point - `python -m till_infinity.node.live`.
+>
+> The journal is read from Python now: `till_infinity.journal.read` and
+> `strategies/report.py`, which is what `journal levels` wrapped.
+
 ```bash
 uv run till-infinity journal levels              # every level, best and worst
 uv run till-infinity journal levels --min-trades 2

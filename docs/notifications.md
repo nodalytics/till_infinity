@@ -1,5 +1,12 @@
 # Notifications
 
+> **The `till-infinity` commands in this document no longer exist.** The
+> 2,852-line CLI retired to `research/retire/bus/` with the services it drove,
+> and `pyproject.toml` declares no console script on purpose: a second way to
+> run the desk is a second thing to go stale. The entry point is
+> `python -m till_infinity.node.live`, and
+> `python -m till_infinity.node.desks` says what it would run.
+
 `till_infinity.notifications` sends alerts to Telegram and Discord. Each
 provider fans out to as many channels as you list, so an on-call chat, a team
 board and a firehose can all be fed from one call.

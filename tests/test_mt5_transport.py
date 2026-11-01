@@ -694,3 +694,106 @@ def test_a_genuinely_empty_listing_is_empty():
     assert asyncio.run(made.positions()) == []
     quiet, _ = proxy(positions_get=None, last_error=(0, "no error"))
     assert asyncio.run(quiet.positions()) == []
+
+
+# ------------------------------------- the terminal's clock, measured not set
+
+
+def test_the_clock_offset_is_recovered_from_the_feed():
+    """**MT5 stamps ticks in broker server time**, which is not UTC on any
+    broker this desk trades, and `server_offset_seconds` defaults to `0.0` -
+    honest rather than right.
+
+    Within one venue nothing notices, because every comparison is relative.
+    Across two it builds a constant lead into every reading, and
+    `relationships-are-contemporaneous` is why that is expensive: the desk's
+    whole relationship screen is about simultaneity, and a lead of exactly
+    three hours is indistinguishable from a broker clock.
+
+    Recovered as the **minimum** implied offset, not the mean. A tick cannot
+    arrive before it was stamped, so the delay is one-sided and the minimum
+    converges on the offset plus the best round trip - where a mean would be
+    the offset plus the *average* delay, which on a 0.25s poll is an eighth of
+    a second of pure bias that wanders with load.
+    """
+    import random
+
+    from till_infinity.adapters.mt5.clocks import Clocks
+
+    random.seed(7)
+    clocks = Clocks()
+    stamped = 1_700_000_000_000_000_000
+    for step in range(60):
+        at = stamped + step * 250_000_000
+        # Three hours ahead, arriving 10-400ms later.
+        clocks.saw(at, at + 3 * 3600 * 1_000_000_000 + int(random.uniform(0.01, 0.4) * 1e9))
+
+    assert clocks.measured == pytest.approx(3 * 3600, abs=1.0)
+    assert clocks.disagrees(0.0) == pytest.approx(3 * 3600, abs=1.0)
+    assert clocks.disagrees(3 * 3600) is None, "configured correctly, so nothing to say"
+
+
+def test_an_offset_is_not_reported_before_it_is_worth_reporting():
+    """The estimate is a minimum, so it is badly wrong with few samples and can
+    only improve with more. Reporting early would mean reporting the first
+    tick's latency as a timezone."""
+    from till_infinity.adapters.mt5.clocks import LEAST, Clocks
+
+    clocks = Clocks()
+    for step in range(LEAST - 1):
+        clocks.saw(step * 1_000_000_000, step * 1_000_000_000 + 7_200_000_000_000)
+    assert clocks.measured is None
+    assert clocks.disagrees(0.0) is None
+    assert "not yet measured" in clocks.describe(0.0)
+
+
+def test_a_terminal_ahead_of_our_clock_is_kept_and_not_discarded():
+    """A negative implied offset means the stamp is ahead of us - a broker
+    ahead of UTC, or our own clock behind. Discarding it would make the
+    estimate silently one-sided."""
+    from till_infinity.adapters.mt5.clocks import LEAST, Clocks
+
+    clocks = Clocks()
+    for step in range(LEAST):
+        at = step * 250_000_000
+        clocks.saw(at, at - 7_200_000_000_000)
+    assert clocks.measured == pytest.approx(-7200, abs=1.0)
+
+
+def test_the_description_names_the_timezone_a_reader_would_recognise():
+    """A broker clock is almost always a whole or half number of hours, and
+    `10800` costs a reader the recognition that `+3.0h` gives away."""
+    from till_infinity.adapters.mt5.clocks import LEAST, Clocks
+
+    whole = Clocks()
+    for step in range(LEAST):
+        at = step * 250_000_000
+        whole.saw(at, at + 2 * 3600 * 1_000_000_000)
+    assert "+2.0h" in whole.describe(0.0)
+    assert "looks like a timezone" in whole.describe(0.0)
+
+    odd = Clocks()
+    for step in range(LEAST):
+        at = step * 250_000_000
+        odd.saw(at, at + 1337 * 1_000_000_000)
+    assert "not a whole timezone" in odd.describe(0.0)
+
+
+def test_nothing_applies_the_measurement_by_itself():
+    """**Reported, never applied.** Shifting every timestamp by an inferred
+    constant would be invisible, would move with the network, and a transport
+    glitch that produced a bad minimum would re-date the whole feed. The
+    configured value stays authoritative.
+
+    Asserted on the source because the property is an absence - there is no
+    call to make that proves a thing does not happen.
+    """
+    from pathlib import Path
+
+    import till_infinity.adapters.mt5.clocks as module
+
+    source = Path(module.__file__).read_text()
+    assert "def saw" in source
+    # No setter, no mutation of a config, nothing returning a corrected stamp.
+    assert "server_offset_seconds =" not in source
+    assert "def apply" not in source

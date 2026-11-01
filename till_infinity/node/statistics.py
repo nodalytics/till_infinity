@@ -230,7 +230,12 @@ class ProfitFactor(PortfolioStatistic):
         return None if got is None else round(got, 4)
 
 
-def register(analyzer, trial_sharpes: Sequence[float] = ()) -> None:
+def register(
+    analyzer,
+    trial_sharpes: Sequence[float] = (),
+    benchmark: pd.Series | None = None,
+    trial_ratios: Sequence[float] = (),
+) -> None:
     """Attach the gate statistic and the diagnostics to a `PortfolioAnalyzer`.
 
     Called by the backtest and live nodes so the same figures appear on both
@@ -275,17 +280,161 @@ def register(analyzer, trial_sharpes: Sequence[float] = ()) -> None:
     analyzer.register_statistic(ProbabilisticWinRate())
     if len(tuple(trial_sharpes)) >= 2:
         analyzer.register_statistic(DeflatedSharpe(trial_sharpes))
+    # **Registered only with a benchmark**, on the same terms as `DSR` with
+    # its trials: without one an information ratio *is* the Sharpe, so a
+    # statistic registered unconditionally would report `None` on every run
+    # and put two always-empty columns in every report. A reading that is
+    # always absent is noise that a reader learns to skip, and the next real
+    # absence is skipped with it.
+    if benchmark is not None:
+        analyzer.register_statistic(InformationRatio(benchmark))
+        if len(tuple(trial_ratios)) >= 2:
+            analyzer.register_statistic(DeflatedInformationRatio(benchmark, trial_ratios))
 
 
 #: The one statistic a promotion gate may read. Named so a future gate cannot
 #: quietly add a second without changing this line, which is the whole
 #: argument above made mechanical.
+class InformationRatio(PortfolioStatistic):
+    """Active return over tracking error, against a benchmark you supply.
+
+    **The benchmark is required and there is no default**, because against a
+    zero benchmark this is exactly the Sharpe - `metrics.information_ratio`
+    says so - and an information ratio reported against nothing is one
+    statistic counted twice under two names. A reader seeing both would
+    reasonably believe two things had been checked.
+
+    The benchmark that makes it a different question is **the rest of the
+    book**: "does this desk beat the others" is what an IR answers and a
+    Sharpe cannot. That is also the reading `strategy-rotation-is-not-
+    timeable` warns about - every pause rule this desk tried matched random
+    pausing at the same duty cycle - so a poor IR against the book is evidence
+    for *retiring* a strategy and not for switching it on and off.
+
+    A diagnostic rather than a gate. It is `expectancy / sd` of a differenced
+    series, so it is the same shape of quantity as `SR_period` and gating on
+    both would count one piece of evidence twice.
+
+    Constructed with the series rather than reading one, because
+    `calculate_from_returns` is handed a strategy's returns and nothing else -
+    so a statistic that wanted the book would have to reach for it, and what
+    it reached into would differ between a backtest and a live node.
+    """
+
+    def __init__(self, benchmark: pd.Series | None = None) -> None:
+        super().__init__()
+        self._benchmark = benchmark
+
+    @property
+    def name(self) -> str:
+        return "InfoRatio"
+
+    def calculate_from_returns(self, returns: pd.Series) -> float | None:
+        if self._benchmark is None:
+            # Refused rather than defaulted. The default that suggests itself
+            # is zero, and zero makes this the Sharpe.
+            return None
+        if returns is None or len(returns) == 0:
+            return None
+        # **Aligned on the index, before either side is cleaned.** Two series
+        # from one run differ in length wherever one strategy traded a day
+        # another sat out, and lining those up by position would compare
+        # Tuesday's return against Wednesday's benchmark - a window mismatch
+        # reported as a difference in skill. `_clean` drops to a list and
+        # loses the index, so the join has to come first.
+        paired = pd.concat(
+            [pd.Series(returns), pd.Series(self._benchmark)], axis=1, join="inner"
+        ).dropna()
+        if len(paired) < 4:
+            return None
+        try:
+            return round(
+                metrics.information_ratio(
+                    [float(x) for x in paired.iloc[:, 0]],
+                    [float(x) for x in paired.iloc[:, 1]],
+                ),
+                6,
+            )
+        except ValueError:
+            # A constant active return has no ratio - which happens when a
+            # strategy tracks its benchmark exactly, and is not a failure.
+            return None
+
+
+class DeflatedInformationRatio(PortfolioStatistic):
+    """`DIR`: the information ratio, deflated against the search that found it.
+
+    The same construction as `DSR` and for the same reason - a candidate
+    selected as the best of many trials shows a ratio inflated by the
+    selection, and at a target Sharpe of 1.5 one month of data supports about
+    one trial. What changes is only which series it is computed on.
+
+    **The trial ratios must be information ratios, not Sharpes.**
+    `expected_max_sharpe` reads their spread to say what the best of them
+    would show from nothing, so a spread measured on undifferenced returns
+    deflates against a different search - and the answer would look like a
+    number rather than like a mistake. The constructor takes both because
+    neither has a defensible default: no benchmark makes this `DSR`, and no
+    trials makes it `PSR`.
+
+    A **gate candidate rather than a gate**, and deliberately not in `GATES`.
+    `DSR` is the gate; adding a second gate on the same algebra over a
+    differenced series would count one piece of evidence twice, which is the
+    reason every other reading here is a diagnostic. It earns a place in
+    `GATES` the day a benchmark series is routinely available at promotion
+    time, and not before.
+    """
+
+    def __init__(
+        self,
+        benchmark: pd.Series | None = None,
+        trial_ratios: Sequence[float] = (),
+    ) -> None:
+        super().__init__()
+        self._benchmark = benchmark
+        self._trials = tuple(float(ratio) for ratio in trial_ratios)
+
+    @property
+    def name(self) -> str:
+        return "DIR"
+
+    @property
+    def trials(self) -> int:
+        return len(self._trials)
+
+    def calculate_from_returns(self, returns: pd.Series) -> float | None:
+        if self._benchmark is None or self.trials < 2:
+            # Both refused rather than defaulted, for the reasons above: this
+            # would otherwise quietly become `DSR` or `PSR` under a third name.
+            return None
+        if returns is None or len(returns) == 0:
+            return None
+        paired = pd.concat(
+            [pd.Series(returns), pd.Series(self._benchmark)], axis=1, join="inner"
+        ).dropna()
+        if len(paired) < 4:
+            return None
+        try:
+            return round(
+                metrics.deflated_information_ratio(
+                    [float(x) for x in paired.iloc[:, 0]],
+                    [float(x) for x in paired.iloc[:, 1]],
+                    self._trials,
+                ),
+                6,
+            )
+        except ValueError:
+            return None
+
+
 GATES: tuple[str, ...] = ("DSR",)
 
 #: Reported for a person. Correlated with each other and with the gate, which
 #: is why they are not gates.
 DIAGNOSTICS: tuple[str, ...] = (
+    "DIR",
     "Expectancy",
+    "InfoRatio",
     "MinTRL",
     "PSR",
     "Payoff",

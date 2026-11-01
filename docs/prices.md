@@ -11,6 +11,12 @@ configured for it. Anything else works too.
 
 ## Commands
 
+> **These no longer exist**, and neither does the `prices` package: the feed
+> is a Nautilus `LiveMarketDataClient` in `adapters/mt5/` now, subscribed by
+> the node rather than collected by a command. Kept because the measured facts
+> about each source below are still the facts. The entry point is
+> `python -m till_infinity.node.live`.
+
 ```bash
 uv run till-infinity prices symbols            # what -s accepts
 uv run till-infinity prices backfill           # deep history, all sources
@@ -208,11 +214,37 @@ The feed name is a slug of it (`volatility_75_index`), because feed names
 travel through journal keys and log lines. A name the account does not carry
 simply never quotes and says so once.
 
-**It polls; there is no stream.** The bridge publishes no websocket and no SSE
-- forty-seven routes, and its only `subscribe` is
-`/symbols/book/{symbol}/subscribe`, which is MT5 market *depth* and is itself
-read by polling. "Stream prices from the terminal" is the obvious way to
-describe the goal and is not what the transport does.
+**It polls, and since 2026-11-01 it does not have to.** This said "there is
+no stream", and that was true when it was written: forty-seven routes, and the
+only `subscribe` was `/symbols/book/{symbol}/subscribe`, which is MT5 market
+*depth* and is itself read by polling.
+
+Two things changed, and the distinction between them is the whole point.
+
+`metatrader-terminal` now serves `WS /api/v1/stream`. On its own that is **not
+a stream in the sense that matters**: its tick pump calls `symbol_info_tick`
+on a 0.25s timer and sends what differs, so it is the same poll moved inside
+the bridge. Its own docstring said as much - "MT5 has no push API, so this
+polls". That is true of the *Python* side: `symbol_info_tick` is a question
+and there is no callback to register.
+
+Inside the terminal the limitation does not exist. `OnTick` is a real
+callback, so `MT5/ea/TillTickFeed.mq5` pushes every tick out over a socket and
+the bridge relays it. **A symbol with that EA attached is pushed at the rate
+the market moves; a symbol without one is still polled.**
+
+Why it is worth the trouble: a poll is a *sample*. A quote that moved and
+moved back between two polls never happened as far as anything downstream is
+concerned, and no interval fixes that - a tighter one samples faster and costs
+the terminal more. A push carries every tick the terminal saw, and the EA's
+`seq` counter makes a *lost* frame visible, so a gap can be refilled from
+`copy_ticks_range` instead of being a hole nobody knows about.
+
+Every frame carries `source`, `ea` or `poll`, and a client that must have the
+push asks for `require=ea` and is **refused** rather than quietly polled: a
+consumer that asked for a push and silently got a sample would take every
+measurement on a feed that is not the one it believes it has, and nothing
+about the result would look wrong.
 
 **A symbol has to be selected before it will quote, and skipping that is
 silent.** MT5 only streams ticks for symbols in Market Watch; an unselected one
@@ -227,6 +259,23 @@ well-formed, and empty. Measured on the live bridge:
 So `prepare` selects every symbol once at start-up. Without it the source polls
 happily and publishes nothing, which is the failure that looks like working
 code.
+
+**The terminal's clock is not UTC, and that is now measured rather than
+assumed.** MT5 stamps ticks in broker server time - typically UTC+2 or UTC+3,
+moving with the broker's own daylight saving. Within one venue nothing
+notices, because every comparison is relative. Across two it builds a constant
+offset into everything, and `relationships-are-contemporaneous` is why that is
+expensive: the desk's whole relationship screen is about simultaneity, and a
+lead of exactly three hours is indistinguishable from a broker clock.
+
+`adapters/mt5/clocks.py` recovers it off the feed as the **minimum** implied
+offset - a tick cannot arrive before it was stamped, so the delay is one-sided
+and the minimum converges on the offset plus the best round trip, where a mean
+would carry the average delay as bias. It **reports and never applies**:
+`server_offset_seconds` stays authoritative, because shifting every timestamp
+by an inferred constant would be invisible and would move with the network.
+The log line names the hours, because a broker clock is nearly always a whole
+or half number of them.
 
 **The tick's own time is kept, not restamped.** A frozen tick time is how a
 shut market is recognised - see `_shut_for` in [trading.md](trading.md) - and

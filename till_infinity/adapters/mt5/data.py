@@ -37,6 +37,7 @@ from nautilus_trader.model.data import Bar, BarType, QuoteTick
 from nautilus_trader.model.identifiers import ClientId, Venue
 from nautilus_trader.model.objects import Price, Quantity
 
+from .clocks import Clocks
 from .config import MT5DataClientConfig
 from .providers import MT5InstrumentProvider
 from .redact import redact
@@ -128,6 +129,10 @@ class MT5DataClient(LiveMarketDataClient):
         self._cfg = config
         self._bridge = connect(config)
         self._pollers: dict[str, asyncio.Task] = {}
+        #: How far the terminal's clock is from ours, measured off the feed.
+        #: One per client rather than per symbol: it is a property of the
+        #: terminal, and every symbol on it shares the clock.
+        self._clocks = Clocks()
         #: The last bar time published per bar type, so a forming bar is not
         #: published twice. `prices` learned this the hard way: a notice per
         #: *touched* bar meant the bar in progress arrived on every sweep, and
@@ -299,8 +304,25 @@ class MT5DataClient(LiveMarketDataClient):
         if msc == mark and (bid, ask) in seen:
             return False
         self._mark[symbol] = (msc, {(bid, ask)} if msc > mark else seen | {(bid, ask)})
-        offset = int(getattr(self._cfg, "server_offset_seconds", 0) or 0)
-        ts_event = msc * 1_000_000 - offset * 1_000_000_000
+        offset = float(getattr(self._cfg, "server_offset_seconds", 0) or 0)
+        ts_event = int(msc * 1_000_000 - offset * 1_000_000_000)
+        # **Measured against the configured value, and said once if they
+        # disagree.** MT5 stamps ticks in broker server time, which is not UTC
+        # on any broker this desk trades, and the default is `0.0` - honest
+        # rather than right. Within one venue nothing notices, because every
+        # comparison is relative; across two it builds a constant lead into
+        # every reading, and `relationships-are-contemporaneous` is why that
+        # is expensive - the whole relationship screen is about simultaneity.
+        #
+        # Reported, never applied: see `clocks.py`. Shifting every timestamp
+        # by an inferred constant would be invisible and would move with the
+        # network.
+        now = self._clock.timestamp_ns()
+        self._clocks.saw(int(msc * 1_000_000), now)
+        gap = self._clocks.disagrees(offset)
+        if gap is not None and not self._clocks.told:
+            self._clocks.told = True
+            self._log.warning(self._clocks.describe(offset))
         self._handle_data(
             QuoteTick(
                 instrument_id=instrument_id,

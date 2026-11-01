@@ -1,5 +1,12 @@
 # Structures
 
+> **The `till-infinity` commands in this document no longer exist.** The
+> 2,852-line CLI retired to `research/retire/bus/` with the services it drove,
+> and `pyproject.toml` declares no console script on purpose: a second way to
+> run the desk is a second thing to go stale. The entry point is
+> `python -m till_infinity.node.live`, and
+> `python -m till_infinity.node.desks` says what it would run.
+
 The numeric layer. It watches quotes and fast bars, learns continuously what is
 normal, and says when something is not - **arithmetic, not judgement, and it
 does not stop when a model provider does.**

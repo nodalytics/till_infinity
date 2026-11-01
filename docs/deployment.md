@@ -1,22 +1,48 @@
 # Running it somewhere
 
-Three shapes, and which one is right is decided by how much memory the machine
-has rather than by preference.
+**One shape, since the Nautilus port**, and the choice that used to be here is
+gone rather than resolved: there is no longer a service-per-process option to
+pick, because the services are no longer processes.
 
 | | processes | bus | when |
 |---|---|---|---|
-| `till-infinity run` | one | in-process | a laptop, an end-to-end check, a small box |
-| `docker compose` | one per service | Redis | anywhere the services should scale or fail apart |
-| CI → GHCR → instance | one | in-process | a small always-on server |
+| `python -m till_infinity.node.live` | one | Nautilus, in-process | a laptop, an end-to-end check |
+| `docker compose up -d` | one | the same | a box you keep running |
+| CI → GHCR → instance | one | the same | the always-on server |
 
-## One process
+All three run the same thing. The difference is only who starts it.
+
+**The table used to offer `docker compose` as "one process per service over
+Redis".** That stopped being true and then stopped being possible: the
+compose file started six containers on subcommands of a `till-infinity`
+console script this project does not declare, so every one of them failed
+immediately. Fixed 2026-11-01.
+
+## The node
 
 ```bash
-uv run till-infinity run
+uv run python -m till_infinity.node.live
 ```
 
-Every service against one in-process bus. Nothing to install, nothing to
-coordinate, and the whole system in one log.
+One `TradingNode`: the MT5 adapter for data and execution, the statespace
+fold, the journal and the notifier as `Actor`s, and one `Strategy` per
+(rule, entry, instrument). One message bus, one cache, one portfolio.
+
+That sharing is the reason there is one process and not six. One cache and one
+portfolio is what makes "what is this account risking, across every venue" a
+question with an answer, and a process per service would put each one's
+positions out of the others' sight.
+
+Before starting it, ask what it would run:
+
+```bash
+uv run python -m till_infinity.node.desks
+```
+
+which prints the venues, the rules, the entries and every instrument, and
+**exits non-zero if the answer is nothing** - because a node that connects,
+reconciles, reports up and trades nothing is a failure this desk has had three
+times.
 
 ## One container per service
 

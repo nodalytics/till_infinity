@@ -1,5 +1,18 @@
 # Key price levels
 
+> **The `till-infinity` commands below no longer exist.** The 2,852-line CLI
+> retired to `research/retire/bus/` with the services it drove, and
+> `pyproject.toml` declares no console script on purpose: a second way to run
+> the desk is a second thing to go stale. The node module is the entry
+> point - `python -m till_infinity.node.live`.
+>
+> **`structures` itself retired on 2026-10-29**, with the eight level-scalper
+> strategies that read it, and is in `research/retire/structures/`. This
+> document is kept because the model is the ancestor of `statespace/`: the
+> successor asks the same question as a predictive distribution with a
+> likelihood that can be scored against a null, rather than as a pattern
+> that either matched or did not.
+
 Where price has turned before, how sure we are it turns *there*, and what it
 did last time it arrived - from that side.
 

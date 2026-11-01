@@ -186,30 +186,37 @@ than preference - six services need about 861 MB, so a small box wants the
 
 ### Locally
 
-Requires [uv](https://docs.astral.sh/uv/). Python 3.11 is pinned in `.python-version`.
+Requires [uv](https://docs.astral.sh/uv/). Python 3.13 is pinned in
+`.python-version` - 3.12 is the floor, because every `nautilus_trader` release
+that does not abort inside `BacktestEngine.run()` requires it.
 
 ```bash
-uv sync                      # runtime + dev deps
-cp .env.example .env         # optional: every setting, documented
-uv run till-infinity run     # collectors, levels, journal - all of it
+uv sync                                  # runtime + dev deps
+cp .env.example .env                     # optional: every setting, documented
+uv run python -m till_infinity.node.desks   # what would run, without running it
+uv run python -m till_infinity.node.live    # the node
 ```
 
-That is the whole thing running: prices and news collecting, `structures`
-finding levels and anomalies, the journal recording, notifications delivering.
-One bus, one process.
+That is one `TradingNode`: the MT5 adapter for data and execution, the
+statespace fold as an `Actor`, the journal and the notifier as `Actor`s, and
+one `Strategy` per (rule, entry, instrument). They share one message bus, one
+cache and one portfolio - which is what makes exposure answerable across
+venues rather than a packaging choice.
 
-```
-till infinity · in-process bus · journal, structures, prices, news
-00:33:18  structures  dislocation gold/PEPPERSTONE +1.06bps off where 5 other venues agree
-00:33:22  structures  spread gold/SAXO 2.2x the group at 0.88bps
-```
+**There is no `till-infinity` command**, deliberately. A 2,852-line CLI
+retired with the services it drove, and a second way to run the desk is a
+second thing to go stale. The node module is the entry point, and the image's
+`ENTRYPOINT` is the same line.
+
+**Nothing arms it but `TRADING_LIVE`.** Unset, the node connects, reconciles,
+subscribes and computes - those are reads, and they are how the desk is
+observed - while its risk engine sits in `HALTED` and every order is denied
+inside the engine, below the strategies and above the client.
 
 ```bash
-uv run till-infinity run --for 300 -s gold    # one instrument, five minutes
-uv run till-infinity run --once               # one collection pass, then stop
+uv run python -m till_infinity.node.status   # up, fresh, and trading something?
 ```
 
-Anything that cannot start says why at second zero and the others carry on.
 Settings come from `.env` - see [.env.example](.env.example) - with real
 environment variables winning, so a deployment is never overridden by a file.
 
@@ -218,14 +225,15 @@ separately; see [how the parts talk](#how-the-parts-talk).
 
 ## Structures
 
-Online models over the price data: every venue measured against the consensus
-of the others, and the key levels price keeps turning at.
+**Retired on 2026-10-29**, with the eight level-scalper strategies that read
+it. The commands below no longer exist and the package is in
+`research/retire/structures/`; what it did is described here because the model
+is the ancestor of `statespace/` and the reasoning is worth keeping.
 
-```bash
-uv run till-infinity structures levels            # what it has found
-uv run till-infinity structures levels --at 4405  # what the history says
-uv run till-infinity structures watch             # run it on its own
-```
+The successor answers the same question - "is this instrument away from where
+it should be, and by how much" - as a predictive distribution with a
+likelihood that can be scored against a null, rather than as a pattern that
+either matched or did not.
 
 A level is a **latent state in a state-space model** rather than a line - each
 touch is a noisy observation of where it sits, so the model's variance *is* the
@@ -327,17 +335,26 @@ journal, so one process writes it and a service on another machine can record
 a decision at all. `structures` reaches `alerts` directly for findings that
 interpret themselves: a feed that has stopped needs no model and no calendar.
 
-`till-infinity run` starts all of these in one process against one bus, which
-is what you want for a laptop or an end-to-end check. Run them separately when
-they should scale or fail independently:
+**They are no longer separate processes, and that is the change the port
+made.** Each was its own service over Redis, started by its own subcommand,
+and they could scale and fail independently. Now the statespace fold, the
+journal and the notifier are `Actor`s and the desks are `Strategy`s, all in
+one kernel:
 
 ```bash
-uv run till-infinity prices collect    --publish redis://localhost:6379 &
-uv run till-infinity news collect      --publish redis://localhost:6379 &
-uv run till-infinity structures watch  --redis   redis://localhost:6379 &
-uv run till-infinity journal listen    --redis   redis://localhost:6379 &
-uv run till-infinity notify listen     --redis   redis://localhost:6379 &
+uv run python -m till_infinity.node.live
 ```
+
+The sharing is the reason rather than a convenience. One cache and one
+portfolio is what makes "what is this account risking, across every venue" a
+question with an answer - `risk/exposure.py` exists because that is a property
+of an account and not of a ticket - and a process per service would put each
+one's positions out of the others' sight.
+
+**Redis is gone with them.** Nothing under `till_infinity/` imports it;
+Nautilus's bus is in-process, with its own optional Redis backing if a future
+deploy wants one. A bus nothing publishes to is a dependency that can only
+fail.
 
 ## Where it lands
 

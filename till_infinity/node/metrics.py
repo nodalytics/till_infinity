@@ -130,6 +130,64 @@ def sharpe(returns: Sequence[float]) -> float:
     return mean / sd
 
 
+def active(returns: Sequence[float], benchmark: Sequence[float]) -> list[float]:
+    """Return less benchmark, period by period.
+
+    Refuses a length mismatch rather than truncating or padding. A benchmark
+    that is shorter because it came from a different window would silently
+    align period 1 against period 1 of a different month, and the resulting
+    tracking error would be a window mismatch reported as a skill measure.
+    """
+    if len(returns) != len(benchmark):
+        raise ValueError(
+            f"{len(returns)} returns against {len(benchmark)} benchmark periods: "
+            f"an information ratio needs them aligned, and padding one would "
+            f"measure a window mismatch rather than a difference in skill"
+        )
+    return [r - b for r, b in zip(returns, benchmark, strict=True)]
+
+
+def tracking_error(returns: Sequence[float], benchmark: Sequence[float]) -> float:
+    """Standard deviation of the active return. The IR's denominator.
+
+    Reported in its own right because it is the half of an information ratio a
+    person can act on: a high IR from a tiny tracking error is a strategy that
+    barely deviates, which is a different thing to own from one that deviates
+    a lot and is right.
+    """
+    difference = active(returns, benchmark)
+    _mean, sd, _skew, _kurt = moments(difference)
+    return sd
+
+
+def information_ratio(returns: Sequence[float], benchmark: Sequence[float]) -> float:
+    """Mean active return over its standard deviation. Not annualised.
+
+    **Against a zero benchmark this is exactly the Sharpe**, and that is worth
+    stating because it is the reason the benchmark is a required argument with
+    no default. An information ratio reported against nothing is a Sharpe
+    wearing a name that implies a comparison nobody made - and this desk has
+    already paid for one statistic counted twice under two names:
+    `fit-on-the-edge-not-the-raw-score` is the same error in a different
+    place, where a fitted weighting beat a hand-tuned one on AUC and lost on
+    edge.
+
+    The benchmark that makes it a different question is **the rest of the
+    book**. "Does this desk beat the others" is what an IR answers and a
+    Sharpe cannot, and it is the measurement `strategy-rotation-is-not-
+    timeable` says to be careful with: every pause rule this desk tried
+    matched random pausing at the same duty cycle, so a strategy with a poor
+    IR against the book is a candidate for retirement and **not** a candidate
+    for being switched on and off.
+
+    Not annualised, for the same reason as `sharpe`: the thresholds here are
+    on the per-period scale.
+    """
+    difference = active(returns, benchmark)
+    mean, sd, _skew, _kurt = moments(difference)
+    return mean / sd
+
+
 def trial_variance(trial_sharpes: Sequence[float]) -> float:
     """Variance of the Sharpes across everything that was tried.
 
@@ -195,6 +253,33 @@ def deflated_sharpe(returns: Sequence[float], trial_sharpes: Sequence[float]) ->
     variance = trial_variance(trial_sharpes)
     threshold = expected_max_sharpe(variance, len(trial_sharpes))
     return probabilistic_sharpe(returns, benchmark=threshold)
+
+
+def deflated_information_ratio(
+    returns: Sequence[float],
+    benchmark: Sequence[float],
+    trial_ratios: Sequence[float],
+) -> float:
+    """DIR: the deflated Sharpe, computed on the **active** return series.
+
+    **It is the same statistic, not an analogue of it.** An information ratio
+    is the Sharpe of `returns - benchmark`, so deflating one is deflating the
+    other on a differenced series - and writing out the PSR algebra again here
+    would be a second copy of a formula to drift from the first. It delegates,
+    and that is the whole implementation.
+
+    What *does* have to be different is the trial set. `trial_ratios` must be
+    the information ratios of everything the search tried, **not** their
+    Sharpes: `expected_max_sharpe` reads the spread of the trials to say what
+    the best of them would show from nothing, and a spread measured on
+    undifferenced returns answers that question about a different search.
+    Passing Sharpes here would deflate against the wrong distribution, and the
+    result would look like a number rather than like a mistake.
+
+    Read it as: given this candidate was the best of what was tried, how
+    likely is its true active return to be positive.
+    """
+    return deflated_sharpe(active(returns, benchmark), trial_ratios)
 
 
 def minimum_track_record(returns: Sequence[float], target: float = 0.95) -> float:

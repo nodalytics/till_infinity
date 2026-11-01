@@ -65,6 +65,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy as NautilusStrategy
 
 from ..domain.models import Intent, Refusal, SymbolSpec, Tick
+from ..utils.topics import PROPOSALS, subscribe
 from .config import Settings
 from .counterfactual import Counterfactual, Resolved
 
@@ -136,7 +137,15 @@ class Desk(NautilusStrategy):
         self._register()
         self.subscribe_bars(self._cfg.bar_type)
         self.subscribe_quote_ticks(self._cfg.instrument_id)
-        self.log.info(f"{self._cfg.rule} on {self._cfg.bar_type}")
+        # **The readings this desk decides on.** Nothing subscribed to
+        # `statespace.proposals` after the port: `service.py` consumed it and
+        # `StatespaceActor` publishes it, so for weeks there was a producer
+        # with no consumer - and a producer whose own tally counts what it
+        # sent looks healthy from either side. That shape has now hidden this
+        # one topic twice, which is why the subscribe sits next to the bars
+        # rather than somewhere a reader has to go looking for it.
+        subscribe(self, PROPOSALS, self.on_data)
+        self.log.info(f"{self._cfg.rule} on {self._cfg.bar_type}, proposals on {PROPOSALS}")
 
     def on_stop(self) -> None:
         """Say what it did, because a strategy that stops silently leaves no
@@ -417,8 +426,24 @@ class Desk(NautilusStrategy):
         """
 
     def on_data(self, data: Any) -> None:
-        """A published reading. The gate sequence, then place or record."""
-        payload = getattr(data, "value", None) or getattr(data, "payload", None)
+        """A published reading. The gate sequence, then place or record.
+
+        **Takes a bare dict as well as a wrapped one**, because the two ways a
+        reading arrives here deliver different things. `subscribe_data` hands
+        over a `Data` subclass with the payload on an attribute;
+        `msgbus.subscribe` hands over the message itself, and
+        `utils/topics.subscribe` says so - the bus does not pass the topic
+        either.
+
+        Unwrapping only would have made this silently return on every
+        proposal: `getattr({}, "value", None)` is `None`, so the handler would
+        run, find nothing and do nothing, for every reading statespace
+        published. A consumer that is subscribed and inert looks exactly like
+        a producer that is quiet.
+        """
+        payload = data if isinstance(data, dict) else None
+        if payload is None:
+            payload = getattr(data, "value", None) or getattr(data, "payload", None)
         if not isinstance(payload, dict):
             return
         verdict = self.consider(payload)

@@ -1,5 +1,12 @@
 # Trading
 
+> **The `till-infinity` commands in this document no longer exist.** The
+> 2,852-line CLI retired to `research/retire/bus/` with the services it drove,
+> and `pyproject.toml` declares no console script on purpose: a second way to
+> run the desk is a second thing to go stale. The entry point is
+> `python -m till_infinity.node.live`, and
+> `python -m till_infinity.node.desks` says what it would run.
+
 Turning level calls into positions, on MetaTrader 5 or on paper.
 
 This is the only part of the project that can lose money. Everything about how

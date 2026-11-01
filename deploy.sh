@@ -2,8 +2,14 @@
 # Replace the running container with a new image. **Runs on the instance**,
 # not here - the deploy workflow copies it across and executes it there.
 # See docs/deployment.md.
-# this started on. `till-infinity run` is one process with an in-process bus,
-# which is the shape that hardware could hold.
+# this started on. One process is the shape that hardware could hold, and
+# since the Nautilus port it is also the shape the code has: one `TradingNode`
+# with the statespace fold, the journal, the notifier and the desks all inside
+# it, sharing one cache and one portfolio.
+#
+# The image's `ENTRYPOINT` is `python -m till_infinity.node.live` - there is no
+# console script, deliberately, and this script passed `run` to one that did
+# not exist until 2026-11-01.
 #
 # See docs/deployment.md.
 set -euo pipefail
@@ -162,7 +168,11 @@ docker run -d \
   --add-host=host.docker.internal:host-gateway \
   -v "$DATA:/app/.data" \
   --log-opt max-size=10m --log-opt max-file=3 \
-  "$IMAGE:$TAG" run || {
+  `# No command: the image's ENTRYPOINT is the node module. This passed
+   # "run", a subcommand of a console script that this project does not
+   # declare - so the container exited immediately, every time, and the
+   # rollback below was what kept the box alive.` \
+  "$IMAGE:$TAG" || {
     echo "the new container would not start" >&2
     restore_previous && exit 1
     echo "ROLLBACK FAILED - there is no container. Look now." >&2

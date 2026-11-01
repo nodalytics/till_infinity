@@ -191,12 +191,21 @@ def test_no_diagnostic_is_also_a_gate():
 
 def test_every_registered_statistic_is_declared_as_one_or_the_other():
     """A statistic in neither list is one nobody decided the status of."""
+    import pandas as pd
     from nautilus_trader.analysis.analyzer import PortfolioAnalyzer
 
     from till_infinity.node.statistics import register
 
     analyzer = PortfolioAnalyzer()
-    register(analyzer, trial_sharpes=[0.4, 0.9, -0.2, 1.4, 0.1, 0.7, -0.5, 1.1])
+    # Everything supplied, because two of these register conditionally - `DSR`
+    # on having trials and the two ratios on having a benchmark. Registering
+    # them unconditionally would put always-empty columns in every report.
+    register(
+        analyzer,
+        trial_sharpes=[0.4, 0.9, -0.2, 1.4, 0.1, 0.7, -0.5, 1.1],
+        benchmark=pd.Series([0.0, 0.0, 0.0, 0.0]),
+        trial_ratios=[0.2, -0.1, 0.4, 0.05],
+    )
     declared = set(GATES) | set(DIAGNOSTICS)
     assert set(analyzer._statistics) == declared, set(analyzer._statistics) ^ declared
 
@@ -212,3 +221,152 @@ def test_the_deflation_undoes_a_confident_psr():
     trials = [0.4, 0.9, -0.2, 1.4, 0.1, 0.7, -0.5, 1.1]
     assert metrics.probabilistic_sharpe(SAMPLE) > 0.997
     assert metrics.deflated_sharpe(SAMPLE, trials) < 0.01
+
+
+# ---------------------------------------- the information ratio, and deflating it
+
+
+def series(values, start="2026-01-01"):
+    import pandas as pd
+
+    return pd.Series(values, index=pd.date_range(start, periods=len(values), freq="D"))
+
+
+RETURNS = [0.01, -0.005, 0.02, 0.015, -0.01, 0.03, 0.004, -0.002]
+BOOK = [0.005, -0.002, 0.01, 0.012, -0.004, 0.02, 0.003, -0.001]
+
+
+def test_an_information_ratio_against_zero_is_the_sharpe():
+    """**Which is the whole reason the benchmark has no default.** An IR
+    reported against nothing is one statistic counted twice under two names,
+    and a reader seeing both would reasonably believe two things had been
+    checked.
+
+    Asserted as an exact identity rather than approximately, because it is one:
+    the IR is the Sharpe of `returns - benchmark`, and subtracting zero is a
+    no-op.
+    """
+    from till_infinity.node.statistics import InformationRatio
+
+    against_zero = InformationRatio(series([0.0] * len(RETURNS)))
+    assert against_zero.calculate_from_returns(series(RETURNS)) == round(metrics.sharpe(RETURNS), 6)
+
+
+def test_no_benchmark_is_refused_rather_than_defaulted():
+    """The default that suggests itself is zero, and zero makes it the Sharpe.
+    So it answers nothing instead of answering a different question."""
+    from till_infinity.node.statistics import InformationRatio
+
+    assert InformationRatio().calculate_from_returns(series(RETURNS)) is None
+
+
+def test_the_ratio_against_the_book_is_a_different_reading():
+    """ "Does this desk beat the others" is what an IR answers and a Sharpe
+    cannot. The two differ here, which is the only thing that makes it worth
+    reporting."""
+    from till_infinity.node.statistics import InformationRatio
+
+    against_book = InformationRatio(series(BOOK)).calculate_from_returns(series(RETURNS))
+    assert against_book != pytest.approx(metrics.sharpe(RETURNS))
+    assert against_book == pytest.approx(metrics.information_ratio(RETURNS, BOOK), abs=1e-6)
+
+
+def test_a_benchmark_is_aligned_on_the_index_and_not_by_position():
+    """Two series from one run differ in length wherever one strategy traded a
+    day another sat out. Lined up by position that compares Tuesday's return
+    against Wednesday's benchmark - a window mismatch reported as a difference
+    in skill."""
+    from till_infinity.node.statistics import InformationRatio
+
+    full = series(RETURNS)
+    # The same benchmark, offset by three days: only five days overlap.
+    shifted = series(BOOK, start="2026-01-04")
+    found = InformationRatio(shifted).calculate_from_returns(full)
+    overlap = metrics.information_ratio(RETURNS[3:], BOOK[:5])
+    assert found == pytest.approx(overlap, abs=1e-6)
+
+
+def test_a_length_mismatch_is_refused_in_the_arithmetic():
+    """The statistic aligns, so this is the layer below: handed two unaligned
+    lists directly, it raises rather than truncating. Padding or trimming one
+    would measure a window mismatch."""
+    with pytest.raises(ValueError, match="an information ratio needs them aligned"):
+        metrics.information_ratio(RETURNS, BOOK[:4])
+
+
+def test_a_strategy_that_tracks_its_benchmark_exactly_has_no_ratio():
+    """A constant active return has no standard deviation to divide by. That
+    is not a failure - it is a strategy that *is* its benchmark - so it reports
+    nothing rather than raising."""
+    from till_infinity.node.statistics import InformationRatio
+
+    same = series(RETURNS)
+    assert InformationRatio(same).calculate_from_returns(same) is None
+
+
+def test_the_tracking_error_is_reported_in_its_own_right():
+    """It is the half a person can act on: a high ratio off a tiny tracking
+    error is a strategy that barely deviates, which is a different thing to
+    own from one that deviates a lot and is right."""
+    assert metrics.tracking_error(RETURNS, BOOK) == pytest.approx(0.005430, abs=1e-5)
+    assert metrics.tracking_error(RETURNS, [0.0] * len(RETURNS)) == pytest.approx(
+        metrics.moments(RETURNS)[1], abs=1e-9
+    )
+
+
+def test_the_deflated_ratio_against_zero_is_the_deflated_sharpe():
+    """**The identity that proves the delegation is right.** A deflated IR is
+    the deflated Sharpe on a differenced series, so writing the PSR algebra
+    out again would have been a second copy of a formula to drift from the
+    first."""
+    from till_infinity.node.statistics import DeflatedInformationRatio
+
+    trials = [0.1, -0.2, 0.35, 0.05, -0.1, 0.22]
+    zero = series([0.0] * len(RETURNS))
+    found = DeflatedInformationRatio(zero, trials).calculate_from_returns(series(RETURNS))
+    assert found == round(metrics.deflated_sharpe(RETURNS, trials), 6)
+
+
+def test_the_deflated_ratio_is_below_the_undeflated_one():
+    """Which is the point of deflating: a candidate selected as the best of
+    many trials shows a ratio inflated by the selection, and at a target
+    Sharpe of 1.5 a month of data supports about one trial."""
+    from till_infinity.node.statistics import DeflatedInformationRatio, InformationRatio
+
+    book = series(BOOK)
+    plain = InformationRatio(book).calculate_from_returns(series(RETURNS))
+    trials = [0.1, -0.2, 0.35, 0.05, -0.1, 0.22, 0.4, -0.05]
+    deflated = DeflatedInformationRatio(book, trials).calculate_from_returns(series(RETURNS))
+    # Different scales - one is a ratio, the other a probability - so what is
+    # asserted is that the probability is not a certainty, which is what a
+    # search of eight trials buys.
+    assert 0.0 <= deflated <= 1.0
+    assert plain > 0.0
+
+
+def test_the_deflated_ratio_refuses_without_a_benchmark_or_without_trials():
+    """Neither has a defensible default: no benchmark makes it `DSR`, and no
+    trials makes it `PSR`. Defaulting either would give a third name to a
+    statistic that is already reported."""
+    from till_infinity.node.statistics import DeflatedInformationRatio
+
+    book = series(BOOK)
+    assert (
+        DeflatedInformationRatio(None, [0.1, 0.2]).calculate_from_returns(series(RETURNS)) is None
+    )
+    assert DeflatedInformationRatio(book, [0.1]).calculate_from_returns(series(RETURNS)) is None
+    assert DeflatedInformationRatio(book, []).calculate_from_returns(series(RETURNS)) is None
+
+
+def test_both_ratios_are_diagnostics_and_neither_is_a_gate():
+    """`DSR` is the gate. A second gate on the same algebra over a differenced
+    series would count one piece of evidence twice, which is why every other
+    reading here is a diagnostic.
+
+    `DIR` earns a place in `GATES` the day a benchmark series is routinely
+    available at promotion time, and this test is where that decision gets
+    made rather than drifted into.
+    """
+    assert "InfoRatio" in DIAGNOSTICS
+    assert "DIR" in DIAGNOSTICS
+    assert GATES == ("DSR",)

@@ -145,11 +145,30 @@ VOLUME ["/app/.data"]
 
 USER till
 
-# `health` reads the status the running stack writes, so a dead service fails
-# the probe. `--version` did not, and reported healthy for three hours with no
-# trading service - see deployment.md. The start period covers the warm-up.
-HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 \
-    CMD till-infinity health || exit 1
+# **The module, not a console script.** `ENTRYPOINT ["till-infinity"]` named a
+# console script this project deliberately does not declare - the 2,852-line
+# CLI retired with the services it drove, and `pyproject.toml` records the
+# reason: a second way to run the desk is a second thing to go stale. So the
+# image could not start at all, and neither could any service in
+# `docker-compose.yml`, every one of which ran a retired subcommand.
+#
+# `python -m till_infinity.node.live` is the entry point the retirement note
+# names, and it is now the only one.
 
-ENTRYPOINT ["till-infinity"]
-CMD ["run"]
+# The probe reads the status the node writes on its own clock, so a kernel that
+# has stopped dispatching fails it - see `node/status.py`. `--version` did not,
+# and reported healthy for three hours with no trading service; a probe
+# answering from inside the process only proves a process is alive, which
+# Docker already knew.
+#
+# It fails a node that is up and running **no strategies**, which is the shape
+# three deploys on 2026-10-09 produced. It does *not* fail an unarmed one:
+# `TRADING_LIVE` unset is a deliberate state, and failing on it would make a
+# dry run impossible.
+#
+# The start period covers the warm-up - `desk-handlers-arm-after-backfill`
+# records that `armed=0` straight after a deploy is normal.
+HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 \
+    CMD python -m till_infinity.node.status || exit 1
+
+ENTRYPOINT ["python", "-m", "till_infinity.node.live"]

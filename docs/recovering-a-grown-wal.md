@@ -1,5 +1,12 @@
 # Recovering an overgrown prices database
 
+> **The `till-infinity` commands in this document no longer exist.** The
+> 2,852-line CLI retired to `research/retire/bus/` with the services it drove,
+> and `pyproject.toml` declares no console script on purpose: a second way to
+> run the desk is a second thing to go stale. The entry point is
+> `python -m till_infinity.node.live`, and
+> `python -m till_infinity.node.desks` says what it would run.
+
 Written after it took the desk out on 2026-09-23: a 29.5 GB database with a 13 GB write-ahead log on
 a box with 3 GB of memory. The code fixes that stop it recurring are in `shared/db.py` and
 `prices/config.py`, and are listed at the bottom; **this page is the one-off recovery**, because

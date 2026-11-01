@@ -1,5 +1,12 @@
 # The journal
 
+> **The `till-infinity` commands in this document no longer exist.** The
+> 2,852-line CLI retired to `research/retire/bus/` with the services it drove,
+> and `pyproject.toml` declares no console script on purpose: a second way to
+> run the desk is a second thing to go stale. The entry point is
+> `python -m till_infinity.node.live`, and
+> `python -m till_infinity.node.desks` says what it would run.
+
 An append-only record of what was decided, **why it was decided at that
 moment**, and what the world looked like when the decision was made.
 
