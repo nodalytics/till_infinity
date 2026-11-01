@@ -257,6 +257,14 @@ class Closed:
     how: str
     opened: float
     closed: float
+    #: The stop distance in price, and the spread at the decision. Kept
+    #: together because the cost of a trade in R is the second over the first
+    #: and nothing else: `cost_px / risk` is **set by the stop**, so a rule
+    #: that loses a fixed fraction of an R a trade is paying for its stop
+    #: width and no exit rule can repair it. Recording them is what lets that
+    #: be read off a run rather than guessed from the mean.
+    risk_px: float = 0.0
+    spread_px: float = 0.0
 
 
 class StructureProfile(Profile):
@@ -519,6 +527,9 @@ class Structure:
                     how="clock" if held.closing else "stop",
                     opened=held.opened,
                     closed=self.clock.timestamp(),
+                    risk_px=held.intent.risk,
+                    spread_px=_number(held.intent.features.get("bos_stop_spreads"))
+                    / self.profile.spreads,
                 )
             )
         super().on_position_closed(event)

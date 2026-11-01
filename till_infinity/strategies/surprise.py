@@ -43,6 +43,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from ..domain import costs
 from ..domain.models import Intent, Refusal, Side
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .exits import ManagedExit
@@ -68,6 +69,15 @@ class SurpriseProfile(Profile):
     #: How surprising a reading has to be. Below it there is nothing to trade.
     least_surprise: ClassVar[float] = 3.5
     #: The share of the move a round trip may cost before the idea is over.
+    #:
+    #: **Chosen, not measured.** `statespace/deciding.py` cited this as the
+    #: place it was measured and nothing here measures it. The measured cost
+    #: limit on this desk is `Envelope.max_spread_risk_fraction` at 0.16 of the
+    #: *risk*, which is 0.32 volatility units on a 2-vol stop against this
+    #: one's 0.40 - so the gate that fires is the looser of the two, and the
+    #: tighter one has no production caller. See `COST_SHARE` in
+    #: `statespace/deciding.py` for the per-venue measurement and for the 49
+    #: trades that passed a reward-denominated test and lost -0.471R.
     cost_share: ClassVar[float] = 0.10
     #: Fallbacks where the proposal names neither.
     stop_vol: ClassVar[float] = 2.0
@@ -101,6 +111,20 @@ class Surprise:
         if str(payload.get("shape") or "") != self.profile.shape:
             return False
         return str(payload.get("feed") or "").lower() in self.profile.feeds
+
+
+    def _spread_limit(self) -> float:
+        """The share of the risk a round trip may cost, as configured.
+
+        Read off `Settings` rather than carried as a `ClassVar`, so the number
+        has one home and `TRADING_MAX_SPREAD_RISK_FRACTION` still moves it.
+        Falls back to the measured default where there is no settings object -
+        a `Profile` built with `__new__`, which is how the class attribute on
+        this mixin is constructed.
+        """
+        settings = getattr(self.profile, "settings", None)
+        found = getattr(settings, "max_spread_risk_fraction", None)
+        return float(found) if isinstance(found, int | float) else costs.MAX_SPREAD_RISK_FRACTION
 
     def decide(  # noqa: PLR0911 - one gate per return, in the order they are
         # applied: the order is the design, and each return is a distinct way a
@@ -162,6 +186,17 @@ class Surprise:
                 f"limit is {self.profile.cost_share:.0%}",
                 feed=feed,
             )
+        # **And against the risk, which is the denominator the damage was
+        # measured in.** The check above scales the permitted spread with the
+        # target, so a distant target buys the right to pay more; this one does
+        # not, because a spread that is half the stop distance is half the stop
+        # distance wherever the target sits. 49 trades passed the reward test
+        # while expensive against risk, at -0.471R and 53% stopped, for
+        # -502.70 - see `domain/costs.py`, which holds the limit and the
+        # comparison so this rule and `statespace/deciding.py` cannot disagree
+        # about either.
+        if dear := costs.too_expensive(cost, risk, self._spread_limit()):
+            return Refusal(gate="spread_risk", detail=dear, feed=feed)
 
         sign = side.sign
         stop = entry - sign * risk

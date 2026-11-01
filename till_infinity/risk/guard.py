@@ -59,7 +59,7 @@ from zoneinfo import ZoneInfo
 from till_infinity.utils import effects
 from till_infinity.utils.logging import get_logger
 
-from ..domain import rollover, swap
+from ..domain import costs, rollover, swap
 from ..domain.models import Intent, Position, Refusal, SymbolSpec, Tick, money
 from . import exposure as ex
 from .envelope import Envelope
@@ -577,15 +577,17 @@ class Guard:
         # stop distance is half the stop distance wherever the target sits. 49
         # trades passed the reward test while expensive against risk, at -0.471R
         # and 53% stopped, for -502.70. See `Envelope.max_spread_risk_fraction`.
-        limit = self.envelope.max_spread_risk_fraction
-        if tick is not None and limit > 0 and intent.risk > 0:
-            share = tick.spread / intent.risk
-            if share > limit:
-                return self._no(
-                    "spread_risk",
-                    intent.feed,
-                    f"spread is {share:.0%} of the risk, limit is {limit:.0%}",
-                )
+        # The same comparison the two decision rules apply, from the same
+        # place - `domain/costs.py`. Three sites writing this division is three
+        # sentences that drift, and the looser cost limit is the worked example:
+        # `surprise.py` and `deciding.py` each cited the other as the place it
+        # was measured, and neither held a measurement.
+        if tick is not None:
+            dear = costs.too_expensive(
+                tick.spread, intent.risk, self.envelope.max_spread_risk_fraction
+            )
+            if dear:
+                return self._no("spread_risk", intent.feed, dear)
 
         swapped = self._swap_refusal(intent, when, hold, spec)
         if swapped is not None:

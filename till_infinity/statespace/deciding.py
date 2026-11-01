@@ -71,6 +71,7 @@ from __future__ import annotations
 
 from typing import Any, ClassVar
 
+from till_infinity.domain import costs
 from till_infinity.domain.models import Intent, Refusal, Side
 
 #: Standardised surprise that counts as a trigger. 3.0, matching
@@ -85,9 +86,37 @@ TRIGGER = 3.0
 TARGET_R = 2.0
 STOP_VOL = 2.0
 
-#: The share of the target a round trip may cost. 0.10 from
-#: `surprise.SurpriseProfile`, where it is measured.
+#: The share of the target a round trip may cost. 0.10, from
+#: `surprise.SurpriseProfile`.
+#:
+#: **It said "where it is measured", and it is not measured there or anywhere.**
+#: `SurpriseProfile.cost_share` carries the number and no source, so the two
+#: files cited each other and neither held a measurement. Corrected rather than
+#: deleted, because the number is doing real work and a reader has to be able
+#: to tell it from one that was fitted.
+#:
+#: What *is* measured sits next door and uses a different denominator. This
+#: gate is `cost > reward * share`, and `risk/guard.py` records what a
+#: reward-denominated test misses: **49 trades passed the reward test while
+#: expensive against the risk, at -0.471R and 53% stopped, for -502.70.** Hence
+#: `Envelope.max_spread_risk_fraction` at 0.16 of the *risk*, which on this
+#: geometry - `STOP_VOL` 2, `TARGET_R` 2 - is a limit of 0.32 volatility units
+#: against this one's 0.40. The measured gate is the tighter of the two, and it
+#: has no production caller: it lives inside `Guard.allows`.
+#:
+#: Measured on the recorded quotes, per venue, on 15m bars: a Deriv eurusd
+#: round trip is 0.26 of one volatility unit at the median, so 0.40 refuses
+#: 12% of bars and 0.32 refuses 29%. The same rule on the same bars costs 0.04
+#: of a unit at FOREXCOM and 0.81 at Pepperstone - a nineteenfold spread range
+#: across six venues on one instrument - and 0.02 on Deriv *gold*, whose
+#: volatility unit is five times eurusd's for a smaller spread. The threshold
+#: is not what decides whether this gate binds; the instrument and the venue
+#: are.
 COST_SHARE = 0.10
+
+#: The share of the **risk** a round trip may cost, which is the measured one.
+#: From `domain/costs.py`, where the number and the comparison both live.
+SPREAD_RISK_SHARE = costs.MAX_SPREAD_RISK_FRACTION
 
 
 def _number(value: Any) -> float:
@@ -118,6 +147,8 @@ class SideProfile:
     #: The gate.
     least_surprise: ClassVar[float] = TRIGGER
     cost_share: ClassVar[float] = COST_SHARE
+    #: And against the risk. See `SPREAD_RISK_SHARE`.
+    spread_risk_share: ClassVar[float] = SPREAD_RISK_SHARE
 
     #: The geometry.
     stop_vol: ClassVar[float] = STOP_VOL
@@ -264,6 +295,17 @@ class OneSided:
                 f"limit is {self.profile.cost_share:.0%}",
                 feed=feed,
             )
+        # **And against the risk**, which is the denominator the damage was
+        # measured in. The check above scales the permitted spread with the
+        # target, so a distant target buys the right to pay more; this one does
+        # not. 49 trades passed the reward test while expensive against risk,
+        # at -0.471R and 53% stopped, for -502.70. The limit and the comparison
+        # are in `domain/costs.py` rather than here, so this rule and
+        # `strategies/surprise.py` cannot come to disagree about either - which
+        # is what happened to the looser limit, where each file cited the other
+        # as the place it was measured and neither held a measurement.
+        if dear := costs.too_expensive(cost, risk, self.profile.spread_risk_share):
+            return Refusal(gate="spread_risk", detail=dear, feed=feed)
 
         sign = side.sign
         spec = self._spec()  # type: ignore[attr-defined]

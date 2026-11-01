@@ -55,6 +55,24 @@ from nautilus_trader.model.objects import Currency, Money, Price, Quantity
 from till_infinity.strategies.config import Settings
 from till_infinity.strategies.entries import EdgeEntryConfig
 from till_infinity.strategies.leaves import leaf
+from till_infinity.strategies.structure import StructureEdge
+
+class Reversed(StructureEdge):
+    """The same rule with the side of every break reversed - the coin twin.
+
+    The geometry is identical: the same bars, the same swings, the same stop
+    distance, the same clock, the same spread paid. Only the side changes, so
+    anything this arm earns is **not** direction - and
+    `let-the-shuffled-twin-name-the-mechanical-observables` is why it is here
+    rather than a note saying it would be a good idea. On the trending feed the
+    true arm should win and this one should lose; if both earn, what was
+    measured is the geometry of a stop against a clock and not the trend.
+    """
+
+    def _payload(self, event, bar):
+        found = super()._payload(event, bar)
+        return found | {"direction": -int(found["direction"])}
+
 
 SEC = 1_000_000_000
 MINUTE = 60 * SEC
@@ -189,8 +207,10 @@ def feed(market: Market, instr: CurrencyPair, minutes: int, start: str, seed: in
     base = pd.Timestamp(start, tz="UTC").value
     digits = market.digits
     half = market.spread / 2.0
-    size = Quantity(1_000_000, 0)
-    volume = Quantity(1, 0)
+    # The venue checks a tick's size precision against the instrument's, so
+    # these are built at the instrument's own and not at zero.
+    size = Quantity(1_000_000, market.size_precision)
+    volume = Quantity(1, market.size_precision)
     data: list[object] = []
     for i in range(minutes):
         ts = base + i * MINUTE
@@ -221,7 +241,9 @@ def feed(market: Market, instr: CurrencyPair, minutes: int, start: str, seed: in
     return data
 
 
-def one(market: Market, era: str, minutes: int, seed: int, **kind: float) -> dict[str, object]:
+def one(
+    market: Market, era: str, minutes: int, seed: int, *, flip: bool = False, **kind: float
+) -> dict[str, object]:
     """One cell: one market, one era, one process. Returns what it did."""
     instr = instrument(market)
     engine = BacktestEngine(
@@ -246,7 +268,8 @@ def one(market: Market, era: str, minutes: int, seed: int, **kind: float) -> dic
     )
     engine.add_instrument(instr)
     engine.add_data(feed(market, instr, minutes, ERAS[era], seed, **kind))
-    strategy = leaf("smc-bos-causal", "edge")(
+    built = Reversed if flip else leaf("smc-bos-causal", "edge")
+    strategy = built(
         EdgeEntryConfig(
             instrument_id=instr.id,
             # The composite: M15 aggregated from the M1 bars inside the engine,
@@ -280,13 +303,55 @@ def one(market: Market, era: str, minutes: int, seed: int, **kind: float) -> dic
         "clocked": sum(1 for t in closed if t.how == "clock"),
         "r_total": sum(t.reward for t in closed),
         "r_mean": (sum(t.reward for t in closed) / len(closed)) if closed else 0.0,
+        "r_sd": _sd([t.reward for t in closed]),
         "money": sum(t.money for t in closed),
         "balance": balance,
         "open_at_end": len(engine.cache.positions_open(strategy_id=strategy.id)),
         "r": [round(t.reward, 4) for t in closed],
+        # The cost, as the only thing that sets it: one spread over the stop
+        # distance. Reported rather than inferred from the mean, because at
+        # this payoff's variance the mean cannot see a number this small.
+        "cost_r": _median([t.spread_px / t.risk_px for t in closed if t.risk_px > 0.0]),
+        "risk_px": _median([t.risk_px for t in closed]),
     }
     engine.dispose()
     return found
+
+
+def _median(values: list[float]) -> float:
+    """The median, or zero on nothing."""
+    if not values:
+        return 0.0
+    ordered = sorted(values)
+    return ordered[len(ordered) // 2]
+
+
+def _sd(values: list[float]) -> float:
+    """The sample standard deviation, or zero on fewer than two values."""
+    if len(values) < 2:
+        return 0.0
+    mean = sum(values) / len(values)
+    return math.sqrt(sum((v - mean) ** 2 for v in values) / (len(values) - 1))
+
+
+def tails(rewards: list[float]) -> str:
+    """The shape of the payoff, which is what a stop against a clock makes.
+
+    **Lead with the tail.** The mean of this distribution is the last thing it
+    tells you: with no target, a win is whatever 1,440 minutes gave and a loss
+    is one R, so the mean is a small number living inside a very wide one. The
+    quantiles say what the rule actually produces.
+    """
+    if not rewards:
+        return "no trades"
+    ordered = sorted(rewards)
+    wins = sum(1 for r in rewards if r > 0) / len(rewards)
+    return (
+        f"win {wins:.0%}  median {ordered[len(ordered) // 2]:+.2f}R  "
+        f"P(>=1R) {sum(1 for r in rewards if r >= 1.0) / len(rewards):.0%}  "
+        f"P(>=3R) {sum(1 for r in rewards if r >= 3.0) / len(rewards):.0%}  "
+        f"worst {ordered[0]:+.2f}R  best {ordered[-1]:+.2f}R"
+    )
 
 
 def report(rows: list[dict[str, object]], months: float) -> None:
@@ -309,22 +374,38 @@ def report(rows: list[dict[str, object]], months: float) -> None:
             f"{row['r_total']:>8.2f} {row['r_mean']:>7.3f} "
             f"{row['trades'] / months:>5.1f}"  # type: ignore[operator]
         )
-    for key in ("market", "era", "process"):
+    for key in ("process", "market", "era"):
         print(f"\nby {key}:")
         for name in dict.fromkeys(row[key] for row in rows):  # type: ignore[index]
             cells = [row for row in rows if row[key] == name]
-            trades = sum(int(row["trades"]) for row in cells)
-            total = sum(float(row["r_total"]) for row in cells)
+            rewards = [r for row in cells for r in row["r"]]  # type: ignore[union-attr]
+            total = sum(rewards)
+            n = len(rewards)
+            sd = _sd(rewards)
+            # **The standard error, printed next to the mean every time.** The
+            # payoff has a one-R floor and no ceiling, so a per-trade sd of
+            # several R is normal and a few hundred trades cannot resolve a
+            # tenth of one. A mean without this beside it reads as a finding.
             print(
-                f"  {str(name):>10}  trades {trades:>4}  R {total:>8.2f}  "
-                f"R/trade {total / trades if trades else 0.0:>7.3f}  "
-                f"trades/month {trades / (months * len(cells)):>5.1f}"
+                f"  {str(name):>11}  trades {n:>4}  R {total:>8.2f}  "
+                f"R/trade {total / n if n else 0.0:>+7.3f} +/- {sd / math.sqrt(n) if n else 0.0:>5.3f}  "
+                f"trades/month {n / (months * len(cells)):>5.1f}"
             )
-    trades = sum(int(row["trades"]) for row in rows)
-    total = sum(float(row["r_total"]) for row in rows)
-    print(f"\npooled: {trades} trades, {total:+.2f}R, {total / trades if trades else 0:+.4f}R a trade")
-    gold = sum(float(row["r_total"]) for row in rows if row["market"] == "XAU/USD")
-    print(f"gold's share of R: {gold:+.2f} of {total:+.2f}")
+            print(f"               {tails(rewards)}")
+            costs = [float(row["cost_r"]) for row in cells if row["cost_r"]]
+            stops = [float(row["risk_px"]) for row in cells if row["risk_px"]]
+            if costs:
+                print(
+                    f"               median stop {_median(stops):.5g} in price, "
+                    f"round trip {_median(costs):.4f}R - which is what the mean has "
+                    f"to beat before anything else"
+                )
+    rewards = [r for row in rows for r in row["r"]]  # type: ignore[union-attr]
+    total = sum(rewards)
+    print(
+        f"\npooled across every arm (which is not a result, only a tally): "
+        f"{len(rewards)} trades, {total:+.2f}R"
+    )
 
 
 def main() -> None:
@@ -333,11 +414,18 @@ def main() -> None:
     parser.add_argument("--seed", type=int, default=20_261_102)
     parser.add_argument(
         "--process",
-        default="walk,trend",
-        help="walk (the null), trend (the power arm), or both",
+        default="walk,walk-flip,trend,trend-flip",
+        help="walk (the null), trend (the power arm), and the reversed twin of each",
     )
     parser.add_argument("--markets", default="", help="a symbol substring, or all of them")
-    parser.add_argument("--trend-strength", type=float, default=0.25)
+    #: The planted drift, as a multiple of the per-minute standard deviation.
+    #: 0.01 is about 0.4 of the 24-hour move's own sd, which is a trend far
+    #: stronger than anything claimed for this rule - deliberately, because
+    #: the power arm has to be detectable at a sample size this box can
+    #: generate. What that costs is stated in the report: an effect the size
+    #: of the rule's own standing figure is **invisible** here, and saying so
+    #: is the point of running the arm at all.
+    parser.add_argument("--trend-strength", type=float, default=0.01)
     args = parser.parse_args()
 
     minutes = int(args.months * 30 * 1_440)
@@ -348,7 +436,12 @@ def main() -> None:
         f"trail_vol {settings.trail_vol}, stale_after {settings.stale_after}, "
         f"scale_out_at {settings.scale_out_at}"
     )
-    kinds = {"walk": {}, "trend": {"strength": args.trend_strength}}
+    arms: dict[str, dict[str, float | bool]] = {
+        "walk": {},
+        "walk-flip": {"flip": True},
+        "trend": {"strength": args.trend_strength},
+        "trend-flip": {"strength": args.trend_strength, "flip": True},
+    }
     rows: list[dict[str, object]] = []
     seed = args.seed
     for name in args.process.split(","):
@@ -357,7 +450,7 @@ def main() -> None:
                 continue
             for era in ERAS:
                 seed += 1
-                row = one(market, era, minutes, seed, **kinds[name.strip()])  # type: ignore[arg-type]
+                row = one(market, era, minutes, seed, **arms[name.strip()])  # type: ignore[arg-type]
                 row["process"] = name.strip()
                 rows.append(row)
                 print(

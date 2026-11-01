@@ -33,6 +33,7 @@ from till_infinity.utils.env import number as _float
 from till_infinity.utils.env import whole as _int
 from till_infinity.utils.logging import get_logger
 
+from ..domain import costs
 from ..risk import plans
 from ..risk.envelope import Envelope
 from ..risk.plans import DEFAULT_PLAN, Plan
@@ -547,7 +548,7 @@ class Settings:
     #: And the same question against the **risk**, which is the denominator the
     #: damage was measured in.
     #: Measured; see `research/docs/settings.md`.
-    max_spread_risk_fraction: float = 0.16
+    max_spread_risk_fraction: float = costs.MAX_SPREAD_RISK_FRACTION
     #: The signal's own confidence, and its separation from the base rate.
     #: `structures` already gates on `actionable`, but that threshold exists to
     #: decide whether to *tell someone*. Deciding whether to put money on it is
@@ -1477,7 +1478,9 @@ class Settings:
             daily_loss_fraction=_float("TRADING_DAILY_LOSS_FRACTION", 0.03),
             min_reward_to_risk=_float("TRADING_MIN_RR", 0.0),
             max_spread_fraction=_float("TRADING_MAX_SPREAD_FRACTION", 0.25),
-            max_spread_risk_fraction=_float("TRADING_MAX_SPREAD_RISK_FRACTION", 0.16),
+            max_spread_risk_fraction=_float(
+                "TRADING_MAX_SPREAD_RISK_FRACTION", costs.MAX_SPREAD_RISK_FRACTION
+            ),
             min_probability=_float("TRADING_MIN_PROBABILITY", 0.58),
             min_base_rate=_float("TRADING_MIN_BASE_RATE", 0.0),
             probability_percentile=_float("TRADING_PROBABILITY_PERCENTILE", 0.0),
