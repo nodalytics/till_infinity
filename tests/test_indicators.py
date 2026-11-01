@@ -1060,3 +1060,163 @@ def test_an_event_restarts_the_accumulators_without_wiping_the_detector():
     detector.reset()
     assert detector.started is False
     assert detector.has_inputs is False
+
+
+# ------------------------------------------------------- the variance ratio
+
+
+def _series(kind: str, n: int = 400, seed: int = 3) -> list[Bar]:
+    """A walk, a walk with drift, or a reverting series, as bars."""
+    import random
+
+    rng = random.Random(seed)
+    price, out, ts = 1.1000, [], 0
+    for _ in range(n):
+        step = rng.gauss(0.0, 0.0004)
+        if kind == "drift":
+            step += 0.00025
+        elif kind == "reverting":
+            step -= 0.5 * (price - 1.1000)
+        price += step
+        out.append(bar(price, price + 0.0004, price - 0.0004, price, ts))
+        ts += HOUR_NS
+    return out
+
+
+def _vr(kind: str, **kwargs):
+    detector = ind.VarianceRatio(window=200, **kwargs)
+    for one in _series(kind):
+        detector.handle_bar(one)
+    return detector
+
+
+def test_the_variance_ratio_reads_one_on_a_random_walk():
+    """**The null is exact, not conventional.** Under a walk the variance of a
+    sum is the sum of the variances, so VR = 1 by construction - which is what
+    makes this the one trend statistic here that can be tested rather than
+    thresholded."""
+    detector = _vr("walk")
+    assert detector.value == pytest.approx(1.0, abs=0.15), detector.value
+    assert abs(detector.z) < 2.0
+    assert detector.regime == "walk"
+
+
+def test_it_finds_reversion_and_says_how_strongly():
+    detector = _vr("reverting")
+    assert detector.value < 0.6, detector.value
+    assert detector.z < -2.0
+    assert detector.regime == "reverting"
+
+
+def test_a_drift_too_small_to_detect_is_reported_as_a_walk():
+    """Not a failure - the null doing its job.
+
+    A drift of 0.00025 against a 0.0004 step is real and is *not* detectable
+    at this sample size: `z` comes out inside two, so the statistic says it
+    cannot tell. An indicator that called it a trend would be claiming evidence
+    it does not have, which is the whole reason to prefer a statistic with a
+    null over one with a threshold.
+
+    No assertion on the *direction* of the point estimate, and that is
+    deliberate: on one seed it came out at 1.11 and on another at 0.98. A test
+    that pinned the sign would be pinning the seed.
+    """
+    detector = _vr("drift")
+    assert abs(detector.z) < 2.0, "the evidence does not clear two"
+    assert detector.regime == "walk"
+
+
+def test_a_short_sample_reads_none_rather_than_one():
+    """One is the *null*. Returning it for "no data" would make an unwarmed
+    indicator look like a confident finding of a random walk."""
+    detector = ind.VarianceRatio(window=200)
+    for one in _series("walk")[:20]:
+        detector.handle_bar(one)
+    assert detector.value is None
+    assert detector.z is None
+    assert detector.regime == "walk", "the honest default, with no claim attached"
+    assert not detector.initialized
+
+
+def test_the_ratio_can_be_swept_over_horizons_within_its_usable_range():
+    """Which is how the desk's own measurement was taken: 0.980 falling to
+    0.924 *across horizons* on traded closes against 1.000 on an i.i.d.
+    control.
+
+    The range is bounded by `q/n`, not by taste. `at` returns None beyond
+    `window / VR_LEAST` rather than a biased number, because the residual bias
+    is about `q/n` and at 0.1 a pure random walk reads 0.908.
+    """
+    from till_infinity.indicators.trend import VR_LEAST
+
+    detector = _vr("walk")
+    usable = detector.window // VR_LEAST
+    got = {q: detector.at(q) for q in (2, 5, usable)}
+    assert all(v is not None for v in got.values()), got
+    assert all(0.8 < v < 1.25 for v in got.values()), got
+    # Beyond it, None rather than a number nobody can trust.
+    assert detector.at(usable * 4) is None
+
+
+def test_a_sweep_beyond_the_usable_range_returns_nothing():
+    """**The artefact this guard exists for.** With the naive estimator and a
+    `q/n` of 0.1, a 200-observation random walk read 0.440 - strong mean
+    reversion, from overlap alone. Lo and MacKinlay's correction took the
+    average to 0.908, which is better and still 9% low, so the range is capped
+    rather than corrected further.
+    """
+    detector = _vr("walk")
+    assert detector.at(detector.window // 2) is None
+    assert detector.at(detector.window) is None
+
+
+def test_a_horizon_of_one_is_refused_because_it_is_one_by_construction():
+    with pytest.raises(ValueError, match="1 by construction"):
+        ind.VarianceRatio(horizon=1)
+
+
+def test_a_window_too_short_for_its_horizon_is_refused():
+    """The bias is measured, so the guard quotes it.
+
+    A `q/n` of 0.25 - which the first version of this guard allowed - reads a
+    pure random walk as strongly mean reverting.
+    """
+    with pytest.raises(ValueError, match="residual bias is about q/n"):
+        ind.VarianceRatio(horizon=20, window=40)
+    with pytest.raises(ValueError, match="residual bias is about q/n"):
+        ind.VarianceRatio(horizon=20, window=200)
+    # And the measured bound is reachable.
+    assert ind.VarianceRatio(horizon=20, window=400).horizon == 20
+
+
+def test_the_ratio_is_scale_free():
+    """A ratio of variances of the same series, so any common scaling cancels -
+    which is what lets it compare a currency with gold without a unit."""
+    small = ind.VarianceRatio(window=200)
+    large = ind.VarianceRatio(window=200)
+    for one in _series("reverting"):
+        small.handle_bar(one)
+    for one in _series("reverting"):
+        # The same path at a thousand times the price.
+        large.handle_bar(
+            bar(
+                float(one.open) * 1000,
+                float(one.high) * 1000,
+                float(one.low) * 1000,
+                float(one.close) * 1000,
+                one.ts_event,
+            )
+        )
+    assert small.value == pytest.approx(large.value, rel=1e-6)
+
+
+def test_efficiency_and_the_variance_ratio_are_kept_apart_on_purpose():
+    """One is a readable heuristic with no null; the other is a statistic with
+    one. `efficiency` names ours rather than the framework's, which reports
+    `(period-1)/period` on a straight line."""
+    assert ind.BAR_DETECTORS["efficiency"][0] is ind.Trend
+    assert ind.BAR_DETECTORS["variance_ratio"][0] is ind.VarianceRatio
+    assert "EfficiencyRatio" not in str(ind.FRAMEWORK)
+    assert "SpreadAnalyzer" not in str(ind.FRAMEWORK)
+    # And ours is reachable under the name the broken one has.
+    assert ind.TICK_DETECTORS["spread"][0] is ind.RollingSpread

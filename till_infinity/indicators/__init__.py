@@ -116,6 +116,7 @@ everywhere else.
 | `cusum` | how far has price run since the last event | bars |
 | `focus` | of every place a change could have started, the best evidence | bars |
 | `trend` | is this trending through here, or ranging inside it | bars |
+| `variance_ratio` | a walk, a trend or reverting - with a null | bars |
 | `speeds` | three EWMAs per feed, and whether they agree | bars, keyed |
 | `displacement` | where the last leg came from | bars |
 | `gaps` | is that hole still there | bars |
@@ -189,7 +190,7 @@ from .levels import (
 )
 from .momentum import Basis, Cusum, Ensemble, Event, SlopeMomentum, Speeds, TickMomentum
 from .spread import RollingSpread
-from .trend import Channel, Pivot, Trend, Trendline, Trendlines
+from .trend import Channel, Pivot, Trend, Trendline, Trendlines, VarianceRatio
 
 #: What a discovery sweep may instantiate, and on which sources.
 #:
@@ -213,10 +214,23 @@ BAR_DETECTORS: dict[str, tuple[Callable[..., object], tuple[Reading, ...]]] = {
     "cusum": (Cusum, (Reading.CLOSE, Reading.TYPICAL, Reading.MEDIAN)),
     "focus": (Focus, (Reading.LOG_RETURN, Reading.RETURN, Reading.BODY)),
     "trend": (Trend, (Reading.CLOSE, Reading.TYPICAL)),
+    # **The same class under the name it is actually known by.** `Trend` *is*
+    # Kaufman's efficiency ratio - net travel over gross - and a config that
+    # wants an efficiency ratio should be able to say so and get ours rather
+    # than reaching for `momentum.EfficiencyRatio`, which reports
+    # `(period-1)/period` on a straight line where the answer is 1.0 by
+    # definition. Deliberately absent from `FRAMEWORK` for that reason, and
+    # named here so the absence does not read as an omission.
+    "efficiency": (Trend, (Reading.CLOSE, Reading.TYPICAL)),
     "speeds": (Speeds, (Reading.LOG_RETURN, Reading.RETURN)),
     "displacement": (Displacement, (Reading.CLOSE,)),
     "gaps": (Gaps, (Reading.CLOSE,)),
     "trendlines": (Trendlines, (Reading.CLOSE,)),
+    # The one trend statistic here with a **null**: VR = 1 under a random walk
+    # by construction, so "is this trending" has a reference point rather than
+    # a threshold somebody chose. `efficiency` is the readable heuristic;
+    # this is what a claim is checked against.
+    "variance_ratio": (VarianceRatio, (Reading.LOG_RETURN, Reading.RETURN)),
     "slope": (SlopeMomentum, (Reading.CLOSE, Reading.TYPICAL)),
     "levels": (Levels, (Reading.CLOSE,)),
     # No `source`: these read a bar's whole shape rather than one float off it.
@@ -280,6 +294,26 @@ def framework(name: str, period: int | None = None) -> object:
     return cls(*args)
 
 
+#: Detectors the engine feeds with **ticks** rather than bars, by name.
+#:
+#: Separate from `BAR_DETECTORS` because the registration call differs -
+#: `register_indicator_for_quote_ticks` and
+#: `register_indicator_for_trade_ticks` rather than `..._for_bars` - and a
+#: catalogue that mixed them would need a flag per entry saying which.
+#:
+#: `spread` is **ours**, and the reason is the same as `efficiency`'s:
+#: `SpreadAnalyzer.average` stops updating once its window fills, measured on
+#: 1.221.0, because it appends a value and then subtracts the one it just
+#: appended. So it is absent from `FRAMEWORK` and present here, and a config
+#: that wants a rolling spread gets the one that keeps moving.
+TICK_DETECTORS: dict[str, tuple[Callable[..., object], tuple[str, ...]]] = {
+    "spread": (RollingSpread, ("quotes",)),
+    # Quotes *and* trades: it signs by `aggressor_side` where a venue sends
+    # trades and by which side of the quote moved where it does not.
+    "ticks": (TickMomentum, ("quotes", "trades")),
+}
+
+
 def build_detector(name: str, source: Reading | None = None, **kwargs: object) -> object:
     """One catalogued detector on one source, scaled correctly for it.
 
@@ -288,6 +322,14 @@ def build_detector(name: str, source: Reading | None = None, **kwargs: object) -
     detector whose threshold is in the wrong units - and trials are the scarce
     thing: at a target Sharpe of 1.5, one month of data supports about one.
     """
+    if name in TICK_DETECTORS:
+        if source is not None:
+            raise ValueError(
+                f"{name!r} is fed ticks and takes no `source`: a tick has no "
+                f"high, low or close for a `Reading` to pick."
+            )
+        build, _ = TICK_DETECTORS[name]
+        return build(**kwargs)
     if name in FRAMEWORK:
         # **The framework's, where it has one.** A strategy may use ours and
         # Nautilus's as it wishes, and one entry point resolving both means a
@@ -301,8 +343,9 @@ def build_detector(name: str, source: Reading | None = None, **kwargs: object) -
         return framework(name, kwargs.get("period"))  # type: ignore[arg-type]
     if name not in BAR_DETECTORS:
         raise ValueError(
-            f"{name!r} is not a detector. Ours: {sorted(BAR_DETECTORS)}. "
-            f"Nautilus's: {sorted(FRAMEWORK)}."
+            f"{name!r} is not a detector. Ours, on bars: "
+            f"{sorted(BAR_DETECTORS)}. Ours, on ticks: "
+            f"{sorted(TICK_DETECTORS)}. Nautilus's: {sorted(FRAMEWORK)}."
         )
     build, sources = BAR_DETECTORS[name]
     if not sources:
@@ -354,6 +397,7 @@ __all__ = [
     "DIMENSION",
     "NEEDS_PREVIOUS",
     "SCALED_BY",
+    "TICK_DETECTORS",
     "Basis",
     "BjorgumLevels",
     "Candles",
@@ -390,6 +434,7 @@ __all__ = [
     "Trend",
     "Trendline",
     "Trendlines",
+    "VarianceRatio",
     "Visit",
     "Zone",
     "build_detector",

@@ -47,7 +47,7 @@ from nautilus_trader.model.data import Bar
 
 from till_infinity.utils.state import Restorable
 
-from .bars import NANOS, Reading, bar_input, check_scale, reset_state
+from .bars import NANOS, Reading, bar_input, check_feed, check_scale, reset_state
 from .candles import Bar as Ohlc
 
 # ==========================================================================
@@ -905,3 +905,255 @@ def card_line(got: dict[str, float]) -> list[str]:
     if accel is not None and not math.isnan(float(accel)):
         line += f" · {'steepening' if float(accel) * slope > 0 else 'easing'}"
     return [line]
+
+
+# ==========================================================================
+# the variance ratio
+# ==========================================================================
+
+#: Horizon the ratio is taken at, in observations. `VR(q)` compares the
+#: variance of `q`-period returns with `q` times the variance of one-period
+#: returns, so `q` is the horizon the question is asked over.
+VR_HORIZON = 5
+
+#: Observations kept. Twenty times the horizon, which is `VR_LEAST`.
+VR_WINDOW = 200
+
+#: Observations per unit of horizon, at least.
+#:
+#: **Measured, not chosen.** Even with Lo and MacKinlay's unbiased estimator a
+#: residual downward bias remains, and it scales as roughly `q/n`. Over 20
+#: random walks, where the answer is 1:
+#:
+#: | q/n | mean VR |
+#: |---|---|
+#: | 0.010 | 0.990 |
+#: | 0.025 | 0.962 to 0.988 |
+#: | 0.050 | 0.926 to 0.956 |
+#: | 0.100 | 0.908 |
+#:
+#: So 20 keeps `q/n` at 0.05 and the bias under about 5%. The first version of
+#: this guard allowed four, which is a `q/n` of 0.25 - and a sweep at that
+#: ratio reads a pure random walk as strongly mean reverting, which is the
+#: overlap artefact this desk already has on record from permutation nulls.
+#:
+#: **The bias is downward**, so a reading below one is the direction to
+#: distrust and a reading above one is the direction to believe.
+VR_LEAST = 20
+
+
+class VarianceRatio(Indicator):
+    """Lo and MacKinlay's variance ratio: is this a walk, a trend, or reverting?
+
+    `VR(q) = Var(r_q) / (q * Var(r_1))`, where `r_q` is the `q`-period return.
+    Under a random walk the variance of a sum is the sum of the variances, so
+    **VR = 1 exactly** - which is why this is the one trend statistic here with
+    a null rather than a convention.
+
+    | | means |
+    |---|---|
+    | **VR < 1** | reverting - the `q`-period move is smaller, so steps cancel |
+    | **VR = 1** | a walk - the steps are independent |
+    | **VR > 1** | trending - the steps reinforce |
+
+    ## Why this and not `ratio`
+
+    `trend.ratio` - Kaufman's efficiency - answers the same question as a
+    **heuristic**: net travel over gross, bounded in [0, 1], with no null and
+    no sampling distribution. It is readable and it cannot be tested. The
+    variance ratio can: `z` below is Lo-MacKinlay's standardised statistic
+    under the homoscedastic null, so "is this trending" becomes a number with a
+    reference point rather than a number with a threshold somebody chose.
+
+    Keep both. Efficiency is what a reader looks at; this is what a claim is
+    checked against.
+
+    ## It is already the desk's regime definition, un-named
+
+    `statespace/switching.py` represents exactly three regimes - balance,
+    imbalance, trending - and its own docstring says they are *the three things
+    the variance ratio can say*: "an integrated state has VR = 1 by
+    construction and a trend does not". A companion measurement put the traded
+    ratio at **0.980 falling to 0.924 across horizons against 1.000 on an
+    i.i.d. control**, so the three states are things the data distinguishes.
+
+    What was missing was anything that computed it. The switching member
+    infers the regime through a mixture; this reports the statistic.
+
+    **Expect numbers near one.** 0.980 to 0.924 is the traded range, so a
+    reading of 1.4 is a bug or a tiny sample before it is a trend.
+
+    ## The null is homoscedastic, and markets are not
+
+    `z` assumes constant variance. Volatility clusters, which inflates the
+    statistic's variance and makes `z` **anti-conservative** - too ready to
+    call a walk a trend. Lo and MacKinlay give a heteroscedasticity-robust
+    version; this does not implement it, and `z` is therefore an upper bound on
+    the evidence rather than a p-value. Said here rather than discovered later.
+    """
+
+    def __init__(
+        self,
+        *,
+        horizon: int = VR_HORIZON,
+        window: int = VR_WINDOW,
+        source: Reading = Reading.LOG_RETURN,
+        unit: float = 0.0,
+        unit_from: Reading | None = Reading.RELATIVE_RANGE,
+        unit_span: int = 0,
+    ) -> None:
+        check_scale(type(self).__name__, source, unit, unit_from)
+        if horizon < 2:
+            raise ValueError(
+                f"horizon={horizon} compares one-period returns with "
+                f"themselves, which is 1 by construction."
+            )
+        if window < horizon * VR_LEAST:
+            raise ValueError(
+                f"window={window} at horizon={horizon} is a q/n of "
+                f"{horizon / window:.3f}, and the estimator's residual bias is "
+                f"about q/n: measured over 20 random walks it reads 0.908 at "
+                f"0.100 and 0.962 to 0.988 at 0.025. Use a window of at least "
+                f"{horizon * VR_LEAST}, or a shorter horizon."
+            )
+        super().__init__([horizon, window, source])
+        self.horizon = int(horizon)
+        self.window = int(window)
+        self.source = source
+        self.unit = float(unit)
+        self.unit_from = unit_from
+        self.unit_span = int(unit_span)
+        self._bar_prev: float | None = None
+        self._bar_scale = 0.0
+        self._fed = ""
+        self._values: deque[float] = deque(maxlen=self.window)
+
+    # ------------------------------------------------------------- the engine
+
+    def handle_bar(self, bar: Bar) -> None:
+        """Nautilus's entry point. Scale-free, so the unit is read and unused.
+
+        The ratio is a ratio of variances of the *same* series, so any common
+        scaling cancels - which is the property that lets it compare a currency
+        with gold without a volatility unit. `unit_from` is still required for
+        the dimension check, because a reading fed levels where it expects
+        returns is a different error and that check catches it.
+        """
+        check_feed(self, "bars")
+        value, _ = bar_input(self, bar)
+        if value is None:
+            return
+        self._values.append(value)
+        self._set_has_inputs(True)
+        if not self.initialized and len(self._values) >= self.window:
+            self._set_initialized(True)
+
+    def reset(self) -> None:
+        """Nautilus's reset: as if this had never seen a bar."""
+        self._values.clear()
+        self._bar_prev = None
+        self._bar_scale = 0.0
+        self._fed = ""
+        self._set_has_inputs(False)
+        self._set_initialized(False)
+
+    # ------------------------------------------------------------ the reading
+
+    @property
+    def value(self) -> float | None:
+        """`VR(q)`, or None before there is enough to say.
+
+        None rather than 1.0 on a short sample. One is the *null*, and
+        returning it for "no data" would make an unwarmed indicator look like a
+        confident finding of a random walk.
+        """
+        return self.at(self.horizon)
+
+    def at(self, horizon: int) -> float | None:
+        """`VR(q)` for an arbitrary `q`, so the ratio can be swept.
+
+        **Overlapping `q`-period returns**, which is Lo-MacKinlay's own
+        estimator and is deliberate: non-overlapping windows waste most of the
+        sample. The cost is that the `q`-period returns are correlated by
+        construction, which `z` accounts for through its `2(2q-1)(q-1)/3q`
+        term - the same overlap this desk has been bitten by elsewhere, handled
+        here because the statistic's author handled it.
+        """
+        values = list(self._values)
+        n = len(values)
+        if horizon < 2 or n < horizon * VR_LEAST:
+            return None
+        mean = sum(values) / n
+        # The one-period variance, on `n - 1` as usual.
+        one = sum((v - mean) ** 2 for v in values) / (n - 1)
+        if one <= 0.0:
+            return None
+
+        # **Lo and MacKinlay's unbiased overlapping estimator**, and the
+        # correction is not cosmetic. The naive version - a sample variance of
+        # the overlapping sums divided by `q` times the one-period variance -
+        # reads **0.440 at q = 20 on a 200-observation random walk**, where the
+        # answer is 1. It would be reported as strong mean reversion and it is
+        # the overlap, which is the artefact this desk already has on record
+        # from permutation nulls on overlapping windows.
+        #
+        # The fix is the denominator: `m = q(n - q + 1)(1 - q/n)` rather than
+        # the sum count, which is what makes the estimator unbiased under the
+        # null. Deviations are taken from `q * mean`, not from the sums' own
+        # mean, for the same reason - the null's mean is known.
+        sums = [sum(values[i : i + horizon]) for i in range(n - horizon + 1)]
+        m = horizon * (n - horizon + 1) * (1.0 - horizon / n)
+        if m <= 0.0:
+            return None
+        many = sum((total - horizon * mean) ** 2 for total in sums) / m
+        if many <= 0.0:
+            return None
+        return many / one
+
+    @property
+    def z(self) -> float | None:
+        """`VR - 1` in standard errors, under the **homoscedastic** null.
+
+        Lo-MacKinlay's asymptotic variance for the overlapping estimator is
+        `2(2q - 1)(q - 1) / (3 * q * n)`. Positive is trending, negative
+        reverting, and anything inside about two is a walk as far as this
+        statistic can tell.
+
+        **An upper bound on the evidence, not a p-value**: the null assumes
+        constant variance and volatility clusters, which makes this
+        anti-conservative. See the class docstring.
+        """
+        got = self.value
+        n = len(self._values)
+        if got is None or n <= 0:
+            return None
+        q = self.horizon
+        variance = 2.0 * (2.0 * q - 1.0) * (q - 1.0) / (3.0 * q * n)
+        if variance <= 0.0:
+            return None
+        return (got - 1.0) / math.sqrt(variance)
+
+    @property
+    def regime(self) -> str:
+        """ "reverting", "walk" or "trending" - the three `switching.py` holds.
+
+        `walk` wherever `z` is inside two, which is the honest middle: the
+        middle state is pinned by theory - an integrated series has VR = 1 by
+        construction - rather than estimated, and that is what gives the other
+        two anchors.
+        """
+        got = self.z
+        if got is None:
+            return "walk"
+        if got > 2.0:
+            return "trending"
+        return "reverting" if got < -2.0 else "walk"
+
+
+def _variance(values: Sequence[float]) -> float:
+    """Sample variance, zero below two observations."""
+    n = len(values)
+    if n < 2:
+        return 0.0
+    mean = sum(values) / n
+    return sum((v - mean) ** 2 for v in values) / (n - 1)
