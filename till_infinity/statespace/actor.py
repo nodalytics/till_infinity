@@ -98,6 +98,17 @@ class StatespaceConfig(ActorConfig, frozen=True):
     #: here because a *discovery* run wants to sweep them over the same stream
     #: the model sees, not because the fold needs them.
     indicators: tuple[str, ...] = ()
+    #: The topic trading proposals go on. **A second topic rather than a field
+    #: on the reading**, for the reason `proposing.TOPIC` gives: two producers
+    #: on a topic named after one of them is how a consumer loses track of
+    #: which produced what, and a separate topic is one subscription to remove.
+    proposals_topic: str = "statespace.proposals"
+    #: Whether to publish them. Default on, matching
+    #: `config.Settings.proposals`, and the same argument applies: the standing
+    #: reason not to ship a producer switched off is `trading.turn_exit`, which
+    #: "has never once run in production" while its end-to-end path passed
+    #: every test.
+    proposals: bool = True
 
 
 class StatespaceActor(Actor):
@@ -188,11 +199,41 @@ class StatespaceActor(Actor):
     def on_bar(self, bar: Bar) -> None:
         if self._engine is None:
             return
-        readout = self._engine.observe_bar(self._payload(bar))
+        payload = self._payload(bar)
+        readout = self._engine.observe_bar(payload)
         if readout is None:
             return  # out of scope, unwarmed, or no variance - all expected
         self._engine.save()
         topics.publish(self, self._cfg.topic, _as_dict(readout))
+        proposal = self._propose(readout, payload)
+        if proposal is not None:
+            topics.publish(self, self._cfg.proposals_topic, proposal)
+
+    def _propose(self, readout: Any, payload: dict[str, Any]) -> dict[str, Any] | None:
+        """The trading proposal this bar is, or `None`. **Does not publish.**
+
+        **This was the gap in the Nautilus port.** `service.py` published on
+        `PROPOSES` and the actor did not, so `config.Settings.proposals` was on
+        and nothing came out of the actor path - a producer whose own tally
+        counts what it sent, which is the bug that hid `statespace.proposals`
+        for weeks.
+
+        **The bar carries the sign, not the readout.** This service folds log
+        variance, so a side taken from the reading would be the side of a
+        *volatility* move published as a price claim - the category error
+        already corrected twice in this package. `proposing.direction_of`
+        takes it from the triggering bar's own body, which is continuation.
+
+        Returning the payload rather than sending it keeps the decision
+        testable: `Actor.msgbus` is a read-only Cython attribute, so an actor
+        built without its engine cannot be handed a bus, and a method that
+        both decides and publishes can only be tested with one.
+        """
+        if not self._cfg.proposals:
+            return None
+        from . import proposing
+
+        return proposing.proposal_for(readout, payload)
 
     def _payload(self, bar: Bar) -> dict[str, Any]:
         bar_type = str(bar.bar_type)
@@ -214,6 +255,162 @@ class StatespaceActor(Actor):
             # that does deliver forming bars would be folded silently.
             "closed": True,
         }
+
+
+#: The one reading per catalogued detector that a sweep thresholds on, as the
+#: attribute to take off the warmed indicator.
+#:
+#: **This table is here and not in `indicators/` on purpose.** A detector
+#: exposes several readings - `Trendlines` alone has `spread_vol`,
+#: `converging`, `broke`, `held` and `extent_vol` - and *which one is the
+#: candidate* is a decision about the search, not a property of the detector.
+#: Putting it in the catalogue would make `indicators` carry a search's
+#: opinion; putting it here means a sweep that wants a different reading
+#: passes `read=` and records that it did.
+#:
+#: A signed reading is taken as a **magnitude** for a dispersion question, and
+#: that is recorded rather than quietly done: the statistic is a forward
+#: *absolute* move, so a signed trigger would be asking a direction question
+#: under a dispersion label - and direction is the one question measured closed
+#: here. `searching.Candidate.question` is what distinguishes them, and a
+#: caller asking the direction question should pass a signed `read`.
+READINGS: dict[str, str] = {
+    "changepoint": "changepoint",
+    "cusum": "pressure",
+    "focus": "statistic",
+    "trend": "efficiency",
+    "efficiency": "efficiency",
+    "variance_ratio": "z",
+    "slope": "change_z",
+    "trendlines": "spread_vol",
+    # How many swings in the window are not yet confirmed: the honest measure
+    # of how much of the current shape is still provisional, and the only
+    # reading on `Pips` that is not a structure label. The labels themselves
+    # are swept properly by `shaping.word_reader`, which fires at a swing's
+    # confirmation index rather than at its extreme.
+    "pips": "provisional",
+    "displacement": "size_vol",
+    # Gaps **open as of this bar**, which is the causal count. `Gaps` is the
+    # incremental form for exactly this reason: a gap list holding only
+    # *unfilled* gaps is lookahead the moment it is read as of a time before
+    # the fill was known, and that mistake read +0.50R a trade as a bias.
+    "gaps": "count",
+    # ── Nautilus's own, and only the ones whose reading is scale-free ──
+    #
+    # **The rest of `FRAMEWORK` is absent for a units reason, not an oversight.**
+    # `bars.check_scale` refuses one of ours whose threshold would be in the
+    # instrument's own units - a reading divided by the wrong dimension "reads
+    # perfectly calibrated at a price near 1.0, where a relative spread and a
+    # price distance are the same number, and is wrong by a factor of the price
+    # everywhere else". It cannot refuse one of Nautilus's, because theirs take
+    # no `unit_from`: `AverageTrueRange.value` is a price distance, `sma` and
+    # `bollinger` are prices, `obv` and `vwap` carry volume. A sweep
+    # thresholding any of those puts a gold threshold on EURUSD.
+    #
+    # These three are **bounded** by construction - `rsi` runs 0 to 1, `aroon`
+    # and `value_k` run to 100 - so one threshold means the same thing on every
+    # instrument. A caller that wants `atr` can still have it through `read=`,
+    # by dividing by something, and that division is the decision the absence
+    # is making visible.
+    #
+    # `roc` is deliberately not here although it is dimensionless. A rate of
+    # change is a return, so it has no units - but its *scale* is the
+    # instrument's volatility, and the 90th percentile of a 14-bar EURUSD
+    # return is 0.00126 where BTC's is two orders of magnitude larger. A
+    # dimensionless reading is not a scale-free one, and only the second is
+    # safe to threshold across a panel.
+    "rsi": "value",
+    "aroon": "value",
+    "stochastics": "value_k",
+}
+
+
+def detector_reader(
+    name: str,
+    source: str | None = None,
+    *,
+    bar_type: str = "SWEEP.SIM-1-HOUR-LAST-EXTERNAL",
+    precision: int = 8,
+    read: Any = None,
+    signed: bool = False,
+    **kwargs: Any,
+) -> Any:
+    """A `searching.Reader` for one catalogued detector on one source.
+
+    **The seam between the panel and the sweep, and it lives here because this
+    is the only file in `statespace` that may import `nautilus_trader`.** The
+    33 detectors reachable through `indicators.build_detector` are Nautilus
+    `Indicator`s, and `searching.py` must not know what a `Bar` is - so this
+    turns a name into a function from candles to one float per candle, and the
+    sweep holds that function as a value.
+
+    Holding it as a value is what makes the null arms work: a **series** arm
+    manufactures candles and the sweep re-runs *the same reader* over them,
+    which is what "null every candidate against a walk through the same
+    detector" means mechanically. Four alternating-detector readings came out
+    level with a walk because the detector's own structure was in both arms,
+    and that only shows up if the detector really is re-run.
+
+    `precision=8` is deliberately **not** a tradable precision. `Price` is
+    fixed-precision, so an instrument's declared precision truncates the feed
+    before the detector sees it - btc at its tradable two decimals moves a 1m
+    reading by 3e-5 relative, and a volume precision of 0 rounded 701 of 3,000
+    btc volumes to zero. A sweep measures the series rather than a fill, so it
+    takes the series undamaged and the fill cost is applied downstream.
+
+    `read` overrides `READINGS`: a callable taking the indicator and returning
+    a float, for a detector whose candidate reading is not the table's.
+    """
+    from nautilus_trader.model.objects import Price, Quantity
+
+    from till_infinity.indicators import BAR_DETECTORS, FRAMEWORK, Reading, build_detector
+
+    if read is None:
+        if name not in READINGS:
+            known = sorted(set(BAR_DETECTORS) | set(FRAMEWORK))
+            raise ValueError(
+                f"{name!r} has no catalogued sweep reading. `READINGS` covers "
+                f"{sorted(READINGS)}; the detectors are {known}. Pass `read=` with the "
+                f"reading this trial is about - a detector exposes several and which "
+                f"one is the candidate is a decision about the search."
+            )
+        attribute = READINGS[name]
+
+        def take(indicator: Any) -> float:
+            return float(getattr(indicator, attribute))
+    else:
+        take = read
+
+    wanted = Reading(source) if source else None
+    kind = BarType.from_str(bar_type)
+    volume = Quantity(1, 0)
+
+    def reader(candles: Any) -> list[float]:
+        indicator = build_detector(name, wanted, **kwargs)
+        step = int(_seconds(kind) * 1_000_000_000)
+        out: list[float] = []
+        for i, (open_, high, low, close) in enumerate(candles):
+            indicator.handle_bar(
+                Bar(
+                    kind,
+                    Price(open_, precision),
+                    Price(high, precision),
+                    Price(low, precision),
+                    Price(close, precision),
+                    volume,
+                    ts_event=(i + 1) * step,
+                    ts_init=(i + 1) * step,
+                )
+            )
+            try:
+                got = take(indicator)
+            except (AttributeError, TypeError, ValueError):
+                out.append(float("nan"))
+                continue
+            out.append(float("nan") if got is None else (got if signed else abs(float(got))))
+        return out
+
+    return reader
 
 
 def _interval(bar_type: BarType) -> str:

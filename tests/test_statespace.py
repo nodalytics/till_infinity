@@ -6325,6 +6325,23 @@ class TestVendoredCusum:
                 # the rule cost while it was absolute.
                 if stripped.startswith(("from ..indicators", "from till_infinity.indicators")):
                     continue
+                # **`domain` is the second permitted reach, added 2026-11-01**,
+                # on the same terms and for the same reason. It is already in
+                # `INFRASTRUCTURE` in `test_service_boundaries.py` - "below
+                # everything: the shapes an order and a holding take, plus
+                # rollover and swap, which are properties of a contract and a
+                # venue rather than anybody's logic" - and it imports nothing
+                # but `utils`, so taking it along is one more directory rather
+                # than a dependency on the live desk.
+                #
+                # `deciding.py` is what needed it: a decision that returns an
+                # `Intent` or a `Refusal` has to use the desk's own shapes. The
+                # alternative was a second `Intent` defined here, which is the
+                # `accruing.py` failure again in the place it would cost most -
+                # the order shape every strategy, the journal and the risk gate
+                # all read.
+                if stripped.startswith(("from ..domain", "from till_infinity.domain")):
+                    continue
                 if stripped.startswith("from ..") or re.match(
                     r"(from|import) till_infinity\b", stripped
                 ):
