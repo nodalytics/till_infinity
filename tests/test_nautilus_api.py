@@ -172,3 +172,18 @@ def test_there_is_no_longer_a_competing_strategy_class():
     # The decision is a mixin with no base, and the leaf is the framework's.
     assert Surprise.__mro__ == (Surprise, object)
     assert issubclass(SurpriseEdge, Strategy)
+
+
+def test_orderside_has_no_to_position_side():
+    """The same trap on an enum, which the `self.x()` sweep cannot see.
+
+    `MT5ExecutionClient._generate_position_status_reports` calls
+    `side.to_position_side()` on an `OrderSide`. The name reads as obviously
+    right and the enum does not have it, so the first real position raises
+    `AttributeError`. If Nautilus adds it, this fails and the call site can
+    stop translating by hand.
+    """
+    from nautilus_trader.model.enums import OrderSide
+
+    assert not hasattr(OrderSide, "to_position_side")
+    assert not hasattr(OrderSide.BUY, "to_position_side")
