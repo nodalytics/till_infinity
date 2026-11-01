@@ -7,6 +7,8 @@ three tests that drove them through the retired runner.
 
 from __future__ import annotations
 
+from till_infinity.indicators.candles import Bar
+
 # ------------------------------------------- reaching the journal, through the service
 
 

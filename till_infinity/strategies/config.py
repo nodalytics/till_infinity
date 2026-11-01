@@ -208,7 +208,18 @@ DEFAULT_SYMBOLS: tuple[str, ...] = ("gold", "btc")
 #: to be discovered by reading this file.
 OPTIONAL_SYMBOLS: tuple[str, ...] = tuple(k for k in INSTRUMENTS if k not in DEFAULT_SYMBOLS)
 
-#: Backends, in the order `auto` tries them. See `broker.choose`.
+#: Backends, in the order `auto` tried them - **vocabulary now, not a
+#: selector.** `broker.choose` retired with `venues/` on 2026-11-01 and
+#: nothing reads `TRADING_BACKEND` on the Nautilus path: the execution client
+#: is the MT5 adapter, registered by `node/live.py`. Kept because a backend
+#: name is still written into the journal beside a trade, and renaming one
+#: would break reading back a record that used it.
+#:
+#: `PAPER` in particular no longer selects anything. **It is not the arming
+#: switch and never was** - that is `TRADING_LIVE`, enforced by putting
+#: Nautilus's `RiskEngine` in `HALTED`; see `node/live._arm`. A deploy that
+#: sets `TRADING_BACKEND=paper` and expects not to trade is armed if
+#: `TRADING_LIVE=1`, which is why the gate reads one variable and not two.
 PAPER = "paper"
 NATIVE = "mt5"
 RPYC = "mt5-rpyc"

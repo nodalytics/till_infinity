@@ -1,44 +1,61 @@
-"""Trading: turning level calls into positions, on MT5 or on paper.
+"""Trading: turning a published reading into a position, through Nautilus.
 
-    structures ──▶ structures.signals ──▶ trading ──┬──▶ broker
-    prices     ──▶ prices.quotes     ──┘            ├──▶ alerts
-                                                    └──▶ journal
+    statespace ──▶ statespace.proposals ──▶ a Desk ──┬──▶ ExecutionEngine ──▶ MT5
+    prices     ──▶ the engine's own feed  ──┘        ├──▶ alerts
+                                                     └──▶ journal
 
-The only part of this project that can lose money, and the only one that is
-written to fail closed: paper unless `TRADING_LIVE=1`, no order without a
-resolved symbol and a checked terminal, and every decision - taken or refused -
-written to the journal beside the numbers it was made from.
+The only part of this project that can lose money. Each leaf here **is** a
+`nautilus_trader` `Strategy`, so the framework assigns it a `strategy_id` and
+carries it on every order, fill and position - which is what retired the magic
+number as an identifier, after off-by-one relabelled every strategy as its
+neighbour.
 
-```python
-from . import Settings, listen
+Nothing here builds a node, and that is a boundary the suite enforces: a
+docstring that so much as *writes* the import is a failing test, because
+`strategies` sits below `node` and a cycle would make either one unusable
+alone. The desks named by `TRADING_SYMBOLS` x `TRADING_ENTRIES` are started
+from above:
 
-# Whatever this host can reach: the native package on Windows, the Wine bridge
-# on Linux, the paper book if neither. Nothing is armed without TRADING_LIVE.
-await listen(bus, settings=Settings.from_env(), journal=journal)
+```sh
+python -m till_infinity.node.live
 ```
+
+**Arming is not here any more, and this is the one thing to know when reading
+this package.** It used to be: `service.py` picked `PaperBroker` unless
+`TRADING_LIVE=1`, and that sentence sat in this docstring. `service.py` retired
+on 2026-11-01 and the switch went with it, which left a node that registered
+the execution client unconditionally - real orders from an environment that
+used to paper-trade. The gate is now `node/live._arm`, which puts Nautilus's
+`RiskEngine` in `HALTED` without `TRADING_LIVE=1`: it denies every trading
+command except cancels, below the strategies and above the client, so nothing
+a decision, an exit or a managed stop does can route around it. **A strategy
+in this package may therefore assume it is allowed to try, and must not
+assume its order went anywhere.**
 
 The pieces, in dependency order:
 
 | | |
 |---|---|
-| `config` | what to trade, on which terminal, and the arming switch |
-| `models` | sides, specs, ticks, intents, refusals - nothing broker-shaped |
-| `broker` | the port, and which of the four backends this host can run |
-| `symbols` | which instruments this broker actually offers, resolved once |
+| `config` | what to trade, on which terminal, and the magic the bridge stamps |
+| `profile` | the numbers a decision runs on, and the helpers measured on them |
+| `surprise` | the one registered decision: is this reading worth trading |
+| `entries` | the three mechanisms that place it - at market, resting, on arrival |
+| `exits` | moving a stop, banking, turning out, and letting a stale one go |
+| `basket` | the one exit that is portfolio-wide, so an Actor rather than a strategy |
+| `desk` | the gate sequence, in the order it is applied, and the journal reasons |
+| `counterfactual` | what would have happened to the ones it refused |
 | `sizing` | volatility units to price, price to lots |
 | `plans` | risk limits as named, internally consistent bundles |
+| `affordable` | whether the account can survive the stop it is about to set |
+| `floors` | pushing a target out until it pays for its own risk |
 | `context` | what the rest of the system knows: the calendar, the venues, the regime |
-| `risk.exposure` | what is at risk per currency rather than per ticket. In
-  `risk/`, because exposure is an account-level question |
-| `risk` | may this account take another trade right now |
-| `strategy` | the port a strategy implements, and the register |
-| `scalper` | the four arithmetic level strategies |
-| `turning` | the cycle reading as an entry, gated on its own record |
-| `valuation` | asking an analyst what a thing is worth, rather than which way it goes |
-| `speeds` | three EWMAs and their agreement, for `momentum-scalp` |
+| `guard` | may this account take another trade right now |
 | `book` | the levels seen so far, for the ones that trade toward a level |
+| `sessions` | which hours a feed is worth trading in |
+| `spreads` | what a round trip costs, in the units the decision uses |
 | `manage` | moving a stop after the trade is on. Off by default |
-| `service` | the bus loop, the orders, the reconciliation, the record |
+| `turning` | the cycle reading as an entry, gated on its own record |
+| `valuation` | asking what a thing is worth, rather than which way it goes |
 | `report` | scoring the closed trades, and refusing to when there are too few |
 """
 

@@ -303,3 +303,104 @@ def test_a_backtest_with_no_desks_refuses_rather_than_reporting_nothing(monkeypa
 
     with pytest.raises(ValueError, match="no desks"):
         backtest.desk_config("EURUSD.SIM")
+
+
+# --------------------------------------------------- the one gate that costs money
+
+
+@pytest.mark.parametrize("unset", ["", "0", "false", "no"])
+def test_a_node_that_is_not_armed_denies_every_order(monkeypatch, loop, unset):
+    """**`TRADING_LIVE` or no orders**, and the regression that put it here.
+
+    `TRADING_LIVE` has always been the desk's arming switch: the retired
+    `service.py` chose a paper book without it. When that path retired on
+    2026-11-01 the switch went with it, and this node registered the MT5
+    execution client unconditionally - so a host with `TRADING_SYMBOLS` set
+    and `TRADING_LIVE` unset would have sent **real orders** where the same
+    environment used to paper-trade. Nothing failed; a control was simply
+    gone, which is why the test is per state rather than per line.
+
+    Driven through `_execute_command` rather than `execute` on purpose:
+    `LiveRiskEngine.execute` enqueues onto a loop that is not running here,
+    and `_execute_command` is the handler that queue drains into - the same
+    path, minus the wait.
+    """
+    from nautilus_trader.common.component import TestClock
+    from nautilus_trader.common.factories import OrderFactory
+    from nautilus_trader.core.uuid import UUID4
+    from nautilus_trader.execution.messages import SubmitOrderList
+    from nautilus_trader.model.enums import OrderSide, TradingState
+    from nautilus_trader.model.identifiers import StrategyId, TraderId
+    from nautilus_trader.model.objects import Price, Quantity
+    from nautilus_trader.test_kit.providers import TestInstrumentProvider
+
+    if unset:
+        monkeypatch.setenv("TRADING_LIVE", unset)
+    else:
+        monkeypatch.delenv("TRADING_LIVE", raising=False)
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+
+    from till_infinity.node import live
+
+    node = live.build()
+    try:
+        assert node.kernel.risk_engine.trading_state == TradingState.HALTED
+
+        venue = node.trader.strategies()[0].config.instrument_id.venue
+        eurusd = TestInstrumentProvider.default_fx_ccy("EUR/USD", venue)
+        node.kernel.cache.add_instrument(eurusd)
+        factory = OrderFactory(
+            trader_id=TraderId("TILL-001"),
+            strategy_id=StrategyId("S-1"),
+            clock=TestClock(),
+        )
+        bracket = factory.bracket(
+            instrument_id=eurusd.id,
+            order_side=OrderSide.BUY,
+            quantity=Quantity.from_int(1_000),
+            sl_trigger_price=Price.from_str("1.0900"),
+            tp_price=Price.from_str("1.1100"),
+        )
+
+        # The denial is an `OrderDenied` sent to `ExecEngine.process`, so the
+        # assertion reads the events rather than the orders: the live exec
+        # engine queues them, and a status still `INITIALIZED` means the
+        # event has not been applied yet, not that nothing was denied.
+        seen: list[object] = []
+        bus = node.kernel.msgbus
+        bus.deregister(endpoint="ExecEngine.process", handler=node.kernel.exec_engine.process)
+        bus.register(endpoint="ExecEngine.process", handler=seen.append)
+
+        node.kernel.risk_engine._execute_command(
+            SubmitOrderList(
+                trader_id=TraderId("TILL-001"),
+                strategy_id=StrategyId("S-1"),
+                order_list=bracket,
+                command_id=UUID4(),
+                ts_init=0,
+            )
+        )
+
+        # Every leg, not just the entry: a bracket whose stop was denied and
+        # whose entry was not is worse than no order at all.
+        assert len(seen) == len(bracket.orders) == 3
+        assert {type(event).__name__ for event in seen} == {"OrderDenied"}
+        assert {event.reason for event in seen} == {"TradingState.HALTED"}
+    finally:
+        node.dispose()
+
+
+def test_trading_live_arms_the_node(monkeypatch, loop):
+    """The other half, because a gate that is always closed is not a gate."""
+    from nautilus_trader.model.enums import TradingState
+
+    monkeypatch.setenv("TRADING_LIVE", "1")
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+
+    from till_infinity.node import live
+
+    node = live.build()
+    try:
+        assert node.kernel.risk_engine.trading_state == TradingState.ACTIVE
+    finally:
+        node.dispose()

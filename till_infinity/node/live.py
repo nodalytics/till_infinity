@@ -26,6 +26,7 @@ from nautilus_trader.config import (
     TradingNodeConfig,
 )
 from nautilus_trader.live.node import TradingNode
+from nautilus_trader.model.enums import TradingState
 
 from till_infinity.adapters.mt5 import (
     MT5,
@@ -36,6 +37,7 @@ from till_infinity.adapters.mt5 import (
 )
 from till_infinity.node import desks
 from till_infinity.statespace.actor import StatespaceActor, StatespaceConfig
+from till_infinity.utils.env import flag
 
 #: The venue's magic, and **no longer how a strategy is identified.**
 #:
@@ -118,6 +120,7 @@ def build() -> TradingNode:
     produced by a different route.
     """
     node = TradingNode(config=settings())
+    _arm(node)
     node.add_data_client_factory(MT5, MT5LiveDataClientFactory)
     node.add_exec_client_factory(MT5, MT5LiveExecClientFactory)
 
@@ -126,7 +129,7 @@ def build() -> TradingNode:
         # **Said out loud, never silent.** A set smaller than the one asked for
         # is the shape of bug this desk has paid for repeatedly: a min-events
         # guard once dropped 141 of 146 feeds and made 0.9 sigma look like 4.8.
-        node.kernel.log.warning(
+        node.kernel.logger.warning(
             f"{len(clipped)} desk(s) clipped for the machine's ceiling of "
             f"{desks.ceiling()}: {', '.join(clipped)}"
         )
@@ -145,6 +148,49 @@ def build() -> TradingNode:
 
     node.build()
     return node
+
+
+def _arm(node: TradingNode) -> bool:
+    """`TRADING_LIVE=1` or no orders. Returns whether the node is armed.
+
+    **The one gate on this path that can lose money, and it fails closed.**
+    `TRADING_LIVE` has always been the desk's arming switch - the retired
+    `service.py` chose a paper book without it - and when that path retired on
+    2026-11-01 the switch went with it: this node registered the MT5 execution
+    client unconditionally, so a host with `TRADING_SYMBOLS` set and
+    `TRADING_LIVE` unset sent **real orders** where the same environment used
+    to paper-trade. A control regression, found by review rather than by a
+    test, which is why there is now a test per state.
+
+    The mechanism is Nautilus's own and not a flag of ours: `HALTED` denies
+    every trading command except cancels inside `RiskEngine`, below the
+    strategies and above the execution client, so nothing a strategy, an exit
+    or a managed stop does can route around it. Set here rather than after
+    `node.build()` because the engine exists from the kernel's constructor and
+    this leaves no window in which an order could be accepted.
+
+    An unarmed node still connects, reconciles, subscribes and computes. That
+    is deliberate: those are reads, they are how the desk is observed, and
+    refusing to build at all would make a dry run impossible on a path that
+    has no paper venue wired. What it cannot do is open or change a position.
+    """
+    # `utils.env.flag` and not `Settings.from_env().live`: the same variable
+    # read through the same primitive `Settings` uses, without the broker
+    # instrument registration that `from_env` performs as a side effect.
+    armed = flag("TRADING_LIVE")
+    if armed:
+        return True
+    node.kernel.risk_engine.set_trading_state(TradingState.HALTED)
+    # Said at `error`, not `info`. A node that is up, connected, reconciled
+    # and refusing every order looks healthy from our own side of the wire,
+    # which is exactly how three deploys on 2026-10-09 reported up while
+    # running none of the code they claimed.
+    node.kernel.logger.error(
+        "TRADING_LIVE is not set: the risk engine is HALTED and every order "
+        "will be denied. Data, reconciliation and the strategies all run; "
+        "nothing reaches the venue. Set TRADING_LIVE=1 to arm."
+    )
+    return False
 
 
 def _actors() -> list[Actor]:
