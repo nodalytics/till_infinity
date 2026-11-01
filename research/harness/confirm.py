@@ -129,7 +129,7 @@ import indicators as ind
 
 from till_infinity.structures.engine import Engine
 from till_infinity.strategies import candles
-from till_infinity.strategies.sizing import price_distance
+from till_infinity.risk.sizing import price_distance
 
 UNIVERSE = os.environ.get("UNIVERSE", "real")
 PART = os.environ.get("PART", "run")

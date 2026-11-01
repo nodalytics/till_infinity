@@ -508,6 +508,71 @@ def test_a_layer_only_imports_what_is_below_it(layer):
     )
 
 
+def test_risk_imports_no_layer_above_it():
+    """The direction `sizing` and `affordable` crossed, pinned by a parser.
+
+    `test_a_layer_only_imports_what_is_below_it` asserts this already and
+    asserts it by regex, which reads `from till_infinity.strategies import x`
+    and does not read `import till_infinity.strategies`. Both are the same
+    breach and the second is the form a convenient one-line fix takes, so this
+    resolves every import under `risk/` - relative ones, `import a.b.c` and
+    `from till_infinity import x` included - and names the file.
+
+    **`statespace` and `indicators` are in scope here, not just `strategies`.**
+    The ruling of 2026-11-01 is that a regime *model* is an inference and stays
+    in `statespace/`, and that `risk/` is a consumer of a regime rather than a
+    producer of one: `scaling.by_regime` takes the ratio as a plain `float` and
+    the caller supplies it. A fitted model reached from here would make the one
+    component that has to stay auditable the one with the most moving parts,
+    and the import is how that would arrive.
+
+    **It is worth a test of its own because the pressure on this edge is
+    recorded rather than hypothetical.** `guard.py` was placed in `risk/` on
+    2026-10-31 and sent back the same day when it turned out to need
+    `strategies.config.Settings`; `sizing.py` and `affordable.py` moved here on
+    2026-11-01 only because they needed nothing above `domain`. The next module
+    offered to this package will arrive with an import, and accepting one is
+    how `risk` stops being shareable by a second strategy package - which is
+    the entire reason it is a top-level package and not a subdirectory of the
+    first one.
+    """
+    allowed = INFRASTRUCTURE | {"risk"}
+    home = ROOT / "risk"
+    offenders: dict[str, list[str]] = {}
+    for path in sorted(home.rglob("*.py")):
+        # The package the file sits in, so a relative import resolves to the
+        # absolute name it actually reaches.
+        package = ["till_infinity", *path.relative_to(ROOT).parts[:-1]]
+        for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            if isinstance(node, ast.Import):
+                targets = [a.name.split(".") for a in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                base = package[: len(package) - max(0, node.level - 1)]
+                tail = (node.module or "").split(".")[: None if node.module else 0]
+                resolved = [*base, *tail] if node.level else tail
+                # `from till_infinity import x` names the package in the alias,
+                # not in the module, so that form has to be expanded or it
+                # reads as an import of nothing.
+                targets = (
+                    [[*resolved, a.name] for a in node.names]
+                    if resolved == ["till_infinity"]
+                    else [resolved]
+                )
+            else:
+                continue
+            for name in targets:
+                if name[:1] != ["till_infinity"] or len(name) < 2:
+                    continue  # the stdlib, a third party, or the package itself
+                if name[1] not in allowed:
+                    offenders.setdefault(path.name, []).append(".".join(name))
+    assert not offenders, (
+        f"risk reaches above itself: {offenders}. Risk applies across strategies, "
+        f"so a second strategy package could not share this one from inside the "
+        f"first - and the import is the symptom that the module belongs upstairs. "
+        f"It may read {sorted(allowed)} and nothing else of the desk's."
+    )
+
+
 def test_every_infrastructure_entry_is_real():
     """An allowance for a module that does not exist is not an allowance.
 

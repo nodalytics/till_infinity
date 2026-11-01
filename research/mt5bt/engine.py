@@ -49,7 +49,7 @@ import pandas as pd
 
 from till_infinity.strategies import swap as swap_rules
 from till_infinity.strategies.models import Side
-from till_infinity.strategies.sizing import lots
+from till_infinity.risk.sizing import lots
 
 from .data import Book
 

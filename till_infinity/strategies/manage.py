@@ -40,8 +40,8 @@ from dataclasses import dataclass
 from till_infinity.utils.logging import get_logger
 
 from ..domain.models import Intent, Position, Side, SymbolSpec
+from ..risk.sizing import price_distance
 from .config import Settings
-from .sizing import price_distance
 
 log = get_logger(__name__)
 

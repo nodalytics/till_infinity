@@ -11,6 +11,11 @@ Three things multiply into a verdict and only the first is obvious - the
 minimum lot, the narrowest stop the broker will accept, and what a stop
 actually costs once slippage is counted - so each has a test that would fail if
 it were dropped.
+
+**The subject moved to `risk/` on 2026-11-01** and this file kept its name and
+its path, because `tests/` is flat - there is nowhere for it to move to. The
+import below is the only record of it here, which is why that import is worth
+reading rather than skipping.
 """
 
 from __future__ import annotations
@@ -18,7 +23,7 @@ from __future__ import annotations
 import pytest
 
 from till_infinity.domain.models import SymbolSpec
-from till_infinity.strategies import affordable as af
+from till_infinity.risk import affordable as af
 
 
 def spec(

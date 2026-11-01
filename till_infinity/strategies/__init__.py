@@ -32,6 +32,15 @@ a decision, an exit or a managed stop does can route around it. **A strategy
 in this package may therefore assume it is allowed to try, and must not
 assume its order went anywhere.**
 
+**`sizing` and `affordable` left for `risk/` on 2026-11-01**, which is why the
+table below is two rows shorter than the package. Both answer account
+questions - how many lots a risk budget buys, and whether the account survives
+the smallest position an instrument permits - and neither reads a signal, so
+neither was a strategy's business. They are not re-exported here either: a name
+re-exported from two packages is a name whose owner nobody can tell. They are
+in `till_infinity.risk` now, and `risk/__init__.py` records which of the other
+candidates stayed and what stopped them.
+
 The pieces, in dependency order:
 
 | | |
@@ -44,9 +53,7 @@ The pieces, in dependency order:
 | `basket` | the one exit that is portfolio-wide, so an Actor rather than a strategy |
 | `desk` | the gate sequence, in the order it is applied, and the journal reasons |
 | `counterfactual` | what would have happened to the ones it refused |
-| `sizing` | volatility units to price, price to lots |
 | `plans` | risk limits as named, internally consistent bundles |
-| `affordable` | whether the account can survive the stop it is about to set |
 | `floors` | pushing a target out until it pays for its own risk |
 | `context` | what the rest of the system knows: the calendar, the venues, the regime |
 | `guard` | may this account take another trade right now |
@@ -75,14 +82,6 @@ from ..domain.models import (
 )
 from ..indicators.momentum import Speeds
 from . import report
-from .affordable import (
-    CATASTROPHIC,
-    STOPS,
-    Affordability,
-    judge,
-    survey,
-    unaffordable,
-)
 from .book import Book, Seen
 from .config import (
     BACKENDS,
@@ -112,14 +111,12 @@ from .manage import Move, advance
 from .plans import PLANS, Plan
 from .profile import Profile
 from .report import Report, Trade
-from .sizing import Sizing, lots, price_distance
 from .surprise import Surprise, SurpriseArrival, SurpriseEdge, SurpriseResting
 from .turning import TurnExit, TurnOutcome, TurnTally
 from .valuation import Priced, Valuation, price_it
 
 __all__ = [
     "BACKENDS",
-    "CATASTROPHIC",
     "DEFAULT_MAGIC",
     "DEFAULT_SYMBOLS",
     "HTTP",
@@ -131,10 +128,8 @@ __all__ = [
     "PAPER",
     "PLANS",
     "RPYC",
-    "STOPS",
     "SUFFIXES",
     "Account",
-    "Affordability",
     "ArrivalEntry",
     "Book",
     "Context",
@@ -157,7 +152,6 @@ __all__ = [
     "Seen",
     "Settings",
     "Side",
-    "Sizing",
     "Speeds",
     "Surprise",
     "SurpriseArrival",
@@ -173,15 +167,10 @@ __all__ = [
     "Verdict",
     "advance",
     "feed_for",
-    "judge",
-    "lots",
     "magic_for",
     "ours",
-    "price_distance",
     "price_it",
     "report",
     "resolve_symbols",
     "strategy_for",
-    "survey",
-    "unaffordable",
 ]
