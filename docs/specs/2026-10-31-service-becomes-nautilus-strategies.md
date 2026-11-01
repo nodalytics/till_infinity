@@ -8,12 +8,33 @@ The finding that shapes the whole thing: **most of `Trader` is not ours to
 port.** The split it implements is already documented in
 `strategies/strategies/strategy.py`:
 
-| | decides |
-|---|---|
-| `strategy` | is this signal worth trading, and where do the stop and target go |
-| `plans` | how much may be lost, per trade and per day |
-| `risk` | may *this account, right now* take another one |
-| `service` | send it, record it, and reconcile what came back |
+| | decides | where it lives now |
+|---|---|---|
+| `strategy` | is this signal worth trading, and where do the stop and target go | `strategies/` |
+| `plans` | how much may be lost, per trade and per day | `risk/plans.py` |
+| `risk` | may *this account, right now* take another one | `risk/guard.py` |
+| `service` | send it, record it, and reconcile what came back | Nautilus |
+
+The third column was added on 2026-11-01, when the last two rows finally
+reached the package their names describe. `guard.py` and `plans.py` had stayed
+in `strategies/` through two attempts, because the limit is an account fact
+while the *number* lived in `Settings` - 1,583 lines of `TRADING_*` knobs
+about what to trade and on which terminal, which `risk` may not import. The
+seam is `risk/envelope.py`, a frozen projection of the 22 fields the gates
+actually read, declaring **no defaults** so a number cannot come to live in
+two places.
+
+Two things that move exposed rather than caused, both worth knowing when
+reading the rows above:
+
+* **`TRADING_RISK_PLAN` was read, printed and never applied.** `apply_plan`'s
+  only caller was the CLI. It is applied in `Settings.from_env` now - not by
+  the node, because `from_env` runs in six live places and a node applying a
+  plan to its own instance would leave the other five on the defaults.
+* **`Guard.allows` has no production caller.** Only `Guard.basket` runs,
+  through `BasketExit`, so the account-level gate chain and its eighteen
+  reason strings are exercised by tests alone and have never reached a
+  journal. That is a gap in the second row above, not in the table.
 
 The fourth row is `Trader`, and Nautilus's `ExecutionEngine`, `Cache` and
 `Portfolio` are that row. So this is mostly deletion, and the part that is

@@ -1448,7 +1448,7 @@ class Settings:
         )
         if carried:
             register_broker_instruments(carried)
-        return cls(
+        found = cls(
             backend=(_env("TRADING_BACKEND") or "auto").lower(),
             url=_env("TRADING_MT5_URL"),
             api_key=_env("TRADING_MT5_API_KEY"),
@@ -1600,6 +1600,26 @@ class Settings:
             paper_equity=_float("TRADING_PAPER_EQUITY", 10_000.0),
             paper_spread_bps=_float("TRADING_PAPER_SPREAD_BPS", 2.0),
         )
+        # **The plan is applied here and not by a caller**, because there is
+        # no single instance for a caller to apply it to: `Settings.from_env()`
+        # is called independently in six live places - the desk, the basket
+        # exit, the news client, the notifier and its delivery - so mutating
+        # one of them would leave the other five on the defaults.
+        #
+        # That is strictly worse than not applying it at all: a desk gated by
+        # `conservative` and sized by `standard` looks configured and is not,
+        # and nothing in a log would distinguish the two. `TRADING_RISK_PLAN`
+        # had been read, printed at start-up and never applied since the CLI
+        # retired, which went unnoticed because this dataclass's defaults are
+        # `standard`'s twelve numbers exactly.
+        apply_plan(found)
+        return found
+
+
+#: Plans already announced, so a six-times-constructed `Settings` says each
+#: one once. A set rather than a last-seen name, because a process that
+#: switches plans - a test, or a tool comparing two - should hear about both.
+_TOLD: set[str] = set()
 
 
 def apply_plan(settings: Settings, name: str | None = None) -> Plan:
@@ -1618,22 +1638,34 @@ def apply_plan(settings: Settings, name: str | None = None) -> Plan:
     to by the time a plan is chosen, so returning a second, differently
     configured one would leave the first in service with nothing to say so.
 
-    **Nothing calls this.** The caller was the CLI, retired to
-    `research/retire/bus/`, and the node has not taken it over - so
-    `TRADING_RISK_PLAN` is read, printed and not applied, and the desk trades
-    the defaults this dataclass declares. Those happen to be `standard`'s
-    twelve numbers exactly, which is why it has gone unnoticed; naming
-    `conservative` or `aggressive` today changes nothing.
+    **Called by `from_env`, and not by a node.** The caller used to be the
+    CLI; when that retired, `TRADING_RISK_PLAN` was read, printed at start-up
+    and never applied, and the desk traded this dataclass's defaults - which
+    are `standard`'s twelve numbers exactly, which is why it went unnoticed.
+
+    The obvious repair was a call in `node/live.py`, and it would have been
+    worse than the gap. `Settings.from_env()` runs independently in six live
+    places - the desk, the basket exit, the news client, the notifier and its
+    delivery - so applying a plan to the node's instance would leave the other
+    five on the defaults: a desk gated by `conservative` and sized by
+    `standard`, looking configured and not being, with nothing in a log to
+    tell the two apart. So it is applied where the object is built.
     """
     plan = plans.get(name or settings.risk_plan or DEFAULT_PLAN)
     for tunable, value in plan.values().items():
         setattr(settings, tunable, value)
     settings.risk_plan = plan.name
-    kept = plans.overridden()
-    if kept:
-        log.info("trading: risk plan %s, overridden for %s", plan.name, ", ".join(kept))
-    else:
-        log.info("trading: risk plan %s", plan)
+    # **Said once per plan, not once per `Settings`.** `from_env` runs in six
+    # live places, so logging unconditionally would put six identical lines in
+    # every start-up - and a line repeated six times is one a reader stops
+    # reading, which is how the next real one gets missed.
+    if plan.name not in _TOLD:
+        _TOLD.add(plan.name)
+        kept = plans.overridden()
+        if kept:
+            log.info("trading: risk plan %s, overridden for %s", plan.name, ", ".join(kept))
+        else:
+            log.info("trading: risk plan %s", plan)
     return plan
 
 

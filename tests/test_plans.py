@@ -124,3 +124,79 @@ class TestThePlanStillLinesUpWithTheSettingsItWritesInto:
         assert made.risk_plan == "conservative"
         assert made.risk_fraction == 0.001
         assert made.max_positions == 34, "the environment's number was overwritten"
+
+
+# ------------------------------------------- the plan is applied, at long last
+
+
+def test_a_named_plan_actually_changes_the_settings(monkeypatch):
+    """**It did not, since the CLI retired.** `TRADING_RISK_PLAN` was read into
+    `Settings.risk_plan`, printed at start-up and never applied: `apply_plan`'s
+    only caller was the CLI, and the node never took it over. So the desk
+    traded this dataclass's defaults, and naming `conservative` or
+    `aggressive` changed nothing at all.
+
+    It went unnoticed because the defaults are `standard`'s twelve numbers
+    exactly - the one case where a broken wire and a working one produce
+    identical output.
+    """
+    from till_infinity.strategies.config import Settings
+
+    monkeypatch.setenv("TRADING_RISK_PLAN", "conservative")
+    careful = Settings.from_env()
+    monkeypatch.setenv("TRADING_RISK_PLAN", "aggressive")
+    bold = Settings.from_env()
+
+    assert careful.risk_plan == "conservative"
+    assert bold.risk_plan == "aggressive"
+    # The numbers, not just the label: a label that changes while the limits
+    # do not is the state this test exists to rule out.
+    assert careful.risk_fraction < bold.risk_fraction
+    assert careful.max_positions < bold.max_positions
+
+
+def test_the_default_is_standard_and_matches_the_dataclass(monkeypatch):
+    """Which is *why* the gap was invisible, and is worth pinning: if the
+    defaults ever drift from `standard`, an unset `TRADING_RISK_PLAN` starts
+    meaning something different and nothing says so."""
+    from till_infinity.strategies.config import DEFAULT_PLAN, Settings
+
+    monkeypatch.delenv("TRADING_RISK_PLAN", raising=False)
+    found = Settings.from_env()
+    assert found.risk_plan == DEFAULT_PLAN == "standard"
+
+    monkeypatch.setenv("TRADING_RISK_PLAN", "standard")
+    assert Settings.from_env().risk_fraction == found.risk_fraction
+
+
+def test_the_plan_applies_to_every_settings_and_not_one(monkeypatch):
+    """**The reason it is applied in `from_env` rather than by the node.**
+    `Settings.from_env()` runs independently in six live places - the desk,
+    the basket exit, the news client, the notifier and its delivery - so a
+    node applying a plan to its own instance would leave the other five on the
+    defaults.
+
+    That is worse than the gap it fixes: a desk gated by `conservative` and
+    sized by `standard` looks configured and is not, and nothing in a log
+    distinguishes the two.
+    """
+    from till_infinity.strategies.config import Settings
+
+    monkeypatch.setenv("TRADING_RISK_PLAN", "conservative")
+    assert {Settings.from_env().risk_fraction for _ in range(4)} == {
+        Settings.from_env().risk_fraction
+    }
+    assert Settings.from_env().max_positions == 2
+
+
+def test_an_environment_variable_still_beats_the_plan(monkeypatch):
+    """A plan is a coherent bundle and a direct setting is a deliberate
+    exception to it, so the exception wins - `Plan.values` leaves out every
+    field the environment set."""
+    from till_infinity.strategies.config import Settings
+
+    monkeypatch.setenv("TRADING_RISK_PLAN", "conservative")
+    monkeypatch.setenv("TRADING_MAX_POSITIONS", "9")
+    found = Settings.from_env()
+    assert found.risk_plan == "conservative"
+    assert found.max_positions == 9, "the variable the operator set, not the plan's 2"
