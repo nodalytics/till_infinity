@@ -70,6 +70,23 @@ class Entry:
     parent: str = ""
     time: float = field(default_factory=_time.time)
 
+    def __post_init__(self) -> None:
+        """Copy the caller's `context` in, rather than holding their dict.
+
+        **The copy used to live in `service.decide`**, which is retired, and
+        it is the shape's own business: the docstring above calls
+        point-in-time correctness the difference between a dataset and a leak,
+        and an entry holding a mutable reference is not point-in-time. It
+        matters more than it did - an entry now waits on the actor's buffer for
+        up to `flush_seconds` before the JSON is written, where `record` wrote
+        it immediately - so the snapshot is taken at construction.
+
+        `object.__setattr__` because the dataclass is frozen, which is the
+        documented way to normalise a field in `__post_init__`.
+        """
+        object.__setattr__(self, "context", dict(self.context))
+        object.__setattr__(self, "tags", tuple(self.tags))
+
     @property
     def id(self) -> str:
         return _digest(self.time, self.actor, self.title)
@@ -87,6 +104,45 @@ class Entry:
             "confidence": self.confidence,
             "parent": self.parent,
         }
+
+    @classmethod
+    def from_message(cls, payload: Any) -> Entry | None:
+        """Rebuild from a bus message, or None if it cannot be trusted.
+
+        **Nothing off the bus is trusted.** An entry arrives as a plain dict
+        from a process we did not write, so this validates rather than assumes
+        and returns None on anything it cannot make sense of. A malformed entry
+        is dropped with a tally; it never becomes a half-written row.
+
+        The `id` on the wire is ignored rather than honoured: it is derived
+        from the content, so recomputing it locally means a sender cannot claim
+        an id that does not match what it sent, and two services publishing the
+        same decision still collapse to one row.
+
+        Lived in `journal/bus.py` until 2026-11-01. It is a property of an
+        `Entry` rather than of a transport - `from_row` is the same job for a
+        stored row - and the transport it was written against is retired.
+        """
+        if not isinstance(payload, dict):
+            return None
+        title = str(payload.get("title") or "").strip()
+        if not title:
+            return None
+
+        context = payload.get("context")
+        tags = payload.get("tags")
+        confidence = payload.get("confidence")
+        return cls(
+            title=title,
+            kind=Kind.parse(payload.get("kind")),
+            actor=str(payload.get("actor") or ""),
+            rationale=str(payload.get("rationale") or ""),
+            context=dict(context) if isinstance(context, dict) else {},
+            tags=tuple(str(tag) for tag in tags) if isinstance(tags, list | tuple) else (),
+            confidence=float(confidence) if isinstance(confidence, int | float) else None,
+            parent=str(payload.get("parent") or ""),
+            time=float(payload.get("time") or _time.time()),
+        )
 
     @classmethod
     def from_row(cls, row: Any) -> Entry:

@@ -78,9 +78,16 @@ class Journal:
         await self.close()
 
     async def open(self) -> None:
-        await asyncio.to_thread(self._connect)
+        await asyncio.to_thread(self.connect)
 
-    def _connect(self) -> None:
+    def connect(self) -> None:
+        """Open the file and apply the schema, on the calling thread.
+
+        Public because the Actor is the single writer now and runs on Nautilus's
+        executor, which hands it a plain thread rather than an event loop. The
+        async wrappers are the same two calls with a hop; a caller that already
+        has a thread should not have to borrow a loop to reach them.
+        """
         self.path.parent.mkdir(parents=True, exist_ok=True)
         conn = shared_db.connect(self.path)
         conn.executescript(SCHEMA)
@@ -88,9 +95,13 @@ class Journal:
         self._conn = conn
 
     async def close(self) -> None:
+        await asyncio.to_thread(self.shut)
+
+    def shut(self) -> None:
+        """Close the connection, on the calling thread. Idempotent."""
         conn, self._conn = self._conn, None
         if conn is not None:
-            await asyncio.to_thread(conn.close)
+            conn.close()
 
     def _require(self) -> sqlite3.Connection:
         if self._conn is None:
@@ -103,9 +114,17 @@ class Journal:
         if not batch:
             return 0
         async with self._lock:
-            return await asyncio.to_thread(self._write, batch)
+            return await asyncio.to_thread(self.append, batch)
 
-    def _write(self, batch: list[Entry]) -> int:
+    def append(self, batch: Sequence[Entry]) -> int:
+        """Write a batch on the calling thread. Returns how many were new.
+
+        The sync core of `write`. **Not serialised here**: the only caller that
+        does not go through `write`'s lock is `actor.JournalActor`, which is the
+        single writer by design and holds its own lock across the write and the
+        close, because Nautilus's executor and the actor's own `on_stop` are two
+        threads reaching for one connection.
+        """
         conn = self._require()
         now = time.time()
         rows = [
