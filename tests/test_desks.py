@@ -256,6 +256,7 @@ def test_the_live_node_builds_with_its_desks_on_it(monkeypatch, loop):
         # refusal reason went to a debug log and every alert to nothing.
         assert {str(a.id) for a in node.trader.actors()} == {
             "BasketExit-MT5",
+            "Heartbeat",
             "JournalActor",
             "Notifier",
             "StatespaceActor",
@@ -294,6 +295,7 @@ def test_statespace_is_only_added_when_it_is_configured(monkeypatch, loop):
     try:
         assert {str(a.id) for a in node.trader.actors()} == {
             "BasketExit-MT5",
+            "Heartbeat",
             "JournalActor",
             "Notifier",
         }
@@ -314,7 +316,13 @@ def test_the_record_can_be_switched_off_by_name(monkeypatch, loop):
 
     node = live.build()
     try:
-        assert [str(a.id) for a in node.trader.actors()] == ["BasketExit-MT5"]
+        # `Heartbeat` is not switched off here: the status file is what a
+        # container's probe reads, and a deploy that silenced the record
+        # should not also silence the thing that says the node is alive.
+        assert sorted(str(a.id) for a in node.trader.actors()) == [
+            "BasketExit-MT5",
+            "Heartbeat",
+        ]
     finally:
         node.dispose()
 

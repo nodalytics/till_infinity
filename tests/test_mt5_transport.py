@@ -797,3 +797,32 @@ def test_nothing_applies_the_measurement_by_itself():
     # No setter, no mutation of a config, nothing returning a corrected stamp.
     assert "server_offset_seconds =" not in source
     assert "def apply" not in source
+
+
+def test_a_tick_timestamp_stays_an_integer_through_the_offset():
+    """**Nanoseconds do not survive a float.** A tick stamp is about 1.8e18
+    and float64 is exact only to 2^53, so computing
+    `msc * 1_000_000 - offset * 1_000_000_000` as a float and casting back
+    perturbed every `ts_event` by 64ns.
+
+    It was found by a test asserting a refilled tick's time, not by reading:
+    the error is tens of nanoseconds on a quantity nothing displays, so no
+    amount of looking at a log would have shown it. The subtraction is
+    integral now - `round` on the offset is what keeps it there.
+    """
+    msc = 1_793_564_255_413
+
+    def shipped(offset: float) -> int:
+        return msc * 1_000_000 - round(offset * 1_000_000_000)
+
+    def through_a_float(offset: float) -> int:
+        return int(msc * 1_000_000 - offset * 1_000_000_000)
+
+    for offset in (0.0, 3 * 3600.0, 1.5, -7200.0):
+        exact = shipped(offset)
+        assert exact % 1_000_000 == 0, "a millisecond stamp lands on a whole millisecond"
+        assert exact == msc * 1_000_000 - int(offset * 1_000_000_000)
+        # The float route is wrong by a non-zero amount at every offset,
+        # including zero - which is the part that makes it a bug rather than
+        # a rounding preference.
+        assert through_a_float(offset) != exact

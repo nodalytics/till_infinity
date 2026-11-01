@@ -267,7 +267,16 @@ def _actors() -> list[Actor]:
         # nobody turns on is a check nobody has.
         from till_infinity.node.status import Heartbeat, HeartbeatConfig
 
-        found.append(Heartbeat(HeartbeatConfig(path=os.environ.get("TILL_STATUS_PATH") or None)))
+        # **The kwarg is omitted when the variable is unset**, not passed as
+        # `None`. `HeartbeatConfig.path` is a `str` with a default, so `None`
+        # reached `Path(None)` and raised `TypeError` - which meant the node
+        # could not build at all unless `TILL_STATUS_PATH` was set, and unset
+        # is the default case.
+        #
+        # My own smoke test set the variable, so it exercised the configured
+        # path and never the default. `status.DEFAULT_PATH` already reads the
+        # environment itself, so there is nothing for this to pass on.
+        found.append(Heartbeat(HeartbeatConfig()))
     if not flag("ALERTS_OFF"):
         from till_infinity.notifications.actor import Notifier, NotifierConfig
 

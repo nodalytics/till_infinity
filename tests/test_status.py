@@ -162,3 +162,53 @@ def test_what_the_writer_writes_is_what_the_probe_reads(tmp_path):
     ok, reason = status.healthy(path)
     assert ok is False
     assert "0 strategies" in reason
+
+
+def test_a_node_builds_with_no_status_path_configured(monkeypatch):
+    """**The regression, and the way I caused it.** `live.py` passed
+    `HeartbeatConfig(path=... or None)`, and `None` reached `Path(None)` and
+    raised `TypeError` - so the node could not build at all unless
+    `TILL_STATUS_PATH` was set, and unset is the default case.
+
+    It went in because my own smoke test set the variable, so it exercised the
+    configured path and never the default. Fifteen tests failed on it and an
+    agent working elsewhere reported them before I did.
+
+    `status.DEFAULT_PATH` reads the environment itself, so there was never
+    anything for the caller to pass on.
+    """
+    import asyncio
+
+    monkeypatch.delenv("TILL_STATUS_PATH", raising=False)
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD")
+    monkeypatch.setenv("TRADING_ENTRIES", "edge")
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+    for name in ("TRADING_VENUES", "STATESPACE_BARS"):
+        monkeypatch.delenv(name, raising=False)
+
+    made = asyncio.new_event_loop()
+    asyncio.set_event_loop(made)
+    try:
+        from till_infinity.node import live
+
+        node = live.build()
+        try:
+            assert "Heartbeat" in {str(actor.id) for actor in node.trader.actors()}
+        finally:
+            node.dispose()
+    finally:
+        asyncio.set_event_loop(None)
+        made.close()
+
+
+def test_the_default_path_is_a_real_path_without_the_variable(monkeypatch):
+    """The narrower half of the same thing, with no node to build: the default
+    has to be usable on its own, because that is what production runs."""
+    from till_infinity.node.status import Heartbeat, HeartbeatConfig
+
+    monkeypatch.delenv("TILL_STATUS_PATH", raising=False)
+    config = HeartbeatConfig()
+    assert isinstance(config.path, str)
+    assert config.path
+    # Constructing the actor is where `Path(...)` is called.
+    assert Heartbeat(config) is not None

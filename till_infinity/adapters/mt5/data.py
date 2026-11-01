@@ -305,7 +305,15 @@ class MT5DataClient(LiveMarketDataClient):
             return False
         self._mark[symbol] = (msc, {(bid, ask)} if msc > mark else seen | {(bid, ask)})
         offset = float(getattr(self._cfg, "server_offset_seconds", 0) or 0)
-        ts_event = int(msc * 1_000_000 - offset * 1_000_000_000)
+        # **Integer arithmetic throughout, and the `round` is what keeps it
+        # there.** A nanosecond timestamp is about 1.8e18, which is past
+        # float64's exact-integer range of 2^53 - so computing
+        # `msc * 1_000_000 - offset * 1_000_000_000` as a float and then
+        # casting perturbed every `ts_event` by tens of nanoseconds. Found by
+        # a test asserting a refilled tick's time, not by reading: the error
+        # is 64ns on a quantity nothing displays, so no amount of looking at
+        # a log would have shown it.
+        ts_event = msc * 1_000_000 - round(offset * 1_000_000_000)
         # **Measured against the configured value, and said once if they
         # disagree.** MT5 stamps ticks in broker server time, which is not UTC
         # on any broker this desk trades, and the default is `0.0` - honest
