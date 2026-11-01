@@ -19,6 +19,7 @@ from collections.abc import Sequence
 import pandas as pd
 from nautilus_trader.analysis.statistic import PortfolioStatistic
 
+from . import metrics
 from .metrics import (
     deflated_sharpe,
     expected_max_sharpe,
@@ -143,15 +144,153 @@ class PerPeriodSharpe(PortfolioStatistic):
             return None
 
 
+class Expectancy(PortfolioStatistic):
+    """Mean return per observation, in R. **A diagnostic, not a gate.**
+
+    `sharpe` is `expectancy / sd`, so this and the Sharpe are the same
+    quantity differently scaled. Reported because R per trade is what a person
+    reads and a Sharpe is not; **not** gated on, because a gate on both is one
+    piece of evidence counted twice.
+    """
+
+    @property
+    def name(self) -> str:
+        return "Expectancy"
+
+    def calculate_from_returns(self, returns) -> float | None:
+        return round(metrics.expectancy(_clean(returns)), 6)
+
+
+class WinRate(PortfolioStatistic):
+    """Share of observations that made money. **A diagnostic, not a gate.**
+
+    Zero-return observations count on neither side: a flat trade is neither
+    won nor lost.
+    """
+
+    @property
+    def name(self) -> str:
+        return "WinRate"
+
+    def calculate_from_returns(self, returns) -> float | None:
+        got = metrics.win_rate(_clean(returns))
+        return None if got is None else round(got, 4)
+
+
+class Payoff(PortfolioStatistic):
+    """Average win over average loss. **A diagnostic, not a gate.**"""
+
+    @property
+    def name(self) -> str:
+        return "Payoff"
+
+    def calculate_from_returns(self, returns) -> float | None:
+        got = metrics.payoff(_clean(returns))
+        return None if got is None else round(got, 4)
+
+
+class ProbabilisticWinRate(PortfolioStatistic):
+    """P(true win rate > 0.5). **The one probability here that is not the
+    Sharpe rescaled.**
+
+    Its standard error is a proportion's, `sqrt(p(1-p)/n)`, not a mean's - so
+    it is different machinery and answers a question the Sharpe does not
+    contain. Measured on two constructed series: PSR ranks a 70%-at-0.5R
+    strategy *below* a 30%-at-3R one (0.779 against 0.894) while this ranks it
+    *above* (1.000 against 0.000). Opposite orderings, which a rescaling
+    cannot produce.
+
+    **Never read alone.** A 30% win rate at a 3R payoff is a good strategy, so
+    a low number here is not a failure - it is half of a description whose
+    other half is `Payoff`.
+    """
+
+    @property
+    def name(self) -> str:
+        return "P_WinRate"
+
+    def calculate_from_returns(self, returns) -> float | None:
+        return round(metrics.probabilistic_win_rate(_clean(returns)), 6)
+
+
+class ProfitFactor(PortfolioStatistic):
+    """Gross wins over gross losses. **A diagnostic, not a gate.**
+
+    `None` where there are no losses, which is where it is undefined and where
+    a strategy looks best - a short sample, a quiet period, a lucky run.
+    Returning a number there would put it top of any ranking.
+    """
+
+    @property
+    def name(self) -> str:
+        return "ProfitFactor"
+
+    def calculate_from_returns(self, returns) -> float | None:
+        got = metrics.profit_factor(_clean(returns))
+        return None if got is None else round(got, 4)
+
+
 def register(analyzer, trial_sharpes: Sequence[float] = ()) -> None:
-    """Attach all of them to a `PortfolioAnalyzer`.
+    """Attach the gate statistic and the diagnostics to a `PortfolioAnalyzer`.
 
     Called by the backtest and live nodes so the same figures appear on both
     sides, which is the point of running one engine for measurement and
     execution.
+
+    ## The split, which is the whole design
+
+    **One statistic gates: the deflated Sharpe.** The multiple-testing
+    correction applies once to the whole search, and four correlated statistics
+    with four thresholds gives an effective trial count nobody can compute -
+    requiring all four to pass costs power rather than buying strictness. The
+    desk's own record is explicit: several candidates passed DSR, PBO and SPA,
+    and what exposed them was running the strategy on **surrogates** and
+    breaking the results down **by hour**. More metrics did not help; a
+    different *kind* of test did.
+
+    ## Redundant descriptions yes, redundant probabilities no
+
+    `Expectancy` is reported and `P_Expectancy` is **not**, though both exist
+    in `metrics.py`. `sharpe = mean / sd`, so a probability on the mean is the
+    PSR differently scaled - on a real sample the two agreed to three decimals.
+    A bare number in R is a unit conversion a person reads and nobody mistakes
+    for a test; **a probability looks like a test result**, and 0.9971 printed
+    beside 0.9975 will be read as two confirmations. That reading is the error
+    the correction exists to prevent, so the number stays and the probability
+    goes.
+
+    What replaced it is `P_WinRate`, which is genuinely different machinery - a
+    binomial proportion rather than a rescaled mean - and which disagrees with
+    the PSR in ordering on constructed cases, as a rescaling could not.
     """
     analyzer.register_statistic(PerPeriodSharpe())
     analyzer.register_statistic(ProbabilisticSharpe())
     analyzer.register_statistic(MinimumTrackRecord())
+    # The diagnostics. `ProbabilisticExpectancy` is deliberately absent - see
+    # the docstring above.
+    analyzer.register_statistic(Expectancy())
+    analyzer.register_statistic(ProfitFactor())
+    analyzer.register_statistic(WinRate())
+    analyzer.register_statistic(Payoff())
+    analyzer.register_statistic(ProbabilisticWinRate())
     if len(tuple(trial_sharpes)) >= 2:
         analyzer.register_statistic(DeflatedSharpe(trial_sharpes))
+
+
+#: The one statistic a promotion gate may read. Named so a future gate cannot
+#: quietly add a second without changing this line, which is the whole
+#: argument above made mechanical.
+GATES: tuple[str, ...] = ("DSR",)
+
+#: Reported for a person. Correlated with each other and with the gate, which
+#: is why they are not gates.
+DIAGNOSTICS: tuple[str, ...] = (
+    "Expectancy",
+    "MinTRL",
+    "PSR",
+    "Payoff",
+    "P_WinRate",
+    "ProfitFactor",
+    "SR_period",
+    "WinRate",
+)

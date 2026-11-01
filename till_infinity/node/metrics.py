@@ -32,6 +32,7 @@ decorative. `trial_variance` therefore takes the readings, not a number.
 from __future__ import annotations
 
 import math
+import random
 from collections.abc import Sequence
 
 #: Euler-Mascheroni, as it appears in the expected-maximum term.
@@ -210,3 +211,228 @@ def minimum_track_record(returns: Sequence[float], target: float = 0.95) -> floa
         return float("inf")
     spread = 1.0 - skew * sr + (kurt - 1.0) / 4.0 * sr * sr
     return 1.0 + spread * (phi_inverse(target) / sr) ** 2
+
+
+# ==========================================================================
+# expectancy and profit factor: diagnostics, not gates
+# ==========================================================================
+#
+# **Reported, never gated on, and the distinction is the point.** The
+# multiple-testing correction applies once to the *whole search*. Four
+# correlated statistics with four thresholds gives an effective trial count
+# nobody can compute, and requiring all four to pass mostly costs power rather
+# than buying strictness. The desk's own record says it plainly: several
+# candidates passed DSR, PBO and SPA, and what exposed them was running the
+# strategy on surrogates and breaking the results down by hour. More metrics
+# did not help; a different *kind* of test did.
+#
+# So these two exist to be read by a person, in units a person reads, beside
+# the one deflated statistic the gate uses.
+
+
+def expectancy(returns: Sequence[float]) -> float:
+    """Mean return per observation. In R, where the inputs are R multiples.
+
+    **Not independent of the Sharpe, and that matters.** `sharpe` is
+    `expectancy / sd`, so a deflated expectancy and a deflated Sharpe are
+    corrections of the same quantity - two passes are one piece of evidence
+    counted twice, and treating them as two is the error the correction exists
+    to prevent.
+    """
+    values = _clean(returns)
+    return sum(values) / len(values) if values else 0.0
+
+
+def probabilistic_expectancy(returns: Sequence[float], benchmark: float = 0.0) -> float:
+    """P(true expectancy > `benchmark`), as a one-sided normal on the mean.
+
+    The sound half of "PSR for expectancy": a mean has a standard error of
+    `sd / sqrt(n)` whatever its distribution, by the central limit theorem, so
+    this needs no assumption about the shape of the returns - unlike the
+    Sharpe, whose own standard error carries skew and kurtosis terms because it
+    is a *ratio*.
+
+    0.0 below two observations, and 0.0 at zero spread rather than 1.0: a
+    sample with no variation has not demonstrated anything, and rounding that
+    to certainty is how a single lucky trade becomes a track record.
+    """
+    values = _clean(returns)
+    if len(values) < 2:
+        return 0.0
+    # The spread computed here rather than through `moments`, which raises on a
+    # constant series because *a Sharpe* needs a denominator. An expectancy
+    # does not - a constant series has a perfectly good mean - so the guard
+    # has to come before the call, and the answer is 0.0 for the reason in the
+    # docstring rather than an exception.
+    mean = sum(values) / len(values)
+    variance = sum((v - mean) ** 2 for v in values) / (len(values) - 1)
+    sd = math.sqrt(variance)
+    if sd <= 0.0:
+        return 0.0
+    return phi((mean - benchmark) * math.sqrt(len(values)) / sd)
+
+
+def profit_factor(returns: Sequence[float]) -> float | None:
+    """Gross wins over gross losses, or **None when there are no losses**.
+
+    None rather than infinity, and that is the whole care this function needs.
+    A strategy with no losing observations has an undefined profit factor, and
+    the regime where that happens is precisely the one where it looks best -
+    a short sample, a quiet period, a lucky run. Returning `inf` would put it
+    at the top of any ranking; returning a large float would be a lie about a
+    quantity that does not exist.
+    """
+    values = _clean(returns)
+    wins = sum(v for v in values if v > 0.0)
+    losses = -sum(v for v in values if v < 0.0)
+    if losses <= 0.0:
+        return None
+    return wins / losses
+
+
+def log_profit_factor(returns: Sequence[float]) -> float | None:
+    """`log(profit factor)`, which is the one worth putting an interval on.
+
+    A profit factor is a ratio of two sums of positives: bounded below by zero,
+    unbounded above, and heavily right-skewed, so an interval computed on it is
+    asymmetric in a way that reads as precision it does not have. In logs the
+    two sides are a difference and the sampling distribution is far closer to
+    symmetric, which is the only reason a normal-shaped interval means anything
+    here.
+    """
+    factor = profit_factor(returns)
+    if factor is None or factor <= 0.0:
+        return None
+    return math.log(factor)
+
+
+def profit_factor_interval(
+    returns: Sequence[float],
+    *,
+    draws: int = 1_000,
+    block: int = 10,
+    level: float = 0.9,
+    seed: int = 0,
+) -> tuple[float, float] | None:
+    """A bootstrap interval on the profit factor, or None if there is none.
+
+    **Bootstrapped because there is no usable closed form.** The delta method
+    needs a derivative at the denominator, and the denominator here is a sum of
+    losses that approaches zero exactly where the estimate matters most - so
+    its standard error is worst where it is most needed. A resample has no such
+    problem.
+
+    The resample is the **stationary bootstrap** from `multiple.py`, not an
+    i.i.d. one: trade outcomes cluster, and drawing observations independently
+    would narrow the interval by assuming away the clustering. Returned in
+    profit-factor units, having been computed in logs.
+    """
+    from .multiple import stationary_bootstrap
+
+    values = _clean(returns)
+    if len(values) < 2:
+        return None
+    rng = random.Random(seed)
+    got: list[float] = []
+    for _ in range(draws):
+        picks = stationary_bootstrap(len(values), block=block, rng=rng)
+        drawn = log_profit_factor([values[i] for i in picks])
+        if drawn is not None:
+            got.append(drawn)
+    # Fewer than a tenth of the draws usable means most resamples had no
+    # losses, which is a statement about the sample rather than a wide
+    # interval - so there is no interval to give.
+    if len(got) < draws // 10:
+        return None
+    got.sort()
+    tail = (1.0 - level) / 2.0
+    low = got[max(0, int(tail * len(got)))]
+    high = got[min(len(got) - 1, int((1.0 - tail) * len(got)))]
+    return math.exp(low), math.exp(high)
+
+
+def _clean(returns: Sequence[float]) -> list[float]:
+    """Finite values only. A nan in a sum poisons the whole statistic."""
+    return [float(v) for v in returns if math.isfinite(v)]
+
+
+# ==========================================================================
+# the payoff split: the part a Sharpe does not contain
+# ==========================================================================
+#
+# Asked directly: can `probabilistic_expectancy` be made independent of the
+# Sharpe? **No, and not for want of trying.** `sharpe = mean / sd`, so a
+# probability on the mean and a probability on the Sharpe are the same
+# statistic differently scaled - measured on a real sample they agree to three
+# decimals, and on the two constructed series below to within 0.007. Anything
+# orthogonal to the Sharpe is, by construction, not the mean: residualising the
+# expectancy against the Sharpe leaves `sd`, which is a volatility statistic
+# wearing an expectancy label. That would look independent and mean something
+# else, which is worse than redundant.
+#
+# What *is* free is the **split**. Expectancy decomposes as
+# `p * W - (1 - p) * L`, and the Sharpe fixes roughly one combination of
+# `(p, W/L)` while leaving the other direction open. Measured:
+#
+#     70% win rate at +0.5R  ->  sharpe +0.073, PSR 0.779
+#     30% win rate at +3.0R  ->  sharpe +0.109, PSR 0.894
+#
+# Similar Sharpe, opposite structure. And the structure is not cosmetic: it
+# sets the Kelly fraction, the sizing, and how long a run of losses lasts
+# before the account is in trouble - none of which a Sharpe reports.
+#
+# The win rate also has its own sampling distribution. It is a **binomial
+# proportion**, so its standard error is `sqrt(p(1-p)/n)` - different machinery
+# from a mean's, and not a rescaling of it.
+
+
+def win_rate(returns: Sequence[float]) -> float | None:
+    """Share of observations that made money, or None with no observations.
+
+    Zero-return observations are **excluded from both** numerator and
+    denominator, not counted as losses. A flat trade is neither won nor lost,
+    and calling it a loss understates a strategy that scratches often.
+    """
+    values = [v for v in _clean(returns) if v != 0.0]
+    if not values:
+        return None
+    return sum(1 for v in values if v > 0.0) / len(values)
+
+
+def payoff(returns: Sequence[float]) -> float | None:
+    """Average win over average loss, or None where either side is empty.
+
+    None rather than a number where there are no losses, for the reason
+    `profit_factor` gives: it is undefined there, and that is where a strategy
+    looks best.
+    """
+    values = _clean(returns)
+    wins = [v for v in values if v > 0.0]
+    losses = [-v for v in values if v < 0.0]
+    if not wins or not losses:
+        return None
+    return (sum(wins) / len(wins)) / (sum(losses) / len(losses))
+
+
+def probabilistic_win_rate(returns: Sequence[float], benchmark: float = 0.5) -> float:
+    """P(true win rate > `benchmark`), on the binomial standard error.
+
+    **This is the independent one.** Its standard error is
+    `sqrt(p(1-p)/n)` - a proportion's, not a mean's - so it is not the Sharpe
+    rescaled, and it answers a question the Sharpe does not contain.
+
+    The benchmark defaults to 0.5 rather than to zero, because a win rate's
+    null is a coin and not an absence. A strategy below it is not broken - a
+    30% win rate at a 3R payoff is a good strategy - which is exactly why this
+    is reported beside `payoff` and never read alone.
+
+    0.0 below two non-zero observations, and the spread is taken at the
+    *observed* rate rather than at the benchmark: the question is what this
+    sample supports, not how surprising it would be under the null.
+    """
+    rate = win_rate(returns)
+    values = [v for v in _clean(returns) if v != 0.0]
+    if rate is None or len(values) < 2:
+        return 0.0
+    spread = math.sqrt(max(rate * (1.0 - rate), 1e-12) / len(values))
+    return phi((rate - benchmark) / spread)
