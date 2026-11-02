@@ -246,5 +246,11 @@ def test_an_external_run_is_fed_the_quotes_as_well_as_the_bars():
 
     external = backtest.data("EURUSD.SIM", "15-MINUTE-LAST-EXTERNAL")
     assert [config.data_cls for config in external] == [Bar, QuoteTick]
-    assert external[0].bar_spec == "15-MINUTE-LAST-EXTERNAL"
+    # **The source is stripped, and leaving it on was a silent zero.**
+    # `BacktestDataConfig` appends the aggregation source itself, so a spec
+    # carrying one resolves to `...-EXTERNAL-EXTERNAL` - a bar type that
+    # exists nowhere - and the run completes with no bars, no error and
+    # `PnL (total): 0.0`. See `backtest.specification` and `test_corpus.py`.
+    assert external[0].bar_spec == "15-MINUTE-LAST"
+    assert external[0].query["identifiers"] == ["EURUSD.SIM-15-MINUTE-LAST-EXTERNAL"]
     assert external[1].bar_spec is None

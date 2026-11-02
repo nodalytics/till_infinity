@@ -97,6 +97,37 @@ def venue(
     )
 
 
+#: The aggregation sources a bar type spells out, which a `bar_spec` must not.
+SOURCES = ("-EXTERNAL", "-INTERNAL")
+
+
+def specification(bar_spec: str) -> str:
+    """A `BacktestDataConfig.bar_spec` from a full bar type suffix.
+
+    **Nautilus appends the aggregation source itself**, so a `bar_spec` that
+    already carries one resolves to `...-EXTERNAL-EXTERNAL` - a bar type that
+    exists nowhere. The query then returns nothing, the engine runs, and the
+    result prints `PnL (total): 0.0` with every other statistic `nan`. No
+    exception, no warning, and `total_orders` is zero because no strategy ever
+    received a bar.
+
+    That is the shape of every backtest this module could have produced, and
+    `run_config`'s own default was `1-MINUTE-LAST-EXTERNAL`, so the defect was
+    in the default. It survived because nothing had ever run: the catalogue was
+    empty until `node/corpus.py`, and both agents who needed a backtest drove
+    `BacktestEngine` by hand instead.
+
+    Callers keep passing a full bar type, because that is what a desk
+    subscribes to and `node/desks.bar_type` builds one. The stripping happens
+    here, once.
+    """
+    found = bar_spec.strip()
+    for source in SOURCES:
+        if found.upper().endswith(source):
+            return found[: -len(source)]
+    return found
+
+
 def data(instrument_id: str, bar_spec: str, start: str | None = None, end: str | None = None):
     """One instrument's data out of the catalogue - the bars **and** the quotes.
 
@@ -135,7 +166,7 @@ def data(instrument_id: str, bar_spec: str, start: str | None = None, end: str |
             catalog_path=str(catalogue()),
             data_cls=Bar,
             instrument_id=instrument_id,
-            bar_spec=bar_spec,
+            bar_spec=specification(bar_spec),
             start_time=start,
             end_time=end,
         ),
