@@ -2490,6 +2490,119 @@ a distance is the one thing levels survived as, per
 `the-origin-picks-a-distance-not-a-probability` - and refuted as a
 **probability**. Build them for placement, not for entry.
 
+## Session pivots, and the control they provide
+
+`indicators/pivots.py`. Arithmetic on the prior period's high, low and close -
+`PP`, `R1`-`R3`, `S1`-`S3`, plus the prior `PH`, `PL` and `PC` - published
+before the period opens and watched by enough people that they matter whether
+or not the formula means anything.
+
+**Their main use is as the control the swing book has never had.** A pivot has
+no parameters, no detector and nothing to fit, and today's set is fully
+determined by yesterday. If the Kalman book over `trend.pivots` does not beat
+this, the swing detection is not earning its complexity - and nothing here had
+ever checked. Two further properties: there is **no look-ahead at all**, since
+a `Session` is emitted only once a bar from the next one arrives; and they
+**exist before the first touch**, which is when a level is most useful and a
+swing level knows least.
+
+### The session boundary is a choice and not a neutral one
+
+`day_of` cuts at UTC midnight, because a set that shifts with the observer's
+clock is not the same level two people are looking at. But the FX day a broker
+rolls is 21:00-22:00 UTC, and **21:00 is where a survivorship confound lives**
+- a random walk held across it reads +0.61R, and the BOS reconciliation found
+three trades exiting at the Sunday reopen for that reason. `boundary` shifts
+the cut in seconds so the two can be compared rather than assumed.
+
+A shifted session is **named for the day it ends in**, which is the content of
+"Sunday 21:00 is Monday's session". Deriving the name from the start date
+instead put the FX week's first boundary a day late, and would have put a
+month boundary in the wrong month whenever the 1st opened the evening before.
+
+Also worth stating: the recorded store's `ts` is probably the bar's **open**
+rather than its close, so a bar near a boundary may fall in the wrong session
+by one bar. It affects the first and last bar of each period and nothing else.
+
+## Asymmetry, by level kind
+
+`Sided` is a **tilt**, not two numbers: the sides are `shared * sqrt(tilt)` and
+`shared / sqrt(tilt)`, so the geometric mean is `shared` whatever the tilt and
+switching asymmetry on cannot move the average. That is deliberate -
+`refit-the-parameter-a-lever-multiplies` is the recorded failure, where a
+multiplier whose mean was not 1 changed the average it multiplied and refitting
+reversed a +1192 result to -24. A tilt of 1 returns `shared` **exactly**,
+because a capability whose neutral setting is not neutral silently
+reparameterises every existing deployment.
+
+| kind | per-side parameter | notes |
+|---|---|---|
+| `Levels` | `reach`, `merge_vol`, `touch_noise_vol` | the book's detection, grouping and belief |
+| `BjorgumLevels` | `mult` | the zone's ATR multiple, so a resistance zone and a support zone need not be the same width |
+| `Pivots` | the `buffer` on `beyond()` | **not the price** - see below |
+| `Pips` | none | no clean seam; see below |
+| `grouping` | `Anchor.SIDED` | floor for a support, ceiling for a resistance |
+
+**A pivot's price must never be tilted.** The only property a pivot has is that
+other people are watching that exact number, so a tilted R1 is not the R1
+anybody else is looking at and the self-fulfilling part - the whole argument
+for carrying them - is gone. The set is published exactly, `SIDES` publishes
+each name's side alongside it, and a per-side *parameter* is applied by
+whatever places against it. `beyond(price, side, buffer=Sided(...))` is that:
+a stop just past the nearest level on the trade's own side, with the buffer's
+tilt read on the **level's** side so one number means the same thing whichever
+way the trade faces. `PP` and `PC` carry side 0 and take the neutral buffer,
+since a midpoint and a prior close are references rather than barriers.
+
+**`Pips` has no clean seam and none was added.** It selects perceptually
+important points by deviation rank, with no tolerance or threshold to tilt;
+`wicks` already decides whether highs come off highs or off closes, which is a
+different axis. Adding a side parameter there would mean inventing a threshold
+in order to tilt it.
+
+**For `BjorgumLevels` the tilt is applied before the cap, not after.** The
+width is `min(atr * mult, close * max_percent / 100)`, so scaling a finished
+span would scale a width the cap had already bound and the two sides would come
+out in the wrong ratio exactly where the cap bites. The buffer therefore holds
+`(atr, close)` per bar and each side's span is computed at draw time.
+
+## Open: is a level graded by how price bounced off it?
+
+**Being measured, not yet answered.** The hypothesis is the useful one: a level
+that produced a **spike or crash** - a sharp, high-body reversal - or a
+**trend run** - two or more bars moving consistently one way with one or two
+small hiccups tolerated - is a *better* level than one price merely drifted
+away from, so the bounce shape is a quality score that ranks the book. The
+payoff would be a ranking rather than an entry: of 24 levels, the five whose
+previous bounces were sharp are the ones worth placing against.
+
+The design, because the traps here are the ones this desk keeps hitting:
+
+- **The usable claim is about the *previous* bounces, not this one.** A bounce
+  shape is known only after the bounce, so grading a level by the touch in
+  progress is look-ahead. What can be claimed is that a level whose earlier
+  bounces were sharp predicts something about its next touch.
+- **A bounce rate is geometry.** `fade-to-value`'s 82% return rate was matched
+  by a distance-matched placebo on every class and a walk reads 0.825, so
+  "price bounced 60% of the time" means nothing without the matched arm.
+- **Conditioning on a sharp bounce selects on volatility.** A spike is a large
+  bar and large bars cluster, so "levels that bounced sharply" is partly
+  "levels touched in a volatile stretch". Stratified within quintiles of
+  trailing compression, with the shuffled twin carried to name the mechanical
+  part.
+- Touch windows are de-overlapped, since
+  `overlapping-windows-inflate-permutation-nulls` turned a level finding at
+  p 0.015 into anchor overlap.
+
+The shapes are measured with `Displacement`, `Candles` and `Trend` - the last
+being Kaufman's efficiency ratio, net travel over gross, which is already the
+right measure of "consistently one direction with hiccups" - rather than new
+shape code. Every kind is reported against `Pivots` as the no-parameter
+control, and the prior is poor: `topology-restates-volatility` and
+[`level-shield.md`](../research/docs/level-shield.md), where a level in the
+path did not suppress the move over 210 cells. Numbers will land in
+`research/docs/level-bounce.md`.
+
 ## Where the code is
 
 | | |
@@ -2499,6 +2612,7 @@ a distance is the one thing levels survived as, per
 | `structures/vol/volatility.py` | the unit everything is measured in |
 | `indicators/levels.py` | Kalman state, zones, per-side stats, decay, the book |
 | `indicators/grouping.py` | clustering, density modes, nearest neighbours, the factor path |
+| `indicators/pivots.py` | session and floor-trader pivots, the cuts, the per-side buffer |
 | `structures/drawing/pivots.py` | sessions and the floor-trader set |
 | `structures/reactions.py` | touch tracking, inference, the guards - **retired to `research/retire/`** |
 | `structures/engine.py` | bars and quotes in, calls out |

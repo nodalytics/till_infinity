@@ -1370,7 +1370,7 @@ class BjorgumLevels(Indicator):
         left: int = LEFT,
         right: int = RIGHT,
         atr_len: int = ATR_LEN,
-        mult: float = MULT,
+        mult: Sided | float = MULT,
         max_percent: float = MAX_PERCENT,
         keep: int = N_PIVOTS,
         forward: int = FORWARD,
@@ -1387,12 +1387,25 @@ class BjorgumLevels(Indicator):
         self.pivots = PivotSource(pivots)
         self.detect = Detect(detect)
         super().__init__(
-            [left, right, atr_len, mult, max_percent, keep, forward, self.pivots, self.detect]
+            [
+                left,
+                right,
+                atr_len,
+                str(Sided.of(mult)),
+                max_percent,
+                keep,
+                forward,
+                self.pivots,
+                self.detect,
+            ]
         )
         self.left = int(left)
         self.right = int(right)
         self.atr_len = int(atr_len)
-        self.mult = float(mult)
+        #: The ATR multiple, per side. A resistance zone and a support zone
+        #: need not be the same width, and `Sided` keeps the geometric mean at
+        #: `shared` so switching the asymmetry on cannot move the average.
+        self.mult = Sided.of(mult)
         self.max_percent = float(max_percent)
         self.keep = int(keep)
         self.forward = int(forward)
@@ -1405,7 +1418,13 @@ class BjorgumLevels(Indicator):
         #: it. The script writes that as `[right]` on the whole expression;
         #: without it a zone's width would be set by volatility `right` bars
         #: after the swing it describes.
-        self._spans: deque[float] = deque(maxlen=self.right + 1)
+        #: `(atr, close)` at each of the last `right + 1` bars, not the
+        #: finished span. **The pair, because `mult` may be `Sided` and the
+        #: `max_percent` cap is a `min`**: tilting a pre-computed span would
+        #: scale a width the cap had already bound, so the two sides would
+        #: come out in the wrong ratio exactly where the cap bites. Computing
+        #: each side's span from the inputs applies the tilt before the cap.
+        self._spans: deque[tuple[float, float]] = deque(maxlen=self.right + 1)
         self._ranges: deque[float] = deque(maxlen=self.atr_len)
         self._prev_close: float | None = None
         #: Heikin-Ashi carries its own open, recursively.
@@ -1435,11 +1454,7 @@ class BjorgumLevels(Indicator):
         self.bars += 1
         self._set_has_inputs(True)
         self._advance_atr(high, low, close)
-        self._spans.append(
-            min(self.atr * self.mult, abs(close) * self.max_percent / 100.0)
-            if self.atr > 0.0
-            else 0.0
-        )
+        self._spans.append((self.atr, abs(close)))
         self._window.append(self._pivot_prices(bar))
         if self.detect is Detect.BARS:
             self._detect(high, low, close)
@@ -1498,16 +1513,23 @@ class BjorgumLevels(Indicator):
         at = self.bars - self.right
         if at in self._seen:
             return
-        span = self._spans[0]
-        if span <= 0.0:
+        atr, magnitude = self._spans[0]
+        if atr <= 0.0:
             return
-        half = span / 2.0
         for resistance, level, wins in (
             (True, high, all(w[0] < high for w in others)),
             (False, low, all(w[1] > low for w in others)),
         ):
             if not wins:
                 continue
+            # Per side, and the cap applied after the tilt - see `_spans`.
+            span = min(
+                atr * self.mult.for_side(1 if resistance else -1),
+                magnitude * self.max_percent / 100.0,
+            )
+            if span <= 0.0:
+                continue
+            half = span / 2.0
             self._seen.add(at)
             self.zones.append(
                 Zone(

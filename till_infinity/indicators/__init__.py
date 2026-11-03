@@ -190,6 +190,7 @@ from .levels import (
     Zone,
 )
 from .momentum import Basis, Cusum, Ensemble, Event, SlopeMomentum, Speeds, TickMomentum
+from .pivots import Pivots, Session, Sessions, levels_from
 from .spread import RollingSpread
 from .trend import Channel, Pivot, Trend, Trendline, Trendlines, VarianceRatio
 
@@ -238,6 +239,11 @@ BAR_DETECTORS: dict[str, tuple[Callable[..., object], tuple[Reading, ...]]] = {
     # `build_detector` only passes what a constructor takes.
     "pips": (Pips, ()),
     "bjorgum": (BjorgumLevels, ()),
+    # Arithmetic on the prior period's range, so no source and no scale - and
+    # **the control the swing book has never had**: no parameters, no
+    # detector, nothing to fit. If `levels` does not beat this, the swing
+    # detection is not earning its complexity.
+    "pivots": (Pivots, ()),
 }
 
 
@@ -558,9 +564,12 @@ __all__ = [
     "Pips",
     "Pivot",
     "PivotSource",
+    "Pivots",
     "Point",
     "Reading",
     "RollingSpread",
+    "Session",
+    "Sessions",
     "Sided",
     "SlopeMomentum",
     "Speeds",
@@ -579,6 +588,7 @@ __all__ = [
     "common",
     "crowding",
     "declaration",
+    "levels_from",
     "modes",
     "nearest",
     "read",
