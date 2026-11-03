@@ -66,6 +66,7 @@ import numpy as np
 
 import research.ideas.level_bounce as B
 import research.ideas.level_bounce_agg as A
+import research.ideas.level_bounce_duration as D
 from research.ideas.level_shield import fit_garch
 
 #: Draws per surrogate arm. Four, as in `level-shield.md`: enough that "outside
@@ -90,7 +91,9 @@ def _names(var: str, default: tuple[str, ...]) -> tuple[str, ...]:
     return tuple(raw) if raw else default
 
 
-def _stats(rows, kind: str, arm: str, draw: int, feed: str, interval: str, venue: str) -> dict:
+def _stats(
+    rows, kind: str, arm: str, draw: int, feed: str, interval: str, venue: str, horizon: int = 20
+) -> dict:
     """Every estimator for one (series, kind, arm, draw), as one JSON row."""
     mask = np.ones(len(rows), dtype=bool)
     out: dict = {
@@ -130,6 +133,19 @@ def _stats(rows, kind: str, arm: str, draw: int, feed: str, interval: str, venue
         else None
     )
 
+    # The duration arm: how long a departure lasts, which the committed run
+    # never measured. Pooled first - the per-level grade below has no power,
+    # measured, so the exponent is the primary reading and the grade is not.
+    out["survival"] = D.as_json(D.survival_for(rows, mask, horizon, seed=draw))
+    out["duration_censored_all"] = (
+        float((rows.duration == B.DURATION_CENSORED).mean()) if len(rows) else 0.0
+    )
+    out["correlations"] = D.correlations(rows, mask)
+    for side, label in ((1, "support"), (-1, "resistance")):
+        out[f"survival_{label}"] = D.as_json(
+            D.survival_for(rows, mask & (rows.away == side), horizon, seed=draw)
+        )
+
     out["grades"] = {}
     for grade in B.GRADES:
         gap = A.grade_gap_for(rows, mask, grade, seed=draw)
@@ -139,6 +155,9 @@ def _stats(rows, kind: str, arm: str, draw: int, feed: str, interval: str, venue
             "auc": None if auc is None else {"n": auc.n, "value": auc.value, "sd": auc.sd},
             "r": {},
         }
+        entry["survival"] = D.split_as_json(
+            D.grade_survival_for(rows, mask, grade, horizon, seed=draw)
+        )
         for target in B.TARGETS:
             split = A.grade_r_for(rows, mask, grade, target, seed=draw)
             entry["r"][str(target)] = (
@@ -197,11 +216,12 @@ def one(job: tuple[str, str, str]) -> list[dict]:
         return []
     settings = B.SETTINGS[interval]
     span = int(settings["unit_span"])
+    horizon = int(settings["horizon"])
     out: list[dict] = []
 
     unit = B.units(series, span)
     real = B.measure(series, kind, interval=interval, settings=settings)
-    out.append(_stats(real.rows, kind, "real", 0, feed, interval, series.venue))
+    out.append(_stats(real.rows, kind, "real", 0, feed, interval, series.venue, horizon))
 
     books = B.book_path(series, kind, unit_span=span, interval=interval)
     for draw in range(DRAWS):
@@ -214,7 +234,7 @@ def one(job: tuple[str, str, str]) -> list[dict]:
             interval=interval,
             horizon=int(settings["horizon"]),
         )
-        out.append(_stats(rows, kind, "placebo", draw, feed, interval, series.venue))
+        out.append(_stats(rows, kind, "placebo", draw, feed, interval, series.venue, horizon))
 
     rets = np.diff(np.log(np.maximum(series.close, 1e-12)))
     fitted = fit_garch(rets)
@@ -228,7 +248,7 @@ def one(job: tuple[str, str, str]) -> list[dict]:
             rng = random.Random(20_000 + 1_000 * index + draw)
             made = make(series, rng, fitted) if arm == "garch-bars" else make(series, rng)
             got = B.measure(made, kind, interval=interval, settings=settings)
-            out.append(_stats(got.rows, kind, arm, draw, feed, interval, series.venue))
+            out.append(_stats(got.rows, kind, arm, draw, feed, interval, series.venue, horizon))
     return out
 
 
@@ -250,6 +270,7 @@ def sweep(job: tuple[str, str, str]) -> list[dict]:
         return []
     settings = B.SETTINGS[interval]
     span = int(settings["unit_span"])
+    horizon = int(settings["horizon"])
     unit = B.units(series, span)
     books = B.book_path(series, kind, unit_span=span, interval=interval)
     strata = B.strata_of(unit, span)
@@ -264,7 +285,7 @@ def sweep(job: tuple[str, str, str]) -> list[dict]:
             horizon=int(settings["horizon"]),
             run_eff=eff,
         )
-        row = _stats(rows, kind, "real", 0, feed, interval, series.venue)
+        row = _stats(rows, kind, "real", 0, feed, interval, series.venue, horizon)
         row["run_eff"] = eff
         out.append(row)
     return out

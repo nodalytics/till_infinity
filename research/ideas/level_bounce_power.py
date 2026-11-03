@@ -42,6 +42,7 @@ import numpy as np
 
 import research.ideas.level_bounce as B
 import research.ideas.level_bounce_agg as A
+import research.ideas.level_bounce_duration as D
 import research.ideas.level_shield as L
 from till_infinity.indicators.levels import FORGET_BARS, KEEP, MERGE_VOL, TOUCH_NOISE_VOL, Levels
 from till_infinity.indicators.trend import REACH
@@ -53,6 +54,22 @@ STRENGTHS = (0.0, 0.1, 0.25, 0.5, 0.75, 1.0)
 #: Spreads for sweep 2, at `BASE`. 0 is the control that must read nothing.
 SPREADS = (0.0, 0.2, 0.4, 0.6, 0.8)
 BASE = 0.5
+
+#: Sweep 3: a bounce with a **known characteristic length**, in bars.
+#:
+#: The duration arm needs its own plant, because neither sweep above plants a
+#: length. A reflecting barrier changes how often price comes back, not how
+#: long it stays away, and the exponent is specifically a statement about the
+#: *shape* of the waiting time - so a power sweep that only varied reflectivity
+#: would report the blind point of a quantity nobody asked about.
+#:
+#: The plant: once price has departed a level, any step that would carry it
+#: back is reflected for the next `length` bars, then the level is released.
+#: That writes an exponential cut-off into the first-return distribution at a
+#: known scale, so the survival curve **must** stop being a power law and the
+#: hazard **must** stop being flat. 0 is the control that has to read as a
+#: plain walk; the blind point is the smallest length the exponent separates.
+LENGTHS = (0, 2, 4, 8, 16)
 
 FEEDS = tuple((os.environ.get("POWER_FEEDS") or "eurusd gold").replace(",", " ").split())
 INTERVALS = tuple((os.environ.get("POWER_INTERVALS") or "1d").replace(",", " ").split())
@@ -67,6 +84,7 @@ def plant(
     unit_span: int,
     strength: float = 0.0,
     spread: float = 0.0,
+    length: int = 0,
 ) -> L.Series:
     """A walk whose own level book reflects it, per level, at a known rate.
 
@@ -107,12 +125,48 @@ def plant(
     )
     rates: dict[int, float] = {}
     held: list[object] = []
+    # `length` plants a characteristic waiting time: a level price has just
+    # left refuses to be crossed back for this many bars, which writes an
+    # exponential cut-off into the first-return distribution at a known scale.
+    # Keyed on the level, so two levels in the book hold independent clocks.
+    guarded: dict[int, int] = {}
+    clocked: set[int] = set()
     out_o, out_h, out_l, out_c = (np.empty(n) for _ in range(4))
     price = float(series.close[0])
     for i in range(n):
         if i:
             step = float(steps[rng.randrange(len(steps))])
             want = price + step
+            if length > 0:
+                # Nearest level first, so a step is turned back about the one
+                # it would actually have crossed. Unsorted, a far level's guard
+                # could reflect a step that a nearer unguarded level should
+                # have let through, and the planted length would not be the
+                # length the estimator then measures.
+                for level in sorted(book.levels, key=lambda lv: abs(lv.at(book.when) - price)):
+                    at = level.at(book.when)
+                    key = id(level)
+                    if (price - at) * (want - at) >= 0:
+                        # Moving away from this level arms its clock for
+                        # `length` bars. **Armed only when not already armed**,
+                        # not `setdefault`: with `setdefault` a level arms once
+                        # in its whole life and every later departure is
+                        # unguarded, so the planted length would appear on the
+                        # first excursion only and the sweep would read as
+                        # blind at every strength.
+                        if abs(want - at) > abs(price - at) and guarded.get(key, -1) <= i:
+                            guarded[key] = i + length
+                            if key not in clocked:
+                                # One strong reference per level, so a dropped
+                                # level's address is never handed to a new one
+                                # and inherited as a clock. Its own set rather
+                                # than `rates`, which means a reflectivity.
+                                clocked.add(key)
+                                held.append(level)
+                        continue
+                    if guarded.get(key, -1) > i:
+                        want = 2.0 * at - want
+                        break
             if strength > 0.0 or spread > 0.0:
                 for level in sorted(book.levels, key=lambda lv: abs(lv.at(book.when) - price)):
                     at = level.at(book.when)
@@ -138,6 +192,26 @@ def plant(
         bottom = price - frac_c[k] * width
         out_c[i], out_l[i], out_h[i] = price, bottom, bottom + width
         out_o[i] = bottom + frac_o[k] * width
+        if length > 0 and guarded:
+            # **The guard has to clip the bar's range, not just its close.**
+            # Measured: guarding the close alone moved the fitted exponent from
+            # 0.4257 to 0.4375 at a planted length of 8 - no cut-off at all -
+            # because `_duration` ends a departure on the first bar whose
+            # *range* contains the level, and with S(1) near 0.45 the reading
+            # is dominated by bar width rather than by the close path. A plant
+            # has to satisfy the hypothesis as the estimator measures it, so a
+            # guarded level is held outside the bar's range while its clock
+            # runs.
+            edge = 1e-9 * max(1.0, abs(price))
+            for level in book.levels:
+                at = level.at(book.when)
+                if guarded.get(id(level), -1) <= i:
+                    continue
+                if out_c[i] > at and out_l[i] <= at:
+                    out_l[i] = at + edge
+                elif out_c[i] < at and out_h[i] >= at:
+                    out_h[i] = at - edge
+            out_o[i] = min(max(out_o[i], out_l[i]), out_h[i])
         book.handle_bar(L._Bar(out_o[i], out_h[i], out_l[i], out_c[i], float(series.ts[i])))
     return L.Series(
         feed=series.feed,
@@ -173,12 +247,15 @@ def _measure(made: L.Series, interval: str, settings: dict) -> dict:
     )
     mask = np.ones(len(rows), dtype=bool)
     hold = A.hold_for(rows, mask)
+    horizon = int(settings["horizon"])
     out: dict = {
         "episodes": len(rows),
         "skipped": rows.skipped,
         "undecided": rows.undecided,
         "hold": None if hold is None else {"value": hold.value, "sd": hold.sd},
         "shares": A.shares(rows, mask),
+        "survival": D.as_json(D.survival_for(rows, mask, horizon)),
+        "correlations": D.correlations(rows, mask),
         "r": {},
         "grades": {},
     }
@@ -195,6 +272,7 @@ def _measure(made: L.Series, interval: str, settings: dict) -> dict:
         entry: dict = {
             "gap": None if gap is None else {"value": gap.value, "sd": gap.sd, "n": gap.n},
             "auc": None if auc is None else {"value": auc.value, "sd": auc.sd, "n": auc.n},
+            "survival": D.split_as_json(D.grade_survival_for(rows, mask, grade, horizon)),
             "r": {},
         }
         for target in B.TARGETS:
@@ -229,7 +307,7 @@ def sweep(feed: str, interval: str, draws: int) -> list[dict]:
     settings = B.SETTINGS[interval]
     span = int(settings["unit_span"])
     out: list[dict] = []
-    for which, grid in (("uniform", STRENGTHS), ("graded", SPREADS)):
+    for which, grid in (("uniform", STRENGTHS), ("graded", SPREADS), ("length", LENGTHS)):
         for value in grid:
             for draw in range(draws):
                 rng = random.Random(30_000 + int(value * 1000) + draw)
@@ -237,8 +315,9 @@ def sweep(feed: str, interval: str, draws: int) -> list[dict]:
                     series,
                     rng,
                     unit_span=span,
-                    strength=value if which == "uniform" else BASE,
-                    spread=0.0 if which == "uniform" else value,
+                    strength=value if which == "uniform" else (0.0 if which == "length" else BASE),
+                    spread=value if which == "graded" else 0.0,
+                    length=int(value) if which == "length" else 0,
                 )
                 row = _measure(made, interval, settings)
                 row |= {
