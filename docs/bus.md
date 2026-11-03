@@ -15,9 +15,12 @@ message bus - in-process, Rust-native, with its own optional Redis backing -
 replaced it. Nothing under `till_infinity/` imports Redis.
 
 This document is kept for the topic design, which is the part that outlived the
-transport: `utils/topics.py` still holds the names, and `carrier.py` is the
+transport: `utils/topics.py` still holds the names. `carrier.py` was the
 two-method protocol that let the bus be replaced without rewriting what
-published to it. The diagram below is the arrangement that retired.
+published to it, and it retired on 2026-11-03 once that was done - nothing
+implemented it, because `statespace/service.py` declares its own `Carrier`
+rather than importing one so the package stays liftable in a single move. The
+diagram below is the arrangement that retired.
 
 ```
 prices  ──┐                          ┌──▶ agents ───┐

@@ -61,15 +61,21 @@ STANDALONE: dict[str, str] = {}
 #: the vacuous scan described on `STANDALONE`, and the third instance of it in
 #: one day. `test_every_infrastructure_entry_is_real` is what makes the next
 #: one fail instead of lingering.
-#: **`bus` left on 2026-10-31 and three things replaced it.** `carrier` is the
-#: protocol a service publishes through - two methods, so the same code runs
-#: against Nautilus, a fake or nothing. `topics` is the names, which are still
-#: the contract because `shared/contracts/bus/*.json` is keyed on them and a
-#: Go service reads the same files. `utils` is the small things with several
-#: callers and no home, which ADR 0002 admits on the same terms as
-#: `till-platform` - and which is where that package's remnants landed when it
-#: too was retired.
-INFRASTRUCTURE = frozenset({"carrier", "utils", "domain"})
+#: **`bus` left on 2026-10-31 and `carrier` followed it.** `carrier` was the
+#: protocol a service published through, and the seam that let the bus retire
+#: without rewriting five services. Once that was done nothing implemented it:
+#: `statespace/service.py` declares its own `Carrier` rather than importing
+#: one, on purpose, so the package stays liftable in a single move - so the
+#: shared protocol had no implementor and no consumer, and its `Message` was
+#: constructed only by a test. Retired 2026-11-03, with the fake that
+#: implemented it.
+#:
+#: `topics` is the names, which are still the contract because
+#: `shared/contracts/bus/*.json` is keyed on them and a Go service reads the
+#: same files. `utils` is the small things with several callers and no home,
+#: which ADR 0002 admits on the same terms as `till-platform` - and which is
+#: where that package's remnants landed when it too was retired.
+INFRASTRUCTURE = frozenset({"utils", "domain"})
 
 #: The Nautilus layers, and what each is allowed to import.
 #:

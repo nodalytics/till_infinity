@@ -16,10 +16,12 @@ none of them can see the future.
 
 from __future__ import annotations
 
+import math
 import random
 
 import pytest
 
+from till_infinity.indicators import build_detector
 from till_infinity.indicators.sentiment import HALVES, SPAN, FearGreed, Mood
 
 
@@ -285,3 +287,156 @@ def test_registering_it_for_quotes_says_why_not():
 
 def test_two_windows_are_told_apart_by_the_identity():
     assert repr(FearGreed(span=30, warmup=10)) != repr(FearGreed(span=60, warmup=20))
+
+
+# ======================================================================
+# Added for research/docs/fear-greed.md, which rests on these four facts
+# ======================================================================
+#
+# The study reports `volatile` and `directional` separately for every result,
+# builds a six-leg risk-off index out of the components, and keys every gate on
+# a trailing quantile rather than on `Mood`. Each of those depends on something
+# above and beyond "the composite is right", and the four tests below are the
+# ones whose failure would invalidate a table in that document rather than only
+# a reading here.
+
+
+def shaped(bars) -> FearGreed:
+    """Fold `(open, high, low, close)` tuples in, one second apart.
+
+    A deterministic builder beside the module's random `grind` and `crash`:
+    the tests below assert a component's **exact** value off a counted fixture,
+    which a seeded random series cannot support.
+    """
+    found = FearGreed()
+    for i, (o, h, lo, c) in enumerate(bars):
+        found.update_raw(o, h, lo, c, float(i))
+    return found
+
+
+def biased(n: int, up_in: int, out_of: int, step: float = 0.003) -> list[tuple]:
+    """A series with exactly `up_in` of every `out_of` bars closing up.
+
+    The count is the point: `pressure` is `(ups - downs) / decided`, so a
+    fixture with a stated up-rate has a known `pressure` and the assertion can
+    be a hand computation rather than a sign.
+    """
+    out = []
+    price = 1.0
+    width = 0.004
+    for i in range(n):
+        move = step if i % out_of < up_in else -step * 0.3
+        nxt = price * (1.0 + move)
+        mid = (price + nxt) / 2.0
+        out.append((price, mid + width / 2.0, mid - width / 2.0, nxt))
+        price = nxt
+    return out
+
+
+def test_the_catalogue_builds_it_and_refuses_a_source():
+    """`fear_greed` is in `BAR_DETECTORS`, and it reads a bar's whole shape so
+    there is nothing for a `Reading` to select.
+
+    This is the wiring the study's own harness does not use - it drives
+    `update_raw` directly - so without this test the registration in
+    `indicators/__init__.py` is unexercised, and a sweep that passed a source
+    and had it silently ignored would report a null for a question it never
+    asked."""
+    assert isinstance(build_detector("fear_greed"), FearGreed)
+
+    with pytest.raises(ValueError, match="no source"):
+        build_detector("fear_greed", "close")
+
+
+def test_pressure_is_the_counted_share_of_up_closes():
+    """Two bars up in every three reads `(2 - 1) / 3`, exactly.
+
+    Asserted as arithmetic off a counted fixture rather than as a sign,
+    because `pressure` is the one direction component the study relies on
+    being **exact on a synthetic cross** - it reads closes only, so it
+    survives the 1.7x range inflation that makes `position`, `conviction` and
+    `expansion` unusable there. A `pressure` that drifted from its own
+    definition would move the risk-off index on the crosses with nothing to
+    show it had."""
+    assert shaped(biased(81, 2, 3)).parts["pressure"] == pytest.approx(1.0 / 3.0)
+    assert shaped(biased(80, 1, 4)).parts["pressure"] == pytest.approx(-0.5)
+    assert shaped(biased(80, 2, 4)).parts["pressure"] == pytest.approx(0.0)
+
+
+def test_the_halves_can_disagree():
+    """Not a tautology: if the halves always moved together the split would be
+    decoration, and `fear-greed.md`'s whole method - report both, attribute the
+    claim to one - would be measuring the same thing twice. It also matters for
+    the index, where `expansion` is oriented **without** the quote flip while
+    the other four are flipped.
+
+    A quiet drift down has a falling direction half and a *contracting*
+    volatility half, so the two take opposite signs."""
+    quiet = []
+    price = 1.0
+    for i in range(SPAN):
+        width = 0.02 if i < SPAN - 12 else 0.002
+        nxt = price * (1.0 - 0.0005)
+        quiet.append((price, price + width, nxt - width, nxt))
+        price = nxt
+    found = shaped(quiet)
+
+    assert found.directional < 0.0
+    assert found.volatile > 0.0
+
+
+def test_the_conventional_threshold_needs_three_bars_in_four_going_one_way():
+    """`mood`'s +-0.5 is first reached at a **75% up-rate with no noise**.
+
+    Measured on this fixture, which has a stated up-rate and otherwise
+    identical bars: 55% up reads **+0.391**, 67% reads **+0.499** - still
+    `CALM`, just under - and 75% reads **+0.537**, the first `GREED`. Three
+    bars in four going one way for sixty bars is not a market.
+
+    The measured counterpart is in `research/docs/fear-greed.md`: the six-leg
+    risk-off index's **90th percentile is +0.15 to +0.19** over 19.25 years, so
+    a gate at +-0.5 refuses everything. Every gate in that study keys on a
+    trailing quantile for this reason and none reads `mood()`.
+
+    A reader who finds `mood()` always `CALM` in production should find this
+    test rather than a bug - which is why it also asserts that a **measured**
+    edge fires, the control without which "the threshold is too wide" is
+    indistinguishable from "`mood` refuses everything"."""
+    market_like = shaped(biased(80, 11, 20))
+
+    assert market_like.reading == pytest.approx(0.391, abs=0.02)
+    assert market_like.mood() is Mood.CALM
+    assert shaped(biased(81, 2, 3)).mood() is Mood.CALM
+    assert shaped(biased(80, 3, 4)).mood() is Mood.GREED
+
+    assert market_like.mood(edge=0.15) is Mood.GREED
+    assert shaped(biased(80, 1, 20)).mood(edge=0.15) is Mood.FEAR
+
+
+def test_convictions_sign_is_the_windows_net_move_not_the_recent_direction():
+    """Deliberate and it looks wrong, so it is pinned.
+
+    `_conviction` signs the body share by `close[-1] - close[0]` over the
+    **whole trailing window**, so on a market that went nowhere it reads
+    whichever phase the window happens to end in - about -0.5 on a closed
+    oscillation. A caller reading `conviction` on a range is reading a phase,
+    and `fear-greed.md` excludes it from the flat-market assertion for that
+    reason rather than widening a tolerance until it passed."""
+    amplitude, cycles, bars = 0.01, 8, 80
+    span = bars // cycles
+    closes = [1.0 + amplitude * math.sin(2.0 * math.pi * i / span) for i in range(bars + 1)]
+    sine = [
+        (
+            closes[i],
+            max(closes[i], closes[i + 1]) + amplitude / 8.0,
+            min(closes[i], closes[i + 1]) - amplitude / 8.0,
+            closes[i + 1],
+        )
+        for i in range(bars)
+    ]
+    found = shaped(sine)
+
+    assert found.parts["position"] == pytest.approx(0.0, abs=0.05)
+    assert found.parts["pressure"] == pytest.approx(0.0, abs=0.1)
+    assert abs(found.parts["conviction"]) > 0.25
+    assert found.parts["conviction"] * (sine[-1][3] - sine[0][3]) > 0.0

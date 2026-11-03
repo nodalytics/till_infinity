@@ -41,7 +41,7 @@ recording something should not require a node to be running.
 
 **`service.py` and `bus.py` are retired** to `research/retire/journal/` -
 `decide`, `observe`, `outcome`, `note`, `record`, `open_journal`, `listen` and
-the `Carrier` transport. The Actor is the writer and `Entry` carries its own
+the bus directly. The Actor is the writer and `Entry` carries its own
 validation; see that directory's `RETIRED.md`.
 
 ## Reading

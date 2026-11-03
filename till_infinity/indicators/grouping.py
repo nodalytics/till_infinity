@@ -119,12 +119,25 @@ class Anchor(StrEnum):
     FLOOR = "floor"
     #: The highest touch - a resistance level, the price that held from below.
     CEILING = "ceiling"
-    #: `FLOOR` for a support, `CEILING` for a resistance, by the level's own
-    #: side. `levels.Level.side` is +1 resistance and -1 support, and it is
-    #: the pivot side that *formed* the level rather than where it sits
-    #: relative to price now - which is the stable thing to key on, because
-    #: the latter flips as price moves.
+    #: `FLOOR` for a support, `CEILING` for a resistance, by **the level's
+    #: own formed side** - `levels.Level.side`, +1 resistance and -1 support,
+    #: the pivot side that made it rather than where it sits relative to price
+    #: now. Stable, because the latter flips as price moves.
+    #:
+    #: **Not the anchor for placing a stop**, and measured: `stop-anchor.md`
+    #: found this hands a long the group's *ceiling* - a price above the entry
+    #: - on 36 to 49% of anchors, because which pivot formed a level says
+    #: nothing about which way the trade faces. Use `PROTECTIVE` there.
     SIDED = "sided"
+    #: The edge a stop belongs beyond, by **the trade's** side: the floor for
+    #: a long, the ceiling for a short, so the level has to break before the
+    #: stop is reached.
+    #:
+    #: Separate from `SIDED` rather than a second meaning for its argument,
+    #: because the two differ on a third to a half of anchors and reading one
+    #: as the other returns a price on the wrong side of the entry - which
+    #: prices an order rather than raising.
+    PROTECTIVE = "protective"
 
 
 @dataclass(frozen=True, slots=True)
@@ -147,13 +160,29 @@ class Group:
     def span(self) -> float:
         return self.high - self.low
 
-    def price(self, anchor: Anchor | str = Anchor.CENTRE, *, side: int = 0) -> float:
+    def price(
+        self,
+        anchor: Anchor | str = Anchor.CENTRE,
+        *,
+        side: int = 0,
+        trade: int = 0,
+    ) -> float:
         """The group's level price, under `anchor`.
 
-        `side` is read only by `Anchor.SIDED`, and a side of zero there falls
-        back to the centre rather than guessing an edge: an unformed side is
-        an absence, and picking the floor for it would make every sideless
-        level a support.
+        **Two different sides, and they are separate arguments because
+        confusing them prices an order rather than raising.** `side` is the
+        level's own formed side and is read only by `SIDED`; `trade` is the
+        trade's side and is read only by `PROTECTIVE`. `stop-anchor.md`
+        measured the two disagreeing on 36 to 49% of anchors, so one argument
+        serving both would hand a long a price above its entry on a third of
+        them.
+
+        A `SIDED` level with no formed side falls back to the centre: an
+        unformed side is an absence, and picking the floor for it would make
+        every sideless level a support. A `PROTECTIVE` anchor with no trade
+        side **raises**, because there is no neutral answer to "which edge
+        does this stop go beyond" and returning the centre would put the stop
+        inside the cluster, which is the failure the anchor exists to avoid.
         """
         try:
             chosen = Anchor(anchor)
@@ -165,6 +194,15 @@ class Group:
             return self.low
         if chosen is Anchor.CEILING:
             return self.high
+        if chosen is Anchor.PROTECTIVE:
+            if trade == 0:
+                raise ValueError(
+                    "Anchor.PROTECTIVE needs the trade's side - `trade=+1` for a "
+                    "long, so the stop goes beyond the floor, or `trade=-1` for a "
+                    "short. There is no neutral edge, and the centre would put the "
+                    "stop inside the cluster."
+                )
+            return self.low if trade > 0 else self.high
         if chosen is Anchor.SIDED:
             if side < 0:
                 return self.low
