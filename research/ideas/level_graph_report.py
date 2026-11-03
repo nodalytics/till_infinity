@@ -45,12 +45,50 @@ def load(path: Path) -> list[dict]:
     return rows
 
 
-def failures(rows: list[dict]) -> None:
+#: Every feed the study asks for at 1d, so the report can say which are
+#: **absent from the output** rather than only which raised.
+REQUESTED = (
+    "eurusd",
+    "gbpusd",
+    "audusd",
+    "usdcad",
+    "usdchf",
+    "usdjpy",
+    "usdcnh",
+    "nzdusd",
+    "gold",
+    "btc",
+    "eth",
+    "spx500",
+    "us100",
+    "sol",
+)
+
+
+def failures(rows: list[dict], cells: list[dict]) -> None:
+    """What did not run, **including what left no trace at all.**
+
+    The first version of this function looked for `kind == "error"` rows only,
+    and printed "nothing: every job returned cells" on a run where **10 of 16
+    requested feeds were absent from the output** - the lab had rebooted and
+    killed the panel at 6 feeds. A job that dies takes its error row with it,
+    so the absence has to be computed from the request rather than read from
+    the file. That is the same silent-zero class as every other defect found
+    on this desk today.
+    """
     bad = [r for r in rows if r.get("kind") == "error"]
     notes = [r for r in rows if r.get("kind") == "note"]
+    present = {c["feed"] for c in cells}
+    missing = [f for f in REQUESTED if f not in present]
+
     print("\n=== what did not run, before any result ===\n")
-    if not bad and not notes:
-        print("  nothing: every job returned cells.")
+    if missing:
+        print(f"  **{len(missing)} of {len(REQUESTED)} requested feeds are ABSENT from the")
+        print(f"  output and left no error row**: {', '.join(missing)}")
+        print("  A job killed outright takes its error row with it, so this is")
+        print("  computed from the request. Coverage below is partial.\n")
+    if not bad and not notes and not missing:
+        print("  nothing: every requested feed returned cells.")
         return
     for r in bad:
         print(f"  ERROR {r.get('feed')} {r.get('interval')}: {r.get('error')}")
@@ -105,7 +143,12 @@ def positive_control(cells: list[dict]) -> None:
     for feed in CONTROLS:
         rows = [c for c in cells if c["feed"] == feed and c["arm"] == "real"]
         if not rows:
-            print(f"  {feed}: absent from this run.")
+            print(
+                f"  {feed}: **not in this store at any interval or venue**, so the"
+                f"\n    positive control cannot be run from `prices.db`. The"
+                f"\n    pre-registration named a control that lives in the lab's"
+                f"\n    seqlab cache, which is a different source."
+            )
             continue
         nodes = max(r["nodes"] for r in rows)
         edges = max(r["edges"] for r in rows)
@@ -237,7 +280,7 @@ def main() -> None:
     cells = [r for r in rows if r.get("kind") == "cell"]
     print(f"level-graph: {sys.argv[1]}")
     print(f"{len(rows)} rows, {len(cells)} cells")
-    failures(rows)
+    failures(rows, cells)
     if not cells:
         print("\nno cells: nothing to report, which is not a null.")
         return
