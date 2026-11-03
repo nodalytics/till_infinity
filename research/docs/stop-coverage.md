@@ -413,7 +413,76 @@ desk three times.
 
 ## Results
 
-*Pending the panel run.*
+15 feed-intervals, both sides, 5 horizons, 6 arms, 16 draws per null arm.
+28,527 rows, **0 error rows**, every cell measurable.
+
+### The finding is the square root, and it is not the estimator
+
+The production stop is a flat 3.0 volatility units with no horizon term, and
+that single fact dominates everything else measured here. Median realised
+stop-out rate over feeds and sides, against a **0.100** target:
+
+| arm | H=1 | H=5 | H=20 | H=48 | H=96 | median n |
+|---|---:|---:|---:|---:|---:|---:|
+| `vol-3` (production) | 0.016 | 0.180 | **0.477** | 0.643 | 0.750 | 240 |
+| `vol-3-N20` | 0.009 | 0.102 | 0.366 | 0.530 | 0.661 | 246 |
+| `t-fixed` | 0.133 | 0.466 | 0.714 | 0.808 | 0.879 | 240 |
+| `t-sqrt-h` | 0.133 | 0.136 | **0.150** | 0.170 | 0.160 | 240 |
+| `quantile` | 0.115 | 0.261 | 0.523 | 0.726 | 0.837 | 240 |
+| `quantile-seated` | 0.115 | 0.127 | **0.146** | 0.168 | 0.160 | 240 |
+
+`vol-3` is reached **1.6% of the time at one bar and 75% at ninety-six**. It is
+not miscalibrated by a factor; it is uncalibrated in the horizon, far too wide
+for a one-bar hold and far too tight for a long one, and a desk holding 20 bars
+is stopped out **4.8x** as often as the 0.100 the distance claims. Scaling the
+same t quantile by the square root of the horizon holds 0.133 to 0.170 across
+the whole range - flat to within the sampling error of 240 anchors.
+
+### The adaptive estimator does not earn its state
+
+| arm | cells | mean \|excess\| | calibrated | median stop |
+|---|---:|---:|---:|---:|
+| `vol-3` | 30 | 0.3722 | 0/30 | 3.00 |
+| `vol-3-N20` | 12 | 0.2260 | 2/12 | 3.48 |
+| `t-fixed` | 30 | 0.6088 | 0/30 | 1.51 |
+| `t-sqrt-h` | 30 | 0.0504 | **12/30** | 6.74 |
+| `quantile` | 30 | 0.4221 | 0/30 | 2.73 |
+| `quantile-seated` | 30 | **0.0461** | **12/30** | 6.87 |
+
+Against the two-thirds rule frozen above:
+
+* `t-sqrt-h` beats `vol-3` on **30/30 cells and both sides of 15/15 feeds** -
+  **pass**.
+* `quantile-seated` beats `vol-3` on **30/30 and 15/15** - **pass**.
+* `quantile-seated` beats `t-sqrt-h` on **18/30 (60%) and both sides of 5/15
+  feeds** - **fail**.
+* plain `quantile` beats `vol-3` on **0/30** and `t-sqrt-h` on **0/30** -
+  **fail** on both.
+
+So the online per-side estimator is a dead heat with a fixed parametric stop
+that costs no state, which is what `tests/test_quantiles.py` already predicted
+from its own coverage test: *"a dead heat, not a win"*. The arm that was the
+point of the study loses to the arm added to make it a fair fight. **Ship the
+square root; do not ship the estimator.** `quantile` without seating is worse
+than the incumbent on every cell, because `GAIN`'s absolute step cannot reach a
+twenty-bar quantile inside 240 anchors - the arm is measuring its own
+convergence budget, as declared.
+
+### What this does not establish
+
+**12 of 30 is not calibration.** Half the cells still sit outside an interval
+that holds 0.100, and the two best arms are the two whose median stop is 6.7-6.9
+volatility units. A stop that wide is a different trade, not a better-calibrated
+version of the same one: `affordable` names `t-fixed` unaffordable on eurusd and
+gbpusd 15m, and **9 of 15 feed-intervals carry no measured spread at all**, so
+whether a 6.9-unit stop can be paid for is unmeasured on most of the panel. The
+catalogue cannot settle that; `node/corpus.py` holds no quotes for the 1d feeds.
+
+The unit choice is nearly free. Close-EWMA against Parkinson range moves the
+rate by at most +-0.033 on 44 of 45 reported pairs. The exception is **gold**,
+where the range unit reads +0.079 to +0.092 higher at 1d, which is the feed
+`drive-q-from-the-range` would predict to move most and is also the feed whose
+daily history carries the dead bars that crashed `FearGreed`.
 
 ## Deviations
 

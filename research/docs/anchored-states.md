@@ -268,14 +268,104 @@ statistic seeing it.
 
 ## Coverage actually run
 
-RESULTS PENDING - the per-feed table from the report goes here, and it goes
-**before** the verdict on purpose: a reader cannot judge a null without
+Reported before the verdict on purpose: a reader cannot judge a null without
 knowing which cells were measurable, and a cell a guard refused is not a cell
 that read nothing.
 
+14 feeds x 3 intervals = **42 series, 0 refused, 0 dead**, 16 draws an arm,
+deciding arms `garch-bars`, `walk-geometry`, `bar-shuffle`, `duty-twin`, with
+`nzdusd` and `usdcad` as the independent placebo pair. Anchors seen per series:
+4 session, 3 through, 5 compression, 3 pivot, 3 mood_vol, 3 mood_dir.
+
+Spans differ by an order of magnitude between intervals and that is reported
+rather than pooled: 15m and 1h carry **0.14-1.03 years** over ~5,000 bars,
+while 1d carries **6.3-19.9 years** over 2,318-6,008. Row counts per cell are
+63-70 at 15m and 1h, 100-285 at 1d, after de-overlapping at a stride of
+69-76 bars (15m/1h) or 20 (1d).
+
+### Every arm's marginal scale, against the real series'
+
+| arm | cells | mean `size` | sd | vs real |
+|---|---:|---:|---:|---:|
+| `real` | 42 | 3.4866 | 3.4374 | 1.000 |
+| `bar-shuffle` | 42 | 3.8712 | 3.1658 | 1.110 |
+| `walk-geometry` | 42 | 3.8928 | 3.1939 | 1.117 |
+| `garch-bars` | 42 | 1.7461 | 1.4051 | 0.501 |
+
+**This table is a caveat on the whole study and belongs with the result.** Two
+of the four deciding arms run 11-12% hotter than the real series on the very
+statistic the claim is about, and `garch-bars` runs at half scale. A
+hardest-of-N over arms that do not match the real marginal is not a fair bar:
+the two hot arms make the test conservative, the cold one makes it
+anti-conservative, and nothing here separates those. The null below is
+therefore reported as *no effect found*, not as *no effect*.
+
 ## The verdict
 
-RESULTS PENDING.
+**Both claims fail, and the direction claim fails flat.**
+
+### Primary: does an anchored state call the next move's size? FAILS
+
+238 measurable cells of 252 attempted, 64 null draws each.
+
+| criterion | | |
+|---|---|---|
+| 1. beats the hardest null, 3+ instruments, both halves | **NOT MET** | 6 cells beat theirs against **3.7 +- 1.9 by chance**; 4 non-placebo instruments (needs 3); **0 of 90 beat in both halves** |
+| 2. survives Benjamini-Hochberg at q=0.10 | **NOT MET** | 0 of 238 |
+| 3. the placebo pair does not pass | **NOT MET** | 1 placebo cell beats (`usdcad`) |
+| 4. the duty-cycle twin does not pass | MET | subsumed by 1; the twin is hardest in 41 of 238, and there the firing rate binds, not the series structure |
+
+Six beating cells against 3.7 +- 1.9 expected is **+1.2 sd - the count a null
+produces**. The two failures that matter are the half-split and the placebo:
+the four instruments that looked promising (`eurusd`, `gold`, `spx500`,
+`us100`) would have met criterion 1's instrument count, and **not one of the 90
+cells measurable in both halves beat its null in both**. A within-strata rank
+statistic instead of the mean gives 3 of 238, agreeing with the mean on 229 of
+238. Discrimination is absent on both readings: AUC spans **0.456-0.561**
+across every anchor and interval.
+
+`the-placebo-arm-selects-the-null` is the rule this result is an instance of,
+and it fires here as designed - a pool where a placebo instrument beats its
+own hardest null is a pool whose null is too easy, whatever the traded feeds do.
+
+### Secondary: does it call direction? FAILS, and more cleanly
+
+**0 of 238 cells beat the hardest null draw, against 3.7 +- 1.9 expected by
+chance** - fewer than a null produces. 0 survive BH, 0 non-placebo instruments
+carry a beating cell, 0 placebo cells do. AUC 0.454-0.539. Real sits below its
+hardest arm's mean in 152 of 238 cells.
+
+This is the strongest form the result could take, and it is the fourth
+independent arrival at the same place: `direction-is-closed-not-just-null`,
+`relationships-are-contemporaneous` and `prod-probability-up-needs-halving`
+each reached it by a different route. The geometric reframing - react
+probabilistically to a state rather than read a shape - **does not recover a
+directional edge**, and it was the cleanest remaining argument that one
+existed.
+
+### What the power sweep does and does not license
+
+The sweep plants a magnitude effect at eight strengths from 0.00 to 3.20 on
+`eurusd` and `gold`. The zero control passes in every cell. **But `beats` is
+`False` at every strength tested, including 3.20, where the plant delivers
+3.4-5.5x the other levels' move** - so criterion 5 is not demonstrated, and by
+`show-power-before-reporting-a-null` this null is **not yet reportable as a
+null**.
+
+The harness names the mechanism in its own `power` header: the outcome's
+denominator is a **trailing** span-20 EWMA, so when two consecutive
+de-overlapped windows are both planted, the second anchor's denominator has
+already absorbed the first window's lift and the ratio cancels. That is a
+property of this plant against this outcome, not proof the statistic is blind -
+on real data 4 instruments do produce beating cells, which a wholly blind test
+could not. But it means the sweep as built cannot answer the question it was
+put there to answer.
+
+**This is the one open item in the study.** The plant has to inject into the
+outcome's numerator without the denominator seeing it - a plant on isolated
+anchors whose neighbours are unplanted, or an untrailed denominator for the
+power arm alone. Until that is run, both verdicts above stand as *no effect
+found at this power*, with the arm-scale table above as the second caveat.
 
 ## Deviations from the pre-registration
 
