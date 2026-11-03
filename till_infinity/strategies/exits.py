@@ -813,10 +813,20 @@ def _trail_vol_bps(intent: Any) -> float:
     folded = float(features.get("vol_bps") or 0.0)
     if folded > 0.0:
         return folded
-    atr = float(features.get("bos_atr") or 0.0)
-    price = float(features.get("bos_close") or 0.0)
-    if atr > 0.0 and price > 0.0:
-        return atr / price * 10_000.0
+    # **Any `<prefix>_atr` with its own `<prefix>_close` anchor**, which is a
+    # convention and not a list: `structure.py` publishes `bos_atr`/`bos_close`
+    # and `bands.py` publishes `ma_atr`/`ma_close`, and a hard-coded pair would
+    # have left the second rule with the silent inert trail the first one had.
+    # The anchor must share the prefix, because dividing a distance by a price
+    # from a different moment reads calibrated near 1.0 and is wrong by a
+    # factor of the price everywhere else.
+    for key, value in features.items():
+        if not str(key).endswith("_atr"):
+            continue
+        atr = float(value or 0.0)
+        price = float(features.get(f"{str(key)[: -len('_atr')]}_close") or 0.0)
+        if atr > 0.0 and price > 0.0:
+            return atr / price * 10_000.0
     return 0.0
 
 

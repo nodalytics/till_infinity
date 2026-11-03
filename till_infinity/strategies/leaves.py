@@ -50,6 +50,10 @@ from functools import cache
 from typing import ClassVar
 
 from ..statespace.deciding import LongProfile, LongSide, ShortProfile, ShortSide
+
+#: `bands.py` owns eleven estimators and two signal forms, which is a
+#: module's worth of rules rather than three classes in this one.
+from .bands import BandsArrival, BandsEdge, BandsResting
 from .desk import Desk
 from .entries import (
     ArrivalEntry,
@@ -183,6 +187,9 @@ LEAVES: dict[tuple[str, str], type[Desk]] = {
     # Listed for the edge alone, `desks.build` refuses the other two by name -
     # which is the behaviour this table exists for.
     ("smc-bos-causal", "edge"): StructureEdge,
+    ("bands", "edge"): BandsEdge,
+    ("bands", "resting"): BandsResting,
+    ("bands", "arrival"): BandsArrival,
 }
 
 #: The rules a deployment may name in `TRADING_STRATEGIES`.
