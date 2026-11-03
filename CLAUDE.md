@@ -110,3 +110,115 @@ uv run ruff format --check       # no path argument, and not implied by the abov
 - PR descriptions end with
   `🤖 Generated with [Claude Code](https://claude.com/claude-code)`.
 - Commit only when asked. Branch first if on the default branch.
+
+## Kills
+
+What died, and what killed it. A refuted idea is a result: it stops being
+re-proposed, and the method that refuted it transfers.
+
+### Trades
+
+**fade-to-value as a displacement thesis.** Giving "value" a definition - the
+origin candle of a displacement - turned the 82% return rate into a target hit
+rate. Traded *from* the zone it was negative everywhere; traded *toward* it,
+**0 of 105 cells** had a positive lower bound across four entry rules, five
+stop pads and four body thresholds; as a filter on origins it read +0.120R on
+477 trades at 1d, +0.017R on 985 at 4h and **-0.007R on 2,786 at 1h** -
+shrinking as the sample grew and reversing on the largest.
+
+Killed by the stop: 89-91% of fades were stopped before the target arrived.
+Price does return 77-81% of the time, but that is measured with no stop and 300
+bars, and the trade has a stop and sixty. Confirmation raised the hit rate from
+31% to 48% and dropped reward from 1.88 to 0.94 - it bought hit rate at almost
+exactly the fair rate, which is `1/(1+N)` doing what it does, and why "improve
+the entry" was never the answer.
+
+**The one surviving positive cell.** `impulse_back` at a 0.70 body on 1d, the
+only cell of sixty with a positive mean R at **+0.036**. Widening 16
+instruments to 29 took it to **-0.028**. The sixteen reproduced exactly, so
+neither run was mismeasured: a result that reverses on thirteen more
+instruments was a property of those sixteen.
+
+### Tidy-ups that would have been bugs
+
+**"`displace` and `DISPLACE_C` are the same rule."** Over 131
+instrument-timeframes and 2.0M bars they fire at similar rates (21.6 against
+18.9 per 1k bars at 1d) and agree on about **a quarter** of their union.
+`DISPLACE_C` grades a body against the last ten bars' - "big for lately" -
+while `displace` wants a share of the bar's own range - "decisive in itself".
+The same shape had already appeared between `origins` and `displacement`,
+agreeing 59-78%. **Two detectors with the same name are usually two
+detectors.**
+
+**Merging the MCFL service into structures.** MCFL imports nothing from
+`structures` while `trading` imports it in five modules, so merging would turn
+"no path to a broker" from something the import graph enforces into a
+convention someone must remember. The real duplication is at the definition
+level, and the fix is one directional dependency rather than a merge.
+
+### Architecture
+
+**Force, quality, decay and pressure as Kalman dimensions.** You cannot
+estimate more latent states than the observations identify. A level sees one
+scalar per touch and a handful of touches in its life, so an eight-dimensional
+state tracks the prior and then reports confident numbers for quantities the
+data never constrained - **and that failure is silent**. What survived is
+`(price, slope)`, gated until it clears three sigmas of its own posterior.
+
+**Zone width as a Kalman dimension.** Dead on the observation model, not the
+arithmetic: **width is not observed.** What is observed is a hit or a miss, and
+`|touch - centre|` - half-normal at best. A linear-Gaussian filter over width
+assumes the thing the band exists to stop assuming. Kalman for the centre,
+conformal for the width.
+
+### Retractions
+
+Kept because a log of other people's dead ideas is marketing.
+
+**"The gate earns its keep."** I measured production's retrain gate as a
+contest and reported gating beating deploy-everything. The real rule is a
+**tolerance**, `GATES["vs_champion"] = 0.01`. Under it the gate wins at 14 days
+by 0.23% and loses at 28 and 56, with **23 of 25 challengers promoted**. A 1%
+tolerance on a quantity whose whole spread is 1.5% is one nearly everything
+clears.
+
+**"The slope change is conservative."** I wrote that a level which never earns
+a slope behaves as before. The covariance was propagating into `variance`
+ungated, so **every zone got wider**, including levels with no slope. A
+non-trending level is now bit-identical to the old filter, pinned against a
+verbatim copy.
+
+**"`CONFIDENT_TOUCHES` is the shrinkage parameter."** It appears in one `if`,
+choosing between two wordings of a string, and affects no number. The shrinkage
+is `PRIOR_WEIGHT = 4.0`. The argument survived on the wrong constant.
+
+**A near-miss.** The first 2D filter gated the covariance propagation as well
+as the mean's. The off-diagonal is the only thing that lets a slope be learned,
+so it reported `slope = 0.0000` forever and **looked healthy doing it**. Caught
+by printing the number rather than trusting the tests.
+
+### What does the killing
+
+- **The duty-cycle control.** Random gates keeping the same share. On a
+  net-negative book any rule that trades less shows a profit improvement, so
+  the headline carries no information.
+- **The barrier test.** Did price reach the target before the stop, inside a
+  holding period a desk would accept. Base rate 48.6%.
+- **Widening the universe.** Sixteen instruments to twenty-nine killed the only
+  positive cell in a sixty-cell sweep, and cost a rerun.
+- **The placebo level.** An ordinary prior extreme at a similar distance with
+  no imbalance behind it. Without it a study of gap edges measures mean
+  reversion and reports it as structure.
+- **A test that a published feature has not gone near-constant.** It caught two
+  unrelated errors on the same feature hours apart; neither looked like what it
+  was, and both surfaced as a distribution collapsing.
+- **Reading the code instead of the name.** `CONFIDENT_TOUCHES`, and
+  `fade-to-value` already trading origins, which changed the question before
+  any measurement ran.
+
+### Alive and unproven
+
+The slope, the calibrated zone width, the estimated `PRIOR_WEIGHT`, six new
+formation kinds. **None has been measured against outcomes.** Each ships behind
+a guard that makes a cold or thin book behave as it did before. That makes them
+safe; it does not make them right.

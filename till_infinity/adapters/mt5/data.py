@@ -102,6 +102,28 @@ def _milliseconds(row: dict) -> int | None:
     return None
 
 
+def _bar_seconds(row: dict) -> float:
+    """A bar's open time in epoch seconds, whichever way the bridge spelled it.
+
+    **`_milliseconds` already knew this and the bar path did not use it.** The
+    HTTP bridge runs its rows through `pandas.to_datetime`, so `time` arrives
+    as an ISO string, and both bar sites did a bare numeric conversion on it:
+    the poll loop `int(row.get("time") or 0)` and `_bar` `float(...)`. Against
+    the live bridge every bar poll raised `invalid literal for int() with base
+    10: '2026-11-...'`, on all six symbols, continuously - so the desk held
+    quotes and **never received a bar**, which is every strategy's only input.
+
+    The tick path was correct because it went through `_milliseconds`. The
+    knowledge was in the file; this makes the bar path use it.
+
+    Zero on an unparseable row rather than a raise: the caller treats a
+    non-advancing timestamp as "nothing new", which is the safe reading, and a
+    raise here would lose the other bar in the same response.
+    """
+    found = _milliseconds(row)
+    return found / 1000.0 if found is not None else 0.0
+
+
 class MT5DataClient(LiveMarketDataClient):
     """The read side of the venue."""
 
@@ -267,7 +289,7 @@ class MT5DataClient(LiveMarketDataClient):
                 # bar is the one behind it, and only that one is published.
                 rows = await self._bridge.bars(symbol, name, count=2, start=0)
                 for row in rows:
-                    opened = int(row.get("time") or 0)
+                    opened = int(_bar_seconds(row))
                     if opened <= self._last_bar.get(str(bar_type), 0):
                         continue
                     if _is_forming(opened, seconds, self._clock.timestamp_ns()):
@@ -458,7 +480,7 @@ def _is_forming(opened: int, seconds: float, now_ns: int) -> bool:
 
 def _bar(bar_type: BarType, row: dict, instrument: Any, seconds: float) -> Bar:
     """One bridge row as a Nautilus bar, with the timestamp moved to its close."""
-    opened = float(row.get("time") or 0.0)
+    opened = _bar_seconds(row)
     closes = secs_to_nanos(opened + seconds)
     digits = instrument.price_precision
     size = instrument.size_precision

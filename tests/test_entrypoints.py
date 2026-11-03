@@ -381,3 +381,65 @@ def test_the_deploy_workflow_sends_files_that_exist():
         f"the deploy workflow copies paths that are not in the repository: "
         f"{missing} - the deploy fails at the scp, after the image is pushed"
     )
+
+
+def test_the_example_env_names_only_rules_that_exist():
+    """**The check that was missing when a deploy took the desk down.**
+
+    On 2026-11-03 the live environment still named sixteen rules retired with
+    the Nautilus port - `cycle-turn`, `level-scalp`, `fade-to-value` and the
+    rest. `desks.rules` refuses an unknown name rather than silently running
+    nothing, which is correct, so the node raised on every start and the
+    container restarted **27 times**.
+
+    Nothing compared a shipped configuration against the rule registry, so a
+    name could rot in `.env.example` indefinitely and anyone copying it would
+    inherit the crash. This asserts the join; `scripts/deploy.sh --check`
+    asserts it against the *deployed* environment, which is the half a test
+    cannot reach.
+    """
+    from till_infinity.node import desks
+
+    text = (ROOT / ".env.example").read_text()
+    named: list[str] = []
+    for line in text.splitlines():
+        stripped = line.strip().lstrip("#").strip()
+        if not stripped.startswith("TRADING_STRATEGIES="):
+            continue
+        value = stripped.split("=", 1)[1].strip()
+        named.extend(part.strip() for part in value.replace(",", " ").split() if part.strip())
+
+    assert named, ".env.example names no strategies at all"
+    unknown = sorted({name for name in named if name not in desks.RULES})
+    assert not unknown, (
+        f".env.example names {unknown}, which `desks.rules` would refuse on "
+        f"start. Known: {', '.join(desks.RULES)}."
+    )
+
+
+def test_the_example_env_pairs_its_rules_with_an_entry_that_exists():
+    """A valid rule on the wrong entry raises too, and `smc-bos-causal` exists
+    on `edge` alone - so a configuration naming it beside
+    `TRADING_ENTRIES=resting` is as dead as a retired rule name, for a reason
+    that is one level further in."""
+    from till_infinity.node import desks
+    from till_infinity.strategies.leaves import LEAVES
+
+    text = (ROOT / ".env.example").read_text()
+
+    def named(key: str) -> list[str]:
+        out: list[str] = []
+        for line in text.splitlines():
+            stripped = line.strip().lstrip("#").strip()
+            if stripped.startswith(f"{key}="):
+                value = stripped.split("=", 1)[1].strip()
+                out.extend(p.strip() for p in value.replace(",", " ").split() if p.strip())
+        return out
+
+    rules = named("TRADING_STRATEGIES")
+    entries = named("TRADING_ENTRIES") or list(desks.entries())
+    dead = [f"{rule}/{entry}" for rule in rules for entry in entries if (rule, entry) not in LEAVES]
+    assert not dead, (
+        f".env.example pairs {dead}, which `leaves.of` refuses. Valid pairings: "
+        f"{', '.join(f'{r}/{e}' for r, e in sorted(LEAVES))}."
+    )

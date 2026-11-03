@@ -67,6 +67,7 @@ from .exits import ExitMechanism, ManagedExit, VenueExit
 from .profile import Profile
 from .structure import StructureEdge
 from .surprise import SurpriseArrival, SurpriseEdge, SurpriseResting
+from .zones import ZonesArrival, ZonesEdge, ZonesResting
 
 # --------------------------------------------------- the statespace side leaves
 
@@ -190,6 +191,9 @@ LEAVES: dict[tuple[str, str], type[Desk]] = {
     ("bands", "edge"): BandsEdge,
     ("bands", "resting"): BandsResting,
     ("bands", "arrival"): BandsArrival,
+    ("zones", "edge"): ZonesEdge,
+    ("zones", "resting"): ZonesResting,
+    ("zones", "arrival"): ZonesArrival,
 }
 
 #: The rules a deployment may name in `TRADING_STRATEGIES`.

@@ -159,3 +159,69 @@ class TestTheSessionIsOpenedDeliberately:
         await bridge.close()
         with pytest.raises(BridgeError):
             _ = bridge.session
+
+
+class TestABarsTimeArrivesInThreeShapes:
+    """**The desk held quotes and never received a bar.**
+
+    The HTTP bridge runs its rows through `pandas.to_datetime`, so a bar's
+    `time` arrives as an ISO string. Both bar sites did a bare numeric
+    conversion on it - the poll loop `int(row.get("time") or 0)` and `_bar`
+    `float(...)` - so against the live bridge every poll raised `invalid
+    literal for int() with base 10: '2026-11-...'`, on all six symbols,
+    continuously. Every strategy here is bar-driven, so the desk was inert.
+
+    The tick path was already correct because it went through
+    `_milliseconds`, whose own docstring describes this exact behaviour. The
+    knowledge was in the file and the bar path did not use it, which is why
+    the fake-bridge tests passed: they return integers.
+    """
+
+    def test_an_epoch_integer_still_reads(self):
+        from till_infinity.adapters.mt5.data import _bar_seconds
+
+        assert _bar_seconds({"time": 1793735408}) == 1793735408.0
+        assert _bar_seconds({"time": 1793735408.0}) == 1793735408.0
+
+    def test_the_iso_string_the_bridge_actually_sends(self):
+        from till_infinity.adapters.mt5.data import _bar_seconds
+
+        naive = _bar_seconds({"time": "2026-11-03T20:15:00"})
+        zulu = _bar_seconds({"time": "2026-11-03T20:15:00Z"})
+
+        assert naive > 0.0, "this is the shape that broke every bar poll"
+        assert naive == zulu, "a naive string is UTC - pandas produced it from an epoch"
+
+    def test_an_unparseable_row_reads_zero_rather_than_raising(self):
+        """The caller treats a non-advancing timestamp as "nothing new", which
+        is the safe reading. A raise would also lose the other bar in the same
+        response, since the bridge is asked for two."""
+        from till_infinity.adapters.mt5.data import _bar_seconds
+
+        assert _bar_seconds({}) == 0.0
+        assert _bar_seconds({"time": "not a time"}) == 0.0
+        assert _bar_seconds({"time": None}) == 0.0
+
+    def test_a_bar_built_from_an_iso_row_carries_a_real_timestamp(self):
+        """Through `_bar` itself, not just the helper: the bug was in two
+        places and a test of one would have missed the other."""
+        from nautilus_trader.model.data import BarType
+        from nautilus_trader.test_kit.providers import TestInstrumentProvider
+
+        from till_infinity.adapters.mt5.data import _bar, _bar_seconds
+
+        instrument = TestInstrumentProvider.default_fx_ccy("EUR/USD")
+        bar_type = BarType.from_str(f"{instrument.id}-5-MINUTE-LAST-EXTERNAL")
+        row = {
+            "time": "2026-11-03T20:15:00",
+            "open": 1.1000,
+            "high": 1.1020,
+            "low": 1.0990,
+            "close": 1.1010,
+            "tick_volume": 120,
+        }
+        made = _bar(bar_type, row, instrument, 300.0)
+
+        assert made.ts_event > 0, "a zero timestamp is the defect, not a bar"
+        # Stamped at the close, which is one interval past the open.
+        assert made.ts_event == int((_bar_seconds(row) + 300.0) * 1e9)

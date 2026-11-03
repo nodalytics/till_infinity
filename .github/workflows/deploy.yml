@@ -169,8 +169,17 @@ jobs:
           HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
         run: |
           sleep 20
-          # A deploy that reports success without checking is a deploy that
-          # reports success while the container restart-loops.
-          ssh -i ~/.ssh/deploy.pem "$HOST" \
-            'docker ps --filter name=till-infinity --format "{{.Names}} {{.Status}}" | grep -q Up' \
-            || { ssh -i ~/.ssh/deploy.pem "$HOST" 'docker logs --tail 40 till-infinity'; exit 1; }
+          # **`docker ps` prints `Up` for a container in restart backoff**, so
+          # grepping for it passed over a desk that restarted 27 times on
+          # 2026-11-03. `State.Status` and `State.Restarting` are what
+          # distinguish them, and the restart count is compared across two
+          # samples because a loop can be `running` at any single instant.
+          ssh -i ~/.ssh/deploy.pem "$HOST" '
+            read -r status restarting first <<<"$(docker inspect -f \
+              "{{.State.Status}} {{.State.Restarting}} {{.RestartCount}}" till-infinity)"
+            sleep 20
+            later="$(docker inspect -f "{{.RestartCount}}" till-infinity)"
+            echo "status=$status restarting=$restarting restarts=$first->$later"
+            [ "$status" = "running" ] && [ "$restarting" = "false" ] \
+              && [ "$later" -le "$first" ]
+          ' || { ssh -i ~/.ssh/deploy.pem "$HOST" 'docker logs --tail 40 till-infinity'; exit 1; }
