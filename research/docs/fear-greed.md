@@ -25,44 +25,57 @@ that produced the level, not of any sentiment source.
 |---|---|
 | **Does the fear reading fire on the 2008 carry crash?** | **Yes, on 2 of 3 pre-registered criteria, and the third was a bad criterion.** The 2008-08-01..2009-03-31 window is the **most risk-off of the 28 non-overlapping windows** of its length in 19.25 years (+0.1276) and its peak clears the sample's 99th percentile (+0.3308 against +0.3060). It is **not** the global maximum: that is **2020-03-08**, COVID. The index's top two episodes are 2008-08-03..2009-03-31 (+0.1276) and **2024-07-17..2025-03-18 (+0.1126)** - the two largest yen-carry unwinds in the window, which nothing told it to find |
 | Is the synthetic cross trustworthy? | **The close path yes, exactly; the bar extremes no, and not marginally.** The triangle holds to 8.9e-16 in log price and collapses to r2 0.003 at a one-bar calendar shift. But the synthesised **range is about 1.7x too wide on AUDJPY and NZDJPY**, which takes median body-over-range from 0.463 to 0.268 and `levels.chains` from **83 displacement legs in 19 years to 4** |
-| **Are up moves longer and slower, down faster and deeper?** | **Yes, and it is stable across all 19 years rather than carried by 2008.** AUDJPY down swings are 33% faster per bar (speed gap **-0.285**, z -3.68), up swings 21% longer (+0.213, z +2.60); NZDJPY -0.252 / +0.219. **Dropping 2008 entirely changes it by 0.005 on AUDUSD and 0.003 on USDCHF**, and the speed gap is negative in **6 of 6 eras** on both against **3 of 6** on the placebo |
-| Is it the path, or the return distribution? | **On the crosses, the distribution. On two legs, about a quarter is not.** No carry cross exceeds its hardest null arm on any statistic - NZDJPY's -0.252 is matched by a memory-free `bar-shuffle` at **-0.252**. But **AUDUSD (+0.066) and USDCHF (+0.077) exceed every arm**, 22% and 29% of the raw effect, and they are exactly the high-yield leg and the safe-haven leg the framing names. Gaussian GARCH reads **-0.093 to +0.081 on all fourteen instruments**, so clustering contributes nothing and the mechanism is return skewness |
-| So is the asymmetry tradeable as a sequence rule? | **Not on this evidence, and the order is untested rather than null.** The power sweep drives the duration gap from -0.033 to **+0.557** by changing the up-bar share alone with the shuffle tracking it to +0.530, so the statistic is close to a marginal statistic by arithmetic; its zero cell reads **-0.002 +- 0.018**, correctly empty. But the **pure-order plant failed its own zero control** - excess **-0.180 at z -4.76 where nothing is planted** - so it was rejected and there is no calibrated test here for a path effect. 5 of 42 cells exceed the hardest arm against 2 expected, and **none at both swing scales**, so the pre-registered consistency rule fails |
-| Does a fear/greed label on a level's formation carry anything? | **Nothing survives, and three of the four books cannot answer** - but this is the one section with **no power statement**, so read it as a sample-size verdict rather than a null. `Levels` and `BjorgumLevels` publish 2-6 crash-labelled levels with a touch per instrument over 19 years; only `Pivots`, the **no-parameter control**, has a usable sample (164-209). Its fear-minus-greed hold gap is +0.061/+0.128 pooled, +0.055/+0.063 within strata, and **-0.203/-0.008 de-overlapped** - the sign flips when the overlap is removed |
+| **Are up moves longer and slower, down faster and deeper?** | **Yes - the clearest positive finding here, and it is not 2008.** AUDJPY down swings are 33% faster per bar (speed gap **-0.285**, z -3.78), up swings 21% longer (+0.213, z +2.51); NZDJPY -0.252 / +0.219; AUDUSD -0.297 (z -4.66). **Dropping 2008 entirely changes it by 0.005 on AUDUSD and 0.003 on USDCHF**, and the speed gap is negative in **6 of 6 eras** on both against **3 of 6** on the placebo. Five of fourteen survive Benjamini-Hochberg on the raw day-block z |
+| Is it the path, or the return distribution? | **The distribution, on all fourteen.** The committed panel showed AUDUSD and USDCHF exceeding every arm at +0.093 and +0.047 - the two legs the framing names, so the two worth sampling hardest. **Re-run with 16 draws an arm instead of 4, AUDUSD reads -0.037 and USDCHF +0.021 at one scale only**, and 1 of 30 cells exceeds where 4 draws gave 8 of 84. Gaussian GARCH reads **-0.079 to +0.116 on all fourteen**, so clustering contributes nothing and the mechanism is return skewness |
+| So is the asymmetry tradeable as a sequence rule? | **Not on this evidence, and the order is untested rather than null.** The power sweep drives the duration gap from -0.033 to **+0.557** by changing the up-bar share alone with the shuffle tracking it to +0.530, so the statistic is close to a marginal statistic by arithmetic; its zero cell reads **-0.002 +- 0.018**, correctly empty. But the **pure-order plant failed its own zero control** - excess **-0.180 at z -4.76 where nothing is planted** - so it was rejected and there is no calibrated test here for a path effect. **8 of 84 cells exceed the hardest arm against about 4 expected**, and exactly one - `usdchf` `speed` - does so at **both** swing scales, which is the pre-registered consistency rule met once |
+| Does a fear/greed label on a level's formation carry anything? | **No. 0 of 16 measurable cells** have a gap outside their surrogate range - the shuffle arms produce a label gap of +-0.13 to +-0.35 by themselves and every real gap lives inside it. The pooled sign is a coin flip (positive on 4 of 8 legs) and **flips on 6 of 8 when the overlap is removed**. Two books cannot answer at all: across eight legs `Levels` yields **4-14** crash-labelled levels with a touch and `BjorgumLevels` **1-7**. Only `Pivots`, the **no-parameter control**, has power |
 | Does the basket index predict a level's hold? | **No.** AUC 0.436-0.557 pooled and 0.433-0.525 within strata for `volatile_off`; 0.441-0.553 and 0.433-0.527 for `directional_off`. Both halves sit on 0.5 |
-| **Does the short-the-cross trade pay?** | **No. The short arm is the flat one and the long arm is the carry trade.** AUDJPY short reads **-0.0002R** ungated and **-0.0862R** on the volatility gate; long reads **+0.2030R** and **+0.2301R**. And the placebo EURGBP reads **+0.1073R short**, so a positive mean R here is the race geometry, not carry |
-| Is direction inside a volatility state the open question it was said to be? | **Measured, null, and one apparent signal in it is circular.** The volatility half carries no direction even conditioned (down-share 0.542 to 0.465 across its whole range on AUDJPY). The direction half *looks* strong - down-share **0.622 against 0.357** - until the placebo: EURGBP's legs are the two excluded from the index, and its conditioning is **0.468 against 0.507**, flat. The index was reading each instrument's own direction back to itself. The 4-cell interaction's **largest readings are the placebo's** (+0.245 to -0.270 against AUDJPY's -0.006 to -0.151) |
+| **Does the short-the-cross trade pay?** | **No, and neither does the long arm - the surrogates overturned that.** Of **420 cells, 6 exceed their hardest null arm where chance gives about 20**, and real sits *below* the hardest null in 414. The gate beats its own duty-cycle random twin in **206 of 420 = 49.0%** against a 50% chance. AUDJPY long reads +0.2030R ungated and +0.2301R gated - both **inside** their surrogate range (+0.2437, +0.3016), and on nzdjpy and gold the **random twin beats the real gated arm**. The 8 BH survivors are **all the ungated arm** on gold and usdjpy: drift, no gate |
+| Is direction inside a volatility state the open question it was said to be? | **Measured, null, and the one apparent signal is circular with a mechanism.** The volatility half moves the next swing's direction by **-0.077 to +0.055 across all fourteen instruments** - nothing, anywhere. The direction half *looks* strong until the sign is checked: the down-share swing's sign **matches `RISK_OFF_SIGN` on 6 of 6 basket legs** (audusd -0.185 at sign -1, usdcad **+0.233** at sign +1) and is flat on all three out-of-basket feeds (mean -0.022). The index reads each instrument's own recent direction back to itself with the quote convention's sign on it |
 | So is the interaction closed? | **No - open, and this sample cannot close it.** The trade arm's version (`volatile_off` **and** `directional_off` both in their top fifth) reads -0.0010R short on AUDJPY on 65 trades against +0.1970R long, and at sd 1.33 its 95% interval is +-0.31R. The bound that *is* firm: **a conditional drift above a tenth of a stop over the 20-bar hold would have been seen** |
-| What would it have found? | **A conditional drift of 0.10 volatility units over the 20-bar hold reads +0.43R**, monotone and steep from there. The real gated short arm reads -0.09 to +0.03R, so the conditional drift is bounded **well under 0.10 units** - under a tenth of a stop. Run on the placebo at 2 draws, so transferring the bound assumes the slope in drift carries across instruments at the same stop and horizon |
+| What would it have found? | **On AUDJPY itself, a conditional drift of a tenth of a stop over the 20-bar hold reads +0.2165R** against a zero cell of -0.0532R, monotone and steep from there. The real gated short arm reads **-0.0862R, below its own zero cell**. The four feeds' zero cells span -0.064 to +0.152, which is the measured version of the earlier caveat: **the race-geometry baseline is feed-specific** and no row should be read against zero |
 | Does `Mood`'s +-0.5 ever fire? | **Not on anything market-like, and nothing keys on it.** The basket index's 90th percentile is **+0.152 to +0.189** over 19.25 years. A single instrument needs a noiseless **75% up-rate** to reach +0.5 - 67% reads +0.499, just under. Every gate here uses a **trailing** quantile and reports the absolute boundary it lands on: **+0.10 at the 80th percentile, +0.15 at the 90th** |
 
 **Nothing in this document is priced.** The primary result is gross and says so
 in every table. See [Costs](#costs-and-what-this-store-cannot-supply).
 
-## What has actually been run, and what has not
+## What has actually been run
 
-**This matters for how much weight each section carries, so it is stated before
-the results rather than in a footnote.**
+**Kept as a table because it is the thing to read before any number below.** The
+first version of this section recorded two sections as single-box
+reconnaissance; the panel has since run and the table now records what it
+covered rather than being deleted because the gap closed.
 
 | section | coverage | arms |
 |---|---|---|
-| **1. the 2008 control and the triangle** | **complete** - all 6 crosses, all 4 calendar shifts, the full basket | the planted-crash sweep at **3 draws a depth** |
-| **3. the asymmetry** | **complete** - 14 series x 2 swing scales x both pivot kinds, 1,012 rows | **all 5 null arms x 4 draws + 2 diagnostics** |
-| **6. the conditioning** | 3 series (audjpy, audusd, eurgbp) x 2 swing scales | real arm only |
-| 4. the level labels | **2 of 8 legs** (audusd, usdjpy) x 4 books | **real arm only - no surrogate arms yet** |
-| 5. the trade | **3 of 14 series** x 5 gates x the 2:1 race x both sides | **real arm only - no surrogate arms, no duty-cycle twin yet** |
-| the power sweeps | asymmetry on 2 feeds at `reach` 10, **8 plants a strength with matched twins**; the trade on eurgbp; the planted crash at 3 draws a depth; the level plant on audusd/`pivots` at 2 draws | **the level plant was rejected** - it fails its own zero control and has no dose response even at a hard wall. Section 4 therefore has no power statement |
+| **1. the 2008 control and the triangle** | all 6 crosses, all 4 calendar shifts, the full basket | planted crash, **4 draws a depth** |
+| **2. the synthetic range** | all 8 real instruments and all 6 crosses | arithmetic, no arms needed |
+| **3. the asymmetry** | 14 series x 2 swing scales x both pivot kinds, **1,012 rows** | **5 null arms x 4 draws + 2 diagnostics** (20 surrogate draws a cell) |
+| **4. the level labels** | **all 8 real legs x 4 books, 384 rows** | **5 null arms x 4 draws + 2 diagnostics** on `pips` and `pivots`; real only on the two books whose crash class is 1-14 levels |
+| **5. the trade** | **all 14 series x 5 gates x 3 races x 2 sides, 10,080 rows** | **5 null arms x 4 draws + 2 diagnostics + the duty-cycle random twin** |
+| **6. the conditioning** | **all 14 series x 2 swing scales, 28 rows** | real arm only; the circularity is checked against the trade panel's surrogates instead |
+| the power sweeps | asymmetry on 4 feeds x 2 scales x 3 plants (8 plants a strength, matched twins); the trade plant on 4 feeds **including audjpy**; the level plant on audusd x `pips` and `pivots` | 144 rows |
 
-Sections 1 and 3 are panel results. **Sections 4 and 5 are single-box
-reconnaissance on a subset and their nulls have not been run** - the harness
-runs all of it in one invocation and the command is below, but what is written
-here for those two sections is the real arm alone. Section 5's conclusion rests
-on the **EURGBP placebo** rather than on surrogates for exactly that reason,
-and the surrogate comparison is the thing to read first when the panel lands.
-The two other `RACES` rows (1:1 and 1:2) and the 15m rule are in the harness
-and are not reported here. One of the asymmetry run's 1,012 lines was torn by
-an overlapping launch and is skipped by the report, which now counts and prints
-what it skipped rather than failing on it.
+**What is still not here.** The 15m rule, on any section - the harness takes
+`--intervals 1d,15m` and it is a different rule, never pooled with 1d. No cost
+anywhere. `conditioned` is real-arm only by construction, so §6's control is
+the trade panel's surrogates and the in-basket/out-of-basket split rather than
+a shuffle of its own statistic.
+
+**Every table below is read from `.data/out/fear_greed/*.jsonl`**, the
+committed panel output, and `fear_greed_report.py` prints them from those
+files so a number in the document and a number in the harness are the same
+number.
+
+**Runtime, and a timing measurement of mine that was wrong.** The whole panel
+is **91 seconds at `--jobs 16`** on a 64-core box: `levels` did all eight legs
+in **35 s** where I had measured **406 s for one leg** locally and projected
+~1,300 s a leg at `--draws` 4. The local figure was taken while a 16-minute
+pytest suite was saturating the same box, so it is a measurement of contention
+rather than of the job. The projection built on it - "25 to 35 minutes at
+`--jobs 16`" - was wrong by a factor of about 20. Timing a job against a busy
+machine is the same class of mistake as the rest of this document's defect
+list, and it is recorded with them.
 
 ## The rules, as frozen before the run
 
@@ -108,8 +121,10 @@ what it skipped rather than failing on it.
   the prior period's range, nothing to fit.
 * **Gates are causal.** A trailing quantile over the prior 500 bars at the 80th
   percentile. No whole-sample quantile anywhere, and no gate reads `Mood`.
-* **Null arms**, four draws each, every one through the same detector over the
-  same bar geometry: `garch-bars` (clustering, no skew), `walk-geometry` and
+* **Null arms**, **four draws each as pre-registered and as the committed panel
+  ran them** - which turned out to be the study's most consequential defect,
+  recorded as deviation 6 and measured in §3; the harness default is now 16 -
+  every one through the same detector over the same bar geometry: `garch-bars` (clustering, no skew), `walk-geometry` and
   `bar-shuffle` (absolute step distribution and wickiness, no memory), and -
   **added mid-study, see deviation 5** - `log-walk` and `log-shuffle`, the same
   two on log returns with the range carried as a share of price. Plus two
@@ -165,6 +180,14 @@ Four, all recorded rather than quietly fixed.
    are retained and reported, and the hardest-arm test now takes the extreme
    over all five. The defect was found by the power sweep rather than by
    review - see the end of section 3.
+6. **The pre-registered draw count was too low and the pre-registered test is
+   anti-conservative because of it.** Four draws an arm, following
+   `level-shield.md`, against a hardest-of-all-draws criterion. An arm's own sd
+   is 0.09-0.12 on this statistic, so the max of four draws understates its
+   tail and **manufactures exceedances**. Both of the study's substantive
+   positive cells came from it and neither survives 16 draws. The criterion
+   itself is kept - changing it after seeing results would be worse - and it is
+   re-run at a draw count that can support it, with both numbers reported.
 
 ## 1. The 2008 carry crash, and the triangle
 
@@ -268,24 +291,27 @@ risk-off sign. Three draws per depth. Chance is 0.0137.
 
 | planted depth | index argmax in window | `volatile_off` | `directional_off` |
 |---|---|---|---|
-| **0.00** | **0 / 3** | 0 / 3 | 0 / 3 |
-| 0.05 | 0 / 3 | 0 / 3 | 1 / 3 |
-| 0.10 | 1 / 3 | 0 / 3 | 2 / 3 |
-| **0.20** | **3 / 3** | 0 / 3 | 2 / 3 |
-| 0.30 | 3 / 3 | 2 / 3 | 3 / 3 |
-| 0.45 | 2 / 3 | 2 / 3 | 3 / 3 |
+| **0.00** | **0 / 4** | 0 / 4 | 0 / 4 |
+| 0.05 | 0 / 4 | 0 / 4 | 1 / 4 |
+| **0.10** | **3 / 4** | 0 / 4 | **4 / 4** |
+| **0.20** | **4 / 4** | 2 / 4 | 4 / 4 |
+| 0.30 | 4 / 4 | 1 / 4 | 4 / 4 |
+| 0.45 | 4 / 4 | 0 / 4 | 4 / 4 |
 
-**The control sees a 20% crash and goes blind between 0.05 and 0.10.** At
-strength 0 it correctly reads nothing, which is the arm that must come back
-empty.
+**The control sees a 10% crash on 3 of 4 draws and a 20% crash on 4 of 4, and
+goes blind between 0.05 and 0.10.** At strength 0 it correctly reads nothing on
+all four draws, which is the arm that must come back empty.
 
 One caveat on the volatility half, and it is the plant's limitation rather than
 the index's: **the planted crash is a smooth drift, so it does not widen
-ranges**, and `expansion` is a range statistic. The direction half sees the
-plant from 0.05 where the volatility half needs 0.30. On a real crash
-volatility explodes, which is why `volatile_off` has the larger peak in 2008
-than the planted sweep would suggest. The plant understates the volatility
-half.
+ranges**, and `expansion` is a range statistic. The direction half finds the
+plant on **4 of 4 draws from depth 0.10** while the volatility half never gets
+past 2 of 4 at any depth and reads 0 of 4 at 0.45 - which is not a dose response
+at all, and is the plant's shape rather than the index's blindness. On a real
+crash volatility explodes, which is why `volatile_off` has by far the larger
+*peak* in 2008 (+0.5125 against +0.3247). **The plant cannot speak for the
+volatility half**, and the honest statement is that this control validates the
+direction half and the composite, not `volatile_off`.
 
 **And the power arm caught its own sign error.** The first version used
 `log1p(-depth)`, which is negative, and so planted a *rally*: the index's
@@ -355,7 +381,7 @@ That split is why the fear reading is a **basket of real legs** rather than a
 cross's own `FearGreed`, and why the level study runs on the eight legs while
 the crosses carry the trade and the swing asymmetry.
 
-## 3. The asymmetry: real, stable across 19 years, and mostly the return distribution
+## 3. The asymmetry: real, stable across 19 years, and the return distribution
 
 `reach` 10 close pivots, 1d, log-mean gaps of up swings against down swings.
 Pre-stated direction: `bars` positive, `size` negative, `speed` negative. z is
@@ -367,67 +393,89 @@ draws each, shown as the mean with the range over draws; `sign-flip` and
 
 | instrument | kind | real | z | `garch-bars` | `bar-shuffle` | `log-shuffle` | `log-walk` | `sign-flip` | `drift-free` |
 |---|---|---|---|---|---|---|---|---|---|
-| audjpy | carry+haven | **-0.285** | -3.68 | +0.049 | -0.172 [-0.22,-0.11] | -0.258 [-0.28,-0.24] | -0.220 [-0.34,-0.09] | +0.308 | -0.272 |
-| nzdjpy | carry+haven | **-0.252** | -3.49 | +0.003 | **-0.252** [-0.40,-0.12] | -0.060 | -0.178 | +0.278 | -0.245 |
-| cadjpy | carry+haven | -0.167 | -2.13 | +0.066 | -0.175 [-0.27,-0.08] | -0.072 | -0.192 | +0.186 | -0.160 |
-| audchf | carry+haven | -0.016 | -0.22 | -0.021 | -0.041 | +0.069 | +0.030 | +0.053 | -0.065 |
-| eurchf | haven | +0.120 | +1.50 | -0.074 | +0.025 | +0.065 | +0.137 | -0.086 | +0.130 |
-| **eurgbp** | **placebo** | **-0.032** | -0.46 | -0.037 | +0.068 | +0.084 | +0.096 | +0.046 | -0.016 |
-| **audusd** | leg (carry) | **-0.297** | **-4.56** | +0.004 | -0.101 [-0.23,+0.02] | -0.106 [-0.14,-0.02] | -0.029 | +0.325 | -0.302 |
-| nzdusd | leg (carry) | -0.120 | -1.88 | +0.029 | -0.058 | -0.006 | -0.022 | +0.152 | -0.120 |
-| usdjpy | leg (haven) | -0.119 | -1.58 | -0.037 | -0.126 | -0.046 | -0.024 | +0.140 | -0.080 |
-| **usdchf** | leg (haven) | **-0.261** | **-3.08** | -0.093 | -0.070 [-0.18,+0.05] | -0.097 [-0.14,-0.06] | -0.033 | +0.285 | -0.277 |
-| usdcad | leg (carry) | +0.077 | +1.06 | +0.025 | -0.027 | +0.079 | +0.026 | -0.059 | +0.054 |
-| gold | leg (haven) | -0.185 | -2.79 | +0.081 | -0.085 [-0.18,+0.02] | +0.009 | -0.045 | +0.226 | -0.164 |
-| eurusd | leg | -0.038 | -0.65 | -0.020 | -0.100 | -0.012 | -0.001 | +0.059 | -0.015 |
-| gbpusd | leg | -0.013 | -0.21 | -0.043 | -0.081 | -0.049 | -0.028 | +0.034 | -0.014 |
+| audjpy | carry+haven | **-0.285** | -3.78 | +0.009 | **-0.266** [-0.30,-0.24] | -0.178 | -0.208 [-0.27,-0.09] | +0.308 | -0.272 |
+| nzdjpy | carry+haven | **-0.252** | -3.29 | +0.031 | **-0.245** [-0.37,-0.17] | -0.187 | -0.135 | +0.278 | -0.245 |
+| cadjpy | carry+haven | **-0.167** | -2.04 | -0.014 | **-0.216** [-0.29,-0.15] | -0.166 | -0.152 | +0.186 | -0.160 |
+| audchf | carry+haven | -0.016 | -0.23 | -0.035 | +0.060 | -0.032 | +0.016 | +0.053 | -0.065 |
+| eurchf | haven | +0.120 | +1.55 | +0.065 | +0.032 | +0.149 | +0.202 | -0.086 | +0.130 |
+| **eurgbp** | **placebo** | **-0.032** | -0.48 | +0.014 | +0.167 | +0.016 | +0.115 | +0.046 | -0.016 |
+| **audusd** | leg (carry) | **-0.297** | **-4.66** | +0.116 | -0.044 [-0.13,+0.13] | -0.041 | -0.038 | +0.325 | -0.295 |
+| nzdusd | leg (carry) | -0.120 | -1.76 | +0.030 | -0.088 | -0.016 | -0.018 | +0.152 | -0.120 |
+| usdjpy | leg (haven) | -0.119 | -1.57 | -0.013 | -0.037 | -0.014 | -0.067 | +0.140 | -0.080 |
+| **usdchf** | leg (haven) | **-0.261** | **-2.87** | +0.001 | -0.026 | -0.140 [-0.21,-0.11] | -0.062 | +0.285 | -0.277 |
+| usdcad | leg (carry) | +0.077 | +1.16 | -0.079 | +0.007 | +0.032 | +0.061 | -0.059 | +0.054 |
+| gold | leg (haven) | -0.185 | -2.78 | +0.062 | -0.119 [-0.20,-0.01] | -0.063 | -0.115 | +0.226 | -0.164 |
+| eurusd | leg | -0.038 | -0.60 | -0.008 | -0.019 | +0.022 | -0.080 | +0.059 | -0.015 |
+| gbpusd | leg | -0.013 | -0.21 | +0.031 | -0.040 | -0.041 | -0.059 | +0.034 | -0.014 |
+
+Arms are the mean over four draws, with the range shown where it decides a
+cell.
 
 A speed gap of -0.285 means **down swings are 33% faster per bar**. The
-duration gap is positive on the same instruments - audjpy **+0.213** (z +2.60),
-nzdjpy +0.219 (+2.60), gold +0.233 (+2.93), audusd +0.186 (+2.30) - so **up
+duration gap is positive on the same instruments - audjpy **+0.213** (z +2.51),
+nzdjpy +0.219 (+2.62), gold +0.233 (+2.85), audusd +0.186 (+2.25) - so **up
 swings are 20-26% longer**. At `reach` 3 the same signs appear about 40%
 smaller (audjpy +0.194 / -0.165, audusd +0.156 / -0.119, eurgbp -0.038 /
 +0.027).
 
 ### What the arms say
 
-**Five of 42 cells at `reach` 10 exceed the hardest null arm; 1 of 42 at
-`reach` 3.** The hardest-arm test asks the real value to beat the extreme of 20
-surrogate draws, so under the null each cell passes with probability about
-1/21 and 42 cells give **about 2 by chance**. Two of the five are substantial
-and three are not:
+**At four draws an arm, four of 42 cells exceed at `reach` 10 and four of 42 at
+`reach` 3.** That is the committed panel's number and it is the one the
+pre-registered test produces. It is also wrong, and the next sub-section is
+why: four draws badly understates an arm whose own sd is 0.09-0.12.
 
-| cell | real | hardest null | excess |
-|---|---|---|---|
-| **usdchf speed** | -0.261 | -0.184 | **+0.077** |
-| **audusd speed** | -0.297 | -0.231 | **+0.066** |
-| nzdusd speed | -0.120 | -0.104 | +0.017 |
-| usdjpy size | -0.042 | -0.037 | +0.005 |
-| gold speed | -0.185 | -0.182 | +0.003 |
+**Re-tested at 16 draws an arm - 80 surrogate draws a cell - the exceedances
+collapse.** Five feeds, both scales, all three statistics, 30 cells:
+
+| cell | real | hardest of 20 draws | hardest of **80** draws | 80-draw excess |
+|---|---|---|---|---|
+| **audusd speed, reach 10** | -0.297 | -0.204 (**+0.093**) | **-0.334** | **-0.037** |
+| **usdchf speed, reach 10** | -0.261 | -0.215 (**+0.047**) | -0.240 | **+0.021** |
+| usdchf speed, reach 3 | -0.139 | -0.126 (+0.013) | -0.184 | -0.045 |
+| audusd bars, reach 3 | +0.156 | +0.147 (+0.010) | +0.175 | -0.019 |
+| audjpy speed, reach 10 | -0.285 | -0.266 | **-0.500** | -0.216 |
+| nzdjpy speed, reach 10 | -0.252 | -0.245 | -0.381 | -0.129 |
+| eurgbp speed, reach 10 | -0.032 | +0.167 | -0.149 | -0.118 |
+
+**1 of 30 cells exceeds at 80 draws** - usdchf `speed` at `reach` 10, by
+**+0.021**, which is 8% of its own raw effect of -0.261. And it **no longer
+exceeds at `reach` 3** (-0.045, where four draws gave +0.013), so **the
+pre-registered consistency requirement now fails outright**: no cell exceeds at
+both swing scales.
+
+audusd - the cell that looked like the study's one substantive path finding at
++0.093 - reads **-0.037**: a single one of sixteen `bar-shuffle` draws reaches
+-0.334, beyond the real -0.297. Nothing is left of it.
+
+**So the verdict on the mechanism is simpler than the panel's number
+suggested**: the asymmetry is real, large and stable across 19 years, and on
+**all fourteen instruments** it is a property of the return distribution. There
+is no instrument on which a properly-sampled memory-free shuffle fails to
+reproduce it.
 
 Four things fall out.
 
 **On the synthetic crosses the effect is fully reproduced by a memory-free
-surrogate.** NZDJPY real -0.252 against a `bar-shuffle` at **-0.252**
-[-0.40,-0.12]; AUDJPY real -0.285 against `log-shuffle` -0.258 [-0.28,-0.24]
-and `log-walk` -0.220 [-0.34,-0.09]; CADJPY -0.167 against -0.175 and -0.192.
-A surrogate with **no memory whatsoever** gives the same answer, and
+surrogate.** AUDJPY real -0.285 against a `bar-shuffle` at **-0.266**
+[-0.30,-0.24]; NZDJPY -0.252 against **-0.245** [-0.37,-0.17]; CADJPY -0.167
+against **-0.216**, where the arm is *larger* than the real effect. A surrogate
+with **no memory whatsoever** gives the same answer, and
 `let-the-shuffled-twin-name-the-mechanical-observables` said it would name the
 mechanical part immediately. **None of the four carry crosses exceeds its
-hardest arm on any statistic.**
+hardest arm on any statistic, at either swing scale.**
 
-**The two cells that do exceed are the two legs the framing names** - AUDUSD,
-the high-yield leg that is sold in a risk-off event, and USDCHF, whose *fall*
-is the safe haven being bought. Their excesses are +0.066 and +0.077, which is
-22% and 29% of the raw effect. So whatever path component exists lives in the
-**legs** and does not survive multiplying two of them into a cross. That is a
-coherent reading - two legs' independent asymmetries combine into a cross whose
-asymmetry is only the distributional part - and it is the opposite of what the
-framing expected, which was that the cross would be where the effect
-concentrates.
+**The two cells that looked like exceptions were the two legs the framing
+names**, which is why they were worth re-testing rather than accepting: AUDUSD,
+the high-yield leg sold in a risk-off event, and USDCHF, whose *fall* is the
+safe haven being bought. At four draws an arm their speed excesses read +0.093
+and +0.047 and their arms sat near zero (AUDUSD: +0.116, -0.044, -0.041,
+-0.038 against a real -0.297). **At 16 draws an arm AUDUSD's is -0.037 and
+USDCHF's is +0.021 at one scale only.** A story that fits the framing this well
+is the one to sample hardest, not the one to report fastest.
 
 **Volatility clustering contributes nothing.** `garch-bars` is Gaussian, so it
-has clustering and no skewness, and it reads **-0.093 to +0.081 across all
+has clustering and no skewness, and it reads **-0.079 to +0.116 across all
 fourteen instruments** - zero everywhere. That rules out clustering as the
 mechanism and leaves return skewness, which every shuffle arm keeps exactly.
 
@@ -444,16 +492,18 @@ duration gap falls from +0.233 to **+0.054**, a 77% reduction; audjpy's from
 for an arithmetic reason.
 
 **Benjamini-Hochberg over the 14 speed cells leaves 5 survivors** - audjpy,
-nzdjpy, audusd, usdchf and gold - but that is BH on the **raw** day-block z,
-which asks "is the asymmetry real" and not "does it exceed a surrogate". The
-raw effect surviving is expected; the excess over the arms is the number that
-decides, and it survives on two cells.
+nzdjpy, audusd, usdchf and gold at `reach` 10 - but that is BH on the **raw**
+day-block z, which asks "is the asymmetry real" and not "does it exceed a
+surrogate". The raw effect surviving is expected and is the finding of this
+section; the excess over the arms is the number that decides whether any of it
+is path rather than distribution, and at 80 draws a cell it survives on one
+cell at one scale.
 
-**It fails the pre-registered consistency requirement.** The sign has to hold
-across both swing scales for the same cell, and the exceedances do not: usdchf
-exceeds on `bars` at `reach` 3 and on `speed` at `reach` 10, and audusd
-exceeds at `reach` 10 only. 5 of 42 against 2 expected, with no cell exceeding
-at both scales.
+**The pre-registered consistency requirement fails.** The rule was that the
+same cell exceeds at both swing scales. At four draws an arm `usdchf` `speed`
+appeared to meet it (+0.013 at `reach` 3, +0.047 at `reach` 10); at 16 draws it
+reads **-0.045 and +0.021**, so it exceeds at one scale and not the other. No
+cell in the study exceeds at both.
 
 ### Eras: the asymmetry is not 2008
 
@@ -585,6 +635,71 @@ plant is built from log returns and its own `bar-shuffle` twin was built from
 absolute steps, and the two disagreed at strength 0.5 where they should have
 agreed exactly.
 
+### A hardest-of-N test with four draws an arm is anti-conservative
+
+**The eighth defect, and the one that changes a verdict.** The exceedance test
+asks the real value to beat the **extreme** of 20 surrogate draws - five arms at
+four draws each - which is how `research/docs/level-shield.md` does it and is
+what this study pre-registered. The max of four draws is a very noisy estimate
+of an arm's upper tail, and measuring each arm's own spread shows how noisy:
+
+| feed | arm | 16 draws: mean | sd | min | max |
+|---|---|---|---|---|---|
+| audjpy | `bar-shuffle` | -0.171 | **0.106** | -0.467 | -0.024 |
+| audjpy | `log-shuffle` | -0.242 | **0.123** | -0.500 | +0.068 |
+| audusd | `bar-shuffle` | -0.080 | **0.087** | **-0.334** | +0.047 |
+| audusd | `log-shuffle` | -0.072 | 0.078 | -0.231 | +0.050 |
+
+An arm whose own sd is 0.09-0.12 on a statistic whose real values are about
+0.3 spans most of the effect by itself. The panel's four audjpy `bar-shuffle`
+draws happened to land in [-0.30, -0.24], a range of 0.06, against a
+sixteen-draw range of **0.44**.
+
+**The direction of the bias is the important part.** Too few draws makes the
+null arm look *tighter* than it is, so it **manufactures exceedances** - the
+test is anti-conservative exactly where a positive claim is being made, and
+conservative where a null is. That splits this document cleanly:
+
+* **§4 and §5 are unaffected and were conservative.** Both conclude that
+  nothing exceeds (0 of 16 level cells, 6 of 420 trade cells against about 20
+  expected). A wider null only widens the margin.
+* **§3's two substantive exceedances are the ones at risk**, because they are
+  the only positive claim in the study scored on this test. Measured: audusd's
+  real speed gap is **-0.297** and a single one of sixteen `bar-shuffle` draws
+  reaches **-0.334** - beyond it. So audusd's +0.093 "excess" is an artefact of
+  having sampled its arm four times.
+
+The same reasoning applies to `level-shield.md`, which used four draws and the
+same test - and whose conclusions were nulls, so the bias there ran in the
+conservative direction and its "1 of 210 cells" would only have been smaller
+with more draws.
+
+### The surrogate draws were not reproducible, and the panel proved it
+
+**A seventh defect, found by comparing the panel against the local run.** Every
+`real` value in `asym.jsonl` matches the local reconnaissance to the digit -
+audjpy -0.285, audusd -0.297, every era, every `sign-flip` mirror. **Every
+surrogate arm differs**: audjpy's `bar-shuffle` speed gap read -0.172 locally
+and **-0.266** on the panel, and the hardest-null column moved enough to change
+which cells exceed (audusd's hardest arm went -0.231 to -0.204, usdchf's -0.184
+to -0.215).
+
+The cause is the seed. The runner built each arm's RNG from
+`random.Random(hash((feed, interval, arm, draw)) & 0xFFFFFFFF)`, and the
+builtin hash of a tuple containing a string is salted by `PYTHONHASHSEED` - so
+the draws are different in every process and nothing is reproducible between
+runs. **A surrogate range that moves between runs cannot be the thing a verdict
+is scored against**, and a hardest-of-20 test is exactly a statement about that
+range's extreme.
+
+Fixed: `fear_greed_run.seed` is a `blake2b` over the parts' reprs, stable
+across processes and machines, verified by running it in two interpreters.
+**Every number in this document is from the committed panel output**, so the
+conclusions are internally consistent; what was lost is the ability to
+reproduce them before the fix, and the numbers here are the ones a re-run with
+the fix will not reproduce either. That is the honest cost and it is the reason
+to state which output file a table came from.
+
 ### A discreteness defect this study walked into
 
 At `reach` 3 the median swing is **4 bars on 8 of 9 instruments**, so the
@@ -595,59 +710,75 @@ power to refute. The statistic is now the **mean of logs**, which is smooth,
 and that is why the tables above exist at all. This is the discreteness version
 of `sweep-thresholds-on-the-mean-not-z`.
 
-## 4. The level formation label: null, and three books cannot answer
+## 4. The level formation label: null on every book that can answer
 
-Real legs only. `horizon` 20 bars, touch tolerance `TOUCH_NOISE_VOL` 0.40
-units, hold = the close 20 bars after the first touch is still on the approach
-side. **Two of the eight legs and the real arm only** - the surrogate arms for
-this section are unrun, so what follows is a sample-size verdict and a sign
-check, not a null-tested one.
+All eight real legs, four books, 384 rows, **five null arms x 4 draws on the
+two books with a usable sample**. `horizon` 20 bars, touch tolerance
+`TOUCH_NOISE_VOL` 0.40 units, hold = the close 20 bars after the first touch is
+still on the approach side. The test is two-sided, so a finding needs
+`|real gap|` outside the largest `|null gap|` over 20 draws.
 
-| feed | book | levels | touched | crash hold | spike hold | f-g pooled | within strata | de-overlapped |
+### The headline: 0 of 16 cells
+
+**Not one of the sixteen measurable cells (8 legs x `pips` and `pivots`) has a
+fear-minus-greed gap outside its surrogate range.** The five closest:
+
+| feed | book | real gap | largest \|null\| | excess | null range over 20 draws |
+|---|---|---|---|---|---|
+| usdjpy | `pivots` | +0.128 | 0.194 | **-0.066** | -0.139 .. +0.194 |
+| gold | `pips` | -0.280 | 0.352 | -0.072 | -0.352 .. +0.296 |
+| audusd | `pivots` | +0.061 | 0.144 | -0.083 | -0.144 .. +0.134 |
+| usdchf | `pips` | -0.099 | 0.208 | -0.110 | -0.208 .. +0.190 |
+| usdcad | `pivots` | -0.040 | 0.150 | -0.110 | -0.150 .. +0.141 |
+
+The surrogate range is **wider than the real effect on every cell**, which is
+the quantitative version of what the two-instrument reconnaissance could only
+guess at: a crash-formed level sits where a big down bar printed, every shuffle
+arm keeps each bar's own shape, and the label gap a shuffle produces by itself
+is +-0.13 to +-0.35 depending on the book. **The real gaps live inside that.**
+
+### Per leg and per book, with the samples that decide it
+
+| feed | book | levels | touched | crash n | spike n | pooled | in strata | de-overlapped |
 |---|---|---|---|---|---|---|---|---|
-| audusd | `levels` | 295 | 196 | 0.500 (n 4) | 0.556 (n 9) | -0.056 | - | - |
-| audusd | `bjorgum` | 141 | 81 | 0.500 (n 2) | 0.667 (n 3) | -0.167 | - | - |
-| audusd | `pips` | 4,406 | 747 | 0.714 (n 42) | 0.625 (n 32) | +0.089 | +0.043 | - |
-| **audusd** | **`pivots`** | 4,590 | 3,246 | **0.593 (n 209)** | **0.533 (n 199)** | **+0.061** | **+0.055** | **-0.203** |
-| usdjpy | `levels` | 316 | 218 | 0.667 (n 6) | 0.455 (n 11) | +0.212 | - | - |
-| usdjpy | `bjorgum` | 156 | 102 | 0.500 (n 2) | 1.000 (n 3) | -0.500 | - | - |
-| usdjpy | `pips` | 4,550 | 796 | 0.444 (n 27) | 0.541 (n 61) | -0.097 | - | - |
-| **usdjpy** | **`pivots`** | 5,073 | 3,579 | **0.591 (n 164)** | **0.463 (n 326)** | **+0.128** | **+0.063** | **-0.008** |
+| audusd | `pivots` | 4,590 | 3,246 | 209 | 199 | +0.061 | +0.055 | **-0.203** |
+| eurusd | `pivots` | 4,732 | 3,359 | 270 | 215 | +0.026 | +0.028 | -0.005 |
+| gbpusd | `pivots` | 4,667 | 3,305 | 249 | 256 | -0.019 | +0.001 | -0.042 |
+| gold | `pivots` | 5,213 | 3,685 | 114 | 366 | +0.102 | +0.127 | - |
+| nzdusd | `pivots` | 4,578 | 3,238 | 237 | 193 | +0.013 | +0.002 | **+0.192** |
+| usdcad | `pivots` | 4,596 | 3,232 | 175 | 300 | -0.040 | -0.054 | -0.078 |
+| usdchf | `pivots` | 4,736 | 3,316 | 275 | 206 | -0.061 | -0.066 | -0.192 |
+| usdjpy | `pivots` | 5,073 | 3,579 | 164 | 326 | +0.128 | +0.063 | -0.008 |
+| audusd | `pips` | 4,406 | 747 | 42 | 32 | +0.089 | +0.043 | - |
+| gold | `pips` | 4,301 | 666 | 24 | 66 | -0.280 | - | - |
+| nzdusd | `pips` | 4,349 | 752 | 49 | 31 | -0.217 | -0.216 | - |
+| usdjpy | `pips` | 4,550 | 796 | 27 | 61 | -0.097 | - | - |
 
-**Three of the four books cannot answer the question.** `Levels` keeps 24
-levels and forgets after 500 bars, so it publishes about 300 distinct levels
-over 4,980 days; crossed with a crash class that is 3-5% of bars that leaves
-**2 to 6 crash-labelled levels with a touch**. `BjorgumLevels` is worse.
-Reporting a gap of -0.500 on n 2 against n 3 as a result would be the
-`pool-events-before-a-per-feed-guard` failure, where a min-events guard dropped
-141 of 146 feeds and made 0.9 sigma look like 4.8.
+**The pooled gap's sign is a coin flip**: positive on 4 of 8 legs for `pivots`
+and 2 of 8 for `pips`. Within compression quintiles it stays the same size
+rather than shrinking, which is a small surprise against the pre-registered
+prediction - the gap was expected to *be* the volatility term and go away in
+strata, and instead it was never there to begin with. **De-overlapped it flips
+sign on 6 of 8 legs** and spans -0.203 to +0.192, which is the overlap
+signature.
 
-**Only `Pivots` has a usable sample, and `Pivots` is the no-parameter
-control** - arithmetic on the prior period's range, nothing to fit. Its gap is
-+0.061 and +0.128 pooled, falls to +0.055 and +0.063 within compression
-quintiles, and **changes sign to -0.203 and -0.008 when the outcome windows are
-de-overlapped**. A sign that flips on de-overlapping is the
-`overlapping-windows-inflate-permutation-nulls` signature, which turned a level
-finding at p 0.015 into anchor overlap.
+**Two of the four books still cannot answer**, and the panel sharpens the
+number: across all eight legs `Levels` yields **4 to 14** crash-labelled levels
+with a touch and `BjorgumLevels` **1 to 7**. Their gaps read -0.750 to +0.500,
+every one of them a difference of two rates on single-digit counts. Reporting
+those as results would be the `pool-events-before-a-per-feed-guard` failure,
+where a min-events guard dropped 141 of 146 feeds and made 0.9 sigma look like
+4.8. They are run on the real arm so the sample is on the record, and the
+surrogate arms are skipped for them.
 
-And the mechanism is visible in the counts. `Pivots`' 4,590 "levels" are not
-4,590 independent levels: they are a **new daily set of up to nine correlated
-prices**, about one new price a day over 4,980 days, and 3,246 of them get a
-touch inside 20 bars. Nine prices computed from the same prior day's range,
-tested in the same week, share almost everything. So the dense number is the
-one with 3,246 rows behind it and the de-overlapped one is the one with
-independent rows behind it, and they disagree in sign. That is the whole
-finding for this section.
-
-The pre-registered prediction was that the raw gap would be non-zero and would
-be the volatility term, going away within strata. **It half holds**: the gap
-shrinks within strata (+0.128 to +0.063) but does not vanish, and then inverts
-on de-overlapping - so the residual is overlap rather than a volatility
-residual. Either way nothing survives.
+**And `Pivots` - the no-parameter control - is the only book with real power.**
+3,232 to 3,685 touched levels against `Levels`' 158-241. A book that keeps 24
+levels and forgets after 500 bars cannot answer a question about a 3-5% class
+over 4,980 days, whatever its merits as a book.
 
 ### Neither half of the index predicts a hold
 
-AUC for the hold, pooled and within compression quintiles:
+AUC for the hold, pooled and within compression quintiles, real arm:
 
 | feed | book | `volatile_off` | `directional_off` |
 |---|---|---|---|
@@ -664,45 +795,48 @@ constant-volatility process and 0.525 within strata: here the **pooled** AUC is
 already 0.44-0.56, so the hold outcome is not a volatility target in disguise
 and the strata control has little left to remove.
 
-### Power for this section: the arm was built, run, and rejected
+### Power for this section: the arm was built, run on real legs, and rejected
 
 `plant_label_hold` takes a `walk-geometry` surrogate, reads its **own** causal
-`Pivots` book and shape labels off it, and then reflects every step that would
-cross a **crash-labelled** level about that level with probability `strength`.
+book and shape labels off it, and reflects every step that would cross a
+**crash-labelled** level about that level with probability `strength`.
 Spike-labelled and unlabelled levels are left alone, so what is planted is the
-**label gap** rather than a general barrier. audusd, `pivots`, 2 plants a
-strength.
+label gap rather than a general barrier. Run on audusd, both measurable books,
+2 plants a strength.
 
-| planted strength | recovered fear-minus-greed gap | crash levels |
-|---|---|---|
-| **0.00 (nothing planted)** | **+0.0971** | 175.5 |
-| 0.10 | -0.0652 | 175.0 |
-| 0.25 | -0.0482 | 169.5 |
-| 0.50 | +0.0845 | 174.5 |
-| 0.75 | -0.0475 | 151.0 |
-| **1.00 (hard walls at the fear levels)** | **-0.0008** | 235.5 |
+| planted strength | `pivots` gap | crash levels | `pips` gap | crash levels |
+|---|---|---|---|---|
+| **0.00 (nothing planted)** | **+0.1412** | 209.5 | **+0.0806** | 18.0 |
+| 0.10 | +0.0087 | 144.5 | -0.0212 | 25.0 |
+| 0.25 | +0.0183 | 183.0 | +0.0985 | 19.5 |
+| 0.50 | +0.0306 | 172.0 | -0.2091 | 35.5 |
+| 0.75 | +0.0248 | 164.5 | -0.0848 | 18.5 |
+| **1.00 (hard walls at the fear levels)** | **-0.0226** | 208.0 | **-0.0294** | 22.0 |
 
-**It fails on both counts.** The zero cell reads +0.0971 where it must read 0,
-and there is no dose response at all - a book of **hard walls at every crash
-level** recovers -0.0008, when it should recover a large positive gap. At two
-draws the per-cell standard error is about 0.039 on its own binomial
-arithmetic (175 crash levels at a hold rate near 0.55, differenced against the
-spike class), so the whole column is inside noise. The arm is rejected.
+**It fails on both books and on both counts.** The zero cell reads +0.1412 and
++0.0806 where it must read 0, and a book of **hard walls at every crash level**
+recovers -0.0226 and -0.0294 - if anything the wrong sign. There is no dose
+response at any strength.
 
-**And the reason it cannot be fixed by adding draws is the useful part.** The
-plant reflects price about crash-labelled levels, which **changes the path** -
-and the measurement then recomputes the book and the shape labels *on the
-planted series*, where different bars are crash bars and different prices are
-levels. **The act of planting destroys the association being planted.**
+**The reason it cannot be fixed by adding draws is the useful part.** The plant
+reflects price about crash-labelled levels, which **changes the path** - and the
+measurement then recomputes the book *and the shape labels* on the planted
+series, where different bars are crash bars and different prices are levels.
+**The act of planting destroys the association being planted.**
 `research/docs/level-shield.md`'s barrier plant does not hit this because it
-reflects at *every* level in the book, so there is no label to be reassigned;
-a label-conditional plant has no such escape.
+reflects at *every* level in the book, so there is no label to be reassigned; a
+label-conditional plant has no such escape.
 
 So a power statement for a label-conditional level claim needs a different
-construction - planting the label on an exogenous variable the reflection
-cannot move, or generating the path and the labels jointly - and this study
-does not have one. **Section 4's "nothing survives" is a sample-size verdict,
-not a measured null**, and that is the largest remaining gap here.
+construction - hanging the label off something the reflection cannot move, or
+generating the path and the labels jointly - and this study does not have one.
+
+**What that costs the verdict, precisely.** The 0-of-16 surrogate result above
+is a real null and does not depend on the plant: it says the real gaps sit
+inside what a memory-free shuffle produces. What is missing is the *other*
+direction - how large a true label effect would have had to be before this
+sample saw it. So: **nothing survives, and the size of what could have hidden
+is unmeasured.**
 
 ### The label definition sensitivity
 
@@ -720,88 +854,102 @@ every reach, which is a fact about the instruments rather than about the label:
 `levels.chains` needs two consecutive 70%-body candles of the same sign, and
 those are more common upward on a haven that grinds up and gaps down.
 
-## 5. The trade: the short arm is flat and the long arm is the carry trade
+## 5. The trade: nothing survives, and the long arm was the surrogates all along
 
-1d, target 2.0 units and stop 1.0 unit, race on **closes**, horizon 20 bars,
-one position at a time, **gross**. Gate = trailing 80th percentile of the named
-reading over the prior 500 bars. **Three series and the real arm only**; the
-1:1 and 1:2 races, the other eleven series and every surrogate arm are in the
-harness and unrun.
+All 14 series x 5 gates x 3 races x 2 sides, **10,080 rows**, with five null
+arms x 4 draws and the duty-cycle random twin. Race on **closes**, horizon 20
+bars, one position at a time, **gross**. Gate = trailing 80th percentile of the
+named reading over the prior 500 bars, causal.
 
-| feed | gate | side | n | duty | mean R | sd | 95% day-block CI | PF | win | trades for 95% |
-|---|---|---|---|---|---|---|---|---|---|---|
-| audjpy | all | **short** | 471 | 0.90 | **-0.0002** | 1.31 | [-0.120, +0.117] | 1.000 | 0.363 | inf |
-| audjpy | all | long | 454 | 0.90 | **+0.2030** | 1.37 | [+0.071, +0.311] | 1.378 | 0.436 | 117 |
-| audjpy | `volatile_off` | **short** | 164 | 0.31 | **-0.0862** | 1.29 | [-0.276, +0.139] | 0.863 | 0.323 | inf |
-| audjpy | `volatile_off` | long | 148 | 0.31 | +0.2301 | 1.39 | [+0.017, +0.410] | 1.428 | 0.453 | 93 |
-| audjpy | `directional_off` | short | 157 | 0.29 | +0.0317 | 1.36 | [-0.144, +0.241] | 1.052 | 0.357 | 4836 |
-| audjpy | `directional_off` | long | 158 | 0.31 | +0.1708 | 1.36 | [-0.009, +0.396] | 1.311 | 0.424 | 163 |
-| audjpy | **`both`** | short | 65 | 0.12 | **-0.0010** | 1.33 | [-0.303, +0.331] | 0.998 | 0.338 | inf |
-| audjpy | `both` | long | 68 | 0.14 | +0.1970 | 1.38 | [-0.068, +0.565] | 1.359 | 0.441 | 125 |
-| nzdjpy | `volatile_off` | short | 159 | 0.30 | -0.0683 | 1.30 | [-0.266, +0.139] | 0.892 | 0.340 | inf |
-| nzdjpy | `volatile_off` | long | 158 | 0.31 | **+0.2946** | 1.37 | [+0.097, +0.471] | 1.589 | 0.487 | 56 |
-| **eurgbp** | all | **short** | 444 | 0.90 | **+0.1073** | 1.35 | [-0.002, +0.239] | 1.188 | 0.403 | 411 |
-| **eurgbp** | all | long | 433 | 0.90 | +0.0710 | 1.35 | [-0.055, +0.179] | 1.124 | 0.393 | 915 |
+### The three numbers that decide it
 
-**The framing's trade is the one that does not work.** Short the carry cross on
-a risk-off reading: -0.0002R ungated, **-0.0862R on the volatility gate**,
--0.0010R on the interaction gate. The long arm pays +0.17 to +0.29R throughout.
+| test | result |
+|---|---|
+| cells where real **exceeds its hardest null arm** (20 surrogate draws) | **6 of 420**, where chance gives about **20** |
+| cells where real **beats its own duty-cycle random twin** | **206 of 420 = 49.0%**, chance 50.0% |
+| cells surviving Benjamini-Hochberg on the raw day-block z | 8 of 420, **all of them the ungated `all` arm** on gold and usdjpy |
 
-**And the placebo is the reason not to celebrate the long arm.** EURGBP, with
-neither a carry nor a haven leg, reads **+0.1073R short and +0.0710R long** -
-both positive. A positive mean R in this race is therefore not a carry
-property; it is the race geometry, which is exactly what
-`research/docs/level-shield.md` measured when it found a bar-level barrier race
-departing from the analytic 1/(1+N) by -0.25 to +0.12R. **No arm here is
-compared against the closed form**. The surrogate arms are the comparison that
-counts and **have not been run** - see "What has actually been run" above - so
-this section's conclusion rests on the placebo, which is a weaker control.
+**Real sits *below* the hardest null in 414 of 420 cells.** The largest excess
+in the whole panel is **+0.0296R** (audchf, `directional_off`, long, 1:2), and
+the next four are +0.0120, +0.0057, +0.0051 and +0.0050. Six exceedances where
+chance gives twenty is not a weak finding, it is the absence of one.
 
-**On the win rate, as the coordinator's correction asks.** The short arm's win
-rate is 0.32-0.37 and that is not why it is rejected - the carry-crash shape
-predicts a low win rate, and the long arm's 0.44-0.49 is not why it is
-accepted. It is rejected on mean R with its own interval straddling zero, and
-on `minimum_track_record`: at a mean of -0.09R and an sd of 1.29 the arm's own
-arithmetic returns **inf** trades needed for a 95% probabilistic Sharpe, which
-is the honest statement that it is not a small edge measured badly but no edge.
-The `directional_off` short arm at +0.0317R needs **4,836 trades**; it produced
-157 in 19.25 years, so at this firing rate it is unmeasurable for the next six
-centuries. That is a different and cheaper decision than "it failed".
+**And the gate is exactly a coin flip against trading at random.** 49.0% is
+what `strategy-rotation-is-not-timeable` says to expect - every pause rule
+tested on this desk beat its baseline and none beat its own random twin at
+p 0.45-0.51.
 
-**The variances are comparable and the samples are not.** Every arm's sd sits
-in 1.24-1.39, so comparing means across arms is fair here - which is not
-something to assume, and is why the sd is in the table. What differs is n: the
-interaction gate produces 65-71 trades, so its 95% interval is +-0.31R and
-**anything smaller than a third of a stop is invisible to it.**
+### The reconnaissance reading was wrong about the long arm
 
-### Power for the trade
+The two-instrument version of this section concluded that "the short arm is
+flat and the long arm is the carry trade". The surrogates say the second half
+of that was race geometry:
+
+| feed | gate | side | real | nulls mean | **hardest null** | random twin | real - nullmax |
+|---|---|---|---|---|---|---|---|
+| audjpy | all | short | -0.0002 | +0.0545 | +0.1608 | -0.0636 | **-0.1610** |
+| audjpy | all | **long** | **+0.2030** | +0.1593 | **+0.2437** | +0.1421 | **-0.0407** |
+| audjpy | `volatile_off` | short | -0.0862 | +0.0486 | +0.2439 | +0.0656 | **-0.3301** |
+| audjpy | `volatile_off` | **long** | **+0.2301** | +0.1471 | **+0.3016** | +0.1156 | **-0.0715** |
+| nzdjpy | `volatile_off` | **long** | **+0.2946** | +0.1464 | **+0.3917** | **+0.3310** | **-0.0971** |
+| gold | all | **long** | **+0.3251** | +0.2838 | **+0.4286** | **+0.3998** | **-0.1035** |
+| eurgbp | all | short | +0.1073 | +0.0704 | +0.1264 | +0.0858 | -0.0191 |
+| audusd | `both` | **long** | **+0.3799** | +0.1242 | **+0.6356** | +0.2600 | **-0.2556** |
+
+Every long-arm cell that looked like a result is **inside its surrogate
+range**, and on nzdjpy and gold the **random twin beats the real gated arm**
+(+0.3310 against +0.2946, +0.3998 against +0.3251). The +0.20 to +0.38R was
+the race geometry plus whatever drift each surrogate family inherits, which is
+exactly what `research/docs/level-shield.md` measured when it found a bar-level
+barrier race departing from the analytic 1/(1+N) by -0.25 to +0.12R and
+**larger on every surrogate**. No arm anywhere in this study is compared
+against the closed form.
+
+The eight BH survivors are the tell: **all of them are the `all` gate** - gold
+long 2:1 at +0.3251 (z +5.32) and short 1:2 at -0.1625 (z -5.30), usdjpy long
+2:1 at +0.2273 (z +3.70) and short 1:2 at -0.1137, gold at 1:1 both ways. Those
+are the same drift read twice with the sign flipped, on the two most strongly
+trending instruments in the set, **with no gate involved**. Not one gated cell
+survives.
+
+### On the win rate, and the variance
+
+The short arm's win rate is 0.32-0.37 and that is not why it is rejected - the
+carry-crash shape predicts a low win rate. It is rejected on mean R against its
+own surrogates. Every arm's sd sits in **1.24-1.39**, so comparing means across
+arms is fair here, which is not something to assume and is why the sd is
+reported. `minimum_track_record` returns **inf** for the flat short arms and
+**4,836 trades** for the `directional_off` short arm on audjpy, which produced
+157 in 19.25 years - unmeasurable rather than failed, a different and cheaper
+decision. The `both` gate produces 65-71 trades, so its 95% day-block interval
+is +-0.31R and anything under a third of a stop is invisible to it.
+
+### Power for the trade, now measured on the instrument the bound applies to
 
 A `walk-geometry` path whose gated 20-bar windows are given a downward drift of
-known size, scored by the same short arm. The **gate is computed on the real
-basket index**, so the planted effect sits exactly where the test looks for
-one. Run on **eurgbp** at 2 draws a drift.
+known size, the gate computed on the **real** basket index so the planted effect
+sits where the test looks. 2 plants a drift, four feeds.
 
-| planted drift (units per horizon) | mean R |
-|---|---|
-| 0.00 | +0.0485 |
-| **0.10** | **+0.4321** |
-| 0.25 | +0.8768 |
-| 0.50 | +1.4641 |
-| 1.00 | +1.7610 |
+| planted drift (units per horizon) | audjpy | nzdjpy | audusd | eurgbp |
+|---|---|---|---|---|
+| **0.00** | **-0.0532** | **-0.0643** | **+0.0524** | **+0.1519** |
+| **0.10** | **+0.2165** | +0.4347 | +0.3524 | +0.3331 |
+| 0.25 | +0.9722 | +0.8895 | +0.7450 | +0.9660 |
+| 0.50 | +1.4334 | +1.4101 | +1.2650 | +1.4538 |
+| 1.00 | +1.6050 | +1.7035 | +1.6352 | +1.7127 |
 
-**A conditional drift of a tenth of a stop over the hold would read +0.43R**,
-and the response is monotone and steep from there. The real gated short arm
-reads -0.09 to +0.03R, so the conditional downward drift inside the fear state
-is bounded well below 0.10 volatility units over 20 bars.
+**On audjpy itself a conditional drift of a tenth of a stop reads +0.2165R**
+against a zero cell of -0.0532R, and the response is monotone and steep from
+there. The real gated short arm on audjpy reads **-0.0862R**, which is *below*
+its own zero cell. So the conditional downward drift inside the fear state is
+bounded under 0.10 volatility units over 20 bars, and the reading is consistent
+with no planted drift at all.
 
-Two caveats on reading it across instruments. The drift-0 row reads **+0.0485
-rather than 0.000** - the race geometry again, and the baseline every other row
-should be read against rather than zero. And the plant was run on **eurgbp**,
-not on the carry crosses the bound is then applied to; the ungated real arms of
-the two sit at +0.107 (eurgbp short) and -0.000 (audjpy short), so the geometry
-baseline is close but not identical, and transferring the bound assumes the
-*slope* in drift carries across instruments with the same stop distance and
-horizon. At 2 draws there is no standard error on these rows.
+The four zero cells - -0.053, -0.064, +0.052, +0.152 - are the measured version
+of the caveat the reconnaissance could only flag: **the race-geometry baseline
+is feed-specific**, spanning 0.21R across four instruments, so no row here
+should be read against zero and the earlier eurgbp-only bound was the worst of
+the four to have used.
 
 ### The measured boundary
 
@@ -818,14 +966,14 @@ trailing quantiles of the basket index, as absolute readings:
 refuses everything. If a boundary is wanted, **+0.10 is the 80th percentile and
 +0.15 the 90th** on this basket.
 
-Two things are being distinguished here and the distinction matters. The
-**basket index** is a mean over six legs, so it is far tighter than any single
-leg's own reading and never approaches +-0.5 over 19.25 years. A **single
-instrument's** `FearGreed` can reach it, and
+Two things are being distinguished and the distinction matters. The **basket
+index** is a mean over six legs, so it is far tighter than any single leg's own
+reading and never approaches +-0.5 over 19.25 years. A **single instrument's**
+`FearGreed` can reach it, and
 `test_the_conventional_threshold_needs_three_bars_in_four_going_one_way` pins
 where: a noiseless series reads +0.391 at a 55% up-rate, **+0.499 at 67% -
-still `CALM`, just under** - and +0.537 at 75%, the first `GREED`. Three bars
-in four going one way for sixty bars is not a market. So the threshold is not
+still `CALM`, just under** - and +0.537 at 75%, the first `GREED`. Three bars in
+four going one way for sixty bars is not a market. So the threshold is not
 unreachable in principle, it is unreachable in practice, and a later reader who
 finds `mood()` always `CALM` finds a test that already knew.
 
@@ -840,41 +988,84 @@ apart), and the framing's claim is precisely a conditional one: not "JPY crosses
 fall" but "JPY crosses fall **fast when fear is rising**". So the conditioning
 was measured rather than assumed closed.
 
-Swings at `reach` 3 (859, 838 and 857 of them), split at the top and bottom
+All 14 series, `reach` 3 (838-859 swings a feed), split at the top and bottom
 tercile of each reading at the swing's **start** bar. `down_share` is the share
-of swings that went down; `speed` is the up-against-down log gap within that
-cell.
+of swings that went down.
 
-| instrument | conditioned on | low tercile | high tercile |
+### The volatility half carries no direction, on any of the fourteen
+
+| group | mean down-share swing, low tercile to high |
+|---|---|
+| in-basket legs (6) | **-0.005** |
+| crosses with an in-basket leg (5) | -0.024 |
+| out-of-basket (eurusd, gbpusd, eurgbp) | +0.021 |
+
+Per feed the whole range is **-0.077 to +0.055** across all fourteen, on
+278-286 swings a cell. The volatility reading moves the next swing's direction
+by nothing, anywhere, and that is the cleanest null in the study.
+
+### The direction half's signal is circular, and the panel shows the mechanism
+
+The reconnaissance saw down-share 0.622 against 0.357 on audjpy and inferred
+circularity from one flat placebo. The full panel does better than infer it.
+
+| feed | `RISK_OFF_SIGN` | down-share, low -> high tercile of `directional_off` | swing |
 |---|---|---|---|
-| audjpy | `volatile_off` | down 0.542, speed -0.079 | down 0.465, speed -0.117 |
-| audjpy | `directional_off` | **down 0.622**, speed -0.098 | **down 0.357**, speed -0.094 |
-| audusd | `volatile_off` | down 0.504, speed -0.082 | down 0.484, speed -0.064 |
-| audusd | `directional_off` | **down 0.586**, speed -0.050 | **down 0.401**, speed -0.166 |
-| **eurgbp** | `volatile_off` | down 0.489, speed -0.063 | down 0.514, speed +0.087 |
-| **eurgbp** | `directional_off` | **down 0.468**, speed -0.064 | **down 0.507**, speed +0.153 |
+| audusd | **-1** | 0.586 -> 0.401 | **-0.185** |
+| nzdusd | **-1** | 0.578 -> 0.407 | **-0.172** |
+| usdjpy | **-1** | 0.568 -> 0.427 | **-0.141** |
+| usdchf | **-1** | 0.510 -> 0.456 | **-0.053** |
+| gold | **+1** | 0.479 -> 0.538 | **+0.059** |
+| usdcad | **+1** | 0.385 -> 0.619 | **+0.233** |
 
-**The volatility half carries no direction, even conditioned.** The down-share
-moves from 0.542 to 0.465 on audjpy and 0.504 to 0.484 on audusd across the
-whole range of the volatility reading - nothing, on 278-286 swings a cell.
+**The sign of the swing matches `RISK_OFF_SIGN` on 6 of 6 basket legs.** That
+is not a coincidence, it is the construction: the index multiplies each leg's
+own `FearGreed` reading by its sign, so a high index reading *means* a
+sign-adjusted leg reading that is high. For audusd (sign -1) that means audusd
+just fell, so a swing starting there starts at a low and goes up - down-share
+falls. For usdcad (sign +1) it means usdcad just rose, so the swing starts at a
+high and goes down - down-share rises. **The index is reading each instrument's
+own recent direction back to itself, with the quote convention's sign on it.**
 
-**The direction half appears to carry a lot, and it is circular.** Down-share
-0.622 against 0.357 on audjpy and 0.586 against 0.401 on audusd looks like a
-strong conditional direction signal. **The placebo says it is not.** EURGBP's
-legs - `eurusd` and `gbpusd` - are the two deliberately **excluded** from the
-basket index, so for EURGBP the index is not a trailing reading of its own
-direction. Its down-share conditioning on `directional_off` is **0.468 against
-0.507**: flat. For audjpy and audusd, whose legs *are* in the index, it is
-0.62 against 0.36.
+The out-of-basket feeds confirm it from the other side: eurusd, gbpusd and
+eurgbp are the three whose legs are deliberately **excluded** from the basket,
+and their swings are **-0.046, -0.058 and +0.039** - a mean of -0.022, flat. And
+the crosses sit where the mechanism predicts: audjpy (-0.266), nzdjpy (-0.280)
+and cadjpy (-0.264) are built from two sign -1 legs and show the largest
+swings, while **eurchf (+0.011)** has one in-basket leg in a quotient and is
+flat.
 
-So the mechanism is the index reading the instrument's own recent direction
-back to itself, which a swing's direction is then determined by: a swing that
-goes up starts at a pivot low, and at a pivot low a trailing direction reading
-is already negative. That is the definitional trap
-`let-the-shuffled-twin-name-the-mechanical-observables` describes - "overshoot
-at an extreme is definitional" - and here the control that caught it was the
-one placebo whose legs are outside the index. Carrying it was the only reason
-this is a diagnosis and not a finding.
+This is the definitional trap `let-the-shuffled-twin-name-the-mechanical-
+observables` describes - "overshoot at an extreme is definitional" - and the
+panel's contribution is to replace a placebo inference with a sign prediction
+that holds on 6 of 6 and fails on 0.
+
+### The independent check, from the trade panel's surrogates
+
+`conditioned` is a real-arm statistic by construction, so the shuffle arms for
+it come from the trade panel instead, where the gate dates are **real** and the
+price path is a **surrogate** - so any gate-to-outcome association on a
+surrogate arm is chance by construction.
+
+Long-minus-short mean R spread on the `directional_off` gate, 2:1 race:
+
+| feed | sign | real | mean over 20 surrogate draws | random twin |
+|---|---|---|---|---|
+| audusd | -1 | +0.2463 | -0.0679 | -0.1695 |
+| nzdusd | -1 | +0.2495 | -0.0847 | +0.0674 |
+| usdjpy | -1 | +0.0615 | +0.1982 | +0.2128 |
+| usdchf | -1 | -0.0485 | -0.1271 | +0.0353 |
+| gold | +1 | +0.3327 | +0.3327 | +0.4234 |
+| usdcad | +1 | -0.0464 | +0.2098 | +0.2491 |
+
+**The sign prediction holds on 4 of 6 here against 6 of 6 on the swings**, and
+the two that miss (gold, usdchf) are the two whose surrogate spread is itself
+large. That is the honest reading: the trade version is *consistent* with the
+circularity and too noisy to add to it, because a 20-bar race against a 2:1
+barrier is a far coarser read of "which way does the next move go" than a swing
+decomposition, and its surrogates carry their own +-0.2 to +-0.5 spread from
+each feed's drift. Across all 14 feeds the real spread exceeds its surrogate
+range on **2** (audchf, eurusd) - chance.
 
 ### The interaction, and the placebo that refuses it
 
@@ -888,22 +1079,25 @@ Direction terciles **within** each volatility tercile, `reach` 3, n 93-96 a cell
 | high vol, high dir | -0.006 | -0.064 | **+0.245** |
 
 **The largest readings in the table are the placebo's.** EURGBP spans +0.245 to
--0.270 where audjpy spans -0.006 to -0.151 and audusd -0.019 to -0.109, and
-the cross and the leg order their four cells **oppositely** to each other -
-audjpy's strongest cell is low-vol/low-dir and audusd's is low-vol/high-dir. At
-n 95 a cell this is sampling noise, and `the-placebo-arm-selects-the-null` is
-explicit: reject any null whose placebo finds structure. This one finds more
-than the instruments the claim is about.
+-0.270 where audjpy spans -0.006 to -0.151 and audusd -0.019 to -0.109, and the
+cross and the leg order their four cells **oppositely** to each other. At n 95 a
+cell this is sampling noise, and `the-placebo-arm-selects-the-null` is explicit:
+reject any null whose placebo finds structure. This one finds more than the
+instruments the claim is about.
 
-**Verdict on the conditioning: measured, and null.** It is not refuted in the
-way a standalone direction gate is - the test here is a 4-cell split at n 95,
-not a fitted gate - but the conditioning this study could run reads nothing,
-the one apparent signal is circular, and the placebo is noisier than the
-signal. The trade arm's own version of the same question (the `both` gate in
-section 5) reads -0.0010R on 65 trades with a +-0.31R interval. **The honest
-statement is that the interaction remains open and this sample cannot close
-it**, with the bound from section 5's power sweep: a conditional drift above a
-tenth of a stop over 20 bars would have been seen.
+### Verdict on the conditioning
+
+**Measured, and null, with one apparent signal fully explained.** The volatility
+half carries no direction on any of fourteen instruments. The direction half's
+apparent signal is the index reading each instrument back to itself, predicted
+by `RISK_OFF_SIGN` on 6 of 6 legs and absent on all three out-of-basket feeds.
+The interaction's cells are noise, with the placebo the noisiest.
+
+What this does **not** establish is that the interaction is closed. The test
+here is a 4-cell tercile split at n 95 and a 65-trade gate with a +-0.31R
+interval, not a fitted conditional model. **It remains open and this sample
+cannot close it**, with one firm bound from §5: on audjpy a conditional drift
+above a tenth of a stop over 20 bars would have read +0.22R and was not there.
 
 ## Costs, and what this store cannot supply
 
@@ -933,20 +1127,27 @@ trade it.**
   feeds, about 50 days. For the **level** study that is not worth running: the
   books publish a few hundred levels over 19 years at 1d, so at 50 days the
   crash class would hold single digits. For the asymmetry and the trade it is
-  worth running and is a **different rule**, never pooled with 1d.
-* **The level and trade panels were not run** - two of eight legs and three of
-  fourteen series, real arm only. See "What has actually been run" above. The
-  surrogate arms and the duty-cycle twin are in the harness and are the first
-  thing to read when the panel lands, because section 5's verdict currently
-  leans on one placebo instead of on three null arms.
+  worth running and is a **different rule**, never pooled with 1d. This is now
+  the largest gap in the study.
+* **`conditioned` has no arm of its own.** It is a real-arm statistic by
+  construction, so §6's controls are the in-basket/out-of-basket split, the
+  `RISK_OFF_SIGN` prediction and the trade panel's surrogates rather than a
+  shuffle of the conditioning statistic itself. A shuffle arm for it would
+  need the index recomputed on the surrogate, which is a different object from
+  the index whose terciles the real split uses.
 * **No `reach`, `keep` or shield-band sweep on the books.** With the crash
-  class at 2-6 levels on two of the four books, a parameter sweep buys cells
-  rather than evidence.
-* **Section 4 has no power statement, and the arm built for it does not
-  work.** `plant_label_hold` was run and rejected - see "Power for this
-  section" in section 4. The plant changes the path, so the recomputed shape
-  labels no longer mark the bars the reflection was placed at, and the act of
-  planting destroys the association being planted.
+  class at 4-14 levels on `Levels` and 1-7 on `BjorgumLevels`, a parameter
+  sweep on those two buys cells rather than evidence; on the two books that can
+  answer, the surrogate arms already say the real gaps sit inside the shuffle's
+  own range, so a sweep would be looking for a cell the arms have already
+  priced.
+* **Section 4's null has no *power* statement**, though it does have surrogate
+  arms (0 of 16 cells exceed). `plant_label_hold` was run on both measurable
+  books and rejected - see "Power for this section" in section 4. The plant
+  changes the path, so the recomputed shape labels no longer mark the bars the
+  reflection was placed at, and the act of planting destroys the association
+  being planted. So "nothing survives" is sound and "nothing could have hidden"
+  is unmeasured.
 * **`indicators.Candles` was available and is not used.** Its question is
   level-relative - `confirms(level, want_up)` asks whether the auction reached
   a price, was rejected and closed away from it - and the labels here are about
@@ -967,7 +1168,7 @@ trade it.**
 * **The JPY crosses are not three independent cells.** `audjpy`, `nzdjpy` and
   `cadjpy` all share the `usdjpy` leg, so the three strong asymmetry readings
   are substantially one leg's property seen three times. `usdjpy` alone reads
-  -0.119 (z -1.55), and `audusd` alone reads -0.297 (z -4.91), so the carry leg
+  -0.119 (z -1.57), and `audusd` alone reads -0.297 (z -4.66), so the carry leg
   is carrying more of it than the haven leg. Counted as one cell for
   Benjamini-Hochberg would be the stricter choice and was not made; the cells
   are reported individually and the dependence is stated here.
@@ -1019,7 +1220,11 @@ arm-draws.
 
 `--intervals 1d,15m` adds the 15m rule as a separate rule - do not pool it.
 `--sections` runs a subset in the pre-registered order; `--draws` sets the
-surrogate draws per arm (4 in everything reported here).
+surrogate draws per arm. **The committed panel ran at 4 and the default is now
+16** - see "A hardest-of-N test with four draws an arm is anti-conservative".
+Every table marked as the panel's is at 4; the 16-draw re-test of §3's
+exceedances is labelled where it appears. Re-running the panel at the new
+default is the obvious next step and will change every arm column.
 
 ### Three properties of the indicator a careless fixture gets wrong
 

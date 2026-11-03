@@ -40,6 +40,7 @@ nobody runs twice.
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import os
 import pathlib
@@ -58,12 +59,24 @@ import research.ideas.fear_greed_levels as L
 import research.ideas.fear_greed_power as P
 import research.ideas.fear_greed_trade as T
 
-#: Draws per surrogate arm. Four, matching `level-shield.md`, which is enough
-#: to bracket a statistic and not enough to call its spread a distribution -
-#: so every arm is reported as a **range over its draws** and a real value is
-#: asked to sit outside the hardest arm's range, never to beat a p value the
-#: draws cannot support.
-DRAWS = 4
+#: Draws per surrogate arm. **Sixteen, not the four `level-shield.md` uses, and
+#: the change is a measured correction rather than caution.**
+#:
+#: The exceedance test asks a real value to beat the *extreme* of all the draws,
+#: and the max of four draws is a badly biased estimate of an arm's tail: on
+#: audjpy at `reach` 10 the `bar-shuffle` speed gap has mean -0.171 and **sd
+#: 0.106** over sixteen draws, spanning -0.467 to -0.024, where the panel's four
+#: draws landed in a range of 0.06. Too few draws makes the null look tighter
+#: than it is, so it **manufactures exceedances** - the test is anti-conservative
+#: exactly where a positive claim is made. At four draws this study read 8 of 84
+#: cells exceeding; at sixteen it reads 1 of 30, and both of its substantive
+#: positive cells disappeared.
+#:
+#: A null conclusion is unaffected by the bias (a wider arm only widens the
+#: margin), so the sections that concluded nothing-exceeds were conservative at
+#: four. The cost of sixteen is runtime, and the whole panel ran in 91 seconds
+#: at four on 64 cores, so there is nothing to trade off.
+DRAWS = 16
 
 #: Day-block bootstrap resamples. 400 is enough for a 95% interval's
 #: quantiles; the interval is reported, never a standard error alone.
@@ -76,6 +89,24 @@ BOOTSTRAP = 400
 #: the sample, and the surrogate arms are skipped for them because an arm for
 #: an unmeasurable cell buys nothing but runtime.
 THIN_BOOKS = frozenset({"levels", "bjorgum"})
+
+
+def seed(*parts: object) -> int:
+    """A **reproducible** seed from the cell's own identity.
+
+    A builtin `hash` of a tuple containing a string is salted by
+    `PYTHONHASHSEED`, so seeding a surrogate from one draws different
+    surrogates in every process. The first version of this file did exactly
+    that, and the consequence was measured rather than guessed: the panel's arm
+    means differ from a local run's on the same code and the same data -
+    audjpy's `bar-shuffle` speed gap read -0.172 locally and **-0.266** on the
+    panel - while every real value matched to the digit. A surrogate range that
+    moves between runs cannot be the thing a verdict is scored against.
+
+    `blake2b` over the repr is stable across processes and machines.
+    """
+    text = "|".join(repr(x) for x in parts)
+    return int.from_bytes(hashlib.blake2b(text.encode(), digest_size=8).digest(), "big")
 
 
 def _arms(series: F.Series, draws: int) -> list[tuple[str, int, F.Series]]:
@@ -93,7 +124,7 @@ def _arms(series: F.Series, draws: int) -> list[tuple[str, int, F.Series]]:
         if make is None:
             continue
         for draw in range(draws if arm in F.DRAWN else 1):
-            rng = random.Random(hash((series.feed, series.interval, arm, draw)) & 0xFFFFFFFF)
+            rng = random.Random(seed(series.feed, series.interval, arm, draw))
             built = make(series, rng, fitted) if arm == "garch-bars" else make(series, rng)
             plan.append((arm, draw, built))
     return plan
@@ -127,7 +158,7 @@ def job_asym(args: tuple[str, str, int]) -> list[dict]:
     for arm, draw, built in _arms(series, draws):
         for reach in A.SWING_REACHES:
             for on_closes in (True, False) if F.range_trusted(series) else (True,):
-                rng = random.Random(hash((feed, arm, draw, reach, on_closes)) & 0xFFFFFFFF)
+                rng = random.Random(seed(feed, arm, draw, reach, on_closes))
                 row = A.one_series(
                     built,
                     unit_span=span,
@@ -201,7 +232,7 @@ def job_trade(args: tuple[str, str, int]) -> list[dict]:
             for target, stop in T.RACES:
                 for side in (-1, 1):
                     rng = random.Random(
-                        hash((feed, arm, draw, name, target, stop, side)) & 0xFFFFFFFF
+                        seed(feed, arm, draw, name, target, stop, side)
                     )
                     got = T.races(
                         built,
@@ -278,7 +309,7 @@ def job_power(args: tuple[str, str, int]) -> list[dict]:
     span, horizon = settings["unit_span"], settings["horizon"]
     moods = {f: F.mood_path(held[f]) for f in F.LEGS}
     basket = F.basket_risk_off(moods)
-    rng = random.Random(hash((feed, "power")) & 0xFFFFFFFF)
+    rng = random.Random(seed(feed, "power"))
     out: list[dict] = []
     for reach in A.SWING_REACHES:
         got = P.sweep_asymmetry(
