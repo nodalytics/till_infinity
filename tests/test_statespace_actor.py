@@ -340,10 +340,18 @@ class TestABacktestDoesNotInheritState:
         assert actor._subscribed_intervals() == ("15m", "1h"), "deduplicated, in order"
         assert ss_actor.StatespaceActor(ss_actor.StatespaceConfig())._subscribed_intervals() == ()
 
-    def test_a_backtest_actor_is_built_without_the_desks_state(self) -> None:
+    def test_a_backtest_actor_is_built_without_the_desks_state(self, monkeypatch) -> None:
         """The join: `desk_config` must ask for the isolated actor, or the two
-        fixes above sit in the config and never reach a measurement."""
+        fixes above sit in the config and never reach a measurement.
+
+        `TRADING_SYMBOLS` is set because `importable_actors` builds no
+        statespace actor at all when the venue names no symbol - an actor
+        subscribed to nothing is a fold that never runs, so the live node omits
+        it rather than shipping one.
+        """
         from till_infinity.node import desks
+
+        monkeypatch.setenv("TRADING_SYMBOLS", "EUR/USD")
 
         live = desks.importable_actors("DERIV")
         measured = desks.importable_actors("DERIV", fresh=True)
@@ -357,6 +365,5 @@ class TestABacktestDoesNotInheritState:
         assert "statespace-backtest-" in found["state_dir"], (
             "a directory of this run's own, not the deployed one"
         )
-        assert found["state_dir"] != statespace(desks.importable_actors("DERIV", fresh=True)).config[
-            "state_dir"
-        ], "two cells of one sweep must not share it"
+        second = statespace(desks.importable_actors("DERIV", fresh=True)).config
+        assert found["state_dir"] != second["state_dir"], "two cells of one sweep must not share it"
