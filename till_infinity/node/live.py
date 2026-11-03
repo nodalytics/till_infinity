@@ -195,7 +195,7 @@ def build() -> TradingNode:
         )
     for strategy in strategies:
         node.trader.add_strategy(strategy)
-    for actor in _actors():
+    for actor in _actors(len(strategies)):
         node.trader.add_actor(actor)
 
     node.build()
@@ -352,8 +352,14 @@ def _arm(node: TradingNode) -> bool:
     return False
 
 
-def _actors() -> list[Actor]:
+def _actors(registered: int = 0) -> list[Actor]:
     """The actors: the basket watchers, the record, the alerts, and statespace.
+
+    `registered` is how many strategies the caller built, passed through to the
+    heartbeat because an `Actor` can reach `trader_id` and nothing else. The
+    heartbeat used to count `cache.strategy_ids()`, which is empty until a
+    strategy has an order, so the healthcheck called every fresh desk "up and
+    trading nothing".
 
     `STATESPACE_BARS` names the bar types statespace folds. Absent, it is not
     added - a node may trade without it, and an actor subscribed to nothing is
@@ -397,7 +403,7 @@ def _actors() -> list[Actor]:
         # My own smoke test set the variable, so it exercised the configured
         # path and never the default. `status.DEFAULT_PATH` already reads the
         # environment itself, so there is nothing for this to pass on.
-        found.append(Heartbeat(HeartbeatConfig()))
+        found.append(Heartbeat(HeartbeatConfig(registered=registered)))
     if not flag("ALERTS_OFF"):
         from till_infinity.notifications.actor import Notifier, NotifierConfig
 

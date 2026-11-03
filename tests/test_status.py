@@ -219,3 +219,69 @@ def test_the_default_path_is_a_real_path_without_the_variable(monkeypatch):
     assert config.path
     # Constructing the actor is where `Path(...)` is called.
     assert Heartbeat(config) is not None
+
+
+def test_the_count_is_what_was_registered_not_what_has_traded(tmp_path):
+    """**The healthcheck called every healthy fresh desk "trading nothing".**
+
+    `reading()` counted `cache.strategy_ids()`, which is empty until a strategy
+    has an order. Measured on a built node: `trader.strategies()` reads 4 where
+    `cache.strategy_ids()` reads 0. So a desk that had just started - twelve
+    strategies registered, no fills yet - reported `0 strategies: the node is
+    up and trading nothing` and Docker marked the container unhealthy.
+
+    That is a false alarm on the one check meant to be trusted, and it fired
+    within an hour of the same check correctly catching a real outage. An
+    `Actor` cannot reach the trader - it has `trader_id` and nothing else - so
+    the count is handed over at construction by the caller that registered
+    them.
+    """
+    from nautilus_trader.test_kit.stubs.component import TestComponentStubs
+
+    from till_infinity.node.status import Heartbeat, HeartbeatConfig, healthy
+
+    where = tmp_path / "s.json"
+    actor = Heartbeat(HeartbeatConfig(path=str(where), registered=12))
+    actor.register_base(
+        portfolio=TestComponentStubs.portfolio(),
+        msgbus=TestComponentStubs.msgbus(),
+        cache=TestComponentStubs.cache(),
+        clock=TestComponentStubs.clock(),
+    )
+    found = actor.reading()
+
+    assert found["strategies"] == 12, "what the node registered"
+    assert found["with_orders"] == 0, "and nothing has traded yet, reported beside it"
+
+    # Through the file, which is what the probe actually reads. The venue is
+    # a separate condition and a stub has no execution client, so what is
+    # asserted is that **the strategy count is no longer the reason** - not
+    # full health, which would need a connected venue this fixture cannot have.
+    actor._write()
+    _, why = healthy(where)
+    assert "0 strategies" not in why, f"the false alarm is back: {why!r}"
+    assert "trading nothing" not in why, f"the false alarm is back: {why!r}"
+
+
+def test_a_node_that_registered_nothing_is_still_caught(tmp_path):
+    """**The control.** The check exists because three deploys were health
+    checked while running none of the code they claimed, and an environment
+    naming retired rules put the live desk into a 27-restart loop. Counting
+    registrations rather than orders must not soften that."""
+    from nautilus_trader.test_kit.stubs.component import TestComponentStubs
+
+    from till_infinity.node.status import Heartbeat, HeartbeatConfig, healthy
+
+    where = tmp_path / "s.json"
+    actor = Heartbeat(HeartbeatConfig(path=str(where), registered=0))
+    actor.register_base(
+        portfolio=TestComponentStubs.portfolio(),
+        msgbus=TestComponentStubs.msgbus(),
+        cache=TestComponentStubs.cache(),
+        clock=TestComponentStubs.clock(),
+    )
+    actor._write()
+
+    ok, why = healthy(where)
+    assert ok is False
+    assert "0 strategies" in why
