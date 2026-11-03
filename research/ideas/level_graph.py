@@ -243,6 +243,21 @@ def bins_of(book: list[tuple[float, int]], unit: float, tol: float) -> dict[int,
     return {round(price / width): price for price, _ in book if price > 0.0}
 
 
+#: Bars of transition history a node's centrality is computed over. **A
+#: window and not the whole history**, for two reasons that point the same way.
+#:
+#: The model one: a level's watchedness now should not depend on transitions
+#: from nineteen years ago. Agreement among participants is a present-tense
+#: property, and an ever-growing graph makes an old node permanently central
+#: because nothing ever removes its edges.
+#:
+#: The cost one: Brandes betweenness is O(VE), and on the whole history the
+#: graph reached **393 nodes and 1,493 edges**, which at ~230 anchors is about
+#: 136M operations per series - times 441 series a feed, which projected to
+#: 2.7 hours a feed and never wrote a row.
+WINDOW = 2_000
+
+
 def build(
     series: shield.Series,
     books: list[list[tuple[float, int]]],
@@ -250,14 +265,15 @@ def build(
     *,
     tol: float,
     upto: int,
+    window: int = WINDOW,
 ) -> Graph:
-    """The graph from bars `[0, upto)`. Causal by construction."""
+    """The graph over the `window` bars before `upto`. Causal by construction."""
     edges: Counter[tuple[int, int]] = Counter()
     dwell: Counter[int] = Counter()
     speed: dict[tuple[int, int], float] = defaultdict(float)
     where: int | None = None
     since = 0
-    for i in range(min(upto, len(series.close))):
+    for i in range(max(0, min(upto, len(series.close)) - window), min(upto, len(series.close))):
         u = float(unit[i])
         if not (u > 0.0):
             continue
@@ -361,36 +377,45 @@ def measure(
     if len(anchors) < 20:
         return []
 
-    out: list[Row] = []
-    for name in ("degree", "weighted", "betweenness", "pagerank"):
-        # Collected per stratum, then reported per stratum. Pooling first and
-        # splitting later is how `pooled-medians-invert-subgroups` happened.
-        per: dict[int, list[tuple[float, float, float]]] = defaultdict(list)
-        dwell_pairs: list[tuple[float, float]] = []
-        seen_nodes = 0
-        seen_edges = 0
-        for at in anchors:
-            graph = build(series, books, unit, tol=tol, upto=at)
-            nodes = graph.nodes
-            if len(nodes) < 4:
-                continue
+    kinds = ("degree", "weighted", "betweenness", "pagerank")
+    # Collected per centrality and per stratum, then reported per stratum.
+    # Pooling first and splitting later is how `pooled-medians-invert-subgroups`
+    # happened.
+    per: dict[str, dict[int, list[tuple[float, float, float]]]] = {
+        name: defaultdict(list) for name in kinds
+    }
+    dwell_pairs: dict[str, list[tuple[float, float]]] = {name: [] for name in kinds}
+    seen_nodes = 0
+    seen_edges = 0
+
+    # **One graph per anchor, every centrality read off it.** This loop used to
+    # sit inside a loop over the four centralities, so `build` ran four times
+    # per anchor and the whole walk four times over - the run that projected to
+    # 2.7 hours a feed and wrote nothing.
+    for at in anchors:
+        graph = build(series, books, unit, tol=tol, upto=at)
+        nodes = graph.nodes
+        if len(nodes) < 4:
+            continue
+        u = float(unit[at])
+        if not (u > 0.0):
+            continue
+        seen_nodes = max(seen_nodes, len(nodes))
+        seen_edges = max(seen_edges, len(graph.edges))
+        dwelt = graph.dwell
+        close = float(series.close[at])
+        here = bins_of(books[at], u, tol)
+        stratum = min(STRATA - 1, max(0, _stratum(unit, at)))
+
+        for name in kinds:
             scores = centrality(graph, name)
             if not scores:
                 continue
-            seen_nodes = max(seen_nodes, len(nodes))
-            seen_edges = max(seen_edges, len(graph.edges))
-            dwelt = graph.dwell
-            dwell_pairs.extend(
+            dwell_pairs[name].extend(
                 (scores.get(node, 0.0), float(dwelt.get(node, 0))) for node in nodes
             )
-
-            u = float(unit[at])
-            if not (u > 0.0):
-                continue
-            close = float(series.close[at])
             # Candidate nodes: the book's prices, with their centrality and
             # their distance from here in volatility units.
-            here = bins_of(books[at], u, tol)
             picks = [
                 (scores.get(node, 0.0), abs(price - close) / u, price)
                 for node, price in here.items()
@@ -398,21 +423,20 @@ def measure(
             ]
             if len(picks) < 2:
                 continue
-            middle = sorted(s for s, _, _ in picks)[len(picks) // 2]
-            high = [p for p in picks if p[0] > middle]
-            low = [p for p in picks if p[0] <= middle]
+            middle = sorted(c[0] for c in picks)[len(picks) // 2]
+            high = [c for c in picks if c[0] > middle]
+            low = [c for c in picks if c[0] <= middle]
             if not high or not low:
                 continue
             # **Distance matching.** Each high-centrality candidate is paired
             # with the peripheral one closest to it in distance, and the pair
             # is dropped if they differ by more than a fifth of a volatility
             # unit. An unmatched comparison is the magnet claim again.
-            stratum = min(STRATA - 1, max(0, _stratum(unit, at)))
             for _, dist, price in high:
                 mate = min(low, key=lambda c: abs(c[1] - dist))
                 if abs(mate[1] - dist) > 0.2:
                     continue
-                per[stratum].append(
+                per[name][stratum].append(
                     (
                         _travelled(series, at, price, u, reach),
                         _travelled(series, at, mate[2], u, reach),
@@ -420,8 +444,12 @@ def measure(
                     )
                 )
 
-        dwell_r = _spearman([a for a, _ in dwell_pairs], [b for _, b in dwell_pairs])
-        for stratum, rows in sorted(per.items()):
+    out: list[Row] = []
+    for name in kinds:
+        dwell_r = _spearman(
+            [a for a, _ in dwell_pairs[name]], [b for _, b in dwell_pairs[name]]
+        )
+        for stratum, rows in sorted(per[name].items()):
             if len(rows) < 20:
                 continue
             hi = sum(r[0] for r in rows) / len(rows)
