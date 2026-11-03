@@ -14,7 +14,9 @@ read our own side of the wire.
 
 from __future__ import annotations
 
+import contextlib
 import os
+import sys
 from decimal import Decimal
 
 from nautilus_trader.common.actor import Actor
@@ -436,7 +438,47 @@ def _actors() -> list[Actor]:
     return found
 
 
+def check() -> int:
+    """Build the node and exit, without connecting or trading.
+
+    **A preflight for a deploy, and the thing that would have prevented an
+    outage.** On 2026-11-03 a deploy met an environment still naming sixteen
+    retired rules, `desks.rules` raised as designed, and the container
+    restart-looped **27 times** - having already replaced a working desk. The
+    pipeline detected it afterwards and failed the job, which left production
+    down rather than untouched.
+
+    Everything that reads configuration happens in `build`: the rule names,
+    the entry and exit names, the symbols, the venues, the bar types. So
+    running `build` against the host's own environment, in the image about to
+    be deployed, catches a stale variable **before** anything is switched
+    over. It opens no socket and places no order.
+
+    What it cannot catch is a name the broker does not carry: a symbol is only
+    wrong once the bridge answers 404, and the node stays up and healthy while
+    every quote poll fails. That is a separate check against a live bridge and
+    is deliberately not done here, because a preflight that needs the venue
+    cannot run before the venue is reachable.
+    """
+    try:
+        node = build()
+    except Exception as exc:
+        print(f"preflight FAILED: {type(exc).__name__}: {exc}", file=sys.stderr)
+        return 1
+    try:
+        count = len(getattr(node.trader, "strategies", lambda: ())())
+    except Exception:
+        count = -1
+    print(f"preflight ok: node built, {count} strategies")
+    # Disposing a node that never ran is not a failure.
+    with contextlib.suppress(Exception):
+        node.dispose()
+    return 0
+
+
 def main() -> None:
+    if "--check" in sys.argv[1:]:
+        raise SystemExit(check())
     node = build()
     try:
         node.run()

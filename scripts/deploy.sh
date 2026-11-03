@@ -142,6 +142,35 @@ restore_previous() {
   docker rename "$PREV" "$NAME" >/dev/null 2>&1 && docker start "$NAME" >/dev/null 2>&1
 }
 
+# **Preflight: build the node from this host's environment, in the image about
+# to be deployed, before anything is switched over.**
+#
+# Everything that reads configuration happens in `build` - rule names, entry
+# and exit names, symbols, venues, bar types - so a stale variable raises here
+# instead of in a container that has already replaced a working desk. On
+# 2026-11-03 sixteen retired rule names got through and cost 27 restarts; this
+# check exits non-zero on that environment in a few seconds and leaves the
+# running container untouched.
+#
+# `--network none` and no venue: it opens no socket and places no order.
+# Skipped only by `SKIP_PREFLIGHT=1`, for the case where the image predates the
+# flag and would exit 2 on an unknown argument.
+if [[ "${SKIP_PREFLIGHT:-0}" != "1" ]]; then
+  echo "preflight: building the node from $(basename /home/ubuntu/till.env)"
+  if ! docker run --rm \
+      --network none \
+      --memory 512m \
+      -e TZ=UTC \
+      --env-file /home/ubuntu/till.env \
+      -e TRADING_LIVE=0 \
+      "$IMAGE:$TAG" --check 2>&1 | tail -20; then
+    echo "preflight failed - the running desk is untouched" >&2
+    # The rename has already happened, so put it back before giving up.
+    restore_previous || true
+    exit 1
+  fi
+fi
+
 # Sized from the host rather than pinned, because the pin was wrong on both
 # boxes it ever ran on. 640m was chosen for a 908MB instance - about 70%, which
 # left the host enough to breathe. Hard-coding it wastes a bigger machine and
@@ -187,32 +216,62 @@ docker run -d \
 # See docs/deployment.md.
 # is happening says nothing. `tr -d` because a stray newline in the captured
 # value made the failure message unreadable and the comparison meaningless.
+# **`State.Running` is `true` while a container is in restart backoff**, so it
+# cannot distinguish a healthy desk from a crash-looper. This is not a theory:
+# on 2026-11-03 a deploy met an environment naming sixteen retired rules, the
+# node raised on every start, and this script printed `up on b86ab4c (state
+# true/0)` and exited 0 over a container that went on to restart **27 times**.
+# The previous comment here reasoned that "a crash-looper is caught because it
+# is not running when sampled twice" - and `docker inspect` returns
+# `{"Status":"restarting","Running":true,"Restarting":true,"ExitCode":1}`, so
+# it never was.
+#
+# So `Status` and `Restarting` are read as well, and the restart count is
+# compared **between** the two samples: a count that climbs while the script
+# watches is a loop whatever any single field says.
 alive() {
-  local up restarts
-  up="$(docker inspect -f '{{.State.Running}}' "$NAME" 2>/dev/null | tr -d '[:space:]')"
-  restarts="$(docker inspect -f '{{.RestartCount}}' "$NAME" 2>/dev/null | tr -d '[:space:]')"
-  echo "${up:-false}/${restarts:-0}"
+  docker inspect -f '{{.State.Status}}/{{.State.Restarting}}/{{.RestartCount}}' \
+    "$NAME" 2>/dev/null | tr -d '[:space:]'
+}
+
+settled() {
+  local state="$1"
+  local status="${state%%/*}"
+  local rest="${state#*/}"
+  local restarting="${rest%%/*}"
+  [[ "$status" == "running" && "$restarting" == "false" ]]
 }
 
 sleep 45
 STATE="$(alive)"
-if [[ "${STATE%%/*}" != "true" ]]; then
+if ! settled "${STATE:-unknown/true/0}"; then
   sleep 30
   STATE="$(alive)"
 fi
-# Running is what matters. A restart count above zero on a container that is
-# *currently up* means it stumbled and recovered, which is not a reason to
-# throw away a deploy - a crash-looper is caught because it is not running when
-# sampled twice, thirty seconds apart.
-if [[ "${STATE%%/*}" != "true" ]]; then
-  echo "new container is not running (state $STATE)" >&2
+FIRST_RESTARTS="${STATE##*/}"
+sleep 20
+LATER="$(alive)"
+LATER_RESTARTS="${LATER##*/}"
+
+BAD=""
+if ! settled "${LATER:-unknown/true/0}"; then
+  BAD="not settled (state $LATER)"
+elif [[ "${LATER_RESTARTS:-0}" -gt "${FIRST_RESTARTS:-0}" ]]; then
+  # Up at both samples and yet the count moved: it died and came back between
+  # them, which is the loop this check exists to catch.
+  BAD="restarting while watched (${FIRST_RESTARTS} -> ${LATER_RESTARTS})"
+fi
+
+if [[ -n "$BAD" ]]; then
+  echo "new container is $BAD" >&2
+  docker logs --tail 30 "$NAME" 2>&1 | tail -30 >&2 || true
   if restore_previous; then
     exit 1
   fi
   echo "left the new container in place - no previous version to restore" >&2
   exit 2
 fi
-echo "up on ${TAG:0:7} (state $STATE)"
+echo "up on ${TAG:0:7} (state $LATER)"
 docker rm -f "$PREV" >/dev/null 2>&1 || true
 
 # The old image is only unreferenced once the new container is up, so a second
