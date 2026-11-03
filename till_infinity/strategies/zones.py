@@ -245,6 +245,14 @@ class Zones:
         #: position on every bar, and the desk refuses it as already held -
         #: which reads as a gate count rather than as the design error it is.
         self.inside: dict[int, bool] = {}
+        #: Whether each zone had already flipped. `flip` needs the **edge**,
+        #: and `Zone.flipped` is a state that stays true once set.
+        self.flipped: dict[int, bool] = {}
+        #: The side this rule last proposed, so an opposing signal can close
+        #: what the previous one opened. Without it the only exit is the stop
+        #: and the win rate is 0.00 by construction, which is what the first
+        #: run of this rule measured on all 15 of its `break` positions.
+        self.standing = 0
         self.counts: dict[str, int] = {"bars": 0, "signals": 0, "unwarmed": 0}
         super().on_start()
 
@@ -268,8 +276,12 @@ class Zones:
             if was is None:
                 continue
             side = self._side(zone, was=was, now=now, close=close)
+            self.flipped[zone.at] = bool(zone.flipped)
             if side == 0:
                 continue
+            if self.tuning.on_opposite == "close" and self.standing != 0 and side == -self.standing:
+                self._leave(side)
+            self.standing = side
             self.counts["signals"] += 1
             # Through `on_data` and not `consider`, because that is where the
             # desk counts what it took and follows what it declined.
@@ -282,32 +294,61 @@ class Zones:
         live = {zone.at for zone in self.levels.zones}
         for gone in [at for at in self.inside if at not in live]:
             del self.inside[gone]
+        for gone in [at for at in self.flipped if at not in live]:
+            del self.flipped[gone]
+
+    def _leave(self, side: int) -> None:
+        """Flatten what the previous signal opened, because this one disagrees.
+
+        Through `ExitMechanism._close` and the desk's own registry: that is the
+        one latched close path, so a position this rule and the stop both ask
+        for in the same instant is flattened once.
+        """
+        for position_id in tuple(self.exits.positions):
+            position = self.cache.position(position_id)
+            if position is None or position.is_closed:
+                continue
+            if self._close(position_id, f"a {side:+d} zone signal reversed it"):
+                self.counts["closed_on_turn"] = self.counts.get("closed_on_turn", 0) + 1
 
     def _side(self, zone: Any, *, was: bool, now: bool, close: float) -> int:
         """Which way this zone reads on this bar: +1, -1 or 0.
 
-        `reject` fires when price **leaves** the zone back the way it came -
-        the turn, which is the mean-reverting reading. `break` fires when price
-        closes **through** it, which is the opposite reading, and both are
-        offered because nothing on this desk has pinned the sign.
+        **Every mode in `MODES` is dispatched here by name, and an unhandled
+        one raises.** The first version branched on `reject` and let everything
+        else fall through to the `break` arm, so `retest` and `flip` were
+        accepted, validated, and ran as `break` while reporting cells under
+        their own names - a configuration that produces numbers for a rule that
+        never ran, which is the one defect this session has found seven of.
         """
-        if self.tuning.mode == "reject":
-            if not (was and not now):
+        mode = self.tuning.mode
+        left = was and not now
+        outside = not was and not now
+        up = close > zone.top
+        down = close < zone.bottom
+        # The side a zone's own role points to: a resistance that breaks,
+        # breaks upward.
+        with_role = +1 if zone.resistance else -1
+
+        if mode == "reject":
+            # Left the zone back the way it came. The zone held: reversal.
+            return -with_role if left and (down if zone.resistance else up) else 0
+        if mode == "break":
+            # Closed through from outside. The zone failed: continuation.
+            return with_role if outside and (up if zone.resistance else down) else 0
+        if mode == "retest":
+            # Already broken, price back inside, now leaving on the break
+            # side. Continuation. Leaving the other way is the retest
+            # *failing*, which is a different trade and not this one.
+            if not (zone.flipped and left):
                 return 0
-            # Left a resistance zone downward: short. Left a support zone
-            # upward: long. Leaving the other way is a break, not a rejection.
-            if zone.resistance and close < zone.bottom:
-                return -1
-            if not zone.resistance and close > zone.top:
-                return +1
-            return 0
-        if was or now:
-            return 0
-        if zone.resistance and close > zone.top:
-            return +1
-        if not zone.resistance and close < zone.bottom:
-            return -1
-        return 0
+            return with_role if (up if zone.resistance else down) else 0
+        if mode == "flip":
+            # The bar the role changes on. Read against `self.flipped` because
+            # a role change is an **edge** and `Zone.flipped` is a state that
+            # stays true - firing on the state would re-propose every bar.
+            return 0 if (not zone.flipped or self.flipped.get(zone.at)) else with_role
+        raise ValueError(f"{mode!r} is in MODES and has no branch here")
 
     def _payload(self, side: int, zone: Any, bar: Bar) -> dict[str, Any]:
         """The crossing as the payload `Desk.consider` reads."""
