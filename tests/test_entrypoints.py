@@ -291,3 +291,57 @@ def test_the_image_names_no_retired_workspace_member():
     for line in read("Dockerfile").splitlines():
         if line.strip().startswith("ENV ") and "shared/contracts" in line:
             raise AssertionError(f"the Dockerfile still points at the retired contracts: {line!r}")
+
+
+# ------------------------------------------------------- what CI points at
+
+
+def workflow_paths() -> dict[str, list[str]]:
+    """Repository paths each CI job globs for, by job name.
+
+    A narrow read on purpose: `cache-dependency-path` and the `for .. in`
+    globs of a shell step are where a job names a directory it expects to
+    exist. Anything cleverer would need a shell parser, and the point here is
+    the same as `test_every_copy_source_exists` - a path that is not in the
+    repository cannot be found, whatever the runner does.
+    """
+    text = (ROOT / ".github" / "workflows" / "ci.yml").read_text()
+    jobs: dict[str, list[str]] = {}
+    job = ""
+    for line in text.splitlines():
+        named = re.match(r"^  (\w[\w-]*):\s*$", line)
+        if named:
+            job = named.group(1)
+            jobs.setdefault(job, [])
+            continue
+        if not job:
+            continue
+        for found in re.findall(r"(?:cache-dependency-path:\s*|in\s+)([\w./*-]+/[\w./*-]+)", line):
+            jobs[job].append(found)
+    return jobs
+
+
+def test_no_ci_job_globs_a_directory_that_is_gone():
+    """**A red job that describes nothing gates every merge, and this one did.**
+
+    ADR 0003 took on a second toolchain for the Go services under `services/`.
+    `a80de7e5` retired those with the rest of the legacy desk and the module
+    moved to `research/retire/services/ticks/`, which CI excludes on purpose -
+    but the `go` job stayed, globbing `services/*/go.mod`. Its own guard was
+    correct and fired every run with "no Go module under services/ - this job
+    is pointing at nothing", so the checks list carried a failure that was
+    true, uninformative, and blocking.
+
+    The guard was right to be an error rather than a silent pass. What was
+    missing was a test that notices when a job outlives the code it checks,
+    which is this one.
+    """
+    gone = {
+        job: [path for path in paths if not list(ROOT.glob(path))]
+        for job, paths in workflow_paths().items()
+    }
+    broken = {job: paths for job, paths in gone.items() if paths}
+    assert not broken, (
+        f"CI jobs glob paths that are not in the repository: {broken} - the job "
+        f"cannot pass, and a job that cannot pass blocks every merge"
+    )
