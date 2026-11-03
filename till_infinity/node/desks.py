@@ -618,11 +618,46 @@ def importable(
 
 
 def importable_actors(venue: str) -> list[ImportableActorConfig]:
-    """The actors, as importable configs."""
-    return [
+    """The actors, as importable configs - **including statespace.**
+
+    It was `BasketExit` alone, and that made the backtest path incapable of
+    running three of the four decision rules. `statespace-surprise`, `-long`
+    and `-short` all consume `statespace.proposals`, `StatespaceActor` is the
+    only producer of it, and nothing registered that actor for a backtest. So
+    a sweep over those rules completed, reported no orders and raised nothing:
+    a consumer with no producer, where both sides look healthy. That exact
+    shape has now hidden this topic three times.
+
+    It is the failure the whole port argues against - the thing that measures
+    and the thing that trades not being the same thing - so the condition is
+    `STATESPACE_BARS`, read the same way `live._actors` reads it, and the
+    bar types default to the desks' own interval on this venue's symbols
+    rather than being left unset. An actor subscribed to nothing is a fold
+    that never runs pretending to be a model that does, which is why the live
+    node omits it when the variable is empty; here the symbols are known, so
+    the sensible default is the bars the desks already subscribe to.
+    """
+    from till_infinity.statespace.actor import StatespaceActor, StatespaceConfig
+
+    out = [
         ImportableActorConfig(
             actor_path=f"{BasketExit.__module__}:{BasketExit.__name__}",
             config_path=f"{BasketConfig.__module__}:{BasketConfig.__name__}",
             config={"venue": venue},
         )
     ]
+    named = _names(os.environ.get("STATESPACE_BARS"))
+    interval = intervals()[0]
+    bars = named or tuple(str(bar_type(symbol, venue, interval)) for symbol in symbols(venue))
+    if bars:
+        out.append(
+            ImportableActorConfig(
+                actor_path=f"{StatespaceActor.__module__}:{StatespaceActor.__name__}",
+                config_path=f"{StatespaceConfig.__module__}:{StatespaceConfig.__name__}",
+                config={
+                    "bar_types": list(bars),
+                    "indicators": list(_names(os.environ.get("STATESPACE_INDICATORS"))),
+                },
+            )
+        )
+    return out

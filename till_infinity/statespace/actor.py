@@ -239,8 +239,21 @@ class StatespaceActor(Actor):
         bar_type = str(bar.bar_type)
         symbol = bar.bar_type.instrument_id.symbol.value
         feeds = self._cfg.feeds or {}
+        # **The slash has to go, and its absence here cost every trade.**
+        # `strategies/sizes.feed_of` keys a feed as `symbol.lower()` with the
+        # slash stripped, and `Surprise.wants` checks the published feed
+        # against `SurpriseProfile.feeds`, which holds `eurusd`. This side
+        # kept the slash, so a catalogue instrument named `EUR/USD` published
+        # `eur/usd`, matched nothing, and **every proposal was declined on
+        # every slashed instrument** - a backtest over 10,270 bars and quotes
+        # that placed not one order and raised nothing.
+        #
+        # Stripped here rather than widened there: a feed name is one thing,
+        # and `exposure.LEGS` and the statespace store are both already keyed
+        # without the separator. `feeds` still overrides, for a venue whose
+        # symbol maps to a feed name no rule could guess.
         return {
-            "feed": feeds.get(symbol, symbol.lower()),
+            "feed": feeds.get(symbol, symbol.lower().replace("/", "")),
             "interval": _interval(bar.bar_type),
             # ts_event is the close; the fold wants the open.
             "time": (bar.ts_event / 1e9) - self._seconds.get(bar_type, 0.0),
