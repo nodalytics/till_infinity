@@ -106,6 +106,38 @@ for attempt in 1 2 3; do
 done
 fi
 
+# **Preflight: build the node from this host's environment, in the image about
+# to be deployed, before anything is switched over.**
+#
+# Everything that reads configuration happens in `build` - rule names, entry
+# and exit names, symbols, venues, bar types - so a stale variable raises here
+# instead of in a container that has already replaced a working desk. On
+# 2026-11-03 sixteen retired rule names got through and cost 27 restarts; this
+# check exits non-zero on that environment in a few seconds and leaves the
+# running container untouched.
+#
+# **Before the rename**, so a bad environment costs nothing at all: the
+# running desk is never stopped and there is nothing to restore. Placing this
+# after the rename - as the first version did - meant a failed preflight still
+# stopped the desk and relied on the rollback to put it back.
+#
+# `--network none` and no venue: it opens no socket and places no order.
+# Skipped only by `SKIP_PREFLIGHT=1`, for the case where the image predates the
+# flag and would exit 2 on an unknown argument.
+if [[ "${SKIP_PREFLIGHT:-0}" != "1" ]]; then
+  echo "preflight: building the node from $(basename /home/ubuntu/till.env)"
+  if ! docker run --rm \
+      --network none \
+      --memory 512m \
+      -e TZ=UTC \
+      --env-file /home/ubuntu/till.env \
+      -e TRADING_LIVE=0 \
+      "$IMAGE:$TAG" --check 2>&1 | tail -20; then
+    echo "preflight failed - the running desk is untouched" >&2
+    exit 1
+  fi
+fi
+
 # **Renamed, not removed** - the old container is the rollback.
 #
 # See docs/deployment.md.
@@ -141,35 +173,6 @@ restore_previous() {
   docker rm -f "$NAME" >/dev/null 2>&1 || true
   docker rename "$PREV" "$NAME" >/dev/null 2>&1 && docker start "$NAME" >/dev/null 2>&1
 }
-
-# **Preflight: build the node from this host's environment, in the image about
-# to be deployed, before anything is switched over.**
-#
-# Everything that reads configuration happens in `build` - rule names, entry
-# and exit names, symbols, venues, bar types - so a stale variable raises here
-# instead of in a container that has already replaced a working desk. On
-# 2026-11-03 sixteen retired rule names got through and cost 27 restarts; this
-# check exits non-zero on that environment in a few seconds and leaves the
-# running container untouched.
-#
-# `--network none` and no venue: it opens no socket and places no order.
-# Skipped only by `SKIP_PREFLIGHT=1`, for the case where the image predates the
-# flag and would exit 2 on an unknown argument.
-if [[ "${SKIP_PREFLIGHT:-0}" != "1" ]]; then
-  echo "preflight: building the node from $(basename /home/ubuntu/till.env)"
-  if ! docker run --rm \
-      --network none \
-      --memory 512m \
-      -e TZ=UTC \
-      --env-file /home/ubuntu/till.env \
-      -e TRADING_LIVE=0 \
-      "$IMAGE:$TAG" --check 2>&1 | tail -20; then
-    echo "preflight failed - the running desk is untouched" >&2
-    # The rename has already happened, so put it back before giving up.
-    restore_previous || true
-    exit 1
-  fi
-fi
 
 # Sized from the host rather than pinned, because the pin was wrong on both
 # boxes it ever ran on. 640m was chosen for a 908MB instance - about 70%, which
