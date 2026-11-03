@@ -9885,7 +9885,6 @@ class TestService:
         import json
         import tempfile
 
-        from till_infinity.carrier import Message
         from till_infinity.statespace.config import Settings
         from till_infinity.statespace.engine import Engine
         from till_infinity.statespace.service import Watcher
@@ -9905,6 +9904,23 @@ class TestService:
             async def publish(self, topic, payload, *, source=""):
                 self.sent.append((topic, payload, source))
                 return 1
+
+        class Message:
+            """A topic and a payload, which is all `Watcher.handle` reads.
+
+            Local because it is a fake, like `Recording` beside it. It came
+            from `till_infinity/carrier.py`, a transport seam that existed to
+            let `bus.py` retire without rewriting five services - and once
+            that was done nothing in the package constructed a `Message` or
+            implemented a `Carrier`, because `statespace/service.py`
+            deliberately declares its own protocol rather than importing one,
+            so the package stays liftable in a single move. `handle` annotates
+            this `Any` and reads both fields with `getattr`.
+            """
+
+            def __init__(self, *, topic, payload):
+                self.topic = topic
+                self.payload = payload
 
         async def run():
             with tempfile.TemporaryDirectory() as directory:

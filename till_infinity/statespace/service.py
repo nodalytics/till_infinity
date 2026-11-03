@@ -22,8 +22,12 @@ traffic.
 
 `TestVendoredCusum` asserts that this package imports nothing from outside
 itself but `shared`, because "isolation is the point: this package is meant to
-lift out in one move". `from ..carrier import Carrier` would break that, and the first
-version of this file did.
+lift out in one move". A shared `Carrier` imported from the desk would break
+that, and the first version of this file did exactly that.
+
+The seam it imported, `carrier.py`, retired on 2026-11-03 for the same reason
+this file does not use it: declaring the protocol here left the shared one with
+no implementor and no consumer at all.
 
 So `Carrier` is a protocol rather than an import: anything with `publish` and
 `subscribe` drives this loop, which is what lets the package be tested without
