@@ -191,6 +191,7 @@ from .levels import (
 )
 from .momentum import Basis, Cusum, Ensemble, Event, SlopeMomentum, Speeds, TickMomentum
 from .pivots import Pivots, Session, Sessions, levels_from
+from .sentiment import HALVES, FearGreed, Mood
 from .spread import RollingSpread
 from .trend import Channel, Pivot, Trend, Trendline, Trendlines, VarianceRatio
 
@@ -239,6 +240,11 @@ BAR_DETECTORS: dict[str, tuple[Callable[..., object], tuple[Reading, ...]]] = {
     # `build_detector` only passes what a constructor takes.
     "pips": (Pips, ()),
     "bjorgum": (BjorgumLevels, ()),
+    # Reads a bar's whole shape, so no source. **An experiment**: the halves
+    # are exposed because the direction half is measured closed here and the
+    # volatility half is measured large, and a claim on the composite cannot
+    # say which it rests on.
+    "fear_greed": (FearGreed, ()),
     # Arithmetic on the prior period's range, so no source and no scale - and
     # **the control the swing book has never had**: no parameters, no
     # detector, nothing to fit. If `levels` does not beat this, the swing
@@ -533,6 +539,7 @@ __all__ = [
     "BAR_DETECTORS",
     "CAN_SCALE",
     "DIMENSION",
+    "HALVES",
     "NEEDS_PREVIOUS",
     "SCALED_BY",
     "SIDES",
@@ -550,6 +557,7 @@ __all__ = [
     "Displacement",
     "Ensemble",
     "Event",
+    "FearGreed",
     "Focus",
     "Forget",
     "Gap",
@@ -560,6 +568,7 @@ __all__ = [
     "Leg",
     "Level",
     "Levels",
+    "Mood",
     "Origin",
     "Pips",
     "Pivot",
