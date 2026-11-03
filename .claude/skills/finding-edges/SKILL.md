@@ -37,6 +37,50 @@ A refuted idea can be re-opened, but only by changing the *claim*, not the
 hope. "BOS retests, but trend-aligned and with a strong displacement" is a
 different claim; "BOS retests, but tuned harder" is not.
 
+### Name the claim a refutation closed, not the family it was in
+
+The table above is a list of **claims**, and it is read wrongly if it is taken
+as a list of forbidden subjects. Levels have now been measured six ways and
+every one is null, which makes it tempting to write "levels are closed" and
+stop. That sentence is not what was measured, and acting on it would retire the
+only state description this desk has.
+
+**Price is the summary of the information. Whatever we trade, we trade the
+geometry of price**, so "the geometry is null" cannot be a finding - it is a
+statement that no observable exists. What the six studies closed is narrower
+and worth keeping straight:
+
+| the claim that was closed | where | what it does **not** close |
+|---|---|---|
+| a level **attracts** price | [magnet.md](../../../research/docs/magnet.md) | that a level is a price many participants compute |
+| a level **blocks** price in the path | [level-shield.md](../../../research/docs/level-shield.md) | the exit side at a different horizon or unit |
+| a level is **graded** by how it behaved before | [gap-levels.md](../../../research/docs/gap-levels.md) | grading it by who is watching it |
+| topology finds levels a ruler had not | [topology.md](../../../research/docs/topology.md) | that the ruler's levels describe the state |
+| the new extreme after a trap | [trap-levels.md](../../../research/docs/trap-levels.md) | the midpoint, which read better |
+| a level's own **record** predicts | `level-signatures.md` | `abs(record - 0.5)`, which read 0.6006 against 0.5005 |
+
+That last row is the pattern to copy. The raw record was null and the *distance
+from indifference* was not, and nobody would have found it by asking whether
+levels work; they found it by asking which function of the level is the
+observable.
+
+**So the live reformulation of a magnet is watchedness, not attraction.**
+Liquidity rests where many participants compute the same price, which is a
+claim about agreement rather than about force, and it is tested with the
+**time exponent** rather than the return rate - a return rate is geometry and
+is matched by a distance-matched placebo on every class. Nothing in the table
+above tests agreement, so it is open.
+
+Two rules keep a reopening honest:
+
+1. **Write the new claim as a sentence that the old study could not have
+   tested**, and say which row above it is distinct from. If you cannot, it is
+   the same claim.
+2. **Keep the refuted version as an arm in the new run.** If the reframed
+   statistic beats its null and the old one does not, that is the evidence the
+   reframing was real; if both beat it, the reframing added nothing and the
+   finding belongs to the old claim.
+
 ## The null comes first
 
 Write down what the null produces **before** looking at the result. For a trade
@@ -166,6 +210,45 @@ back smaller does not.
 what the naive estimator read on FX was estimation error. When a correction is
 that large, the uncorrected version of every nearby measurement is suspect too,
 and that is a reason to go back through them rather than to publish the one.
+
+### A zero is a reading, and a reading can be of nothing
+
+Three defects found in one session, each of which turned a working rule into
+`+0.00 over 0 positions`. None raised, none logged, and all three read as *the
+strategy declined to trade*.
+
+* **`BacktestNode` disposes the engine before it counts.** `_run` calls
+  `engine.dispose()` - "drop data and all state" - then `engine.get_result()`,
+  whose `total_orders` is `cache.orders_total_count()`. It counts an emptied
+  cache, so every run reports 0 orders and 0 positions whatever it did, while
+  `stats_pnls` comes off the portfolio analyzer and survives. One result read
+  `PnL (total): -62.32` at a 0.25 win rate **next to `total_orders = 0`**. Set
+  `dispose_on_completion=False`.
+* **A producer scoped to an interval the data does not hold.** The statespace
+  engine folded `('1m', '5m')`; the catalogue holds nothing but 15-minute bars.
+  `Settings.wants` returned False and `observe_bar` returned `None` on all
+  5,135 bars - and that return also covers "unwarmed" and "no variance", so
+  there was nothing to see.
+* **Persisted progress leaking into a replay.** The actor restored its fold
+  state on start and refuses a bar at or before the last one folded. Cell one
+  of a sweep placed 18 orders; cell two over identical data placed 0.
+
+The rules that fall out of this:
+
+- **A count of zero beside a non-zero P&L is a reporting bug, never a null.**
+  Read the two together on every cell and treat disagreement as a defect in
+  the harness.
+- **Before reading a zero as a decline, prove the chain was exercised.** Count
+  the producer's own returns - bars in, readouts out, proposals out, orders out
+  - and find the stage where the number dies. Four counters over one run
+  located all three of these.
+- **A silent `None` that means four things will eventually mean the wrong
+  one.** Where one return value covers "out of scope", "unwarmed" and "no
+  variance", a scope bug is indistinguishable from a warmup. Count the branches
+  separately even if you log none of them.
+- **Reproduce a cell twice in one process.** Any sweep whose cells share state
+  will pass its first cell and silently zero the rest; two identical runs that
+  disagree is the cheapest possible test for it.
 
 ## Reading outside finance, which is where most of this year's ideas came from
 

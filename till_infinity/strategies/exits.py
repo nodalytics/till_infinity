@@ -781,6 +781,45 @@ class ExitMechanism:
         ]
 
 
+def _trail_vol_bps(intent: Any) -> float:
+    """The relative volatility `advance` needs, in basis points.
+
+    **`advance` stands down entirely when this is zero**, because
+    `price_distance` multiplies by it, so a rule that publishes no volatility
+    gets no trail - silently, since a trail that never moves a stop looks
+    exactly like a trail that was never switched on.
+
+    Measured: `TRADING_TRAIL_VOL` at 0.25, 0.5, 1.0 and 3.0, with
+    `TRADING_TRAIL_SIGMAS` at 0.5 and 0.0, moved `smc-bos-causal` by **0.00 on
+    all eight combinations** while the same settings moved
+    `statespace-surprise` from -93.58 to -56.12 and `statespace-long` from
+    -145.89 to -58.90. One rule in four had an inert trail.
+
+    The reason is a units decision that was right: `structure.py` publishes its
+    volatility as `bos_atr` and says in place why it is **not** called
+    `vol_bps` - that column is a folded log variance elsewhere on this desk,
+    and an ATR written into it would put one journal column in two estimators.
+    So the conversion belongs here, at the one caller that needs a distance,
+    rather than in the feature the journal scores.
+
+    An ATR is a price distance and `vol_bps` is relative, so the conversion is
+    `atr / price * 10_000` - the inverse of `price_distance`, same dimension
+    and same unit. `bos_close` is the anchor because `bos_atr` is measured at
+    the signal bar's close, and dividing a distance by a price from a different
+    moment is the error that reads as calibrated near 1.0 and is wrong by a
+    factor of the price everywhere else.
+    """
+    features = getattr(intent, "features", None) or {}
+    folded = float(features.get("vol_bps") or 0.0)
+    if folded > 0.0:
+        return folded
+    atr = float(features.get("bos_atr") or 0.0)
+    price = float(features.get("bos_close") or 0.0)
+    if atr > 0.0 and price > 0.0:
+        return atr / price * 10_000.0
+    return 0.0
+
+
 class VenueExit(ExitMechanism):
     """The venue holds the whole exit and nothing of ours moves it.
 
@@ -852,7 +891,7 @@ class ManagedExit(ExitMechanism):
             as_domain(position, held.intent, stop=held.stop),
             spec,
             now=now,
-            vol_bps=float(held.intent.features.get("vol_bps") or 0.0),
+            vol_bps=_trail_vol_bps(held.intent),
             # No rungs: the `Book` of levels is not threaded to a strategy, so
             # a level trail has nothing to step behind. `Intent.trail_levels`
             # is off by default and this is the reason - a feature switched on
