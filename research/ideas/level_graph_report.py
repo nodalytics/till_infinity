@@ -162,7 +162,7 @@ def positive_control(cells: list[dict]) -> None:
 
 
 def _rows_for(cells: list[dict]) -> list[dict]:
-    keys = ("feed", "interval", "tol", "reach", "centrality", "stratum")
+    keys = ("feed", "interval", "tol", "reach", "centrality", "stratum", "half")
     grouped: dict[tuple, dict[str, list[dict]]] = collections.defaultdict(
         lambda: collections.defaultdict(list)
     )
@@ -186,6 +186,7 @@ def _rows_for(cells: list[dict]) -> list[dict]:
                 "feed": key[0],
                 "centrality": key[4],
                 "stratum": key[5],
+                "half": key[6],
                 "tol": key[2],
                 "reach": key[3],
                 "gap": gap,
@@ -201,6 +202,35 @@ def _rows_for(cells: list[dict]) -> list[dict]:
     return rows
 
 
+def _halves(rows: list[dict]) -> tuple[list[dict], list[dict]]:
+    """The half-split, printed and returned.
+
+    **Criterion 1 is an AND**, and reporting only the instrument count called
+    it met on half its definition. The pre-registration says "3+ instruments,
+    **both halves**", and the anchored-states panel on the same data window is
+    the cautionary case: 4 instruments met the count while **0 of 90** cells
+    beat the hardest null in both halves.
+    """
+    halves: dict[tuple, dict] = collections.defaultdict(dict)
+    for r in rows:
+        if r.get("half") in ("A", "B"):
+            cell = (r["feed"], r["centrality"], r["stratum"], r["tol"], r["reach"])
+            halves[cell][r["half"]] = r
+    pairs = [v for v in halves.values() if "A" in v and "B" in v]
+    both = [v for v in pairs if v["A"]["beats"] and v["B"]["beats"]]
+
+    print("\n=== the half-split, the other half of criterion 1 ===\n")
+    print(f"  {len(pairs)} cells measurable in both halves.")
+    print(f"  beating the hardest null in **both**: {len(both)}")
+    a_only = sum(1 for v in pairs if v["A"]["beats"])
+    b_only = sum(1 for v in pairs if v["B"]["beats"])
+    print(f"  half A alone: {a_only}; half B alone: {b_only}")
+    if pairs and not both:
+        print("  Not one cell survives the split, which is what killed the")
+        print("  anchored-states magnitude claim on the same window.")
+    return pairs, both
+
+
 def verdict(cells: list[dict]) -> None:
     print("\n=== the claim: does centrality beat a distance-matched placebo ===\n")
     rows = _rows_for(cells)
@@ -208,8 +238,10 @@ def verdict(cells: list[dict]) -> None:
         print("  no cell carries both a real reading and enough null draws.")
         return
 
-    traded = [r for r in rows if r["feed"] not in PLACEBO and r["feed"] not in CONTROLS]
-    placebo = [r for r in rows if r["feed"] in PLACEBO]
+    # The whole-history rows carry the headline; the halves decide criterion 1.
+    whole = [r for r in rows if r.get("half", "all") == "all"]
+    traded = [r for r in whole if r["feed"] not in PLACEBO and r["feed"] not in CONTROLS]
+    placebo = [r for r in whole if r["feed"] in PLACEBO]
     beating = [r for r in traded if r["beats"]]
     chance = len(traded) / (1 + statistics.fmean([r["draws"] for r in rows]))
 
@@ -259,10 +291,21 @@ def verdict(cells: list[dict]) -> None:
             f"{'BEATS' if r['beats'] else ''}"
         )
 
+    # **Criterion 1 is an AND, and reporting only the instrument count called it
+    # met on half its definition.** The pre-registration says "3+ instruments,
+    # **both halves**", and the anchored-states panel the same day is the
+    # cautionary case: 4 instruments met the count while 0 of 90 cells beat in
+    # both halves.
+    pairs, both = _halves(rows)
+
     print("\n=== pass rule, criterion by criterion ===\n")
-    met1 = len({r["feed"] for r in beating}) >= 3
+    enough = len({r["feed"] for r in beating}) >= 3
+    met1 = enough and bool(both)
     met3 = not any(r["beats"] for r in placebo)
-    print(f"  [{'MET' if met1 else 'NOT MET'}] 1. beats the hardest null, 3+ instruments")
+    tag = "MET" if met1 else "NOT MET"
+    print(f"  [{tag}] 1. beats the hardest null, 3+ instruments AND both halves")
+    print(f"            instruments {len({r['feed'] for r in beating})} (needs 3); "
+          f"cells beating in both halves {len(both)} of {len(pairs)}")
     print("  [      -] 2. Benjamini-Hochberg over every cell - needs per-cell p")
     print(f"  [{'MET' if met3 else 'NOT MET'}] 3. no placebo instrument passes")
     print("  [      -] 4. the duty-cycle twin - not in this run's arms")

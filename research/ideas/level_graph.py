@@ -61,6 +61,24 @@ TOLS: tuple[float, ...] = (0.25, 0.5, 1.0)
 #: two studies' numbers sit side by side.
 REACHES: tuple[float, ...] = (1.0, 2.0, 3.0)
 
+#: Which prices a node may be drawn from, the same two `indicators/zigzag.py`
+#: offers and for the same reason.
+#:
+#: `extreme` is the wick: the high and the low as the venue printed them.
+#: `body` replaces them with `max(open, close)` and `min(open, close)`, so a
+#: level can only form where the bar *closed* through, not where it merely
+#: traded.
+#:
+#: **The two are not a free choice.** A level drawn from wicks includes every
+#: stop-run and every one-print spike; a level drawn from bodies is where
+#: agreement was recorded rather than where price was touched, which is closer
+#: to the watchedness this study is about. `exotic-spreads-are-a-whole-bar-
+#: range` is the standing reason to doubt a wick on a costly feed - 0.40 to
+#: 0.97 bar-ranges round trip - and `how-markets-differ-from-every-simple-
+#: process` measures real bars as wickier than any simple process, so the two
+#: sources differ most on exactly the feeds where it matters.
+SOURCES: tuple[str, ...] = ("extreme", "body")
+
 #: Volatility strata. `topology-restates-volatility` is the most likely
 #: explanation of any positive result here, so nothing is reported pooled
 #: without its per-stratum twin.
@@ -79,11 +97,27 @@ ARMS: tuple[str, ...] = ("bar-shuffle", "walk-geometry", "garch-bars")
 #: `the-placebo-arm-selects-the-null` rejects any null a placebo passes.
 PLACEBO: tuple[str, ...] = ("nzdusd", "usdcad")
 
-#: `Range_Break` is a range by construction, so its graph must show two
-#: dominant nodes with a heavy edge between them; `Drift_Switch` is the regime
-#: control and must not. A harness that misses the first is broken rather than
-#: null - `range-break-is-the-level-positive-control`.
-CONTROLS: tuple[str, ...] = ("Range_Break", "Drift_Switch")
+#: **The controls are generated here, not loaded.**
+#:
+#: The pre-registration named Deriv's `Range Break` and `Drift Switch`, and
+#: neither is reachable: they are absent from `prices.db` at every interval and
+#: venue, and the seqlab npz cache that would hold them **does not exist on
+#: either machine**. `seqlab.fetch` would pull them from the MT5 terminal - the
+#: one `lab-hosts-the-mt5-terminal` records the live desk trading through, and
+#: the lab had just rebooted - and `research/starving.md`'s rule is that
+#: research degrading production is not research that got a result faster.
+#:
+#: Generating them is also the better control. `range-break-is-the-level-
+#: positive-control` wants "a range by construction"; a generator gives exactly
+#: that with the bounds known, where the Deriv feed gives a range whose bounds
+#: have to be inferred. `deriv-synthetics-are-real-markets` is about them being
+#: real markets with a known generator, which is a virtue for a structure
+#: control and irrelevant to whether a ruler finds a range.
+#:
+#: `range` must show the denser graph with its mass on two nodes. `drift` is
+#: the regime control and must not. A harness that misses the first is broken
+#: rather than reporting a null.
+CONTROLS: tuple[str, ...] = ("gen_range", "gen_drift")
 
 FEEDS: tuple[str, ...] = (
     "eurusd",
@@ -114,6 +148,24 @@ class Graph:
     #: `a-return-rate-is-geometry` is why: the origin's 82% return rate is
     #: matched by a distance-matched placebo on every class.
     speed: dict[tuple[int, int], float]
+
+    def concentration(self) -> tuple[float, float]:
+        """`(heaviest edge's share, two busiest nodes' share)` of all weight.
+
+        A range by construction puts its turning points on the same two prices
+        over and over, so both numbers are high. A drifting process spreads its
+        transitions over a chain of prices it visits once each, so both are low.
+        """
+        total = sum(self.edges.values())
+        if total <= 0:
+            return 0.0, 0.0
+        heaviest = max(self.edges.values()) / total
+        per: dict[int, float] = defaultdict(float)
+        for (a, b), n in self.edges.items():
+            per[a] += n
+            per[b] += n
+        busiest = sorted(per.values(), reverse=True)[:2]
+        return heaviest, sum(busiest) / (2.0 * total)
 
     @property
     def nodes(self) -> list[int]:
@@ -310,6 +362,15 @@ class Row:
     draw: int
     tol: float
     reach: float
+    #: `extreme` or `body`. See `SOURCES`.
+    source: str
+    #: `all`, `A` or `B`. **Criterion 1 requires beating the hardest null in
+    #: both halves**, and the first version of this harness emitted only the
+    #: whole history, so the reporter checked the instrument count and called
+    #: the criterion met on half its definition. The anchored-states panel the
+    #: same day is why that matters: 4 instruments met the count and **0 of 90
+    #: cells beat in both halves**.
+    half: str
     #: Which centrality this row is. **Named `centrality` and not `kind`**:
     #: the row-type marker is `kind`, and `{"kind": "cell", **asdict(row)}`
     #: let this field overwrite it, so every cell in the smoke run was written
@@ -319,6 +380,15 @@ class Row:
     stratum: int
     nodes: int
     edges: int
+    #: Share of all transition weight on the single heaviest edge, and on the
+    #: two busiest nodes. **This is what the positive control is judged on**,
+    #: not edges-per-node: `range-break-is-the-level-positive-control` asks for
+    #: "two dominant nodes with a heavy edge between them", which is
+    #: concentration. Average density did not separate the two generated
+    #: controls at all - a reflecting range read 6.01 edges a node against the
+    #: drift arm's 5.28, twice, on two different generators.
+    top_edge: float
+    top_two: float
     n_high: int
     n_low: int
     travelled_high: float
@@ -351,6 +421,27 @@ def _spearman(a: list[float], b: list[float]) -> float:
     return num / (da * db) if da > 0 and db > 0 else float("nan")
 
 
+def bodied(series: shield.Series) -> shield.Series:
+    """The same series with its wicks removed. See `SOURCES`.
+
+    A new `Series` rather than a mutation, because the arms are generated from
+    the original and a mutated input would hand the `body` run's surrogates the
+    `body` geometry twice.
+    """
+    top = np.maximum(series.open, series.close)
+    bottom = np.minimum(series.open, series.close)
+    return shield.Series(
+        feed=series.feed,
+        venue=series.venue,
+        interval=series.interval,
+        ts=series.ts,
+        open=series.open,
+        high=top,
+        low=bottom,
+        close=series.close,
+    )
+
+
 def measure(
     series: shield.Series,
     *,
@@ -360,6 +451,7 @@ def measure(
     draw: int,
     stride: int,
     warm: int,
+    source: str = "extreme",
 ) -> list[Row]:
     """Every (centrality, stratum) cell for one series.
 
@@ -370,9 +462,14 @@ def measure(
     distance being the single control that turned the magnet claim from 44.9%
     into nothing.
     """
-    books = shield.book_path(series)
-    unit = shield.units(series, 48)
-    n = len(series.close)
+    # **The source is applied before the book and before the unit**, so a
+    # `body` cell's levels, its volatility unit and its outcome all read the
+    # same geometry. Applying it to the book alone would compare body levels
+    # against a wick-derived unit, which is two units in one column.
+    seen = bodied(series) if source == "body" else series
+    books = shield.book_path(seen)
+    unit = shield.units(seen, 48)
+    n = len(seen.close)
     anchors = list(range(max(warm, 240), n - int(reach * 48) - 1, stride))
     if len(anchors) < 20:
         return []
@@ -387,13 +484,15 @@ def measure(
     dwell_pairs: dict[str, list[tuple[float, float]]] = {name: [] for name in kinds}
     seen_nodes = 0
     seen_edges = 0
+    top_edges: list[float] = []
+    top_twos: list[float] = []
 
     # **One graph per anchor, every centrality read off it.** This loop used to
     # sit inside a loop over the four centralities, so `build` ran four times
     # per anchor and the whole walk four times over - the run that projected to
     # 2.7 hours a feed and wrote nothing.
     for at in anchors:
-        graph = build(series, books, unit, tol=tol, upto=at)
+        graph = build(seen, books, unit, tol=tol, upto=at)
         nodes = graph.nodes
         if len(nodes) < 4:
             continue
@@ -402,8 +501,11 @@ def measure(
             continue
         seen_nodes = max(seen_nodes, len(nodes))
         seen_edges = max(seen_edges, len(graph.edges))
+        edge_share, two_share = graph.concentration()
+        top_edges.append(edge_share)
+        top_twos.append(two_share)
         dwelt = graph.dwell
-        close = float(series.close[at])
+        close = float(seen.close[at])
         here = bins_of(books[at], u, tol)
         stratum = min(STRATA - 1, max(0, _stratum(unit, at)))
 
@@ -438,11 +540,47 @@ def measure(
                     continue
                 per[name][stratum].append(
                     (
-                        _travelled(series, at, price, u, reach),
-                        _travelled(series, at, mate[2], u, reach),
-                        dist,
+                        _travelled(seen, at, price, u, reach),
+                        _travelled(seen, at, mate[2], u, reach),
+                        float(at),
                     )
                 )
+
+    return _emit(
+        series=series,
+        per=per,
+        dwell_pairs=dwell_pairs,
+        anchors=anchors,
+        shape=(seen_nodes, seen_edges, top_edges, top_twos),
+        tol=tol,
+        reach=reach,
+        source=source,
+        arm=draws_arm,
+        draw=draw,
+    )
+
+
+def _emit(
+    *,
+    series: shield.Series,
+    per: dict,
+    dwell_pairs: dict,
+    anchors: list[int],
+    shape: tuple,
+    tol: float,
+    reach: float,
+    source: str,
+    arm: str,
+    draw: int,
+) -> list[Row]:
+    """One `Row` per (centrality, stratum, half). Split out of `measure` only
+    to keep each function readable; it holds no logic of its own."""
+    seen_nodes, seen_edges, top_edges, top_twos = shape
+    kinds = ("degree", "weighted", "betweenness", "pagerank")
+    # Halves by anchor position, which is time: the split has to be the same
+    # one for every arm, so it is taken from the anchor list rather than from
+    # each cell's own rows.
+    midpoint = float(anchors[len(anchors) // 2]) if anchors else 0.0
 
     out: list[Row] = []
     for name in kinds:
@@ -450,31 +588,44 @@ def measure(
             [a for a, _ in dwell_pairs[name]], [b for _, b in dwell_pairs[name]]
         )
         for stratum, rows in sorted(per[name].items()):
-            if len(rows) < 20:
-                continue
-            hi = sum(r[0] for r in rows) / len(rows)
-            lo = sum(r[1] for r in rows) / len(rows)
-            out.append(
-                Row(
-                    feed=series.feed,
-                    venue=series.venue,
-                    interval=series.interval,
-                    arm=draws_arm,
-                    draw=draw,
-                    tol=tol,
-                    reach=reach,
-                    centrality=name,
-                    stratum=stratum,
-                    nodes=seen_nodes,
-                    edges=seen_edges,
-                    n_high=len(rows),
-                    n_low=len(rows),
-                    travelled_high=hi,
-                    travelled_low=lo,
-                    gap=hi - lo,
-                    dwell_r=dwell_r,
+            for half, picked in (
+                ("all", rows),
+                ("A", [r for r in rows if r[2] < midpoint]),
+                ("B", [r for r in rows if r[2] >= midpoint]),
+            ):
+                # Twenty in the whole and ten in a half: a half with the whole
+                # bar would drop most cells and leave criterion 1 untestable,
+                # which is the failure this field exists to fix.
+                floor = 20 if half == "all" else 10
+                if len(picked) < floor:
+                    continue
+                hi = sum(r[0] for r in picked) / len(picked)
+                lo = sum(r[1] for r in picked) / len(picked)
+                out.append(
+                    Row(
+                        feed=series.feed,
+                        venue=series.venue,
+                        interval=series.interval,
+                        arm=arm,
+                        draw=draw,
+                        tol=tol,
+                        reach=reach,
+                        source=source,
+                        half=half,
+                        centrality=name,
+                        stratum=stratum,
+                        nodes=seen_nodes,
+                        edges=seen_edges,
+                        top_edge=sum(top_edges) / len(top_edges) if top_edges else 0.0,
+                        top_two=sum(top_twos) / len(top_twos) if top_twos else 0.0,
+                        n_high=len(picked),
+                        n_low=len(picked),
+                        travelled_high=hi,
+                        travelled_low=lo,
+                        gap=hi - lo,
+                        dwell_r=dwell_r,
+                    )
                 )
-            )
     return out
 
 
@@ -517,13 +668,97 @@ def arms_for(series: shield.Series, rng: random.Random, fitted=None):
     }
 
 
+def generated(feed: str, interval: str, n: int = 5_000) -> shield.Series:
+    """One of the two controls, built rather than fetched. See `CONTROLS`.
+
+    `gen_range` is an Ornstein-Uhlenbeck log price with reflecting bounds: it
+    **is** a range, so a level detector that cannot find two dominant nodes in
+    it cannot find one anywhere. `gen_drift` is a two-state Markov-modulated
+    drift with the same unconditional volatility and no range at all, which is
+    the arm that must stay sparse.
+
+    Matched on unconditional volatility and bar count so the two differ in the
+    property being tested and not in their scale -
+    `a-control-is-only-for-a-named-property`.
+    """
+    rng = np.random.default_rng(hash_of("control", feed, interval))
+    sigma = 0.004
+    if feed == "gen_range":
+        # **A walk reflecting off two walls: a range by construction.**
+        #
+        # Three constructions were measured and **none separates from the
+        # drift arm on any statistic tried**, which is a result about the
+        # method rather than about the generator:
+        #
+        # * an Ornstein-Uhlenbeck pull to a centre: 6.01 edges a node against
+        #   the drift arm's 5.28;
+        # * this reflecting walk: 6.01 again, and on concentration `top_edge`
+        #   **0.0096 against the drift arm's 0.0099** - no separation at all;
+        # * two attractors with noise, which produced **no cells**: a process
+        #   that sits at one of two prices has near-zero volatility inside a
+        #   state, so the trailing unit collapses and `bins_of` refuses a
+        #   zero-width bin, correctly.
+        #
+        # The reason the first two fail is the mechanism this study rests on.
+        # A bounded walk **visits every price in its range**, so its transition
+        # graph is a chain of prices each seen about once - the range lives in
+        # the marginal distribution and never reaches the graph. And the third
+        # shows the alternative is not constructible either: a process that
+        # *only* visits two prices has no volatility to measure the range in.
+        #
+        # So the honest reading is that **a transition graph does not represent
+        # rangeness**, on a process built to be nothing but a range. That is
+        # the power check `show-power-before-reporting-a-null` asks for, and it
+        # comes back negative: the statistic cannot see the thing it was built
+        # to find, so the panel's null is a statement about the statistic and
+        # not about markets. Recorded here rather than in a verdict, because
+        # this is the control and it is where a reader will look for it.
+        wall = 25.0 * sigma
+        x = np.zeros(n)
+        for t in range(1, n):
+            x[t] = x[t - 1] + sigma * rng.standard_normal()
+            while x[t] > wall or x[t] < -wall:
+                x[t] = 2.0 * wall - x[t] if x[t] > wall else -2.0 * wall - x[t]
+        logp = x
+    else:
+        mu = np.array([+0.0012, -0.0012])
+        trans = np.array([[0.99, 0.01], [0.01, 0.99]])
+        state = np.empty(n, dtype=int)
+        state[0] = 0
+        u = rng.random(n)
+        for t in range(1, n):
+            state[t] = int(np.searchsorted(np.cumsum(trans[state[t - 1]]), u[t]))
+        logp = np.cumsum(mu[state] + sigma * rng.standard_normal(n))
+
+    close = 1000.0 * np.exp(logp)
+    # A bar's range around its close, so the detector sees wicks rather than a
+    # line - `how-markets-differ-from-every-simple-process` records markets
+    # being wickier than any simple process, and a rangeless bar would make the
+    # control easier than the data it stands in for.
+    spread = np.abs(rng.standard_normal(n)) * sigma * close
+    opened = np.concatenate([[close[0]], close[:-1]])
+    return shield.Series(
+        feed=feed,
+        venue="GENERATED",
+        interval=interval,
+        ts=np.arange(n, dtype=float) * 86_400.0,
+        open=opened,
+        high=np.maximum(opened, close) + spread,
+        low=np.minimum(opened, close) - spread,
+        close=close,
+    )
+
+
 def job(args: tuple) -> list[dict]:
-    feed, interval, store, draws, tols, reaches, stride, warm = args
+    feed, interval, store, draws, tols, reaches, stride, warm, sources = args
     rows: list[dict] = []
     try:
-        con = sqlite3.connect(store, uri=True)
-        series = shield.load(con, feed, interval)
-        con.close()
+        if feed in CONTROLS:
+            series = generated(feed, interval)
+        else:
+            con = sqlite3.connect(store, uri=True)
+            series = shield.load(con, feed, interval)
+            con.close()
         if series is None:
             return [{"kind": "error", "feed": feed, "interval": interval, "error": "no series"}]
 
@@ -543,34 +778,43 @@ def job(args: tuple) -> list[dict]:
 
         for tol in tols:
             for reach in reaches:
-                rows.extend(
-                    {"kind": "cell", **asdict(row)}
-                    for row in measure(
-                        series,
-                        tol=tol,
-                        reach=reach,
-                        draws_arm="real",
-                        draw=0,
-                        stride=stride,
-                        warm=warm,
-                    )
-                )
-                for name in ARMS:
-                    for draw in range(draws):
-                        rng = random.Random(hash_of(feed, interval, name, draw))
-                        made = arms_for(series, rng, fitted)[name]()
-                        rows.extend(
-                            {"kind": "cell", **asdict(row)}
-                            for row in measure(
-                                made,
-                                tol=tol,
-                                reach=reach,
-                                draws_arm=name,
-                                draw=draw,
-                                stride=stride,
-                                warm=warm,
-                            )
+                for source in sources:
+                    rows.extend(
+                        {"kind": "cell", **asdict(row)}
+                        for row in measure(
+                            series,
+                            tol=tol,
+                            reach=reach,
+                            draws_arm="real",
+                            draw=0,
+                            stride=stride,
+                            warm=warm,
+                            source=source,
                         )
+                    )
+                    for name in ARMS:
+                        for draw in range(draws):
+                            # The arm is generated from the **unmodified**
+                            # series and the source applied inside `measure`,
+                            # so a `body` cell's null is the real series'
+                            # surrogate seen through bodies - not a surrogate
+                            # of an already-bodied series, which would have
+                            # lost the wick distribution the shuffle needs.
+                            rng = random.Random(hash_of(feed, interval, name, draw))
+                            made = arms_for(series, rng, fitted)[name]()
+                            rows.extend(
+                                {"kind": "cell", **asdict(row)}
+                                for row in measure(
+                                    made,
+                                    tol=tol,
+                                    reach=reach,
+                                    draws_arm=name,
+                                    draw=draw,
+                                    stride=stride,
+                                    warm=warm,
+                                    source=source,
+                                )
+                            )
     except Exception as exc:
         import traceback
 
@@ -613,6 +857,7 @@ def main(argv: list[str] | None = None) -> None:
     ap.add_argument("--stride", type=int, default=20)
     ap.add_argument("--warm", type=int, default=240)
     ap.add_argument("--controls", action="store_true", help="add the two generated controls")
+    ap.add_argument("--sources", default=",".join(SOURCES), help="extreme, body, or both")
     args = ap.parse_args(argv)
 
     feeds = tuple((args.feeds or " ".join(FEEDS)).replace(",", " ").split())
@@ -621,19 +866,24 @@ def main(argv: list[str] | None = None) -> None:
     intervals = tuple(args.intervals.replace(",", " ").split())
     tols = tuple(float(t) for t in args.tols.split(","))
     reaches = tuple(float(r) for r in args.reaches.split(","))
+    sources = tuple(s.strip() for s in args.sources.split(","))
+    unknown = [s for s in sources if s not in SOURCES]
+    if unknown:
+        raise SystemExit(f"{unknown} are not sources; known: {', '.join(SOURCES)}")
 
     where = Path(args.out)
     where.mkdir(parents=True, exist_ok=True)
     sink = where / "cells.jsonl"
 
     jobs = [
-        (feed, interval, args.store, args.draws, tols, reaches, args.stride, args.warm)
+        (feed, interval, args.store, args.draws, tols, reaches, args.stride, args.warm, sources)
         for interval in intervals
         for feed in feeds
     ]
     print(
         f"{len(jobs)} jobs, {args.draws} draws an arm, {len(tols)} tols x "
-        f"{len(reaches)} reaches, {args.workers} workers -> {sink}",
+        f"{len(reaches)} reaches x {len(sources)} sources, "
+        f"{args.workers} workers -> {sink}",
         file=sys.stderr,
     )
     started = time.time()
