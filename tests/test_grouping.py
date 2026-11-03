@@ -374,7 +374,7 @@ def test_a_one_touch_group_reads_the_same_under_every_anchor():
     """The degenerate case, and worth pinning: a level with one touch has no
     edge distinct from its centre, so nothing should move."""
     group = grouping.cluster([100.0], GAP)[0]
-    prices = {group.price(a) for a in grouping.Anchor}
+    prices = {group.price(a, trade=1) for a in grouping.Anchor}
     assert prices == {100.0}
 
 
@@ -389,3 +389,43 @@ def test_an_extreme_is_the_noisier_estimate():
     moved_floor = abs(spiked.price(grouping.Anchor.FLOOR) - clean.price(grouping.Anchor.FLOOR))
     moved_centre = abs(spiked.centre - clean.centre)
     assert moved_floor > moved_centre
+
+
+def test_a_protective_anchor_follows_the_trade_and_not_the_level():
+    """**The measured hazard.** `SIDED` keys on the pivot that *formed* the
+    level, which says nothing about which way the trade faces -
+    `stop-anchor.md` found it hands a long the group's ceiling, a price above
+    its entry, on 36 to 49% of anchors. A stop belongs beyond the floor for a
+    long and the ceiling for a short, whatever formed the level."""
+    group = grouping.cluster([99.80, 100.02], GAP)[0]
+
+    assert group.price(grouping.Anchor.PROTECTIVE, trade=1) == pytest.approx(99.80)
+    assert group.price(grouping.Anchor.PROTECTIVE, trade=-1) == pytest.approx(100.02)
+
+
+def test_the_two_sides_disagree_on_a_resistance_a_long_is_trading_into():
+    """The case that produced the measurement: a level formed by a pivot high
+    that a long is now stopping below. `SIDED` says ceiling, which is above
+    the entry; `PROTECTIVE` says floor, which is where a stop goes."""
+    group = grouping.cluster([99.80, 100.02], GAP)[0]
+
+    assert group.price(grouping.Anchor.SIDED, side=1) == pytest.approx(100.02)
+    assert group.price(grouping.Anchor.PROTECTIVE, trade=1) == pytest.approx(99.80)
+
+
+def test_a_protective_anchor_without_a_trade_side_raises():
+    """There is no neutral answer to which edge a stop goes beyond, and
+    returning the centre would put the stop *inside* the cluster - the exact
+    failure the anchor exists to avoid. A silent centre would price an order
+    rather than fail."""
+    group = grouping.cluster([99.80, 100.02], GAP)[0]
+    with pytest.raises(ValueError, match="needs the trade's side"):
+        group.price(grouping.Anchor.PROTECTIVE)
+
+
+def test_the_level_side_is_not_read_by_the_protective_anchor():
+    """Separate arguments, so a caller passing the one it has cannot get the
+    other one's answer."""
+    group = grouping.cluster([99.80, 100.02], GAP)[0]
+    assert group.price(grouping.Anchor.PROTECTIVE, trade=1, side=1) == pytest.approx(99.80)
+    assert group.price(grouping.Anchor.SIDED, side=-1, trade=-1) == pytest.approx(99.80)

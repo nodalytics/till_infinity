@@ -2453,6 +2453,17 @@ opposite of what the stop is for.
 than where the level sits relative to price now - the latter flips as price
 moves, which would change a level's anchor under it.
 
+**`SIDED` is not the anchor for a stop, and that is measured.**
+[`stop-anchor.md`](../research/docs/stop-anchor.md) found it hands a long the
+group's *ceiling* - a price above the entry - on **36 to 49% of anchors**,
+because which pivot formed a level says nothing about which way the trade
+faces. `PROTECTIVE` is the one for placement: the floor for a long, the
+ceiling for a short, read off the **trade's** side. The two are separate
+arguments (`side` and `trade`) rather than one serving both, because reading
+either as the other returns a price on the wrong side of the entry, which
+prices an order rather than raising - and `PROTECTIVE` with no trade side
+raises, since the centre would put the stop inside the cluster.
+
 **The trade-off runs the other way for robustness.** An extreme is one touch,
 so a single spike moves it and nothing averages it out, where the centre is an
 estimate over the whole group. The extreme is the better *definition* and the
