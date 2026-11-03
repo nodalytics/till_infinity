@@ -73,6 +73,17 @@ class HeartbeatConfig(ActorConfig, frozen=True):
 
     path: str = str(DEFAULT_PATH)
     seconds: float = HEARTBEAT
+    #: How many strategies the node registered, **told to the actor because an
+    #: `Actor` cannot see the trader.** It has `trader_id` and nothing else.
+    #:
+    #: The count used to come from `cache.strategy_ids()`, which is **empty
+    #: until a strategy has an order**: measured, `trader.strategies()` reads 4
+    #: where `cache.strategy_ids()` reads 0 on a node that has just built. So
+    #: the healthcheck reported `0 strategies: the node is up and trading
+    #: nothing` on every healthy fresh desk and marked the container unhealthy
+    #: - a false alarm on the one check that is supposed to be trusted, and it
+    #: fired within an hour of that check correctly catching a real outage.
+    registered: int = 0
 
 
 class Heartbeat(Actor):
@@ -117,9 +128,10 @@ class Heartbeat(Actor):
     def reading(self, running: bool = True) -> dict[str, Any]:
         """The claims, each with its source.
 
-        `strategies` and `actors` come from the trader, `venue` from whether
-        an execution client reports connected - **the venue's word and not
-        ours**, which is the whole argument of `lifecycle.py`.
+        `strategies` is the count the node registered, handed over at
+        construction because an `Actor` cannot reach the trader. `venue` comes
+        from whether an execution client reports connected - **the venue's word
+        and not ours**, which is the whole argument of `lifecycle.py`.
         """
         venue = False
         try:
@@ -132,7 +144,13 @@ class Heartbeat(Actor):
             "running": running,
             "trader": str(self.trader_id),
             "venue_connected": venue,
-            "strategies": len(self._strategy_ids()),
+            # What was registered, which is what "is this node running any
+            # desks" means. `with_orders` is the cache's view and is reported
+            # beside it rather than instead of it: "registered 12, none
+            # trading yet" and "registered 0" are different problems and the
+            # old reading could not tell them apart.
+            "strategies": max(int(self._cfg.registered), len(self._strategy_ids())),
+            "with_orders": len(self._strategy_ids()),
             "armed": self._armed(),
             "wrote": self._wrote,
             "write_failures": self._failed,
