@@ -41,6 +41,8 @@ threshold inside statespace and was the conversion throwing the volume away.
 
 from __future__ import annotations
 
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from nautilus_trader.common.actor import Actor
@@ -109,6 +111,38 @@ class StatespaceConfig(ActorConfig, frozen=True):
     #: "has never once run in production" while its end-to-end path passed
     #: every test.
     proposals: bool = True
+    #: Whether to load the saved fold progress on start. **Live must; a
+    #: backtest must not.**
+    #:
+    #: `Engine.observe_bar` refuses a bar at or before the last timestamp
+    #: folded for that feed-interval, which is right for a live service being
+    #: re-announced a backfill and fatal for a backtest: the first run over a
+    #: window saves `seen.at` at the window's end, so every later run over the
+    #: same window is rejected bar for bar. Measured on a 5,135-bar cell - run
+    #: one placed 18 orders, run two placed 0, same process and same data - and
+    #: in a 72-cell sweep the first cell poisons the other seventy-one.
+    restore: bool = True
+    #: Where the fold state lives, overriding `STATESPACE_STATE_DIR`. A
+    #: backtest points this at a directory of its own so a measurement can
+    #: neither read the live desk's progress nor leave any behind.
+    state_dir: str | None = None
+    #: Intervals to fold, overriding `STATESPACE_INTERVALS`. **`None` means
+    #: "whatever `bar_types` subscribes to", which is the only value that
+    #: cannot be silently wrong.**
+    #:
+    #: `config.DEFAULT_INTERVALS` is `('1m', '5m')` while every catalogue bar
+    #: is 15-minute, so `Settings.wants` returned `False` for all 5,135 bars of
+    #: a run and `observe_bar` returned `None` for each. That return also
+    #: covers "unwarmed" and "no variance", so there was nothing to see: no
+    #: log, no exception, and nine of twelve sweep leaves reporting `+0.00 over
+    #: 0 positions` as though the rules had declined to trade.
+    #:
+    #: Deriving it from the subscription removes the mismatch by construction
+    #: and costs nothing: folding the interval the actor is handed is strictly
+    #: cheaper than folding an interval nobody sends. The cost argument behind
+    #: `DEFAULT_INTERVALS` is about the *product* of feeds and intervals, which
+    #: this does not widen.
+    intervals: tuple[str, ...] | None = None
 
 
 class StatespaceActor(Actor):
@@ -146,8 +180,15 @@ class StatespaceActor(Actor):
         from . import service as ss_service  # noqa: F401 - topic parity
         from .engine import Engine
 
-        self._engine = Engine(settings=ss_config.Settings.from_env())
-        self._engine.restore()
+        settings = ss_config.Settings.from_env()
+        if self._cfg.state_dir is not None:
+            settings = replace(settings, state_dir=Path(self._cfg.state_dir))
+        folds = self._cfg.intervals or self._subscribed_intervals()
+        if folds:
+            settings = replace(settings, intervals=tuple(folds))
+        self._engine = Engine(settings=settings)
+        if self._cfg.restore:
+            self._engine.restore()
 
         for raw in self._cfg.bar_types:
             bar_type = BarType.from_str(raw)
@@ -155,6 +196,20 @@ class StatespaceActor(Actor):
             self._register(bar_type)
             self.subscribe_bars(bar_type)
             self.log.info(f"folding {bar_type}")
+
+    def _subscribed_intervals(self) -> tuple[str, ...]:
+        """The intervals `bar_types` names, deduplicated and in order.
+
+        An empty `bar_types` returns empty, which leaves `Settings` as the
+        environment configured it - the live node's case when `STATESPACE_BARS`
+        is unset and no actor is built at all.
+        """
+        found: list[str] = []
+        for raw in self._cfg.bar_types:
+            name = _interval(BarType.from_str(raw))
+            if name and name not in found:
+                found.append(name)
+        return tuple(found)
 
     def _register(self, bar_type: BarType) -> None:
         """Build the configured detectors and hand them to Nautilus.
@@ -239,8 +294,21 @@ class StatespaceActor(Actor):
         bar_type = str(bar.bar_type)
         symbol = bar.bar_type.instrument_id.symbol.value
         feeds = self._cfg.feeds or {}
+        # **The slash has to go, and its absence here cost every trade.**
+        # `strategies/sizes.feed_of` keys a feed as `symbol.lower()` with the
+        # slash stripped, and `Surprise.wants` checks the published feed
+        # against `SurpriseProfile.feeds`, which holds `eurusd`. This side
+        # kept the slash, so a catalogue instrument named `EUR/USD` published
+        # `eur/usd`, matched nothing, and **every proposal was declined on
+        # every slashed instrument** - a backtest over 10,270 bars and quotes
+        # that placed not one order and raised nothing.
+        #
+        # Stripped here rather than widened there: a feed name is one thing,
+        # and `exposure.LEGS` and the statespace store are both already keyed
+        # without the separator. `feeds` still overrides, for a venue whose
+        # symbol maps to a feed name no rule could guess.
         return {
-            "feed": feeds.get(symbol, symbol.lower()),
+            "feed": feeds.get(symbol, symbol.lower().replace("/", "")),
             "interval": _interval(bar.bar_type),
             # ts_event is the close; the fold wants the open.
             "time": (bar.ts_event / 1e9) - self._seconds.get(bar_type, 0.0),

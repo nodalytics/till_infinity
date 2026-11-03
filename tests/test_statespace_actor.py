@@ -226,3 +226,144 @@ class TestTheProposalPath:
         assert cfg.proposals_topic != cfg.topic, (
             "two producers on one topic is how a consumer loses track of which produced what"
         )
+
+
+# --------------------------------------- the two reasons a backtest placed nothing
+
+
+class TestABacktestDoesNotInheritState:
+    """**Two silent defects, each of which alone zeroed nine of twelve leaves.**
+
+    `research/ideas/leaf_sweep.py` reported `+0.00 over 0 positions` for every
+    `statespace-*` leaf on every feed, and that read as "this rule places
+    nothing". It was not a measurement: the rule never evaluated a single bar.
+
+    Both causes were found by counting `Engine.observe_bar`'s return over a
+    real 5,135-bar run. With both fixed the same cell places **18 orders and
+    takes 6 positions**.
+    """
+
+    def test_the_folded_intervals_cover_the_bar_type_the_actor_subscribes_to(self) -> None:
+        """**Cause one: a scope mismatch that reads as a null.**
+
+        `config.DEFAULT_INTERVALS` is `('1m', '5m')` and the catalogue holds
+        **only** 15-minute bars - `node/corpus.py` writes no 1m or 5m series at
+        all. So `Settings.wants('eurusd', '15m')` was `False` and
+        `observe_bar` returned `None` on all 5,135 bars, with no log line and
+        no exception, because that return covers "out of scope" and three
+        expected cases alike.
+
+        A desk subscribed to an interval its own engine will not fold cannot
+        trade, and that is a config error rather than a result. Asserted here
+        as the join: whatever `DEFAULT_INTERVALS` becomes, the test says which
+        bar types a statespace desk can be built on.
+        """
+        from till_infinity.statespace import config as ss_config
+
+        wanted = ss_config.Settings(intervals=("15m",))
+        assert wanted.wants("eurusd", "15m") is True
+        assert ss_config.Settings(intervals=("1m", "5m")).wants("eurusd", "15m") is False
+
+    def test_a_rerun_over_the_same_bars_folds_them_again(self) -> None:
+        """**Cause two: persisted progress makes a backtest unrepeatable.**
+
+        `on_start` calls `Engine.restore()`, and `observe_bar` refuses a bar
+        whose timestamp is at or before the last one folded for that
+        feed-interval - correct for a live service being re-announced a
+        backfill, fatal for a backtest. The first run over a window folds it
+        and saves `seen.at` at the window's end; every later run over the same
+        window is rejected bar for bar.
+
+        Measured: run one places **18 orders**, run two over the identical
+        period places **0**, same process, same data. In a 72-cell sweep the
+        first cell poisons the other seventy-one, so the defect scales with how
+        much you measure.
+        """
+        from till_infinity.statespace import config as ss_config
+        from till_infinity.statespace.engine import Engine
+
+        def bar(when: float) -> dict[str, Any]:
+            return {
+                "feed": "eurusd",
+                "interval": "15m",
+                "time": when,
+                "open": 1.1000,
+                "high": 1.1020,
+                "low": 1.0990,
+                "close": 1.1010,
+                "volume": 100.0,
+                "closed": True,
+            }
+
+        settings = ss_config.Settings(intervals=("15m",), warm_bars=1)
+        engine = Engine(settings=settings)
+        first = [engine.observe_bar(bar(1000.0 + 900.0 * i)) for i in range(5)]
+        assert sum(r is not None for r in first) == 5, "a fresh engine folds every bar"
+
+        replayed = [engine.observe_bar(bar(1000.0 + 900.0 * i)) for i in range(5)]
+        assert sum(r is not None for r in replayed) == 0, (
+            "the same engine refuses a replay, which is the live behaviour "
+            "being pinned, not the defect"
+        )
+
+        fresh = Engine(settings=settings)
+        again = [fresh.observe_bar(bar(1000.0 + 900.0 * i)) for i in range(5)]
+        assert sum(r is not None for r in again) == 5, (
+            "a backtest needs an engine that has not seen the window; this is "
+            "what `restore=False` buys"
+        )
+
+    def test_an_actor_can_be_told_not_to_restore(self) -> None:
+        """The switch the fix turns on for a backtest. Default is to restore,
+        because live must: a desk that forgot its progress on every deploy
+        would refold whatever the bus re-announced."""
+        assert ss_actor.StatespaceConfig().restore is True
+        assert ss_actor.StatespaceConfig(restore=False).restore is False
+
+    def test_the_folded_interval_follows_the_subscription(self) -> None:
+        """The fix that makes the mismatch impossible rather than loud.
+
+        An actor handed a 15-minute bar type folds 15-minute bars, whatever
+        `STATESPACE_INTERVALS` says, because folding the interval it is sent is
+        strictly cheaper than folding one nobody sends. `DEFAULT_INTERVALS`
+        guards the *product* of feeds and intervals, which this does not widen.
+        """
+        cfg = ss_actor.StatespaceConfig(
+            bar_types=(
+                "EUR/USD.DERIV-15-MINUTE-LAST-EXTERNAL",
+                "GBP/USD.DERIV-15-MINUTE-LAST-EXTERNAL",
+                "GOLD.DERIV-1-HOUR-LAST-EXTERNAL",
+            )
+        )
+        actor = ss_actor.StatespaceActor(cfg)
+
+        assert actor._subscribed_intervals() == ("15m", "1h"), "deduplicated, in order"
+        assert ss_actor.StatespaceActor(ss_actor.StatespaceConfig())._subscribed_intervals() == ()
+
+    def test_a_backtest_actor_is_built_without_the_desks_state(self, monkeypatch) -> None:
+        """The join: `desk_config` must ask for the isolated actor, or the two
+        fixes above sit in the config and never reach a measurement.
+
+        `TRADING_SYMBOLS` is set because `importable_actors` builds no
+        statespace actor at all when the venue names no symbol - an actor
+        subscribed to nothing is a fold that never runs, so the live node omits
+        it rather than shipping one.
+        """
+        from till_infinity.node import desks
+
+        monkeypatch.setenv("TRADING_SYMBOLS", "EUR/USD")
+
+        live = desks.importable_actors("DERIV")
+        measured = desks.importable_actors("DERIV", fresh=True)
+
+        def statespace(actors):
+            return next((a for a in actors if "Statespace" in a.actor_path), None)
+
+        assert statespace(live).config.get("restore") is None, "live restores by default"
+        found = statespace(measured).config
+        assert found["restore"] is False
+        assert "statespace-backtest-" in found["state_dir"], (
+            "a directory of this run's own, not the deployed one"
+        )
+        second = statespace(desks.importable_actors("DERIV", fresh=True)).config
+        assert found["state_dir"] != second["state_dir"], "two cells of one sweep must not share it"

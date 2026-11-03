@@ -791,3 +791,74 @@ def test_a_trailing_order_at_the_venue_makes_advance_stand_down():
     strategy.on_quote_tick(quotes(count=1)[0])
     assert strategy.passed_over.get("(exit):trailing-conflict") == 1
     assert strategy.passed_over.get("(exit):advanced") == 1, "advance moved a stop anyway"
+
+
+class TestTheTrailGetsAVolatilityFromEveryRule:
+    """**`advance` stood down on one rule in four, and silently.**
+
+    `price_distance` multiplies by `vol_bps`, so an intent carrying none gets
+    no trail at all - and a trail that never moves a stop is indistinguishable
+    from a trail that was never switched on.
+
+    Measured before the fix: `TRADING_TRAIL_VOL` at 0.25, 0.5, 1.0 and 3.0,
+    crossed with `TRADING_TRAIL_SIGMAS` at 0.5 and 0.0, moved
+    `smc-bos-causal` by **0.00 on all eight combinations**, while the same
+    settings moved `statespace-surprise` from -93.58 to -56.12 and
+    `statespace-long` from -145.89 to -58.90. After it, the structure rule
+    moves too: -62.32 at no trail against -16.46, -21.70 and +40.06 at 0.5, 1.0
+    and 2.0 volatility units. **Eight positions, so those are mechanics and
+    not an edge** - `node/corpus.py` holds 76 days.
+    """
+
+    def _intent(self, **features):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(features=features)
+
+    def test_a_folded_log_variance_is_used_as_it_stands(self):
+        """The statespace rules publish `vol_bps` already, in the unit
+        `price_distance` wants, so nothing is converted."""
+        from till_infinity.strategies.exits import _trail_vol_bps
+
+        assert _trail_vol_bps(self._intent(vol_bps=2.3231)) == pytest.approx(2.3231)
+
+    def test_an_atr_is_converted_rather_than_renamed(self):
+        """`structure.py` publishes `bos_atr` and says in place why it is not
+        called `vol_bps`: that column is a folded log variance elsewhere, and
+        an ATR written into it would put one journal column in two estimators.
+        So the conversion happens at the one caller that needs a distance.
+
+        An ATR is a price distance and `vol_bps` is relative, so the factor is
+        `atr / price * 10_000` - the inverse of `price_distance`.
+        """
+        from till_infinity.risk.sizing import price_distance
+        from till_infinity.strategies.exits import _trail_vol_bps
+
+        atr, price = 0.0012, 1.1000
+        found = _trail_vol_bps(self._intent(bos_atr=atr, bos_close=price))
+
+        assert found == pytest.approx(atr / price * 10_000.0)
+        assert price_distance(price, found, 1.0) == pytest.approx(atr), (
+            "one volatility unit must come back as the ATR it was built from"
+        )
+
+    def test_the_folded_reading_wins_where_a_rule_carries_both(self):
+        """Not an arbitrary precedence: `vol_bps` is the measured estimator
+        this desk scores on, and the ATR is a fallback for the one rule that
+        publishes no folded reading."""
+        from till_infinity.strategies.exits import _trail_vol_bps
+
+        both = self._intent(vol_bps=2.0, bos_atr=0.0012, bos_close=1.1)
+        assert _trail_vol_bps(both) == pytest.approx(2.0)
+
+    def test_a_rule_with_no_volatility_gets_no_trail_rather_than_a_guess(self):
+        """**The control for the fix.** Inventing a distance here would put a
+        stop at a price nothing measured, which is worse than standing down -
+        and `advance` already returns None on a zero, so standing down is the
+        behaviour the rest of the code expects."""
+        from till_infinity.strategies.exits import _trail_vol_bps
+
+        assert _trail_vol_bps(self._intent()) == 0.0
+        assert _trail_vol_bps(self._intent(bos_atr=0.0012)) == 0.0, "an ATR with no anchor price"
+        assert _trail_vol_bps(self._intent(bos_close=1.1)) == 0.0, "a price with no ATR"
+        assert _trail_vol_bps(self._intent(vol_bps=0.0, bos_atr=0.0, bos_close=0.0)) == 0.0

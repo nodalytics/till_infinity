@@ -194,6 +194,7 @@ from .pivots import Pivots, Session, Sessions, levels_from
 from .sentiment import HALVES, FearGreed, Mood
 from .spread import RollingSpread
 from .trend import Channel, Pivot, Trend, Trendline, Trendlines, VarianceRatio
+from .zigzag import Forecast, Prediction, Shape, Source, Zigzag, legs_from
 
 #: What a discovery sweep may instantiate, and on which sources.
 #:
@@ -245,6 +246,9 @@ BAR_DETECTORS: dict[str, tuple[Callable[..., object], tuple[Reading, ...]]] = {
     # volatility half is measured large, and a claim on the composite cannot
     # say which it rests on.
     "fear_greed": (FearGreed, ()),
+    # Legs between confirmed turns. No source, because it reads a bar's whole
+    # shape - and `Source` chooses *which* prices, which is its own argument.
+    "zigzag": (Zigzag, ()),
     # Arithmetic on the prior period's range, so no source and no scale - and
     # **the control the swing book has never had**: no parameters, no
     # detector, nothing to fit. If `levels` does not beat this, the swing
@@ -559,6 +563,7 @@ __all__ = [
     "Event",
     "FearGreed",
     "Focus",
+    "Forecast",
     "Forget",
     "Gap",
     "Gaps",
@@ -575,12 +580,15 @@ __all__ = [
     "PivotSource",
     "Pivots",
     "Point",
+    "Prediction",
     "Reading",
     "RollingSpread",
     "Session",
     "Sessions",
+    "Shape",
     "Sided",
     "SlopeMomentum",
+    "Source",
     "Speeds",
     "Structure",
     "Swing",
@@ -590,6 +598,7 @@ __all__ = [
     "Trendlines",
     "VarianceRatio",
     "Visit",
+    "Zigzag",
     "Zone",
     "build_detector",
     "check_scale",
@@ -597,6 +606,7 @@ __all__ = [
     "common",
     "crowding",
     "declaration",
+    "legs_from",
     "levels_from",
     "modes",
     "nearest",

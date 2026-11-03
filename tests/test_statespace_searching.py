@@ -947,3 +947,43 @@ class TestTheShapeGrid:
         assert len(strided) < len(full), "the stride cost no power, so it did nothing"
         for at, label in strided.items():
             assert full.get(at) == label, f"stride re-dated or relabelled {at}"
+
+
+def test_the_published_feed_name_carries_no_separator():
+    """**Every proposal on a slashed instrument was declined, silently.**
+
+    `StatespaceActor._payload` keyed a feed as `symbol.lower()`, keeping the
+    slash, so a catalogue instrument named `EUR/USD` published `eur/usd`.
+    `Surprise.wants` checks that against `SurpriseProfile.feeds`, which holds
+    `eurusd`, and `strategies.sizes.feed_of` strips the separator - so the two
+    sides disagreed and a backtest over 10,270 bars and quotes placed not one
+    order and raised nothing.
+
+    Pinned against `sizes.feed_of` rather than against a literal, so the two
+    cannot drift apart again: whichever way a feed is named, both sides name
+    it the same.
+    """
+    from nautilus_trader.model.data import Bar, BarType
+    from nautilus_trader.model.identifiers import InstrumentId
+    from nautilus_trader.model.objects import Price, Quantity
+
+    from till_infinity.statespace.actor import StatespaceActor, StatespaceConfig
+    from till_infinity.strategies.sizes import feed_of
+
+    instrument = InstrumentId.from_str("EUR/USD.DERIV")
+    bar_type = BarType.from_str(f"{instrument}-15-MINUTE-LAST-EXTERNAL")
+    bar = Bar(
+        bar_type,
+        Price(1.1, 5),
+        Price(1.2, 5),
+        Price(1.0, 5),
+        Price(1.15, 5),
+        Quantity(1, 0),
+        ts_event=0,
+        ts_init=0,
+    )
+    actor = StatespaceActor.__new__(StatespaceActor)
+    actor._cfg = StatespaceConfig(bar_types=(str(bar_type),))
+    actor._seconds = {}
+
+    assert actor._payload(bar)["feed"] == feed_of(instrument) == "eurusd"

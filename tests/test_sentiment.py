@@ -440,3 +440,37 @@ def test_convictions_sign_is_the_windows_net_move_not_the_recent_direction():
     assert found.parts["pressure"] == pytest.approx(0.0, abs=0.1)
     assert abs(found.parts["conviction"]) > 0.25
     assert found.parts["conviction"] * (sine[-1][3] - sine[0][3]) > 0.0
+
+
+def test_a_dead_patch_at_the_end_of_the_window_does_not_raise():
+    """**A production crash, found by a study and not by this file.**
+
+    `_expansion` guarded the window's median range against zero and not the
+    *recent* mean, so a window whose median is positive while its last fifth
+    is all zero-range bars computed `log2(0 / middle)` and raised
+    `ValueError: math domain error` - straight into Nautilus's bar handler,
+    on any feed that goes flat for a fifth of the span. Gold's daily history
+    carries three such bars, and twelve consecutive flat bars at the default
+    span of 60 was enough.
+
+    The two guards are not the same condition: a feed can range normally for
+    most of a window and stop dead at the end, which is exactly what a halt
+    or a holiday looks like.
+    """
+    found = FearGreed(span=20, warmup=10)
+    for i in range(16):
+        found.update_raw(100.0, 101.0, 99.0, 100.0 + i * 0.01)
+    for _ in range(4):
+        found.update_raw(100.0, 100.0, 100.0, 100.0)
+
+    assert found.parts["expansion"] == 0.0
+    assert found.initialized is True
+
+
+def test_a_window_dead_throughout_is_the_other_guard():
+    """The case that was already handled, kept beside the new one so a future
+    change cannot satisfy one and lose the other."""
+    found = FearGreed(span=20, warmup=10)
+    for _ in range(20):
+        found.update_raw(100.0, 100.0, 100.0, 100.0)
+    assert found.parts["expansion"] == 0.0

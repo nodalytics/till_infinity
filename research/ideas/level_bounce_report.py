@@ -167,6 +167,129 @@ def part_two(rows: list[dict], grade: str) -> list[dict]:
     return out
 
 
+def duration_cells(rows: list[dict]) -> list[dict]:
+    """The time exponent per cell, real against the hardest null arm.
+
+    **The comparison is the arms, never the asymptotic 0.5.** The estimator
+    reads 0.397 on a simulated walk at a 20-bar horizon and 0.429 at 48 - the
+    bias is finite-horizon censoring and is measured in
+    `level_bounce_duration` - so an absolute exponent is not quotable and only
+    the excess over the hardest arm is.
+
+    "Hardest" for duration means the arm whose exponent is **furthest from
+    real in the direction that would explain it away**, which is the largest
+    arm exponent: a bounce with a characteristic length decays faster than a
+    power law, so the claim predicts real **above** its arms.
+    """
+    out = []
+    for (feed, interval, kind), arms in sorted(_grouped(rows).items()):
+        real = _mean_of(arms.get("real", []), ["survival", "exponent"])
+        if not real:
+            continue
+        # **Hardest by S(8), not by the exponent.** S(8) is the deciding
+        # statistic under the corrected pass rule - monotone across the whole
+        # planted-length sweep where the exponent is not - so the arm that has
+        # to be beaten is the one with the longest departures, and its exponent
+        # is reported for the same arm rather than cherry-picked from another.
+        best = None
+        for arm in NULLS:
+            vals = _mean_of(arms.get(arm, []), ["survival", "at", "8"])
+            if not vals:
+                continue
+            top = max(vals)
+            if best is None or top > best[1]:
+                best = (arm, top)
+        se = _mean_of(arms.get("real", []), ["survival", "exponent_se"])
+        med = _mean_of(arms.get("real", []), ["survival", "median"])
+        arm_med = _mean_of(arms.get(best[0], []), ["survival", "median"]) if best else []
+        better = [r["survival"]["power_better"] for r in arms.get("real", []) if r.get("survival")]
+        arm_expt = (
+            (_mean_of(arms.get(best[0], []), ["survival", "exponent"]) or [0.0])[0] if best else 0.0
+        )
+        t = (real[0] - arm_expt) / se[0] if best and se and se[0] > 0 else 0.0
+        out.append(
+            {
+                "feed": feed,
+                "interval": interval,
+                "kind": kind,
+                "n": int(_mean_of(arms.get("real", []), ["survival", "n"])[0]),
+                "censored": (_mean_of(arms.get("real", []), ["survival", "censored"]) or [0.0])[0],
+                "median": med[0] if med else None,
+                "arm_median": arm_med[0] if arm_med else None,
+                "s2": (_mean_of(arms.get("real", []), ["survival", "at", "2"]) or [0.0])[0],
+                "s8": (_mean_of(arms.get("real", []), ["survival", "at", "8"]) or [0.0])[0],
+                "arm_s8": best[1] if best else 0.0,
+                "tail": (_mean_of(arms.get("real", []), ["survival", "tail"]) or [0.0])[0],
+                "exponent": real[0],
+                "se": se[0] if se else 0.0,
+                "power_better": bool(better and all(better)),
+                "hardest": best[0] if best else None,
+                "hardest_exponent": (
+                    (_mean_of(arms.get(best[0], []), ["survival", "exponent"]) or [0.0])[0]
+                    if best
+                    else None
+                ),
+                "excess": (
+                    real[0]
+                    - (_mean_of(arms.get(best[0], []), ["survival", "exponent"]) or [0.0])[0]
+                    if best
+                    else None
+                ),
+                "t": t,
+                "p": _p_two_sided(t),
+            }
+        )
+    return out
+
+
+def part_two_survival(rows: list[dict], grade: str) -> list[dict]:
+    """The grade's exponent difference, high-grade minus low, against the arms.
+
+    The causal grading question asked in the time domain: do a level's
+    **previous** durations say anything about its next one. Same split as the
+    shape and R versions - each compression-by-age cell's own median grade - so
+    the three answers are comparable.
+    """
+    path = ["grades", grade, "survival"]
+    out = []
+    for (feed, interval, kind), arms in sorted(_grouped(rows).items()):
+        real = _mean_of(arms.get("real", []), [*path, "diff"])
+        if not real:
+            continue
+        se = _mean_of(arms.get("real", []), [*path, "se"])
+        best = None
+        for arm in NULLS:
+            vals = _mean_of(arms.get(arm, []), [*path, "diff"])
+            if not vals:
+                continue
+            top = max(vals)
+            if best is None or top > best[1]:
+                best = (arm, top)
+        t = real[0] / se[0] if se and se[0] > 0 else 0.0
+        out.append(
+            {
+                "feed": feed,
+                "interval": interval,
+                "kind": kind,
+                "n_high": int((_mean_of(arms.get("real", []), [*path, "n_high"]) or [0])[0]),
+                "n_low": int((_mean_of(arms.get("real", []), [*path, "n_low"]) or [0])[0]),
+                "exponent_high": (
+                    _mean_of(arms.get("real", []), [*path, "exponent_high"]) or [0.0]
+                )[0],
+                "exponent_low": (_mean_of(arms.get("real", []), [*path, "exponent_low"]) or [0.0])[
+                    0
+                ],
+                "diff": real[0],
+                "se": se[0] if se else 0.0,
+                "t": t,
+                "p": _p_two_sided(t),
+                "hardest": best[0] if best else None,
+                "excess": real[0] - best[1] if best else None,
+            }
+        )
+    return out
+
+
 def deflated(cells: list[dict]) -> dict:
     """The Sharpe the best of these cells would show if every one were nothing.
 
@@ -206,8 +329,13 @@ def main() -> None:
     for row in rows:
         if row["arm"] == "real":
             by_kind[(row["interval"], row["kind"])].append(row["shares"])
-    print(f"{'interval':9s} {'kind':9s} {'n':>8s} " + " ".join(f"{k:>9s}" for k in
-          ("reject", "spike", "leg", "run", "drift", "through", "stall", "sharp")))
+    print(
+        f"{'interval':9s} {'kind':9s} {'n':>8s} "
+        + " ".join(
+            f"{k:>9s}"
+            for k in ("reject", "spike", "leg", "run", "drift", "through", "stall", "sharp")
+        )
+    )
     for (interval, kind), got in sorted(by_kind.items()):
         total = sum(s["n"] for s in got)
         print(
@@ -260,22 +388,105 @@ def main() -> None:
         )
         print(f"  deflated: {deflated(got)}")
 
+    print("\n=== duration: the time exponent, real against the hardest null arm ===")
+    print(
+        "  The asymptotic walk exponent is 0.5, but this estimator reads 0.397 on a\n"
+        "  simulated walk at horizon 20 and 0.429 at 48, so the ARMS are the comparison\n"
+        "  and the 0.5 is only an anchor.\n"
+        "  A characteristic length shows as pow? FALSE and S8 above the arm's S8.\n"
+        "  The EXPONENT is non-monotone in the planted length (0.426 -> 0.457 -> 0.245\n"
+        "  -> 0.113 at lengths 0/2/8/16) and so cannot carry the sign - it is printed\n"
+        "  as description. dS8 is the deciding column.\n"
+    )
+    dcells = duration_cells(rows)
+    print(
+        f"{'feed':9s} {'iv':4s} {'kind':9s} {'n':>6s} {'cens':>6s} {'tail':>6s} "
+        f"{'S2':>6s} {'S8':>6s} {'armS8':>6s} {'dS8':>7s} {'expt':>7s} {'se':>7s} "
+        f"{'pow?':>5s} {'hardest':>14s} {'theirs':>7s} {'dexpt':>8s} {'t':>6s}"
+    )
+    for c in dcells:
+        print(
+            f"{c['feed']:9s} {c['interval']:4s} {c['kind']:9s} {c['n']:6d} "
+            f"{c['censored']:6.3f} {c['tail']:6.3f} "
+            f"{c['s2']:6.3f} {c['s8']:6.3f} {c['arm_s8']:6.3f} "
+            f"{_fmt(c['s8'] - c['arm_s8'], 7, 3)} "
+            f"{c['exponent']:7.4f} {c['se']:7.4f} {str(c['power_better'])[:5]:>5s} "
+            f"{(c['hardest'] or ''):>14s} {(c['hardest_exponent'] or 0):7.4f} "
+            f"{_fmt(c['excess'], 8)} {c['t']:+6.2f}"
+        )
+    if dcells:
+        qs = benjamini_hochberg([c["p"] for c in dcells])
+        longer = [c for c in dcells if c["s8"] > c["arm_s8"]]
+        print(
+            f"  cells {len(dcells)}; **S8 above the hardest arm's in "
+            f"{len(longer)}**; exponent above its arm in "
+            f"{sum(1 for c in dcells if (c['excess'] or 0) > 0)}; "
+            f"BH on the exponent {sum(1 for q in qs if q < 0.05)}; "
+            f"power-law still better in {sum(1 for c in dcells if c['power_better'])} "
+            f"(a characteristic length would make this small)"
+        )
+        cens = [c["censored"] for c in dcells]
+        print(
+            f"  censored share across cells: min {min(cens):.3f} "
+            f"median {sorted(cens)[len(cens) // 2]:.3f} max {max(cens):.3f}"
+        )
+        no_med = [c for c in dcells if c["median"] is None]
+        if no_med:
+            print(f"  cells whose curve never reaches 0.5 (longer than the horizon): {len(no_med)}")
+
+    print("\n=== duration: does a level's PREVIOUS durations predict its next ===")
+    got = part_two_survival(rows, "long_share")
+    if got:
+        print(
+            f"{'feed':9s} {'iv':4s} {'kind':9s} {'nhi':>6s} {'nlo':>6s} "
+            f"{'ehi':>7s} {'elo':>7s} {'diff':>8s} {'se':>7s} {'t':>6s} "
+            f"{'hardest':>14s} {'excess':>8s}"
+        )
+        for c in got:
+            print(
+                f"{c['feed']:9s} {c['interval']:4s} {c['kind']:9s} {c['n_high']:6d} "
+                f"{c['n_low']:6d} {c['exponent_high']:7.4f} {c['exponent_low']:7.4f} "
+                f"{_fmt(c['diff'], 8)} {c['se']:7.4f} {c['t']:+6.2f} "
+                f"{(c['hardest'] or ''):>14s} {_fmt(c['excess'], 8)}"
+            )
+        qs = benjamini_hochberg([c["p"] for c in got])
+        print(
+            f"  cells {len(got)}; beating their hardest null "
+            f"{sum(1 for c in got if c['excess'] is not None and c['excess'] > 0)}; "
+            f"BH survivors {sum(1 for q in qs if q < 0.05)}; "
+            f"positive {sum(1 for c in got if c['diff'] > 0)}"
+        )
+
+    print("\n=== does duration restate shape or R? Spearman, real arm ===")
+    keys = ("r_mtm", "r1", "r2", "r3", "peak_at", "held", "excursion", "sharp", "run")
+    print(f"{'iv':4s} {'kind':9s} {'n':>8s} " + " ".join(f"{k:>9s}" for k in keys))
+    pooled: dict = defaultdict(list)
+    for row in rows:
+        if row["arm"] == "real" and row.get("correlations"):
+            pooled[(row["interval"], row["kind"])].append(row["correlations"])
+    for (interval, kind), got2 in sorted(pooled.items()):
+        total = sum(c.get("n", 0) for c in got2)
+        cells = " ".join(
+            f"{sum(c.get(k, 0.0) * c.get('n', 0) for c in got2) / max(1.0, total):9.3f}"
+            for k in keys
+        )
+        print(f"{interval:4s} {kind:9s} {total:8.0f} {cells}")
+
     print("\n=== kinds against pivots, mean R excess over own nulls, per feed ===")
     best: dict = defaultdict(dict)
     for c in part_one(rows):
         if c["excess"] is not None:
             best[(c["feed"], c["interval"])][c["kind"]] = c["excess"]
-    print(f"{'feed':9s} {'iv':4s} " + " ".join(f"{k:>11s}" for k in
-          ("levels", "bjorgum", "pips", "pivots")) + "   levels-pivots")
+    print(
+        f"{'feed':9s} {'iv':4s} "
+        + " ".join(f"{k:>11s}" for k in ("levels", "bjorgum", "pips", "pivots"))
+        + "   levels-pivots"
+    )
     wins = 0
     seen = 0
     for (feed, interval), got in sorted(best.items()):
         row = " ".join(_fmt(got.get(k), 11) for k in ("levels", "bjorgum", "pips", "pivots"))
-        gap = (
-            got["levels"] - got["pivots"]
-            if "levels" in got and "pivots" in got
-            else None
-        )
+        gap = got["levels"] - got["pivots"] if "levels" in got and "pivots" in got else None
         if gap is not None:
             seen += 1
             wins += gap > 0
@@ -299,13 +510,21 @@ def main() -> None:
     if power:
         print("\n=== power: planted bounce, and planted grading ===")
         print(
+            "  med@ is how many draws of the cell produced a median at all. A\n"
+            "  median exists only where the survival curve reaches 0.5 inside the\n"
+            "  horizon, so averaging the draws that did CONDITIONS ON THE BOUNCE\n"
+            "  BEING SHORT - the longest-lasting draws are the ones excluded, which\n"
+            "  is the censoring bias Kaplan-Meier avoids, reappearing a layer up.\n"
+            "  Read the median only where med@ is the full draw count; below that it\n"
+            "  is biased short, and the shortfall is itself the finding.\n"
             "  uniform: the control that must read nothing on the grade, because\n"
             "  every level is the same. graded: the alternative, where levels differ\n"
             "  and a level's own past is informative. Blind point is where |t| < 2.\n"
         )
         print(
             f"{'feed':9s} {'sweep':8s} {'level':>6s} {'eps':>6s} {'hold':>7s} "
-            f"{'sharp':>7s} {'meanR':>9s} {'gradeR':>9s} {'se':>8s} {'t':>6s} {'auc':>6s}"
+            f"{'sharp':>7s} {'meanR':>9s} {'gradeR':>9s} {'se':>8s} {'t':>6s} {'auc':>6s} "
+            f"{'expt':>7s} {'med':>5s} {'med@':>5s} {'pow?':>5s}"
         )
         agg: dict = defaultdict(list)
         for row in power:
@@ -314,11 +533,25 @@ def main() -> None:
         def avg(xs):
             return sum(xs) / len(xs) if xs else None
 
+        def shown(value, width, places, missing="-"):
+            """`value` formatted, or `missing` where there is none.
+
+            **Not `value or default`.** `0.0 or -1` is `-1`, and a median
+            duration of zero bars is a real outcome - a departure that
+            returns inside the same bar - so the falsy form printed an
+            instant bounce and a bounce that never resolved identically.
+            Opposite readings from the same cell.
+            """
+            return f"{missing:>{width}}" if value is None else f"{value:{width}.{places}f}"
+
         path = ["grades", "sharp_share", "r", HEAD, "diff"]
         for (feed, which, level), got in sorted(agg.items()):
             means = _mean_of(got, [*path, "mean"])
             ses = _mean_of(got, [*path, "se"])
             t = (avg(means) / avg(ses)) if means and ses and avg(ses) > 0 else 0.0
+            expt = _mean_of(got, ["survival", "exponent"])
+            med = _mean_of(got, ["survival", "median"])
+            pw = [g["survival"]["power_better"] for g in got if g.get("survival")]
             print(
                 f"{feed:9s} {which:8s} {level:6.2f} "
                 f"{sum(g['episodes'] for g in got) / len(got):6.0f} "
@@ -326,7 +559,10 @@ def main() -> None:
                 f"{sum(g['shares']['sharp'] for g in got) / len(got):7.3f} "
                 f"{_fmt(avg(_mean_of(got, ['r', HEAD, 'mean'])), 9)} "
                 f"{_fmt(avg(means), 9)} {(avg(ses) or 0):8.4f} {t:+6.2f} "
-                f"{(avg(_mean_of(got, ['grades', 'sharp_share', 'auc', 'value'])) or 0):6.3f}"
+                f"{shown(avg(_mean_of(got, ['grades', 'sharp_share', 'auc', 'value'])), 6, 3)} "
+                f"{shown(avg(expt), 7, 4)} {shown(avg(med), 5, 0)} "
+                f"{len(med)}/{len(got)} "
+                f"{shown(sum(pw) / len(pw) if pw else None, 5, 2)}"
             )
 
 

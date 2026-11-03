@@ -244,6 +244,15 @@ class FearGreed(Indicator):
             return 0.0
         recent = max(1, len(self._ranges) // 5)
         now = statistics.fmean(list(self._ranges)[-recent:])
+        # **`now` as well as `middle`, and the second guard was missing.**
+        # A window whose median range is positive while its *last fifth* is
+        # all zero-range bars gives `log2(0 / middle)` - a `ValueError: math
+        # domain error` raised straight into Nautilus's bar handler on any
+        # feed that goes flat for a fifth of the window. Gold's own daily
+        # history carries three such bars. Twelve flat bars at the default
+        # span was enough to take the desk down.
+        if now <= 0.0:
+            return 0.0
         # A ratio of 1 reads 0, 2 reads -1, 0.5 reads +1: symmetric in the log
         # so a doubling and a halving are the same distance from neutral.
         import math

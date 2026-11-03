@@ -16,6 +16,7 @@ import pytest
 
 import research.ideas.level_bounce as B
 import research.ideas.level_bounce_agg as A
+import research.ideas.level_bounce_duration as D
 
 
 def series_of(bars, *, feed="test", interval="1d", start=0.0, step=86_400.0):
@@ -407,10 +408,14 @@ def test_a_cell_thinner_than_the_floor_reports_nothing_rather_than_a_gap():
         excursion=np.zeros(n),
         r=dict.fromkeys(B.TARGETS, np.zeros(n)),
         r_mtm=np.zeros(n),
+        duration=np.arange(n) % 7 + 1,
+        censored=np.zeros(n, dtype=bool),
+        peak_at=np.ones(n, dtype=np.int64),
         n_prev=np.ones(n, dtype=np.int64),
         sharp_share=np.linspace(0.0, 1.0, n),
         run_share=np.zeros(n),
         bar_share=np.zeros(n),
+        long_share=np.zeros(n),
         hold_share=np.zeros(n),
         hold_dev=np.zeros(n),
     )
@@ -431,3 +436,185 @@ def test_the_implied_sample_grows_with_the_variance_at_a_fixed_mean():
     wild = A._money(0.1 + rng.normal(0, 3.0, 400), block, draws=50, seed=0)
     assert wild.sd > calm.sd
     assert wild.needed > 4 * calm.needed
+
+
+# ──────────────────────────── the duration arm ────────────────────────────
+
+
+def test_the_exponent_estimator_recovers_a_walks_known_first_return_law():
+    """Sparre Andersen's 1/2, which is the only null this arm has that is exact.
+
+    The first-passage time of a symmetric random walk back to a level has
+    `P(T > t) ~ t^(-1/2)` whatever the step distribution. A simulated Gaussian
+    walk over a long horizon must therefore come back near 0.5 - it reads 0.46
+    at horizon 200, the residual gap being finite-horizon censoring. If this
+    drifts, every exponent in the write-up is on a different scale than it
+    claims and the arms are the only thing holding the comparison up.
+    """
+    rng = np.random.default_rng(0)
+    horizon = 200
+    dur, cen = [], []
+    for _ in range(6000):
+        x = 1.0
+        for t in range(1, horizon + 1):
+            x += rng.normal()
+            if x <= 0:
+                dur.append(t)
+                cen.append(False)
+                break
+        else:
+            dur.append(horizon)
+            cen.append(True)
+    times, surv = D.kaplan_meier(np.array(dur), np.array(cen), horizon)
+    exponent, _rate, power_resid, exp_resid = D._fit(times, surv, horizon)
+    assert 0.40 < exponent < 0.55
+    assert power_resid < exp_resid
+
+
+def test_a_planted_characteristic_length_makes_the_exponential_fit_win():
+    """The control that gives the power-law verdict its meaning.
+
+    A walk's first-return survival is a power law and has no characteristic
+    length. An exponentially distributed duration has one, and the fit must say
+    so - otherwise "the power law fits better" is a statement the test would
+    make about anything, and the whole hazard-shape question is decoration.
+    """
+    rng = np.random.default_rng(1)
+    horizon = 60
+    dur = np.minimum(rng.geometric(0.12, 4000), horizon)
+    cen = dur >= horizon
+    times, surv = D.kaplan_meier(dur, cen, horizon)
+    _exponent, rate, power_resid, exp_resid = D._fit(times, surv, horizon)
+    assert exp_resid < power_resid
+    assert rate > 0
+
+
+def test_a_censored_departure_stays_in_the_risk_set_until_it_is_censored():
+    """Dropping censored episodes deletes exactly the long ones.
+
+    A departure still running at the horizon is evidence *for* long durations.
+    An estimator that discarded it would bias the curve short, and short is
+    what a "bounces are brief" finding looks like - so the bias manufactures
+    the result. Two samples identical except that one's long episodes are
+    censored must not give the censored one a *higher* survival at a time
+    before the censoring.
+    """
+    horizon = 20
+    short = np.array([2, 3, 4, 5] * 25)
+    both = np.concatenate([short, np.full(100, horizon)])
+    cen = np.concatenate([np.zeros(len(short), bool), np.ones(100, bool)])
+    _t1, s_short = D.kaplan_meier(short, np.zeros(len(short), bool), horizon)
+    _t2, s_both = D.kaplan_meier(both, cen, horizon)
+    assert s_both[5] > s_short[5]
+    assert s_short[5] == 0.0
+
+
+def test_a_touch_that_closed_through_the_level_has_no_duration_to_measure():
+    """Timing a level that already failed would call it a brief bounce.
+
+    `_duration` refuses when the touch bar closed on the through side. Counting
+    that as a one-bar departure would put the level's worst episodes at the
+    short end of the distribution and drag the exponent with them.
+    """
+    bars = [(99.0, 99.3, 98.8, 99.1), (99.1, 100.4, 99.0, 100.3)]
+    bars += [(100.3, 100.6, 100.0, 100.4)] * 8
+    series = series_of(bars)
+    assert B._duration(series, 1, 100.0, -1, 8) is None
+    assert B._duration(series, 1, 100.0, 1, 8) is not None
+
+
+def test_a_duration_is_the_first_return_and_not_the_last():
+    """A departure ends the first time price comes back, counted by hand.
+
+    The touch is bar 1, at a level of 100.0, closing away at 98.5. Bars 2 and 3
+    stay clear of the level and bar 4's range covers it, so the duration is the
+    **3** bars that elapsed, not the index of the bar it came back on and not
+    the 5 bars to the later re-touch. Reading the last touch in the window
+    instead would merge a whole excursion cluster into one departure and
+    inflate every length in the study.
+    """
+    bars = [(99.0, 99.3, 98.8, 99.1), (99.1, 100.2, 99.0, 98.5)]
+    bars += [(98.5, 98.9, 98.0, 98.2), (98.2, 98.6, 97.9, 98.4)]
+    bars += [(98.4, 100.5, 98.3, 99.8), (99.8, 100.9, 99.2, 100.6)]
+    bars += [(100.6, 100.9, 100.2, 100.7)] * 4
+    got = B._duration(series_of(bars), 1, 100.0, -1, 8)
+    assert got is not None
+    assert got[0] == 3
+    assert not got[1]
+
+
+def test_the_duration_grade_counts_a_censored_previous_episode_as_long():
+    """Censored means "at least the horizon", which is above any median.
+
+    Dropping censored episodes from the grade would delete the long ones and
+    make `long_share` measure "this level's bounces ended quickly" - the
+    opposite of what it is named for, and a sign flip that no later null would
+    catch because the grade would still look like a grade.
+    """
+    bars = [(99.0, 99.4, 98.6, 99.2)]
+    for _ in range(3):
+        bars += [(99.2, 100.2, 99.1, 98.6), (98.6, 99.0, 98.2, 98.8)]
+        bars += [(98.8, 99.2, 98.4, 99.0)] * 6
+    series = series_of(bars)
+    rows = B.episodes(
+        series,
+        [[(3, 100.0)] for _ in bars],
+        np.full(len(bars), 0.5),
+        np.zeros(len(bars), dtype=np.int64),
+        interval="1d",
+        horizon=4,
+        gap_bars=4,
+    )
+    assert len(rows) >= 2
+    assert (rows.censored | (rows.duration > 0)).any()
+    assert (rows.long_share > 0).all()
+
+
+def test_the_planted_length_actually_suppresses_the_return_it_claims_to():
+    """The power sweep is worthless if the plant does not plant anything.
+
+    Guarding only the next close moved the fitted exponent from 0.4257 to
+    0.4375 at a planted length of 8 - no cut-off at all - because a departure
+    ends on the first bar whose *range* contains the level, and about half of
+    all measured durations are set by bar width rather than by the close path.
+    The guard therefore clips the bar's range too, and this pins that: with a
+    length planted, survival at 8 bars must rise well above the unplanted
+    control's.
+    """
+    import random
+
+    import research.ideas.level_bounce_duration as Dur
+    import research.ideas.level_bounce_power as P
+
+    # A seeded walk with real bar ranges, because `Levels` needs confirmed
+    # pivots to have a book at all and a near-flat fixture gives it none - the
+    # first version of this test skipped for that reason, and a test that skips
+    # is a test that cannot fail.
+    rng = np.random.default_rng(11)
+    price = 100.0
+    bars = []
+    for _ in range(1500):
+        price += rng.normal(0.0, 0.25)
+        half = abs(rng.normal(0.0, 0.18)) + 0.05
+        close = price + rng.normal(0.0, 0.05)
+        bars.append((price, max(price, close) + half, min(price, close) - half, close))
+    base = series_of(bars)
+    horizon = 20
+
+    def s8(length):
+        made = P.plant(base, random.Random(3), unit_span=20, length=length)
+        unit = B.units(made, 20)
+        rows = B.episodes(
+            made,
+            B.book_path(made, "levels", unit_span=20, interval="1d"),
+            unit,
+            B.strata_of(unit, 20),
+            interval="1d",
+            horizon=horizon,
+        )
+        got = Dur.survival_for(rows, np.ones(len(rows), dtype=bool), horizon)
+        return None if got is None else got.at.get(8)
+
+    clear, planted = s8(0), s8(16)
+    assert clear is not None and planted is not None
+    assert planted > clear

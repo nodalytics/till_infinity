@@ -21,29 +21,35 @@ The payoff if true is a ranking, not an entry.
 
 ## Status
 
-**The harness, the pre-registration, the nulls and the power design are
-complete; the panel has not been run.** The development box has 8 cores and was
-shared with another study at a load average of 19, so a multi-process sweep
-there would have been both wrong and useless. The run is a single invocation
-with a configurable output directory - see [Running it](#running-it).
+**Shape and distance: run, 168 cells, null.** The panel is at
+`.data/bounce-out/` - 2,856 rows, 14 feeds x 3 intervals x 4 kinds x 5 arms.
 
-[What a one-feed local pass shows](#what-a-one-feed-local-pass-shows) is a
-single-process sanity check on **eurusd 1d at one draw an arm**, run to prove
-the machinery end to end. **It is not the study.** Nothing in it clears the
-pass rule, which needs 14 feeds, three intervals, four draws and the
-cross-interval sign check, and one feed cannot distinguish a result from a
-cell.
+**Duration: pre-registered below, harness complete, not yet run.** It is a
+third arm on the same panel, so one invocation now produces all three.
+`a-magnet-is-a-shared-reference` ends with *use the time exponent, not the
+return rate*, and the committed run used distance - so this is the reading the
+memory asked for and the study had not taken.
 
-## The verdict table, to be filled from the panel
+## The verdict table
 
 | question | answer |
 |---|---|
-| Does price bounce at a level, in mean R? | *pending the panel.* On the one feed measured, mean R is **-0.057 / -0.038 / +0.002** at 1R / 2R / 3R against a walk's exact zero, every one inside its own standard error |
-| Does a level's **previous** bounce shape raise the mean R of its next touch? | *pending the panel.* On the one feed measured the R difference is **+0.0021 +- 0.0989** - a fortieth of its own noise - **while the same grade sorts the hit rate at AUC 0.5335.** If the panel holds that pattern the answer is the most interesting kind of null: the score works on the rate and the rate is not worth anything |
-| Does the Kalman book beat parameter-free session pivots? | *pending the panel.* One feed: `levels` -0.0382 +- 0.0448 against `pivots` -0.0638 +- 0.0281, which is not a separation |
-| Where does the test go blind? | *pending the power run.* The design is a **graded** plant with the uniform plant as a control that must read nothing |
+| Does price bounce at a level, in mean R? | **No.** Pooled mean R at 2R is **-0.029 / +0.002 / +0.079** at 15m / 1d / 1h for `levels`, against walk-exact zero - and every surrogate arm reads the same scale or larger, `garch-bars` at **-0.20** on every kind at every interval. Real is *closer* to zero than any null, which is `the-walk-is-the-best-calibrated-band` again |
+| Does a level's **previous** bounce shape raise the mean R of its next touch? | **No, and the test could not have seen it.** 102 cells: **0 BH survivors**, 53 of 102 positive where chance gives 51, 13 beating their hardest arm. And the power sweep is the real answer - see below |
+| Does the Kalman book beat parameter-free session pivots? | **No. `levels` beats `pivots` on 18 of 42 feed-intervals**, below half. **The swing detection is not earning its complexity** on this measurement - the first time anything on this desk has checked |
+| Where does the test go blind? | **Everywhere, on the per-level grade.** The planted uniform barrier drives the hold rate **0.714 -> 0.882** monotonically, so the detector plainly sees the barriers - and the graded plant moves the grade's R difference by **nothing at any strength** (-0.039 to +0.033, no trend, t never past 0.8). With a few hundred episodes over hundreds of level tags a level carries two to four previous episodes and the grade is mostly prior. **The part 2 null is uninformative and is reported as such, not as evidence** |
 | Does the harness reproduce a known number? | **Yes.** `hold_share`'s AUC reads 0.5078 on eurusd 1d against [`record-auc.md`](record-auc.md)'s 0.4977-0.5104 over twelve configurations - a different detector, a different venue policy and a different outcome definition landing inside the published interval |
-| Did splitting the claim matter? | **Yes, and it is the methodological finding so far.** `run_share` 0.5523 against `bar_share` 0.4450 - **opposite signs**, averaged into `sharp_share`'s 0.5335. Reporting only the union would have published a shape effect that is one part restated outcome and one part the claim with its sign reversed |
+| Did splitting the claim matter? | **Yes, and it is the methodological finding.** `run_share` 0.5523 against `bar_share` 0.4450 - **opposite signs**, averaged into `sharp_share`'s 0.5335. Reporting only the union would have published a shape effect that is one part restated outcome and one part the claim with its sign reversed |
+| How long does a bounce last? | *pending the run.* On eurusd 1d `levels`: **S(1) 0.451, S(2) 0.359, S(4) 0.267, S(8) 0.170, S(16) 0.131**, censored 0.117. So **55% of departures end on the very next bar** and 12% never return inside 20. Exponent 0.5434 +- 0.0396 against `pivots`' 0.4539 +- 0.0238, and the power law beats the exponential on both - but the comparison is the arms, not these numbers |
+
+**The part 2 null needs reading carefully and it is the most important
+methodological point in this document.** It is not "bounce shape does not
+predict the next touch". It is "**this estimator cannot tell**, and here is the
+planted effect it failed to see". The pooled statistics have power; the
+per-level grade does not, because the sample per level is two to four episodes.
+That is why the duration arm leads with a **pooled** reading - the time
+exponent over thousands of episodes - and carries the per-level grade as a
+clearly-labelled secondary.
 
 ## What decides, and what is only description
 
@@ -232,6 +238,172 @@ on eurusd 1d the two halves point in **opposite directions**, `run_share` at
 AUC 0.5523 and `bar_share` at 0.4450, and the union at 0.5335 was hiding both.
 Reporting only the union would have left "which one carried it" unanswerable.
 
+## The duration arm, pre-registered 2026-11-03 before it was run
+
+The third quantity. Shape says *what* the departure looked like, R says *how
+far* it went, and neither says **how long it lasted**. The 20-bar (1d) and
+48-bar (1h, 15m) horizons in the committed run are censoring windows, not
+measurements: a `run` share of 22-25% says a quarter of touches departed and
+nothing at all about whether that lasted three bars or eighteen.
+
+### The definition
+
+**Duration is the first return to the level**: bars from the touch bar until
+the first later bar whose range contains the level price. Measured from bar
+`i + 1`, so the touch bar - whose range contains the level by definition -
+cannot end the departure it started. **Refused** when the touch bar closed on
+the *through* side: there is no departure to time there, and timing one would
+put the level's outright failures at the short end of the distribution and drag
+the exponent with them.
+
+`peak_at`, the bars to the furthest point reached, is recorded beside it and
+is **not** a second reading - it correlates with duration at **0.90** on
+eurusd 1d, so they are one quantity and the write-up says so rather than
+reporting both as evidence.
+
+### Why the exponent and not the mean
+
+**The null is exact, parameter-free and distribution-free.** By Sparre
+Andersen's theorem the first-passage time of a symmetric random walk back to a
+level has `P(T > t) ~ t^(-1/2)` **whatever the step distribution** - the same
+1/2 for a Gaussian walk, a fat-tailed one and this market's own resampled
+steps. Nothing has to be fitted to supply the null.
+
+**A power-law survival has no characteristic length.** If the exponent sits at
+the walk's, "how long does a bounce last" has no answer beyond the horizon: the
+distribution is scale-free, any mean is a property of the censoring window, and
+**a time exit set to a particular number of bars is arbitrary**. That is a
+result about the SMC rule's 1,440-M1-bar clock - a number chosen rather than
+measured, which the reconciliation found 40-44% of its FX trades reaching - and
+not an absence of one. So the hazard shape is *tested*: a flat hazard is an
+exponential survival and does have a characteristic length `1/h`; a decaying
+hazard is the power law and does not. Both are fitted to the same
+Kaplan-Meier points and compared by residual.
+
+### The 0.5 is an anchor and not the comparison, and that is measured
+
+**This estimator does not read 0.5 on a walk at these horizons.** Simulated
+symmetric Gaussian walks, 30,000 paths, the estimator exactly as it runs here:
+
+| horizon | fit to half | fit to 0.75 | fit to the end | censored |
+|---|---|---|---|---|
+| **20 (the 1d setting)** | **0.397** | 0.414 | 0.424 | 0.275 |
+| **48 (1h and 15m)** | **0.429** | 0.439 | 0.445 | 0.181 |
+| 100 | 0.446 | 0.457 | 0.463 | 0.127 |
+| 200 | 0.460 | 0.465 | 0.467 | 0.092 |
+
+The bias is finite-horizon censoring and it **shrinks monotonically toward 0.5
+as the horizon grows**, which is what shows the estimator is right rather than
+broken. But it moves with the window, so by the standard this desk already set
+- the roughness exponent that drifted by a factor of three across windows and
+had no value quoted because of it - **no absolute exponent is quotable here**.
+Real is compared against the **same estimator on the matched arms at the same
+horizon**. The report prints a `z_vs_theory` and labels it an anchor.
+
+This is also why the eurusd 1d readings above (0.5434 for `levels`, 0.4539 for
+`pivots`, both against a simulated 0.397) are **not** reported as a finding.
+They are above the simulation, but the simulation is a Gaussian walk and the
+arms carry this market's bar geometry, which is the thing that produces the
+bias. Only the panel settles it.
+
+### Censoring, which is the main hazard and points the wrong way
+
+A departure still running at the horizon has no measured length, and a mean
+over the uncensored episodes alone is biased **short** - and short is exactly
+what a "bounces are brief" finding looks like, so the bias manufactures the
+result. Therefore: Kaplan-Meier everywhere, the censored share with every cell,
+and **no bare mean duration anywhere in this document**. Where the curve never
+reaches 0.5 the answer is written as "longer than the horizon" rather than
+estimated through, and the report counts those cells.
+
+The median is reported but is nearly useless here and the reason is worth
+stating: on eurusd 1d it is **1 bar**, because a bar's range is wide against
+the level and price prints back through it immediately. That is a property of
+the bar, not of the bounce. It is why the fit starts at **t = 2**, and why the
+curve is reported at fixed times - S(1), S(2), S(4), S(8), S(16) - instead of
+through one quantile.
+
+### The grade, and its power stated up front
+
+`long_share` grades a level on the share of its **previous** departures that
+lasted longer than the duration **running median** of the series so far - a
+running threshold, because a whole-sample median would be the same lookahead
+the grades exist to avoid, arriving through the threshold instead of the
+history. **A censored previous episode counts as long**: it lasted at least the
+horizon, which is above any running median, and dropping censored episodes
+would delete precisely the long ones and invert what the grade means.
+
+It is carried under no illusions. The committed power sweep moved the per-level
+R grade by nothing against a planted barrier that shifted the hold rate by 17
+points, so **the per-level grade on this panel has no demonstrated power in any
+of the three quantities** and `long_share` is reported as secondary. The
+pooled exponent is the primary reading.
+
+### Power for duration, run before the panel, and it changed the pass rule
+
+Neither committed sweep plants a *length*: a reflecting barrier changes how
+often price comes back, not how long it stays away. A third sweep plants the
+length directly - once price has left a level, the level is held outside the
+bar's range for `length` bars and then released, each level holding its own
+clock. That writes an exponential cut-off into the first-return distribution at
+a known scale, so the survival **must** stop being a power law.
+
+eurusd 1d, horizon 20, one draw per length, through the production estimator:
+
+| planted length | exponent | S(2) | S(8) | censored | power law still better? |
+|---|---|---|---|---|---|
+| **0** (control) | 0.4257 | 0.553 | 0.310 | 0.196 | yes |
+| 2 | **0.4572** | 0.673 | 0.362 | 0.234 | yes |
+| 4 | 0.3616 | 0.748 | 0.471 | 0.297 | yes |
+| **8** | 0.2453 | 0.810 | 0.608 | 0.407 | **no** |
+| 16 | 0.1132 | 0.892 | 0.778 | 0.570 | **no** |
+
+**The test sees a characteristic length of 8 bars or more and goes blind
+between 4 and 8**, at a 20-bar horizon. The control at 0 correctly reads as a
+power law.
+
+**And the exponent is non-monotone, which refutes the direction this arm was
+pre-registered with.** The first version of the pass rule said a characteristic
+length means the exponent sits *above* its arms. At a planted length of 2 it
+does - 0.4572 against the control's 0.4257 - but at 8 and 16 it goes the other
+way, to 0.2453 and 0.1132. A cut-off makes the curve flat early and steep late,
+and one power-law slope fitted over the window misreads that shape in a
+direction that depends on where the cut-off sits relative to the window. So the
+exponent alone cannot carry the verdict, and a pass rule resting on its sign
+would have been wrong for half the range of the effect it was looking for.
+
+The corrected rule, which is what the panel will be read against:
+
+1. **`power_better` false on the real arm and true on its arms.** This is the
+   primary: it is the hazard-shape question itself and it moves monotonically
+   with the planted length.
+2. **S(8) above the hardest arm's S(8).** Monotone across the whole sweep -
+   0.310, 0.362, 0.471, 0.608, 0.778 - and the most sensitive single number
+   here. It separates at a planted length of 2, where the hazard verdict does
+   not.
+3. the exponent reported with its CI as **description**, with its
+   non-monotonicity stated, and never as the deciding sign;
+4. sign agreement between 1d and at least one of 1h/15m on (1) and (2);
+5. survival of Benjamini-Hochberg over every cell;
+6. the censored share small enough that the curve is a measurement. The sweep
+   shows why: censoring climbs from 0.196 to 0.570 as the planted length grows,
+   so a long characteristic length *presents as* heavy censoring. A cell above
+   about half censored is reported as **"longer than the horizon"** and
+   contributes nothing to a verdict - that is an answer, not a gap.
+
+**If the real arm looks like the control, the recorded answer is that a bounce
+has no characteristic length and a time exit is arbitrary** - a usable result
+about the 1,440-M1-bar clock, and the valued outcome here.
+
+### Is duration a third quantity, or a restatement?
+
+Reported rather than assumed, as Spearman on the real arm. On eurusd 1d
+`levels`, duration against: `peak_at` **0.90**, `held` 0.455, `sharp` 0.354,
+`run` 0.320, R at 2R **0.262**, `r_mtm` 0.179. So it is strongly related to
+time-to-peak - they are one reading - and **only weakly to R**, which is the
+answer to whether the arm buys anything: two bounces with the same R can have
+very different lengths, and 0.26 is the number that says so.
+
 ## The nulls, reused rather than rebuilt
 
 [`level-shield.md`](level-shield.md)'s `ARMS` is imported whole, so the two
@@ -396,18 +568,26 @@ Three invocations, in order. `BOUNCE_OUT` is the only path that has to be set
 and must be the same for all three - the report reads what the other two wrote.
 
 ```sh
-# 1. the panel, and the RUN_EFF grid beside it
+# 1. the panel: shape, distance AND duration, plus the RUN_EFF grid
 BOUNCE_OUT=<output-dir> BOUNCE_WORKERS=<cores> BOUNCE_DRAWS=4 \
   uv run python -m research.ideas.level_bounce_run
 
-# 2. the power sweeps: planted bounce, then planted grading
+# 2. the power sweeps: planted barrier, planted grading, planted LENGTH
 BOUNCE_OUT=<output-dir> POWER_FEEDS="eurusd gold spx500" \
-  POWER_INTERVALS="1d" POWER_DRAWS=3 \
+  POWER_INTERVALS="1d 1h" POWER_DRAWS=3 \
   uv run python -m research.ideas.level_bounce_power
 
 # 3. the tables
 BOUNCE_OUT=<output-dir> uv run python -m research.ideas.level_bounce_report
 ```
+
+**The duration arm is part of the same panel**, so step 1 now emits the
+survival curve, the exponent, the hazard comparison and the correlations
+alongside everything the committed run produced. The panel has to be re-run for
+it: `.data/bounce-out/panel.jsonl` predates the arm and has no `survival` key.
+The committed run took **96 seconds** on a many-core box, and the duration
+estimators add one Kaplan-Meier pass and one bootstrap per cell, so the cost is
+materially unchanged.
 
 `BOUNCE_STORE` points at a copy of `prices.db` if it is not at
 `.data/prices/prices.db`. `BOUNCE_FEEDS`, `BOUNCE_KINDS` and
@@ -446,10 +626,11 @@ a hang** - that mistake cost two restarts here.
 |---|---|
 | `research/ideas/level_bounce.py` | the data, the four books, the touch episodes, the shape bits, the races and the causal grades |
 | `research/ideas/level_bounce_agg.py` | the estimators as count tensors with a block bootstrap, and the R statistics |
+| `research/ideas/level_bounce_duration.py` | the duration arm: Kaplan-Meier, the time exponent, the hazard-shape comparison and the correlations |
 | `research/ideas/level_bounce_run.py` | the panel and the `RUN_EFF` grid, one job per (feed, interval, kind) |
-| `research/ideas/level_bounce_power.py` | the uniform plant, the graded plant, and both sweeps |
+| `research/ideas/level_bounce_power.py` | the uniform plant, the graded plant, the **length** plant, and all three sweeps |
 | `research/ideas/level_bounce_report.py` | the tables above, with Benjamini-Hochberg and the deflated Sharpe |
-| `research/ideas/test_level_bounce.py` | 18 tests, run with `uv run pytest research/ideas/test_level_bounce.py` since `research/` is outside `testpaths`. The first two are the lookahead guards |
+| `research/ideas/test_level_bounce.py` | **24 tests**, run with `uv run pytest research/ideas/test_level_bounce.py` since `research/` is outside `testpaths`. The first two are the lookahead guards; the duration block pins Sparre Andersen's 1/2 and the censoring treatment |
 
 ## What was not done, and why
 
@@ -486,6 +667,63 @@ a hang** - that mistake cost two restarts here.
   that 21:00 is exactly where a survivorship confound lives. The default UTC
   cut is used throughout because it is the one reproducible across observers;
   comparing the two is a separate measurement.
+
+## The duration power sweep, on three feeds
+
+Run on the full panel after the arm was built. `pow?` is the share of draws
+where a power law still beats a cut-off, and it is the deciding column: a real
+characteristic length drives it to zero.
+
+| feed | planted length | exponent | median (bars) | med@ | pow? |
+|---|---|---|---|---|---|
+| eurusd | 0 | 0.4749 | 4 | 6/6 | 1.00 |
+| eurusd | 8 | 0.2493 | 16 | 6/6 | 0.00 |
+| eurusd | 16 | 0.1526 | 36 | 6/6 | 0.17 |
+| gold | 0 | 0.3646 | 5 | 6/6 | 1.00 |
+| gold | 8 | 0.2141 | 19 | 6/6 | 0.17 |
+| gold | 16 | 0.1393 | 38 | 6/6 | 0.00 |
+| spx500 | 0 | 0.4416 | 4 | 6/6 | 1.00 |
+| spx500 | 8 | 0.2168 | 23 | 6/6 | 0.00 |
+| spx500 | 16 | 0.1177 | **-** | **0/6** | 0.00 |
+
+**The test sees a planted characteristic length on all three feeds**, and the
+median tracks the plant almost exactly - 4 bars at length 0 against 36 at
+length 16 on eurusd. So the null below is informative: the detector
+demonstrably finds a characteristic length when one is there, and the market
+has none. Real read **S(8) above the hardest null arm in 0 of 167 cells** with
+the power law still better in 157.
+
+spx500 at length 16 reads `0/6`: not one draw's survival curve reached 0.5
+inside the horizon, which is the "longer than the horizon" case and is counted
+rather than averaged away.
+
+**The `graded` plant still reads nothing at any strength on any feed** - `t`
+never past 0.8, AUC pinned between 0.47 and 0.52 - so the part-two grade null
+is uninformative on three feeds rather than one. With two to four prior
+episodes per level the grade is mostly prior.
+
+**The `uniform` plant drives the hold rate monotonically** - eurusd 0.716 to
+0.890, gold 0.713 to 0.874 - so the detector plainly sees planted barriers.
+The machinery works; it is the grade that cannot resolve.
+
+### Two defects in the draw-aggregation layer, found reading this table
+
+**`0.0 or -1` collapsed a real zero into the missing sentinel.** A median
+duration of zero bars is a departure returning inside the same bar, and it
+printed identically to a curve that never resolved - opposite readings from
+one cell. The same `or 0` form sat beside it on the exponent and the AUC.
+
+**Averaging medians across draws conditions on the bounce being short.** A
+median exists only where the curve reaches 0.5, so the draws that lasted
+longest contribute nothing and the average is biased short - the Kaplan-Meier
+censoring bias reappearing one layer above where it was correctly handled. The
+`med@` column now reports how many draws carried a median, and the header says
+to read the median only at a full count.
+
+The stored data was never wrong: the JSONL carries `None` and the aggregator
+drops non-numerics. Only the terminal table lied, which is why the per-cell
+statistics - `censored` on every row, a count of curves never reaching 0.5 -
+were all correct while the summary above them was not.
 
 ## Deviations from the pre-registration
 
@@ -532,6 +770,41 @@ a hang** - that mistake cost two restarts here.
   already failed and excluding them selects in favour of the bounce. With a
   fixed denominator the arm is the forward excursion in units and the sd is
   3.0.
+
+## The duration arm's deviations
+
+* **The exponent is compared against the arms, not against Sparre Andersen's
+  0.5**, and that was decided by a measurement rather than by preference: the
+  estimator reads 0.397 on a simulated Gaussian walk at the 1d horizon of 20
+  bars and 0.429 at 48, converging on 0.5 only as the horizon grows. The
+  measured bias table is in the pre-registration above. Comparing real against
+  the theoretical value at these horizons would have manufactured a finding on
+  every cell in the panel.
+* **The median duration is reported and not used.** It is 1 bar on eurusd 1d,
+  because a bar's range is wide against the level and price prints back through
+  it immediately - a property of the bar, not of the bounce. The fit therefore
+  starts at t = 2 and the curve is reported at fixed times instead.
+* **`peak_at` is recorded and explicitly not treated as a second reading.** It
+  correlates 0.90 with duration, so reporting both as evidence would be
+  double-counting one quantity.
+* **The pre-registered direction for the exponent was wrong and the power
+  sweep caught it before the panel ran.** The rule said a characteristic length
+  means the exponent above its arms; the planted sweep shows it goes **up** at
+  a length of 2 and **down** at 8 and 16, because a cut-off makes the survival
+  curve flat early and steep late and a single fitted slope misreads that shape
+  depending on where the cut-off falls in the window. `power_better` and S(8)
+  decide instead, both monotone across the sweep. Recorded rather than quietly
+  fixed, because the first version of this rule would have rejected a real
+  effect over half the range it was built to find.
+* **The planted length had to clip the bar's range, not only its close.**
+  Guarding the close alone moved the fitted exponent from 0.4257 to 0.4375 at a
+  planted length of 8 - no cut-off at all - because a departure ends on the
+  first bar whose *range* contains the level and, with S(1) near 0.45, the
+  reading is dominated by bar width rather than by the close path. **That is a
+  statement about the measurement as much as about the plant**: roughly half of
+  all measured durations are set by how wide a bar is against the level, which
+  is why the fit starts at t = 2 and why S(2) and S(8) are reported beside the
+  exponent.
 
 ## Three defects the tests caught on the way
 

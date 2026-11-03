@@ -191,3 +191,40 @@ def test_the_sizes_carry_the_instruments_own_precision(tmp_path, monkeypatch):
     assert book.bars(bar_types=["GOLD.DERIV-15-MINUTE-LAST-EXTERNAL"])[0].volume.precision == (
         instrument.size_precision
     )
+
+
+# ------------------------------------------------- the counts the result reports
+
+
+def test_the_run_keeps_the_state_its_trade_counts_are_computed_from():
+    """**A disposed engine reports zero trades on a run that traded.**
+
+    `BacktestNode._run` calls `engine.dispose()` - "drop data and all state" -
+    and *then* `engine.get_result()`, whose `total_orders` is
+    `cache.orders_total_count()` and whose `total_positions` counts
+    `cache.positions()`. Both read the cache that was just emptied, so the
+    result says 0 and 0 however much the run did.
+
+    `stats_pnls` is computed off the portfolio analyzer instead of the cache,
+    so it survives - which is what made this expensive to find. One run
+    reported `PnL (total): -62.32` at a 0.25 win rate beside `total_orders =
+    0`, and a sweep reading the counts called it a cell that never traded.
+    That is how `research/ideas/leaf_sweep.py` reported 0 of 72 cells, and it
+    was first mis-diagnosed as a `BacktestDataConfig` bar-type fault - the
+    data config was resolving and loading correctly the whole time.
+
+    Nautilus's default is `True`, so this has to be set on every config this
+    module builds rather than relied on.
+    """
+    config = backtest.run_config("EUR/USD.DERIV", "15-MINUTE-LAST-EXTERNAL")
+    assert config.dispose_on_completion is False
+
+
+def test_a_desk_run_reports_counts_as_well_as_a_pnl(monkeypatch):
+    """The control for the test above: that the flag is wired to a config a
+    desk actually runs, not just to `run_config`'s own default. Without it the
+    counts here are 0 while the PnL is unchanged, which is the exact pairing
+    that reads as "nothing traded"."""
+    monkeypatch.setenv("TRADING_SYMBOLS", "EUR/USD")
+    config = backtest.desk_config("EUR/USD.DERIV", "15-MINUTE-LAST-EXTERNAL")
+    assert config.dispose_on_completion is False

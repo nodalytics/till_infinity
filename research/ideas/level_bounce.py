@@ -98,6 +98,7 @@ comparable across all four.
 from __future__ import annotations
 
 import os
+import statistics as st
 from dataclasses import dataclass
 
 import numpy as np
@@ -206,6 +207,29 @@ RACE = 1.0
 #: sensible place to put it when the trade is a bounce.
 STOP_VOL = 1.0
 
+#: How long a departure lasts, in bars: the **first return to the level**.
+#:
+#: This is the third quantity, independent of shape and of distance, and
+#: `a-magnet-is-a-shared-reference` ends with the instruction it answers - *use
+#: the time exponent, not the return rate*. Two bounces with identical hit
+#: rates and identical R at a fixed target can have very different lengths, so
+#: duration is reported beside those readings and never folded into them.
+#:
+#: **The null is exact, parameter-free and distribution-free.** By Sparre
+#: Andersen's theorem the first-passage time of a symmetric random walk back
+#: to a level has `P(T > t) ~ t^(-1/2)` *whatever the step distribution* - the
+#: exponent is 1/2 for a Gaussian walk, a fat-tailed walk and this market's own
+#: resampled steps alike. So the pre-registered null exponent is **0.5** and no
+#: arm has to be fitted to supply it. A reading at 0.5 means duration is
+#: geometry, which is `a-return-rate-is-geometry` in the time domain; a
+#: departure from 0.5 is the finding.
+#:
+#: Duration is **right-censored** at the horizon and a mean over the
+#: uncensored episodes is biased short - exactly the bias that would make a
+#: short-lived bounce look universal. Nothing here reports a bare mean; the
+#: estimator is Kaplan-Meier and the censored share travels with every cell.
+DURATION_CENSORED = -1
+
 #: Reward-to-risk ratios raced, as multiples of the **risk measured from the
 #: entry**, not of the volatility unit. That distinction is the whole reason
 #: the arithmetic is honest: with the target at `k` times the realised risk,
@@ -312,11 +336,28 @@ SHARP = REJECT | SPIKE | LEG | RUN
 #: `hold_dev` is `|hold_share - 0.5|`, the decisiveness reading that scored
 #: 0.6006 against the raw record's 0.5005 and is the reason a magnitude grade
 #: is worth testing at all.
-GRADES = ("sharp_share", "run_share", "bar_share", "hold_share", "hold_dev")
+GRADES = ("sharp_share", "run_share", "bar_share", "long_share", "hold_share", "hold_dev")
 
 #: `bar_share`'s numerator: the sharp shapes that do **not** require the
 #: departure to have held.
 SHARP_BAR = REJECT | SPIKE | LEG
+
+#: `long_share` grades a level on how long its **previous** departures lasted,
+#: against the duration running median of the series so far - the third
+#: quantity, and the one `a-magnet-is-a-shared-reference` points at.
+#:
+#: **A censored previous episode counts as long**, which is the only treatment
+#: that is not a lie: it lasted at least the horizon, and the horizon is above
+#: any median the series can produce. Dropping censored episodes from the grade
+#: would delete exactly the long ones and make the grade measure "this level's
+#: bounces ended quickly", which is the opposite of the claim.
+#:
+#: The grade is carried under no illusions about its power. The committed power
+#: sweep drives the hold rate from 0.714 to 0.882 with a planted barrier and
+#: moves the per-level R grade by nothing at any strength, because with a few
+#: hundred episodes over hundreds of level tags a level has two to four
+#: previous episodes and the grade is mostly prior. The **pooled** duration
+#: statistics are where the power is, and they are the primary reading.
 
 
 # ─────────────────────────────── the books ───────────────────────────────
@@ -601,12 +642,24 @@ class Rows:
     #: than a barrier race and immune to the tie rule, so it is the arm to
     #: trust when the two disagree.
     r_mtm: np.ndarray
+    #: Bars from the touch to the **first return to the level** - how long the
+    #: departure lasted. `DURATION_CENSORED` where the touch bar closed on the
+    #: through side, so there was no departure to time.
+    duration: np.ndarray
+    #: Price had not come back by the horizon, so `duration` is a lower bound
+    #: and not a value. Kaplan-Meier is what makes these usable.
+    censored: np.ndarray
+    #: Bars from the touch to the furthest point reached away from the level.
+    #: Censored in its own way - a departure still extending at the horizon
+    #: peaks at the horizon - so it is descriptive beside `duration`.
+    peak_at: np.ndarray
     #: Episodes at this level strictly before this one.
     n_prev: np.ndarray
     #: The grades, each from strictly earlier episodes at this level only.
     sharp_share: np.ndarray
     run_share: np.ndarray
     bar_share: np.ndarray
+    long_share: np.ndarray
     hold_share: np.ndarray
     hold_dev: np.ndarray
     #: Touches that passed the de-overlap and were still not scored because the
@@ -723,6 +776,39 @@ def _race(series: Series, i: int, price: float, away: int, scale: float, horizon
     )
 
 
+def _duration(series: Series, i: int, price: float, away: int, horizon: int):
+    """`(bars to the first return to the level, censored, bars to the MFE)`.
+
+    The duration of the departure, which is the first-passage time back to
+    `price` starting from the touch bar's close. Measured from bar `i + 1`, so
+    the touch bar - whose range contains the level by definition - cannot end
+    the departure it started.
+
+    `censored` is true when price had not come back by the horizon, and the
+    duration is then the horizon itself as a **lower bound**, not a value.
+    `level-bounce.md` reports the censored share per cell for that reason: a
+    mean over the uncensored episodes alone is biased short, and that bias
+    points the same way as the finding a short bounce would be.
+
+    `None` when the touch bar closed on the **through** side of the level.
+    There is no departure to time there, and timing one would measure the
+    level failing and call it a bounce that ended quickly.
+    """
+    entry = float(series.close[i])
+    if away * (entry - price) <= 0.0:
+        return None
+    last = min(i + horizon, len(series.close) - 1)
+    best, best_at = 0.0, 0
+    for j in range(i + 1, last + 1):
+        hi, lo = float(series.high[j]), float(series.low[j])
+        reach = away * ((hi if away > 0 else lo) - price)
+        if reach > best:
+            best, best_at = reach, j - i
+        if lo <= price <= hi:
+            return j - i, False, best_at
+    return last - i, True, best_at
+
+
 def episodes(
     series: Series,
     books: list[list[tuple[int, float]]],
@@ -778,6 +864,7 @@ def episodes(
                 continue
             held, decided, tie, rs, mtm = raced
             undecided += not decided
+            timed = _duration(series, i, price, away, horizon)
             last_scored[ident] = i
             far = min(i + horizon, len(series.close) - 1)
             found.append(
@@ -794,31 +881,52 @@ def episodes(
                     "excursion": (float(series.close[far]) - price) * away / scale,
                     "r": rs,
                     "r_mtm": mtm,
+                    "duration": DURATION_CENSORED if timed is None else timed[0],
+                    "censored": bool(timed[1]) if timed else False,
+                    "peak_at": timed[2] if timed else 0,
                 }
             )
 
     found.sort(key=lambda row: row["bar"])
     bits = {"sharp_share": SHARP, "run_share": RUN, "bar_share": SHARP_BAR}
-    seen: dict[int, list[tuple[int, bool]]] = {}
-    pooled: dict[str, float] = dict.fromkeys(("hold", *bits), 0.0)
+    seen: dict[int, list[tuple[int, bool, bool]]] = {}
+    pooled: dict[str, float] = dict.fromkeys(("hold", "long", *bits), 0.0)
     pooled_n = 0
+    # The duration median is **running**, over episodes strictly earlier in
+    # this series, so `long_share` never reads a threshold computed from the
+    # future. A whole-sample median would be the same lookahead the grades
+    # exist to avoid, arriving through the threshold instead of the history.
+    durations: list[int] = []
     for row in found:
         history = seen.get(row["tag"], ())
         n_prev = len(history)
         row["n_prev"] = n_prev
         for grade, bit in bits.items():
             base = pooled[grade] / pooled_n if pooled_n else 0.5
-            hits = sum(1 for mask, _ in history if mask & bit)
+            hits = sum(1 for mask, _, _ in history if mask & bit)
             row[grade] = (hits + PRIOR_K * base) / (n_prev + PRIOR_K)
         base_hold = pooled["hold"] / pooled_n if pooled_n else 0.5
-        held_prev = sum(1 for _, held in history if held)
+        held_prev = sum(1 for _, held, _ in history if held)
         row["hold_share"] = (held_prev + PRIOR_K * base_hold) / (n_prev + PRIOR_K)
         row["hold_dev"] = abs(row["hold_share"] - 0.5)
-        seen.setdefault(row["tag"], []).append((row["shape"], row["held"]))
+        base_long = pooled["long"] / pooled_n if pooled_n else 0.5
+        long_prev = sum(1 for _, _, long in history if long)
+        row["long_share"] = (long_prev + PRIOR_K * base_long) / (n_prev + PRIOR_K)
+        # Censored counts as long: it lasted at least the horizon, which is
+        # above any running median. Dropping censored episodes would delete
+        # the long ones and invert what the grade means.
+        mid = st.median(durations) if durations else 0.0
+        is_long = row["censored"] or (
+            row["duration"] > mid and row["duration"] != DURATION_CENSORED
+        )
+        seen.setdefault(row["tag"], []).append((row["shape"], row["held"], is_long))
         for grade, bit in bits.items():
             pooled[grade] += 1.0 if row["shape"] & bit else 0.0
         pooled["hold"] += 1.0 if row["held"] else 0.0
+        pooled["long"] += 1.0 if is_long else 0.0
         pooled_n += 1
+        if row["duration"] != DURATION_CENSORED:
+            durations.append(row["duration"])
 
     def col(name: str, dtype):
         return np.asarray([row[name] for row in found], dtype=dtype)
@@ -836,10 +944,14 @@ def episodes(
         excursion=col("excursion", float),
         r={k: np.asarray([row["r"][k] for row in found], dtype=float) for k in TARGETS},
         r_mtm=col("r_mtm", float),
+        duration=col("duration", np.int64),
+        censored=col("censored", bool),
+        peak_at=col("peak_at", np.int64),
         n_prev=col("n_prev", np.int64),
         sharp_share=col("sharp_share", float),
         run_share=col("run_share", float),
         bar_share=col("bar_share", float),
+        long_share=col("long_share", float),
         hold_share=col("hold_share", float),
         hold_dev=col("hold_dev", float),
         skipped=skipped,

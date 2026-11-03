@@ -65,6 +65,7 @@ from __future__ import annotations
 import os
 import re
 import zlib
+from pathlib import Path
 
 from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import ImportableActorConfig, ImportableStrategyConfig
@@ -617,12 +618,67 @@ def importable(
     return out, [f"{r}/{e}/{s}" for r, e, s in clipped]
 
 
-def importable_actors(venue: str) -> list[ImportableActorConfig]:
-    """The actors, as importable configs."""
-    return [
+def _scratch_state() -> Path:
+    """A fold-state directory of this run's own, never the deployed one.
+
+    Named per process and per call so two cells of one sweep cannot share it.
+    `tempfile.mkdtemp` and not a path under `.data/`, so a sweep leaves nothing
+    behind that a later run could restore from by accident.
+    """
+    import tempfile
+
+    return Path(tempfile.mkdtemp(prefix="statespace-backtest-"))
+
+
+def importable_actors(venue: str, *, fresh: bool = False) -> list[ImportableActorConfig]:
+    """The actors, as importable configs - **including statespace.**
+
+    It was `BasketExit` alone, and that made the backtest path incapable of
+    running three of the four decision rules. `statespace-surprise`, `-long`
+    and `-short` all consume `statespace.proposals`, `StatespaceActor` is the
+    only producer of it, and nothing registered that actor for a backtest. So
+    a sweep over those rules completed, reported no orders and raised nothing:
+    a consumer with no producer, where both sides look healthy. That exact
+    shape has now hidden this topic three times.
+
+    It is the failure the whole port argues against - the thing that measures
+    and the thing that trades not being the same thing - so the condition is
+    `STATESPACE_BARS`, read the same way `live._actors` reads it, and the
+    bar types default to the desks' own interval on this venue's symbols
+    rather than being left unset. An actor subscribed to nothing is a fold
+    that never runs pretending to be a model that does, which is why the live
+    node omits it when the variable is empty; here the symbols are known, so
+    the sensible default is the bars the desks already subscribe to.
+    """
+    from till_infinity.statespace.actor import StatespaceActor, StatespaceConfig
+
+    out = [
         ImportableActorConfig(
             actor_path=f"{BasketExit.__module__}:{BasketExit.__name__}",
             config_path=f"{BasketConfig.__module__}:{BasketConfig.__name__}",
             config={"venue": venue},
         )
     ]
+    named = _names(os.environ.get("STATESPACE_BARS"))
+    interval = intervals()[0]
+    bars = named or tuple(str(bar_type(symbol, venue, interval)) for symbol in symbols(venue))
+    if bars:
+        out.append(
+            ImportableActorConfig(
+                actor_path=f"{StatespaceActor.__module__}:{StatespaceActor.__name__}",
+                config_path=f"{StatespaceConfig.__module__}:{StatespaceConfig.__name__}",
+                config={
+                    "bar_types": list(bars),
+                    "indicators": list(_names(os.environ.get("STATESPACE_INDICATORS"))),
+                    # **A measurement must not inherit the desk's progress.**
+                    # `Engine.observe_bar` refuses a bar at or before the last
+                    # one folded for that feed-interval, so a restored engine
+                    # rejects a replayed window bar for bar: one cell placed 18
+                    # orders and the next over identical data placed 0. Live
+                    # keeps restoring, because a desk that forgot its progress
+                    # would refold whatever the bus re-announced.
+                    **({"restore": False, "state_dir": str(_scratch_state())} if fresh else {}),
+                },
+            )
+        )
+    return out
