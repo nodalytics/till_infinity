@@ -165,6 +165,7 @@ from .bars import (
 )
 from .candles import Candles
 from .changepoint import Changepoint, Focus
+from .grouping import Group, cluster, common, crowding, modes, nearest, residual
 from .levels import (
     BjorgumLevels,
     Clock,
@@ -546,6 +547,7 @@ __all__ = [
     "Forget",
     "Gap",
     "Gaps",
+    "Group",
     "Imbalance",
     "Kind",
     "Leg",
@@ -572,7 +574,13 @@ __all__ = [
     "Zone",
     "build_detector",
     "check_scale",
+    "cluster",
+    "common",
+    "crowding",
     "declaration",
+    "modes",
+    "nearest",
     "read",
+    "residual",
     "unit_for",
 ]

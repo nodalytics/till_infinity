@@ -106,6 +106,7 @@ from nautilus_trader.model.data import Bar
 
 from till_infinity.utils.state import Restorable
 
+from . import grouping
 from .bars import NANOS, Reading, bar_input, check_feed, check_scale
 from .candles import Bar as Ohlc
 from .trend import REACH, Pivot, pivots
@@ -722,6 +723,10 @@ class Levels(Indicator):
         touch_noise_vol: Sided | float = TOUCH_NOISE_VOL,
         forget: Forget | float | int = FORGET_BARS,
         keep: int = KEEP,
+        #: Merge by bounded clustering rather than the chaining greedy pass.
+        #: Off, because every measured level on this desk was read off the
+        #: chaining version - see `_merge`.
+        bounded: bool = False,
         span: int = 240,
         seed: int = 0,
         source: Reading = Reading.CLOSE,
@@ -749,10 +754,12 @@ class Levels(Indicator):
                 str(self.touch_noise_vol),
                 keep,
                 str(Forget.of(forget)),
+                "bounded" if bounded else "greedy",
             ]
         )
         self.forget = Forget.of(forget)
         self.keep = int(keep)
+        self.bounded = bool(bounded)
         self.span = int(span)
         self.seed = int(seed)
         self.source = source
@@ -892,8 +899,26 @@ class Levels(Indicator):
         symmetric and `ordered` is by price: taking one level's own side would
         make whether a pair merged depend on which came first in the scan, so
         the same book would collapse differently read upwards and downwards.
+
+        **This chains, and `bounded=True` is the version that does not.**
+        Keeping the better-evidenced centre moves the anchor, so the next
+        comparison is against the new price: nine levels 0.30 units apart at
+        `merge_vol` 0.35, each carrying more touches than the last, collapse
+        into one level spanning 2.40 units - 6.9 times the gap - centred at a
+        price only one of the nine sat at. With equal touch counts the anchor
+        holds and the same input gives five levels, so whether it collapses
+        depends on the touch counts rather than on the prices, and the case
+        where it does is the ordinary one of a later touch having seen more.
+        See `grouping.cluster`, which bounds the span by construction.
+
+        The default is still the chaining version, because every level this
+        desk has measured was read off it and flipping it silently would move
+        every level at once.
         """
         if scale <= 0.0 or len(self.levels) < 2:
+            return
+        if self.bounded:
+            self._regroup(scale)
             return
         ordered = sorted(self.levels, key=lambda x: x.at(self.when))
         kept: list[Level] = []
@@ -912,6 +937,42 @@ class Levels(Indicator):
                 kept[-1] = better
                 continue
             kept.append(level)
+        self.levels = kept
+
+    def _regroup(self, scale: float) -> None:
+        """Merge by bounded clustering instead, so no group chains.
+
+        One width for the whole book - the wider of the two sides, which is
+        the rule `_merge` already applies pairwise - because a per-group width
+        would depend on which levels landed in the group and so on the order
+        again.
+
+        Each group folds into its best-evidenced member, which is the same
+        choice `_merge` makes; what differs is only which levels are in a
+        group together.
+        """
+        width = scale * max(self.merge_vol.for_side(1), self.merge_vol.for_side(-1))
+        prices = [x.at(self.when) for x in self.levels]
+        kept: list[Level] = []
+        start = 0
+        order = sorted(range(len(prices)), key=lambda i: prices[i])
+        for group in grouping.cluster(
+            [prices[i] for i in order],
+            width,
+            weights=[float(self.levels[i].touches) for i in order],
+        ):
+            members = [self.levels[i] for i in order[start : start + group.members]]
+            start += group.members
+            best = max(members, key=lambda x: x.touches)
+            for other in members:
+                if other is best:
+                    continue
+                best.from_below += other.from_below
+                best.from_above += other.from_above
+                best.first = min(best.first, other.first)
+                best.last = max(best.last, other.last)
+                best.last_bar = max(best.last_bar, other.last_bar)
+            kept.append(best)
         self.levels = kept
 
     def _forget(self) -> None:
