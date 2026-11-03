@@ -70,6 +70,7 @@ from ..utils.topics import PROPOSALS, subscribe
 from . import sizes
 from .config import Settings
 from .counterfactual import Counterfactual, Resolved
+from .timeframes import Frames
 
 
 class DeskConfig(StrategyConfig, frozen=True):
@@ -82,6 +83,16 @@ class DeskConfig(StrategyConfig, frozen=True):
     #: is which class `node/desks.py` built rather than a string looked up in
     #: a registry. Left in place so an existing config still loads.
     rule: str = "statespace-surprise"
+    #: Coarser frames to read for state, never to fire on. Empty by default,
+    #: so nothing changes for a strategy that does not ask.
+    #:
+    #: **A trigger on a coarse frame is a different strategy on that frame**,
+    #: not this one with context, so `timeframes.Frames` refuses a context
+    #: frame finer than or equal to the signal frame. The look-ahead this
+    #: exists to prevent - reading the H1 bar that *contains* the M15 signal,
+    #: three quarters of which is in the future - is enforced by
+    #: `Frames.ready` rather than left to a caller.
+    context_bar_types: tuple[BarType, ...] = ()
     #: Detectors from `till_infinity.indicators` to register, as `name` or
     #: `name:source`. Empty by default - an indicator nothing reads still
     #: costs a fold per bar.
@@ -121,6 +132,13 @@ class Desk(NautilusStrategy):
         self.refused = 0
         self.taken = 0
         self.detectors: dict[str, Any] = {}
+        #: The clocks this desk reads. Built here so a strategy can ask what
+        #: was knowable at a bar's close without each one keeping its own
+        #: book of which frame last closed when.
+        self.frames = Frames(
+            signal=str(config.bar_type),
+            context=tuple(str(frame) for frame in config.context_bar_types),
+        )
         #: The highest account equity this strategy has seen, which is what
         #: `scaling.by_drawdown` tapers against. Equity is account-wide, so
         #: every strategy on one account converges on the same figure.
@@ -148,6 +166,10 @@ class Desk(NautilusStrategy):
         """
         self._register()
         self.subscribe_bars(self._cfg.bar_type)
+        for frame in self._cfg.context_bar_types:
+            self.subscribe_bars(frame)
+        if self._cfg.context_bar_types:
+            self.log.info(f"context frames: {', '.join(str(f) for f in self.frames.context)}")
         self.subscribe_quote_ticks(self._cfg.instrument_id)
         # **The readings this desk decides on.** Nothing subscribed to
         # `statespace.proposals` after the port: `service.py` consumed it and
@@ -522,10 +544,27 @@ class Desk(NautilusStrategy):
     def on_bar(self, bar: Bar) -> None:
         """Nautilus delivers this after every registered indicator has updated.
 
-        Deliberately empty here. A bar is not a signal on this desk - the
-        decision rules read published readings - so an entry that wants a bar
-        trigger overrides this, and one that does not pays nothing.
+        **Records which frame just closed, and decides nothing.** A bar is not
+        a signal on this desk - the decision rules read published readings - so
+        an entry that wants a bar trigger overrides this, and one that does not
+        pays only the frame bookkeeping.
+
+        An override that wants the context must call `super().on_bar(bar)` or
+        `self.frames.ready` will never see a close. Nautilus delivers a bar at
+        its close, so what is recorded here is always final.
         """
+        self.frames.observe(bar.bar_type, bar.ts_event / 1e9, self.readings())
+
+    def readings(self) -> dict[str, Any]:
+        """What a frame's state is worth recording, per registered detector.
+
+        Default is the detector values, which is what a context frame is for:
+        a trend or a volatility reading from a slower clock. Overridden by a
+        strategy that wants something else, and deliberately not the bar - a
+        frame's bar is already in the cache and recording it here would
+        duplicate it per frame.
+        """
+        return {name: getattr(detector, "value", None) for name, detector in self.detectors.items()}
 
     def on_data(self, data: Any) -> None:
         """A published reading. The gate sequence, then place or record.
