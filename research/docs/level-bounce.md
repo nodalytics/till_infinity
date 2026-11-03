@@ -668,6 +668,63 @@ a hang** - that mistake cost two restarts here.
   cut is used throughout because it is the one reproducible across observers;
   comparing the two is a separate measurement.
 
+## The duration power sweep, on three feeds
+
+Run on the full panel after the arm was built. `pow?` is the share of draws
+where a power law still beats a cut-off, and it is the deciding column: a real
+characteristic length drives it to zero.
+
+| feed | planted length | exponent | median (bars) | med@ | pow? |
+|---|---|---|---|---|---|
+| eurusd | 0 | 0.4749 | 4 | 6/6 | 1.00 |
+| eurusd | 8 | 0.2493 | 16 | 6/6 | 0.00 |
+| eurusd | 16 | 0.1526 | 36 | 6/6 | 0.17 |
+| gold | 0 | 0.3646 | 5 | 6/6 | 1.00 |
+| gold | 8 | 0.2141 | 19 | 6/6 | 0.17 |
+| gold | 16 | 0.1393 | 38 | 6/6 | 0.00 |
+| spx500 | 0 | 0.4416 | 4 | 6/6 | 1.00 |
+| spx500 | 8 | 0.2168 | 23 | 6/6 | 0.00 |
+| spx500 | 16 | 0.1177 | **-** | **0/6** | 0.00 |
+
+**The test sees a planted characteristic length on all three feeds**, and the
+median tracks the plant almost exactly - 4 bars at length 0 against 36 at
+length 16 on eurusd. So the null below is informative: the detector
+demonstrably finds a characteristic length when one is there, and the market
+has none. Real read **S(8) above the hardest null arm in 0 of 167 cells** with
+the power law still better in 157.
+
+spx500 at length 16 reads `0/6`: not one draw's survival curve reached 0.5
+inside the horizon, which is the "longer than the horizon" case and is counted
+rather than averaged away.
+
+**The `graded` plant still reads nothing at any strength on any feed** - `t`
+never past 0.8, AUC pinned between 0.47 and 0.52 - so the part-two grade null
+is uninformative on three feeds rather than one. With two to four prior
+episodes per level the grade is mostly prior.
+
+**The `uniform` plant drives the hold rate monotonically** - eurusd 0.716 to
+0.890, gold 0.713 to 0.874 - so the detector plainly sees planted barriers.
+The machinery works; it is the grade that cannot resolve.
+
+### Two defects in the draw-aggregation layer, found reading this table
+
+**`0.0 or -1` collapsed a real zero into the missing sentinel.** A median
+duration of zero bars is a departure returning inside the same bar, and it
+printed identically to a curve that never resolved - opposite readings from
+one cell. The same `or 0` form sat beside it on the exponent and the AUC.
+
+**Averaging medians across draws conditions on the bounce being short.** A
+median exists only where the curve reaches 0.5, so the draws that lasted
+longest contribute nothing and the average is biased short - the Kaplan-Meier
+censoring bias reappearing one layer above where it was correctly handled. The
+`med@` column now reports how many draws carried a median, and the header says
+to read the median only at a full count.
+
+The stored data was never wrong: the JSONL carries `None` and the aggregator
+drops non-numerics. Only the terminal table lied, which is why the per-cell
+statistics - `censored` on every row, a count of curves never reaching 0.5 -
+were all correct while the summary above them was not.
+
 ## Deviations from the pre-registration
 
 * **`SPIKE` was split into `SPIKE` and `LEG` after a firing-rate measurement,
