@@ -32,8 +32,9 @@ import time
 from collections.abc import Callable
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
+from typing import Any
 
-from .promotion import Allocation, Candidate, Retirement, Rung, promote, retire, revive
+from .promotion import Allocation, Candidate, Gate, Retirement, Rung, promote, retire, revive
 
 #: The most the ladder may allocate, ever, without a person editing this.
 #:
@@ -64,6 +65,39 @@ class Decision:
         when = time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime(self.at))
         tail = f" | {self.evidence}" if self.evidence else ""
         return f"{when} {self.candidate}: {self.action} - {self.reason}{tail}"
+
+
+def _gates(saved: Any) -> list[Gate]:
+    """The gates on a saved candidate, dropping any that will not rebuild.
+
+    `Gate` refuses one naming no control, so a hand-edited file can hold a
+    gate that cannot exist. Dropped one at a time and the rest kept: losing a
+    gate costs a hold for want of evidence, where raising would lose every
+    candidate in the file. The float sequences come back from JSON as lists
+    and are restored as the tuples the dataclass declares.
+    """
+    found: list[Gate] = []
+    for entry in saved or []:
+        if not isinstance(entry, dict):
+            continue
+        try:
+            found.append(
+                Gate(
+                    name=str(entry["name"]),
+                    criterion=str(entry["criterion"]),
+                    control=str(entry["control"]),
+                    candidates=int(entry["candidates"]),
+                    episodes=int(entry["episodes"]),
+                    passed=entry.get("passed"),
+                    reading=entry.get("reading"),
+                    note=str(entry.get("note", "")),
+                    trial_sharpes=tuple(float(v) for v in entry.get("trial_sharpes") or ()),
+                    returns=tuple(float(v) for v in entry.get("returns") or ()),
+                )
+            )
+        except (KeyError, TypeError, ValueError):
+            continue
+    return found
 
 
 @dataclass(slots=True)
@@ -104,11 +138,22 @@ class Ladder:
         Temp file and rename, the same discipline the tick store uses: a
         process killed mid-write leaves the previous ladder intact rather than
         a truncated one that the next start would refuse or, worse, parse.
+
+        **The gates are written, and that is what makes the loop a loop.**
+        They were excluded, and `load` built every candidate without them, so
+        a candidate passing at DSR 1.0 came back from its own file reporting
+        "no gate has been run" - the words a node discovery had never reached
+        reports. Nothing could climb off `DISCOVERED`, whatever was delivered.
+
+        The returns and trial Sharpes are written whole because
+        `Gate.deflated` recomputes the DSR from them on every verdict; a gate
+        without them falls back to the `passed` flag, which is a weaker test
+        substituted silently at the restart.
         """
         payload = {
             "candidates": {
                 name: {
-                    **{k: v for k, v in asdict(c).items() if k not in ("rung", "gates")},
+                    **{k: v for k, v in asdict(c).items() if k != "rung"},
                     "rung": c.rung.value,
                 }
                 for name, c in self.candidates.items()
@@ -136,7 +181,13 @@ class Ladder:
         except (OSError, ValueError):
             return cls()
         ladder = cls(
-            episodes=dict(raw.get("episodes") or {}), entered=dict(raw.get("entered") or {})
+            episodes=dict(raw.get("episodes") or {}),
+            entered=dict(raw.get("entered") or {}),
+            # Restored so a restart does not re-log every hold it had already
+            # reported. The field was written and never read back, which made
+            # the de-duplication the docstring describes last exactly as long
+            # as the process did.
+            holding=dict(raw.get("holding") or {}),
         )
         for name, data in (raw.get("candidates") or {}).items():
             try:
@@ -144,6 +195,7 @@ class Ladder:
                     name=data["name"],
                     rung=Rung(data.get("rung", "discovered")),
                     origin=data.get("origin", ""),
+                    gates=_gates(data.get("gates")),
                     allocation=float(data.get("allocation", 0.0)),
                     decide_after=int(data.get("decide_after", 200)),
                     history=list(data.get("history") or []),
@@ -185,6 +237,68 @@ class Ladder:
         return (at - started) > STALE_DAYS * 86_400
 
 
+def deliver(
+    ladder: Ladder,
+    name: str,
+    gate: Gate,
+    *,
+    origin: str = "",
+    now: Callable[[], float] | None = None,
+) -> Decision:
+    """Put a measured gate on the ladder, for `step` to judge on its next pass.
+
+    **The entry point a discovery run had nowhere to deliver to.** The loop
+    says candidates "arrive by being written to the ladder file - by a
+    discovery run, or by a person", and no function wrote one.
+
+    Delivering evidence is not promoting: a new candidate lands at
+    `DISCOVERED` with no allocation, where `_seed` puts a configured leg, and
+    climbs only if `step` reads the gate as passing. An existing candidate
+    keeps its rung, allocation and episode count, because a fresh backtest is
+    evidence for the next decision rather than a re-run of the ones taken.
+
+    A gate replaces one of the same name. `Candidate.blocking` reads every
+    gate, so a superseded failure left beside a pass would hold a candidate
+    for ever on a number its own harness has withdrawn.
+    """
+    clock = now or time.time
+    at = clock()
+    candidate = ladder.candidates.get(name)
+    if candidate is None:
+        candidate = Candidate(name=name, origin=origin or "delivered by a discovery run")
+        ladder.candidates[name] = candidate
+        ladder.enter(name, at)
+    elif origin and not candidate.origin:
+        candidate.origin = origin
+
+    replaced = any(existing.name == gate.name for existing in candidate.gates)
+    candidate.gates = [existing for existing in candidate.gates if existing.name != gate.name]
+    candidate.gates.append(gate)
+
+    dsr = gate.deflated()
+    reading = f"DSR {dsr:.3f}" if dsr is not None else f"passed={gate.passed}"
+    candidate.record(
+        f"{gate.name}: {reading} on {gate.episodes} episodes, "
+        f"chosen from {gate.candidates}, against {gate.control}"
+    )
+    # Cleared so the next pass states its hold against the new evidence rather
+    # than keeping the deduplicated reason the old gate produced.
+    ladder.holding.pop(name, None)
+
+    decision = Decision(
+        at=at,
+        candidate=name,
+        action="gated" if replaced else "delivered",
+        reason=f"{gate.name} {reading}",
+        evidence=(
+            f"{gate.criterion} against {gate.control}; {gate.episodes} episodes, "
+            f"{gate.candidates} candidates, {len(gate.trial_sharpes)} trial Sharpes"
+        ),
+    )
+    ladder.record(decision)
+    return decision
+
+
 def step(
     ladder: Ladder,
     *,
@@ -204,7 +318,7 @@ def step(
     decided: list[Decision] = []
 
     for name, candidate in list(ladder.candidates.items()):
-        seen = ladder.episodes.get(name, 0)
+        seen = sample_seen(candidate, ladder.episodes.get(name, 0))
 
         # Stale first: a candidate that has neither passed nor failed in three
         # months is not pending, it is forgotten, and an automated loop
@@ -277,6 +391,35 @@ def step(
             ladder.record(decision)
             decided.append(decision)
     return decided
+
+
+#: The rungs a candidate occupies before it has any allocation. `Allocation.of`
+#: is zero at both, so neither can trade or close a position.
+BEFORE_CAPITAL = (Rung.DISCOVERED, Rung.BACKTESTED)
+
+
+def sample_seen(candidate: Candidate, live: int) -> int:
+    """The episodes that gate this candidate's next climb.
+
+    **The sample has to be in the currency the rung is decided in.** `step`
+    passed the live closed-position count to all four, and the two before
+    capital have no allocation - so a candidate there could not trade, could
+    not close a position, and could not reach the 200 episodes it needed to
+    reach the rung where trading is allowed. The hold read "0 of 200
+    episodes", which is true and silent about the deadlock.
+
+    `sample_for` already names the resolution: backtested keeps
+    `MIN_EPISODES` because "backtest episodes are cheap" - cheap because they
+    are a backtest's. So the rungs before capital are judged on `Gate
+    .episodes` and the live rungs on what the account closed.
+
+    The largest gate, not the sum: two gates on one backtest are two readings
+    of one sample, and adding them would let a second opinion stand in for a
+    longer record.
+    """
+    if candidate.rung in BEFORE_CAPITAL:
+        return max((gate.episodes for gate in candidate.gates), default=0)
+    return live
 
 
 def _next_rung(rung: Rung) -> Rung:

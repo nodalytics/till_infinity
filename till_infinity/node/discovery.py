@@ -30,6 +30,7 @@ can tell a regime claim from a direction claim.
 
 from __future__ import annotations
 
+from collections.abc import Sequence
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
@@ -152,21 +153,44 @@ class Trials:
         return counts
 
 
-def read(proposals: list[Proposal], results: list[Any]) -> Trials:
+def read(
+    proposals: list[Proposal],
+    results: list[Any],
+    returns: Sequence[Sequence[float]] | None = None,
+) -> Trials:
     """Pair proposals with the `BacktestResult`s `BacktestNode.run()` returned.
 
     Positional, because `BacktestNode` returns results in the order of the
     configs it was given. A length mismatch is refused rather than zipped
     short, which would silently drop trials from the count.
+
+    **`returns` is optional in the signature and not in effect.** A
+    `BacktestResult` carries `stats_returns`, a dict of finished statistics,
+    and no returns *series* - so there is nothing in it to deflate. Without
+    one every gate built here falls back to the `passed` flag, which nothing
+    here sets, and a candidate would be held for want of a deflated Sharpe
+    however good it was. The series comes off the engine the node kept,
+    `BacktestNode.get_engine(run_config_id)`, and is passed in because this
+    function is given results rather than engines.
+
+    None is still allowed: a sweep run to count trials or read a firing rate
+    has no use for the deflation, and `Gate.verdict` says how many returns it
+    was given.
     """
     if len(proposals) != len(results):
         raise ValueError(
             f"{len(proposals)} proposals and {len(results)} results - the trial count "
             f"is what the deflation rests on, so a mismatch cannot be zipped away"
         )
+    if returns is not None and len(returns) != len(results):
+        raise ValueError(
+            f"{len(returns)} return series for {len(results)} results - a series "
+            f"paired with the wrong trial deflates the wrong candidate"
+        )
     trials = Trials()
-    for proposal, result in zip(proposals, results, strict=True):
-        trials.add(Trial.of(proposal, result))
+    for index, (proposal, result) in enumerate(zip(proposals, results, strict=True)):
+        series = tuple(float(v) for v in returns[index]) if returns is not None else ()
+        trials.add(Trial.of(proposal, result, series))
     return trials
 
 
@@ -229,3 +253,52 @@ def summarise(trials: Trials) -> str:
     best = trials.best()
     head = f"{trials.attempted} attempted, {len(trials.kept)} measured, {len(trials.failed)} failed"
     return f"{head}; best {best.proposal.name} at SR {best.sharpe:.3f}" if best else head
+
+
+def deliver_to(
+    path: Any,
+    name: str,
+    trials: Trials,
+    trial: Trial,
+    *,
+    origin: str = "",
+    gate_name: str = "backtest",
+    prior_trials: int = 0,
+    candidates: int | None = None,
+) -> Any:
+    """Write a sweep's verdict onto the ladder the live node reads.
+
+    **The step that was missing, and the reason the loop never ran.** A search
+    could measure a candidate, deflate it honestly and build a `Gate`, and had
+    nowhere to put it: the gate went out of scope with the process.
+
+    Read, amend, write - not replace. The live node owns this file and writes
+    to it on its own timer, so a discovery run that wrote a fresh ladder would
+    drop every candidate the node is running along with their rungs and
+    episode counts. `Ladder.save` is atomic, so the node reads the ladder
+    either before this delivery or after it.
+
+    `name` must be the id Nautilus assigns the strategy, since that is what
+    the loop counts episodes against. `desks.strategy_name` derives it.
+    """
+    from pathlib import Path
+
+    from .pipeline import Ladder, deliver
+
+    where = Path(path)
+    gate = gate_from(
+        trials,
+        trial,
+        name=gate_name,
+        prior_trials=prior_trials,
+        candidates=candidates,
+    )
+    ladder = Ladder.load(where)
+    decision = deliver(
+        ladder,
+        name,
+        gate,
+        origin=origin or f"{trial.proposal.name} over {trials.attempted} trials",
+    )
+    ladder.save(where)
+    return decision

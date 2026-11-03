@@ -112,7 +112,6 @@ class Surprise:
             return False
         return str(payload.get("feed") or "").lower() in self.profile.feeds
 
-
     def _spread_limit(self) -> float:
         """The share of the risk a round trip may cost, as configured.
 

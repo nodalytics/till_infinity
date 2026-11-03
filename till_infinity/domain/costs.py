@@ -70,7 +70,7 @@ MAX_SPREAD_RISK_FRACTION = 0.16
 
 
 def too_expensive(spread: float, risk: float, limit: float = MAX_SPREAD_RISK_FRACTION) -> str:
-    """"" if the round trip is affordable against the stop, else why it is not.
+    """Empty if the round trip is affordable against the stop, else why not.
 
     A reason string rather than a bool, because every caller records one and
     three callers writing the same sentence is three sentences that drift.

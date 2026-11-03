@@ -292,6 +292,41 @@ def test_the_importable_paths_build_what_a_backtest_would_build(monkeypatch):
         assert isinstance(ActorFactory.create(actor), Actor), actor.actor_path
 
 
+def test_the_derived_name_is_the_id_nautilus_assigns(monkeypatch):
+    """**The join between a measurement and a promotion.** `LadderActor`
+    counts a candidate's episodes with `positions_closed(strategy_id=...)`, so
+    a discovery run delivering under any other name delivers one the loop can
+    never find a sample for - held for want of episodes while the strategy it
+    names trades beside it.
+
+    Asserted against each strategy's own `id`, built through the factory
+    `BacktestNode` uses, rather than against the formula. The formula is
+    Nautilus's and could change under us; a test that restated it would agree
+    with `strategy_name` and with nothing else.
+    """
+    from nautilus_trader.trading.config import StrategyFactory
+
+    monkeypatch.setenv("TRADING_ENTRIES", "edge resting arrival")
+    back, _ = desks.importable("MT5")
+    assert back, "nothing to name, so nothing was asserted"
+    for config in back:
+        assert desks.strategy_name(config) == str(StrategyFactory.create(config).id)
+
+
+def test_a_name_without_a_tag_is_still_a_name():
+    """A config carrying no `order_id_tag` would otherwise be named with a
+    trailing dash, which is not an id Nautilus would ever assign and so could
+    not be matched to anything."""
+    from nautilus_trader.trading.config import ImportableStrategyConfig
+
+    bare = ImportableStrategyConfig(
+        strategy_path="till_infinity.strategies.surprise:SurpriseEdge",
+        config_path="till_infinity.strategies.entries:EdgeEntryConfig",
+        config={},
+    )
+    assert desks.strategy_name(bare) == "SurpriseEdge"
+
+
 def test_the_basket_is_an_actor_rather_than_a_desk():
     """Its whole subject is other strategies' positions."""
     found = desks.actors("MT5")

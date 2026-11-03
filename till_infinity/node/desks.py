@@ -554,6 +554,25 @@ def actors(venue: str) -> list[Actor]:
     return [BasketExit(BasketConfig(venue=venue, component_id=f"BasketExit-{venue}"))]
 
 
+def strategy_name(config: ImportableStrategyConfig) -> str:
+    """The `StrategyId` Nautilus will assign this config, as a string.
+
+    **The join between a measurement and a promotion.** `LadderActor` counts
+    a candidate's episodes with `Cache.positions_closed(strategy_id=...)`, so
+    a candidate delivered under any other name is one the loop can never find
+    a sample for: held for want of episodes while the strategy it names
+    trades beside it.
+
+    Derived from the importable config, not from `(rule, entry, symbol)`, so
+    the name cannot disagree with the one the kernel assigns. Nautilus
+    composes it from the class name and the order id tag; a test holds that
+    against a real strategy's own `id` rather than against this docstring.
+    """
+    leaf_class = config.strategy_path.rsplit(":", 1)[-1]
+    tag = (config.config or {}).get("order_id_tag", "")
+    return f"{leaf_class}-{tag}" if tag else leaf_class
+
+
 def importable(
     venue: str,
     *,
