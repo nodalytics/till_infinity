@@ -3,10 +3,17 @@
 **Measured 2026-11-03, pre-registered.** `strategies/surprise.py` computes
 `risk = stop_vol * unit` and never reads the level book.
 `indicators/grouping.py` gained `Anchor.FLOOR`/`CEILING`/`SIDED` and
-`Group.price(anchor, side=)` this session for the opposite rule - put the stop
-beyond the nearest cluster's *extreme*, so the level has to break before the
-stop is reached - and that primitive has **no caller anywhere**. This decides
-whether it should get one.
+`Group.price` this session for the opposite rule - put the stop beyond the
+nearest cluster's *extreme*, so the level has to break before the stop is
+reached - and that primitive has **no caller anywhere**. This decides whether
+it should get one.
+
+The placement anchor is now `Anchor.PROTECTIVE`, added in response to this
+study: `SIDED` is keyed on the level's own formed side and was measured here
+handing a long the group's *ceiling* on 36 to 49% of anchors, so the study had
+to pass the trade's side by hand. `PROTECTIVE` takes it as a separate `trade`
+argument and raises when it is missing. Read every placement claim below as
+`PROTECTIVE`; `SIDED` appears only as the thing that had to be worked around.
 
 Harness: [`research/ideas/stop_anchor.py`](../ideas/stop_anchor.py) and
 [`stop_anchor_book.py`](../ideas/stop_anchor_book.py), tests in
@@ -20,21 +27,33 @@ feed-intervals, **0 instruments** beat the distance-matched placebo on both
 sides on either statistic, and the surrogates manufacture a larger
 floor-over-placebo advantage than the real market shows.
 
+**Headline figures are the 48-draw run** (`--draws 16`, 16 draws of each of
+three surrogate families). An earlier 12-draw run is kept only where the
+comparison is informative, and the two pass counts **are not comparable
+without saying so**: a cell passes by exceeding its *hardest* surrogate draw,
+so the bar rises with the draw count and the chance of a pass falls from
+**1/13 to 1/49**. The decisive contrast's raw count fell from 4 of 28 to **1 of
+28** while its expectation fell from 2.15 to **0.57** - so the count moved
+towards chance from above and the reading is unchanged in direction and firmer
+in kind. **Every real reading is identical between the two runs on all 140
+cells**; only the surrogate bar moved, which is the check that the real arm is
+reproducible and the comparison is sound.
+
 ## Verdict
 
 | question | answer | kind |
 |---|---|---|
 | Is the nearest level's floor a *wider* stop than the incumbent, as the premise assumes? | **No - it is four to five times tighter.** The nearest cluster's floor sits **0.427 volatility units** below the close (eurusd 1d median) against `SurpriseProfile.stop_vol` of 2.0. Anchoring there is a cost change, not a width change | mechanic |
 | How much can the anchor move a stop at all? | **0.028 to 0.105 volatility units**, the floor-to-centre span, on all 14 feed-intervals. The nearest group has a median of **2 touches**, so the "weighted mean inside the body of touches" argument is at its weakest case | mechanic |
-| Does `floor` beat the distance-matched placebo? | **No. 4 of 28 cells** beat their hardest surrogate draw on R where 12 draws give **2.2** by chance, and **0 of 14 instruments** on both sides. The stop-out rate points the predicted way on both sides on **3 of 14** feeds against **3.5** by chance | null |
-| Does `floor` beat `centre` - is the anchor the finding? | **No. 2 of 28 cells**, **0 instruments on both sides.** On the catalogue the centre is marginally *better*: -0.382R against the floor's -0.390R | null |
-| Does `floor` beat `mirror` - the far-side level? | **No. 4 of 28, 1 instrument on both sides** | null |
+| Does `floor` beat the distance-matched placebo? | **No. 1 of 28 cells** beats its hardest surrogate draw on R where 48 draws give **0.57** by chance (Poisson sd 0.76), and **0 of 14 instruments** on both sides. The stop-out rate points the predicted way on both sides on **3 of 14** feeds against **3.5** by chance | null |
+| Does `floor` beat `centre` - is the anchor the finding? | **No. 0 of 28 cells**, on either statistic. On the catalogue the centre is marginally *better*: -0.382R against the floor's -0.390R | null |
+| Does `floor` beat `mirror` - the far-side level? | **No. 0 of 28 cells**, on either statistic | null |
 | Can `floor` be compared with the incumbent at matched width? | **No, and that is worth stating. 0 of 28 cells** share a single quarter-unit width stratum with `vol-2`. The level book and a 2-unit stop are different widths everywhere, so only the placebo can decide | mechanic |
 | What does the nearest-level stop cost? | **0.108R pooled and 0.169-0.198R on btc, eurusd and gbpusd**, against the baseline's 0.050R. The desk's own measured limit is `MAX_SPREAD_RISK_FRACTION` **0.16 of the risk**, so this arm is outside the cost envelope on three of six feeds | cost |
 | Does the harness reproduce a known number? | **Yes, exactly, per instrument.** The rule's own ATR/N20 stop reads **-0.533R on n 75**, day-block [-0.830, -0.237], and btc -0.207 / eurusd -0.311 / gbpusd -0.336 / gold -1.196 / spx500 -1.475 / us100 -0.126 - every figure identical to [`smc-bos-reconcile.md`](smc-bos-reconcile.md) | mechanic |
 | Where does the test go blind? | **Very high, and asymmetrically.** A barrier that reflects the **close** path is invisible at *every* strength up to a hard wall. One that price may not **print** through is visible only at strength **1.00** (dP -0.043/-0.053 both sides) and reads nothing at 0.75 | power |
-| Does `indicators.Levels` support the primitive at all? | **No.** It keeps a Kalman posterior per level and discards the touch prices, so no floor or ceiling can be recovered from it. A production wiring would have to change that first | mechanic |
-| Does `Anchor.SIDED` name the price the claim needs? | **On 51-64% of anchors only.** It is keyed on the level's *formed* side, not the trade's, so it hands a long the group's ceiling - a price above the entry - on a third to a half of them | mechanic |
+| Does `indicators.Levels` support the primitive at all? | **No, and this is a precondition rather than an aside.** It keeps a Kalman posterior per level and **discards the touch prices**, so no floor or ceiling can be recovered from the book a strategy actually reads. **It blocks the whole clustering seam from reaching production**, whatever a future measurement finds, and it is not fixed | **blocker** |
+| Does `Anchor.SIDED` name the price the claim needs? | **No, on 51-64% of anchors only** - it is keyed on the level's *formed* side, so it hands a long the group's ceiling, a price above the entry, on **36 to 49%** of them. **Now fixed in production** as `Anchor.PROTECTIVE`, which takes the trade's side; this study had to pass the trade's side by hand | mechanic |
 
 ## The claim, and the arithmetic it rests on
 
@@ -99,10 +118,31 @@ turns agree (`a-magnet-is-a-shared-reference`). The volatility unit is a causal
 EWMA of the bar **range** (`drive-q-from-the-range`), asserted equal to
 `level_shield.units` so the two studies measure distances in one unit.
 
-**`indicators.Levels` could not be used, and that is a finding.** It keeps a
-Kalman posterior per level and **discards the touch prices**, so no floor or
-ceiling can be recovered from it. Any production wiring of `Anchor.FLOOR` has
-to change that first.
+### The precondition: `indicators.Levels` cannot supply an edge at all
+
+**This is the most consequential mechanic in the study and it is not fixed.**
+`indicators.Levels` is the book a strategy on this desk actually reads. It
+keeps a **Kalman posterior per level** and **discards the touch prices**, so
+`Level` exposes a centre (`price`, `at`) and a posterior width (`zone`) and
+there is **no floor and no ceiling to be had from it**. `Anchor.FLOOR`,
+`Anchor.CEILING` and `Anchor.PROTECTIVE` all need the extreme touches, and the
+production book throws them away as it folds them in.
+
+So this study had to build its own book - `grouping.cluster` over confirmed
+`trend.pivots`, asserted pivot-for-pivot identical to the production detector -
+and that is not a shortcut, it is the only way the question could be asked at
+all.
+
+**The consequence is a precondition on any future work here, not a caveat on
+this one.** Whatever a later measurement finds about cluster edges, it cannot
+reach production until `Levels` retains per-level touch extremes (or a parallel
+book does). That is a change to the live level book on a production trading
+desk, so it carries its own measurement: every number on this desk that reads
+`Level.price` or `Level.zone` is a number about a Kalman centre, and adding
+state to the fold is the kind of change `restore-drops-deque-maxlen` is about.
+**It blocks the whole clustering seam, and it should be costed before any
+further study of cluster anchors is commissioned** - otherwise a positive
+finding would arrive with no route to a desk.
 
 **The exit.** No target, time exit at the interval's horizon (20 bars at 1d, 48
 at 15m). **This is the only exit rule on which the stop width can matter at
@@ -161,10 +201,28 @@ turned at, so "a level is 2 units away" is a statement about the recent path,
 and clustering is the mechanical route by which that predicts a smaller forward
 excursion. An arm without it cannot judge the claim.
 
-**The criterion is the hardest draw, not the z.** Each z's standard deviation
-comes from 12 surrogate draws, so every p derived from it is far too small and
-the Benjamini-Hochberg table inherits that. What the z's are for is ranking
-cells; what passes a cell is exceeding its own hardest draw.
+**The criterion is the hardest draw, not the z.** A cell passes by exceeding
+the maximum of its own surrogate draws. Under exchangeability the chance of
+that is **1/(k+1)** for `k` draws, so the expected pass count over `c` cells is
+`c/(k+1)` and **the bar rises with the draw count**:
+
+| run | `--draws` | draws per cell | chance per cell | expected of 28 | expected of 140 |
+|---|---|---|---|---|---|
+| headline | 16 | **48** | 1/49 | **0.57** | **2.86** |
+| earlier | 4 | 12 | 1/13 | 2.15 | 10.77 |
+
+**`--draws` is per surrogate family and there are three**, so `--draws 16` is
+48 draws and not 16 - a four-fold tightening, not a 33% one. The harness
+printed a hardcoded "12 draws give 10.8" on every run regardless, which
+understated the bar by four on the only run where it mattered; it now computes
+the expectation and its Poisson sd from the actual count. Pass counts from the
+two runs are therefore **not comparable as raw counts** and are quoted against
+their own expectations throughout.
+
+Each z's standard deviation comes from those same draws, so every p derived
+from it is too small and the Benjamini-Hochberg table inherits that. What the
+z's are for is ranking cells; what passes a cell is exceeding its own hardest
+draw.
 
 **And never against a closed form.** [`level-shield.md`](level-shield.md)
 measured a bar-extreme barrier race departing from 1/(1+N) by -0.25 to +0.12R,
@@ -276,70 +334,107 @@ settle.**
 ### The contrast that decides, per instrument
 
 `beyond-floor+0.25` minus `beyond-matched+0.25`, standardised on the stop's own
-quarter-unit width stratum, against the hardest of 12 surrogate draws. `hard`
-is the criterion; **a cell passes only by exceeding it, and an instrument only
-by passing on both sides.**
+quarter-unit width stratum, against **the hardest of 48 surrogate draws**.
+`hard` is the criterion; **a cell passes only by exceeding it, and an
+instrument only by passing on both sides.** Bold marks a pass, or a wrong-sign
+stop-out reading.
 
 | feed | side | dR\|width | hardest null | dP(stop)\|width | hardest null |
 |---|---|---|---|---|---|
-| gold.1d | +1 / -1 | -0.0034 / +0.0042 | +0.0224 / +0.0236 | **+0.0050** / -0.0070 | -0.0155 / -0.0065 |
-| eurusd.1d | +1 / -1 | +0.0085 / +0.0048 | +0.0141 / +0.0172 | -0.0114 / -0.0076 | -0.0114 / -0.0132 |
-| gbpusd.1d | +1 / -1 | -0.0021 / -0.0009 | +0.0062 / +0.0109 | **+0.0015** / **+0.0037** | -0.0087 / -0.0073 |
-| usdjpy.1d | +1 / -1 | **+0.0191** / +0.0015 | +0.0096 / +0.0147 | -0.0045 / -0.0032 | -0.0092 / -0.0111 |
-| usdchf.1d | +1 / -1 | -0.0103 / **+0.0093** | +0.0237 / +0.0076 | **+0.0147** / -0.0072 | -0.0097 / -0.0076 |
-| usdcad.1d | +1 / -1 | +0.0071 / -0.0131 | +0.0075 / +0.0155 | -0.0093 / **+0.0072** | -0.0079 / -0.0123 |
-| audusd.1d | +1 / -1 | -0.0103 / -0.0020 | +0.0070 / +0.0252 | **+0.0110** / +0.0000 | -0.0091 / -0.0140 |
-| nzdusd.1d | +1 / -1 | -0.0097 / -0.0014 | +0.0163 / +0.0210 | **+0.0097** / **+0.0051** | -0.0106 / -0.0169 |
-| eurusd.15m | +1 / -1 | **+0.0282** / -0.0056 | +0.0263 / +0.0328 | -0.0102 / **+0.0068** | -0.0104 / -0.0136 |
-| gbpusd.15m | +1 / -1 | -0.0288 / +0.0168 | +0.0181 / +0.0210 | **+0.0148** / -0.0041 | -0.0109 / -0.0139 |
-| gold.15m | +1 / -1 | +0.0247 / +0.0020 | +0.0267 / +0.0126 | -0.0067 / **+0.0073** | -0.0110 / -0.0080 |
-| btc.15m | +1 / -1 | +0.0264 / **+0.0213** | +0.0478 / +0.0187 | -0.0023 / -0.0102 | -0.0112 / -0.0092 |
-| us100.15m | +1 / -1 | +0.0081 / -0.0099 | +0.0222 / +0.0223 | -0.0050 / **+0.0118** | -0.0050 / -0.0130 |
-| spx500.15m | +1 / -1 | -0.0074 / -0.0053 | +0.0196 / +0.0204 | **+0.0106** / -0.0015 | -0.0071 / -0.0146 |
+| gold.1d | +1 / -1 | -0.0034 / +0.0042 | +0.0351 / +0.0206 | **+0.0050** / -0.0070 | -0.0093 / -0.0134 |
+| eurusd.1d | +1 / -1 | +0.0085 / +0.0048 | +0.0148 / +0.0263 | **-0.0114** / -0.0076 | -0.0105 / -0.0162 |
+| gbpusd.1d | +1 / -1 | -0.0021 / -0.0009 | +0.0137 / +0.0140 | **+0.0015** / **+0.0037** | -0.0135 / -0.0085 |
+| usdjpy.1d | +1 / -1 | +0.0191 / +0.0015 | +0.0265 / +0.0170 | -0.0045 / -0.0032 | -0.0186 / -0.0112 |
+| usdchf.1d | +1 / -1 | -0.0103 / +0.0093 | +0.0196 / +0.0276 | **+0.0147** / -0.0072 | -0.0136 / -0.0114 |
+| usdcad.1d | +1 / -1 | +0.0071 / -0.0131 | +0.0127 / +0.0179 | -0.0093 / **+0.0072** | -0.0108 / -0.0150 |
+| audusd.1d | +1 / -1 | -0.0103 / -0.0020 | +0.0146 / +0.0213 | **+0.0110** / +0.0000 | -0.0116 / -0.0167 |
+| nzdusd.1d | +1 / -1 | -0.0097 / -0.0014 | +0.0153 / +0.0136 | **+0.0097** / **+0.0051** | -0.0107 / -0.0115 |
+| eurusd.15m | +1 / -1 | +0.0282 / -0.0056 | +0.0339 / +0.0224 | -0.0102 / **+0.0068** | -0.0273 / -0.0148 |
+| gbpusd.15m | +1 / -1 | -0.0288 / +0.0168 | +0.0326 / +0.0414 | **+0.0148** / -0.0041 | -0.0166 / -0.0180 |
+| gold.15m | +1 / -1 | **+0.0247** / +0.0020 | +0.0239 / +0.0368 | -0.0067 / **+0.0073** | -0.0117 / -0.0114 |
+| btc.15m | +1 / -1 | +0.0264 / +0.0213 | +0.0417 / +0.0271 | -0.0023 / -0.0102 | -0.0143 / -0.0124 |
+| us100.15m | +1 / -1 | +0.0081 / -0.0099 | +0.0336 / +0.0242 | -0.0050 / **+0.0118** | -0.0173 / -0.0152 |
+| spx500.15m | +1 / -1 | -0.0074 / -0.0053 | +0.0326 / +0.0302 | **+0.0106** / -0.0015 | -0.0094 / -0.0158 |
 
-**4 of 28 cells** exceed their hardest draw on R, where 12 draws give 2.2 by
-chance, and **0 of 14 instruments do so on both sides**: usdjpy passes long and
-fails short, usdchf short and fails long, eurusd.15m long, btc.15m short. The
-sign is not stable across intervals either - gold is -0.0034 long at 1d and
-+0.0247 at 15m, and eurusd is +0.0048 short at 1d and -0.0056 at 15m.
+**1 of 28 cells** exceeds its hardest draw on R - gold.15m long, +0.0247
+against +0.0239 - where 48 draws give **0.57** by chance at a Poisson sd of
+0.76. It fails on the short side (+0.0020 against +0.0368), so **0 of 14
+instruments pass on both sides**, which was the criterion fixed before the run.
+One cell beats its hardest draw on the stop-out rate (eurusd.1d long) and that
+instrument fails short too.
+
+**The two runs' passing cells are disjoint, which is the clearest evidence that
+these passes are noise.** At 12 draws this contrast passed on usdjpy.1d long,
+usdchf.1d short, eurusd.15m long and btc.15m short; all four had their hardest
+draw rise past them at 48, and the one cell that passes at 48 - gold.15m long -
+had *failed* at 12. No cell passes in both runs. A real effect would not
+reshuffle which instruments carry it when only the surrogate set changes, and
+this is also why the pass count is quoted against its own expectation rather
+than compared across runs.
+
+A caveat on the mechanism, from a defect in this harness rather than from the
+data: the 48-draw set does **not** contain the 12-draw set, because the
+surrogate seeds came from Python's salted `hash()` and so differed per process.
+That is why gold.15m's hardest value could *fall* from +0.0267 to +0.0239 - a
+maximum over more draws cannot otherwise decrease. The seeding is fixed
+(`zlib.crc32`), the defect was confined to which surrogates were drawn, and
+every real reading is identical across the two runs on all 140 cells.
+
+**The sign is not stable across intervals** either, which was also a
+pre-registered requirement: gold reads -0.0034 long at 1d and +0.0247 at 15m,
+and eurusd +0.0048 short at 1d and -0.0056 at 15m.
 
 **The stop-out rate is the pre-registered statistic and it is the cleaner
-null.** The predicted sign on *both* sides appears on **3 of 14** feeds against
-**3.5** by chance, and the bolded wrong-sign entries are the tell: a barrier is
-a property of the path, so it cannot be present long and reversed short.
+null**, and it does **not** depend on the draw count at all where it matters
+most: the predicted sign on *both* sides appears on **3 of 14** feeds against
+**3.5** by chance, identically in both runs, because that reading involves no
+surrogate. The bolded wrong-sign entries are the tell: a barrier is a property
+of the path, so it cannot be present long and reversed short.
 [`level-shield.md`](level-shield.md)'s dose arm died on exactly this, and it
 has reproduced at a shorter range.
 
-**The surrogates are the calibration worth keeping.** The hardest null arms
-produce a floor-over-placebo advantage of **+0.006 to +0.048R an anchor** with
-no levels in them whatsoever - larger than all but four of the 28 real
-readings. A floor-anchored stop looks better than a width-matched one on bar
-geometry alone, which is `a-return-rate-is-geometry` arriving in a new place.
+**The surrogates are the calibration worth keeping.** At 48 draws the hardest
+null arms produce a floor-over-placebo advantage of **+0.013 to +0.042R an
+anchor** with no levels in them whatsoever - larger than 27 of the 28 real
+readings. (At 12 draws the range was +0.006 to +0.048; the floor rose and the
+ceiling fell, which is what sampling more maxima from one distribution does.)
+A floor-anchored stop looks better than a width-matched one on bar geometry
+alone, which is `a-return-rate-is-geometry` arriving in a new place.
 
 ### Across every contrast and every cell
 
-| contrast | cells | beats hardest, dR | on both sides | beats hardest, dP | on both sides | dP predicted sign on both sides |
+48 draws, with the 12-draw counts beside them. **Read each count against its
+own expectation, never against the other column**: chance is **0.57** cells per
+row at 48 draws and 2.15 at 12.
+
+| contrast | cells | beats hardest, dR (48 / 12) | on both sides | beats hardest, dP (48 / 12) | on both sides | dP predicted sign, both sides |
 |---|---|---|---|---|---|---|
-| `beyond-floor` - `beyond-matched` | 28 | 4 | **0** | 3 | **0** | 3 of 14 |
-| `beyond-floor` - `beyond-centre` | 28 | 2 | **0** | 1 | **0** | 5 of 14 |
-| `beyond-floor` - `beyond-mirror` | 28 | 4 | 1 | 3 | **0** | 3 of 14 |
-| `near-floor` - `near-matched` | 28 | 4 | **0** | 2 | **0** | 3 of 14 |
-| `near-floor` - `near-centre` | 28 | 2 | **0** | 4 | 1 | 11 of 14 |
+| `beyond-floor` - `beyond-matched` | 28 | **1** / 4 | **0** / 0 | **1** / 3 | **0** / 0 | 3 of 14 |
+| `beyond-floor` - `beyond-centre` | 28 | **0** / 2 | **0** / 0 | **0** / 1 | **0** / 0 | 5 of 14 |
+| `beyond-floor` - `beyond-mirror` | 28 | **0** / 4 | **0** / 1 | **0** / 3 | **0** / 0 | 3 of 14 |
+| `near-floor` - `near-matched` | 28 | **2** / 4 | **0** / 0 | **1** / 2 | **0** / 0 | 3 of 14 |
+| `near-floor` - `near-centre` | 28 | **0** / 2 | **0** / 0 | **3** / 4 | 1 / 1 | 11 of 14 |
 | `beyond-floor` - `vol-2` | **0** | - | - | - | - | - |
 
-Chance is 2.2 cells per row. Over the whole panel of 140 cells, **16 beat their
-hardest draw on R against 10.8 expected and 14 on the stop-out rate against the
-same 10.8**; one cell survives Benjamini-Hochberg on R
-(`spx500.15m near-floor - near-matched`, q 0.0010) and none on the stop-out
+Over the whole panel of 140 cells at 48 draws, **3 beat their hardest draw on R
+against 2.86 expected and 5 on the stop-out rate against the same 2.86**
+(Poisson sd 1.69, so 5 is +1.3σ). One cell survives Benjamini-Hochberg on R
+(`spx500.15m near-floor - near-matched`, q 0.0013) and none on the stop-out
 rate. The q values are reported but should not be read: each z's standard
-deviation comes from 12 draws, so every p is too small.
+deviation comes from the same draws, so every p is too small.
+
+**The last column does not move between runs and that is the point.** The
+predicted-sign counts involve no surrogate, so they are identical at 12 and 48
+draws - 3, 5, 3, 3 and 11 of 14 against 3.5 by chance. Whatever the draw count
+does to the pass bar, the real readings do not point the right way more often
+than a coin.
 
 **The one row that looks like a finding is the one that is pure width.**
 `near-floor` is stopped less often than `near-centre` in the predicted
 direction on both sides on **11 of 14** feeds - and it is 14% wider (0.652
 against 0.566 units) on a stop so tight that 79-81% of anchors are stopped.
-Only 4 of 28 of those cells beat their own surrogate, and 1 on both sides, so
-the surrogates caught it.
+Only 3 of 28 of those cells beat their own surrogate at 48 draws, and 1 on both
+sides, so the surrogates caught it.
 
 **`beyond-floor` against `vol-2` produced no comparable cell at all.** The two
 arms do not share a single quarter-unit width stratum on any feed, so the
@@ -351,21 +446,26 @@ question at all.
 ## Power: where the test goes blind, and an asymmetry worth keeping
 
 A walk with eurusd 15m's bar geometry whose own cluster book reflects it at
-every group edge, swept over strength, two plants and two draws each. The
+every group edge, swept over strength, two plants and three draws each. The
 recovered quantity is the same `beyond-floor` minus `beyond-matched` contrast.
+
+**None of this section depends on the surrogate draw count.** The plant is its
+own null and the sweep is seeded by integers, so the `close` rows reproduce
+bit-for-bit between the two runs; the `print` rows differ only because the
+earlier run used two draws per strength and this one uses three.
 
 | planted strength | `close` plant, dP\|width long / short | `print` plant, dP\|width long / short |
 |---|---|---|
-| 0.00 | -0.0018 / -0.0027 | -0.0018 / -0.0027 |
-| 0.10 | -0.0052 / +0.0076 | -0.0069 / +0.0062 |
-| 0.25 | +0.0071 / -0.0016 | +0.0030 / -0.0002 |
-| 0.50 | +0.0113 / -0.0005 | -0.0004 / +0.0090 |
-| 0.75 | +0.0031 / +0.0036 | -0.0068 / +0.0064 |
-| **1.00** | -0.0061 / +0.0052 | **-0.0428 / -0.0525** |
+| 0.00 | -0.0013 / +0.0015 | -0.0013 / +0.0015 |
+| 0.10 | -0.0013 / +0.0050 | -0.0014 / +0.0064 |
+| 0.25 | +0.0016 / +0.0004 | +0.0042 / -0.0007 |
+| 0.50 | +0.0074 / +0.0009 | -0.0021 / +0.0036 |
+| 0.75 | +0.0044 / +0.0005 | -0.0046 / +0.0053 |
+| **1.00** | -0.0036 / -0.0030 | **-0.0533 / -0.0557** |
 
-**At strength 0 the test correctly reads nothing** (-0.002), which is the
-control an estimator manufacturing a result out of estimation error would have
-failed.
+**At strength 0 the test correctly reads nothing** (-0.001 / +0.002), which is
+the control an estimator manufacturing a result out of estimation error would
+have failed.
 
 **A barrier that reflects the close path is invisible to a stop at every
 strength, including a hard wall.** That is not a weakness of the harness, it is
@@ -377,13 +477,42 @@ range near one unit, the wick is more than twice the distance to the level. So
 only the second one is about a stop.**
 
 **The second claim is visible, but only at an absolute wall.** The `print`
-plant - price may not print through a level - recovers -0.043 and -0.053 on
+plant - price may not print through a level - recovers **-0.053 and -0.056** on
 both sides at strength 1.00 and reads nothing at 0.75. **The test therefore
 goes blind between 0.75 and 1.00**, which is a very high bar, and the null
 above is only a statement about barriers that hold essentially every print.
 The real readings are ±0.01 against a hard wall's -0.05, so the honest upper
 bound is that any barrier here holds **well under three prints in four** - and
 that is not a quantity worth a parameter.
+
+## What does not depend on the surrogate draw count
+
+The draw count sets one thing only: the height of the bar a cell has to clear.
+Four of this study's conclusions do not touch it, and they are the four the
+verdict actually rests on.
+
+1. **The anchor can only move a 2-unit stop by 1.4% to 5.3%**, on 14 of 14
+   feed-intervals, because the nearest group's floor-to-centre span is
+   0.028-0.105 volatility units and its median touch count is 2. This is
+   measured off the real series alone. **It is the conclusion that decides the
+   study**, and no number of surrogate draws is relevant to it.
+2. **The nearest-level stop costs 0.169-0.198R on btc, eurusd and gbpusd**
+   against the desk's own measured limit of 0.16 of the risk - outside the cost
+   envelope on three of six feeds. Measured on the recorded catalogue with the
+   modelled spread; no surrogate anywhere.
+3. **A close-path barrier is invisible to a stop at every strength including a
+   hard wall**, because the stop is hit by the extreme and the wick is more
+   than twice the distance to the nearest level. The plant is its own null.
+4. **The real readings do not point the right way more often than a coin**: the
+   predicted stop-out sign on both sides appears on 3 of 14 feeds against 3.5
+   expected, identically in both runs, because that count involves no
+   surrogate at all.
+
+What *did* move with the draw count is only the pass count on the
+surrogate-compared statistics, and it moved **towards** chance from above: 16
+of 140 against 10.8 expected at 12 draws, 3 of 140 against 2.86 at 48. In both
+cases the reading is "at chance", and the four-fold tighter bar is the firmer
+statement of it.
 
 ## Part A: the recorded catalogue, net of the modelled spread
 
@@ -459,23 +588,32 @@ For this to be wired into `Surprise.decide`, all of:
    which means groups with more than two touches and a wider `WIDTH_VOL`. That
    is a different book, and widening it is a measurement of its own.
 2. **`floor` above its hardest surrogate draw on both sides of one
-   instrument.** 0 of 14 instruments, on either statistic, on every contrast.
-   Not one.
+   instrument.** 0 of 14 instruments, on either statistic, on every contrast,
+   at 12 draws and again at 48. Not one, and the tighter bar did not create a
+   near miss - the single passing cell fails its own other side by 0.035.
 3. **`floor` above `centre` by more than `centre` is above `vol`.** The centre
-   is marginally better on the catalogue (-0.382 against -0.390) and 2 of 28
-   cells beat chance's 2.2 on the panel.
+   is marginally better on the catalogue (-0.382 against -0.390) and **0 of 28**
+   cells beat their hardest draw on the panel against chance's 0.57.
 4. **A cost that clears 0.16 of the risk.** The `near` book reads 0.108-0.198R,
    and the `beyond` book only clears it by being a 2.5-unit stop - which the
    incumbent already is.
 5. **A barrier holding more prints than the test's blind point.** The honest
    bound is well under three in four, and a hard wall is needed to read -0.05.
 
-And `indicators.Levels` would have had to keep its touch prices, which it does
-not. `Anchor.FLOOR`/`CEILING`/`SIDED` and `Group.price` are kept: the
+**And before any of that, `indicators.Levels` would have to keep its touch
+prices.** It does not, so there is no route from a cluster edge to a desk at
+all - see the precondition above. That is the first thing to fix if this
+question is ever reopened, and it should be costed before the question is,
+because a positive finding with no route to production is a finding nobody can
+use.
+
+`Anchor.FLOOR`/`CEILING`/`PROTECTIVE`/`SIDED` and `Group.price` are kept: the
 arithmetic is correct, `test_grouping.py` and
 `test_a_clusters_floor_is_outside_its_touches_and_its_centre_is_inside` pin it,
 and a future claim about cluster edges should not have to rebuild them. They
-remain without a production caller, now for a measured reason.
+remain without a production caller, now for a measured reason. `PROTECTIVE`
+exists because of this study and is the right anchor for a placement claim; it
+is simply not a placement worth making yet.
 
 ## What was not done, and why
 
@@ -495,10 +633,11 @@ remain without a production caller, now for a measured reason.
 * **The Bjorgum zone was not tested.** It is the level primitive with a
   measurement behind it, and it is a different object with a width; "price
   stops inside a band" is not the claim tested here.
-* **`Anchor.SIDED` was not raced.** It names the extreme by the **level's**
-  formed side, so it hands a long the group's *ceiling* whenever the nearest
-  group below was built mostly from pivot highs - a price above the entry,
-  which is not a stop. Racing it would mean either dropping those anchors,
+* **`Anchor.SIDED` was not raced**, and `Anchor.PROTECTIVE` did not exist when
+  the panel ran. `SIDED` names the extreme by the **level's** formed side, so
+  it hands a long the group's *ceiling* whenever the nearest group below was
+  built mostly from pivot highs - a price above the entry, which is not a
+  stop. Racing it would mean either dropping those anchors,
   biasing the shared anchor set towards supports, or folding them in as a tight
   stop, which is two rules under one name. It is reported as a rate instead.
 
@@ -516,23 +655,30 @@ remain without a production caller, now for a measured reason.
 uv run ruff check --isolated --select F821 research/ideas/stop_anchor.py \
   research/ideas/stop_anchor_book.py
 uv run pytest research/ideas/test_stop_anchor.py -q
-uv run python research/ideas/stop_anchor.py --all --draws 4 --out .data/out/stop_anchor
+uv run python research/ideas/stop_anchor.py --all --draws 16 --out .data/out/stop_anchor
 ```
 
 **One process, no pool anywhere, one core**, so it is safe to run beside other
-work. Measured: a `--geometry --draws 4` pass is **about 45 minutes** (14
-feed-intervals times 13 series, the clustering dominating), `--catalogue` is
-**about 8 minutes** (54 engine runs: six for the machinery check, six per arm,
-and a second pass per instrument for the permuted arm), and `--power --draws 2`
-is **about 25 minutes** (two plants times six strengths times two draws, each
-plant maintaining its own causal book bar by bar). So **`--all --draws 4` is
-about 80 minutes.**
+work. `--draws` is **per surrogate family** and there are three, so `--draws
+16` is 48 draws a cell. Measured: `--geometry --draws 4` is **about 45
+minutes** (14 feed-intervals times 13 series, the per-bar clustering
+dominating) and `--draws 16` is **about 2.5 hours** (41 series a cell);
+`--catalogue` is **about 8 minutes** (54 engine runs: six for the machinery
+check, six per arm, and a second pass per instrument for the permuted arm); and
+`--power` is **about 25 minutes** (two plants times six strengths times
+`min(3, draws)` draws, each plant maintaining its own causal book bar by bar).
 
-**The figures above come from two invocations rather than one**, and that is
-reported rather than smoothed over: the panel is from the first `--all` pass
-and the catalogue and power tables are from a second `--catalogue --power` pass
-after the two bugs below were fixed. A single `--all --draws 4` is the
-reproduction command and nothing in the panel was touched between them.
+**Nothing here is parallel, so a larger box does not make it faster** - it
+makes a higher `--draws` affordable, and that is the only axis on which this
+study gets stronger. The headline figures are `--draws 16`.
+
+**The figures come from more than one invocation and that is reported rather
+than smoothed over.** The 48-draw panel and power sweep are one pass; the
+catalogue tables are from a separate `--catalogue` pass, because the catalogue
+needs the local `ParquetDataCatalog` and the box the 48-draw panel ran on had
+none (its report says so in place of the tables). The catalogue part does not
+read `--draws` at all, so nothing is mixed. A single `--all --draws 16` on a
+box with the catalogue present reproduces everything.
 
 The `--sanity` block runs first and asserts the three things that make the rest
 readable, so a changed primitive or a failed sync stops the run rather than
@@ -541,10 +687,14 @@ directory, and `report.txt`, `geometry.json`, `catalogue.json` and `power.json`
 land in it.
 
 Parts run alone with `--geometry`, `--catalogue`, `--power` or `--sanity`.
-Nothing here is parallel, so a bigger box makes it no faster - it makes it
-possible to raise `--draws`, which is what the surrogate criterion wants: the
-hardest-draw bar rises with the draw count and 12 draws is the weakest form of
-the test reported here.
+
+**Raising `--draws` further has a sharply falling return.** The bar is the
+maximum of the draws, so its expectation grows like the extreme-value scale of
+the surrogate distribution - roughly logarithmically - while the runtime grows
+linearly. Going 4 to 16 cut the expected pass count from 10.8 to 2.9 cells and
+cost three hours; going 16 to 64 would cut it to 0.7 and cost twelve. The
+binding constraint on this study was never the draw count, it was the
+floor-to-centre span being a twentieth of the stop.
 
 ### The bugs this caught on the way
 
@@ -574,3 +724,20 @@ off-by-ones is worth less than one that does not.
   -0.11, because both fell in the bin [2.0, 3.0). Quarter-unit bins put them in
   different bins and the contrast correctly became undefined, with the overlap
   share printed beside every standardised number.
+* **The surrogate seeds were not reproducible, and it moved a cell.** They came
+  from `hash((key, name, d))`, and Python salts string hashing per process, so
+  every run drew a different surrogate set. The 48-draw run therefore does
+  **not** contain the 12-draw run's draws, which is why `gold.15m` long read a
+  hardest null of +0.0267 on one run and **+0.0239** on the next and flipped
+  from failing to passing with no real reading moving at all. Seeds are now
+  `zlib.crc32` of the same string, which is stable across processes. The real
+  arm was always reproducible - its seeds are integers, and every real reading
+  is identical across the two runs on all 140 cells - so the defect was
+  confined to the bar, not to the measurement.
+* **The chance expectation printed in the report was hardcoded.** `_bh` said
+  "12 draws give about 10.8" on every run regardless of `--draws`, which on
+  the 48-draw run understated the bar by a factor of four and made 3 of 140
+  cells read as far below chance when the true expectation is 2.86 and the
+  reading is exactly chance. It now derives the expectation and its Poisson sd
+  from `draws * 3`. **The number of surrogate families is part of the draw
+  count** and that was the easy thing to get wrong: `--draws 16` is 48 draws.

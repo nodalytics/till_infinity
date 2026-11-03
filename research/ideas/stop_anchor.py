@@ -74,6 +74,7 @@ import os
 import random
 import sqlite3
 import sys
+import zlib
 from collections import defaultdict
 from dataclasses import replace
 from pathlib import Path
@@ -462,7 +463,16 @@ def geometry(intervals: tuple[str, ...], draws: int, out_dir: Path) -> None:
                     ("bar-shuffle", L.bar_shuffle),
                 ):
                     for d in range(draws):
-                        rng = random.Random(hash((key, name, d)) & 0xFFFFFFFF)
+                        # `zlib.crc32` and not `hash()`: Python salts string
+                        # hashing per process, so `hash((key, name, d))` gave a
+                        # different surrogate set on every run and the
+                        # hardest-draw bar was itself irreproducible. Measured
+                        # consequence: `gold.15m` long read a hardest null of
+                        # +0.0267 on one run and +0.0239 on the next, which
+                        # flipped the cell from failing to passing without any
+                        # real reading moving. The real arm was always
+                        # reproducible because its seeds are integers.
+                        rng = random.Random(zlib.crc32(f"{key}|{name}|{d}".encode()))
                         if name == "garch-bars":
                             if fitted is None:
                                 rets = np.diff(np.log(np.maximum(series.close, 1e-12)))
@@ -476,11 +486,13 @@ def geometry(intervals: tuple[str, ...], draws: int, out_dir: Path) -> None:
                 cells.extend(_print_contrasts(real, dict(nulls), key))
     finally:
         con.close()
-    _bh(cells)
+    # Three surrogate families, so the draws behind each hardest value are
+    # `draws * 3` and the chance of a pass is 1/(that + 1).
+    _bh(cells, draws * 3)
     (out_dir / "geometry.json").write_text(json.dumps(report, indent=1, default=str))
 
 
-def _bh(cells: list[tuple[str, int, str, float, float, bool, bool]]) -> None:
+def _bh(cells: list[tuple[str, int, str, float, float, bool, bool]], arms_drawn: int) -> None:
     """Benjamini-Hochberg over every cell, on both statistics.
 
     **The count is the whole point.** This grid is 14 feed-intervals times two
@@ -489,6 +501,16 @@ def _bh(cells: list[tuple[str, int, str, float, float, bool, bool]]) -> None:
     profitable instruments survived no deflation while five survived as losers.
     One-sided in the direction fixed before the run, so a cell that beats its
     null the *wrong* way cannot be counted as evidence.
+
+    `arms_drawn` is the **total** surrogate draws behind each cell's hardest
+    value - `--draws` times the three surrogate families, so `--draws 16` is 48
+    and not 16. Under exchangeability the chance of real exceeding the maximum
+    of `k` draws is `1/(k+1)`, so the expected pass count is
+    `cells / (arms_drawn + 1)` and it is **four times smaller at `--draws 16`
+    than at `--draws 4`**. This was hardcoded to 13 and printed "12 draws" on
+    every run, which understated the bar by a factor of four on the only run
+    where it mattered: 3 of 140 cells read as far below chance against a stated
+    10.8, where the true expectation is 2.9 and the reading is exactly chance.
     """
     from till_infinity.node.metrics import phi
     from till_infinity.node.multiple import benjamini_hochberg
@@ -496,10 +518,10 @@ def _bh(cells: list[tuple[str, int, str, float, float, bool, bool]]) -> None:
     if not cells:
         return
     print("\n=== Benjamini-Hochberg over every cell, one-sided in the fixed direction ===")
-    print("  **Read the counts, not the q values.** Each z's sd comes from 12 surrogate")
-    print("  draws, so every p here is far too small and BH inherits that; what the table")
-    print("  settles is whether the number of cells pointing the right way exceeds chance,")
-    print("  and the `exceeds its own hardest draw` count above it is the real criterion.")
+    print(f"  **Read the counts, not the q values.** Each z's sd comes from {arms_drawn}")
+    print("  surrogate draws, so every p here is too small and BH inherits that; what the")
+    print("  table settles is whether the number of cells pointing the right way exceeds")
+    print("  chance, and the `exceeds its own hardest draw` count is the real criterion.")
     for label, at, beats in (
         ("dR|width above its null", 3, 5),
         ("dP(stop)|width below its null", 4, 6),
@@ -508,9 +530,11 @@ def _bh(cells: list[tuple[str, int, str, float, float, bool, bool]]) -> None:
         if not rows:
             continue
         won = sum(1 for c in rows if c[beats])
+        expected = len(rows) / (arms_drawn + 1)
         print(
             f"  {label}: **{won} of {len(rows)} cells exceed their own hardest "
-            f"surrogate draw**, where 12 draws give about {len(rows) / 13:.1f} by chance"
+            f"surrogate draw**, where {arms_drawn} draws give {expected:.2f} by chance "
+            f"(Poisson sd {math.sqrt(expected):.2f})"
         )
         p = [1.0 - phi(c[at]) for c in rows]
         q = benjamini_hochberg(p)
