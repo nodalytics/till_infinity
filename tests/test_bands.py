@@ -183,21 +183,59 @@ class TestWhatASweepVariesIsReadPerCall:
         assert bands.Tuning.read().mode == "cross", "and an average keeps the form it was given"
 
 
-class TestTheExitOnTurnIsPartOfTheRule:
-    def test_it_is_on_by_default_and_can_be_switched_off(self):
-        """**Without it the win rate is 0.00 by construction.** With no target
-        and no hold clock the only exit is the stop, which is what the first
-        run measured on all 57 positions across five estimators. Switching it
-        on took `ema` from -160.27 at 7 positions to +100.78 at 57, with the
-        win rate going 0.00 to 0.26 - so it is the difference between a rule
-        and a one-sided accounting of stops.
+class TestTheTurnExitCarriesTheAsymmetry:
+    """**Without a turn exit the win rate is 0.00 by construction.** With no
+    target and no hold clock the only exit is the stop, which is what the
+    first run measured on all 57 positions across five estimators. Switching
+    it on took `ema` from -160.27 at 7 positions to +100.78 at 57, win rate
+    0.00 to 0.26.
 
-        An average crossover rule exits on the opposite cross. That is the
-        rule, not an addition to it, and the flag exists so the sweep can
-        measure what it costs.
-        """
+    The three-way flag exists because the interesting arm is neither on nor
+    off. `band_asymmetry.py` measured `both` at a payoff ratio of **2.61
+    against the 2.75 its 0.27 win rate requires**, while a trail at 2.0 took
+    the same cell to 1.28 against 2.14 - so the policies that look like
+    improvements cut the right tail that pays for everything. `losers` is the
+    arm that cuts the left tail only.
+    """
+
+    def test_the_conventional_rule_is_the_default(self):
+        assert bands.Tuning().exit_turn == "both"
         assert bands.Tuning().exit_on_turn is True
-        assert bands.Tuning(exit_on_turn=False).exit_on_turn is False
+
+    def test_never_is_the_control_and_reports_as_no_turn_exit(self):
+        """Kept as the arm that shows what the turn exit is worth - 6 positions
+        over 5,135 bars, since a held position blocks re-entry and only a stop
+        ends it - and not as a candidate."""
+        assert bands.Tuning(exit_turn="never").exit_on_turn is False
+
+    def test_the_asymmetric_arm_still_closes_something(self):
+        """`losers` has to read as a turn exit, or a reader checking whether
+        the cross closes anything gets the wrong answer for the one arm that
+        matters."""
+        assert bands.Tuning(exit_turn="losers").exit_on_turn is True
+
+    @pytest.mark.parametrize(
+        ("given", "wanted"),
+        [
+            ("both", "both"),
+            ("1", "both"),
+            ("never", "never"),
+            ("0", "never"),
+            ("losers", "losers"),
+            ("LOSERS", "losers"),
+            (None, "both"),
+        ],
+    )
+    def test_the_old_boolean_spelling_still_reads(self, given, wanted):
+        """The flag was a boolean first and a sweep script may still pass one,
+        so `1` and `0` map onto the ends rather than raising."""
+        assert bands._turn(given) == wanted
+
+    def test_an_unknown_arm_is_refused_by_name(self):
+        """Rather than defaulting, which would report a cell for an arm that
+        never ran - the defect this file has pinned twice already."""
+        with pytest.raises(ValueError, match="not a turn exit"):
+            bands._turn("winners")
 
 
 def test_the_rule_publishes_a_volatility_the_trail_can_use():
@@ -217,3 +255,63 @@ def test_the_rule_publishes_a_volatility_the_trail_can_use():
     # The anchor has to share the prefix. A `ma_atr` beside a `bos_close` is
     # two moments' prices and would read calibrated near 1.0 only.
     assert _trail_vol_bps(SimpleNamespace(features={"ma_atr": 0.0012})) == 0.0
+
+
+class TestTheAsymmetricArmActuallyCloses:
+    """**34,130 swallowed failures in one sweep.**
+
+    `_leave(losers_only=True)` first asked `Position.unrealized_pnl(price)`,
+    which takes a Nautilus `Price` while `Desk._tick()` returns this desk's own
+    tick with plain floats. Every call raised `Argument 'price' has incorrect
+    type (expected Price, got float)`, the handler counted it as a warning and
+    carried on, and the whole `losers` arm closed nothing while still reporting
+    cells for a third of the grid.
+
+    So the side is decided from the prices, which have no type to get wrong.
+    """
+
+    def _position(self, *, long: bool, entry: float):
+        from types import SimpleNamespace
+
+        return SimpleNamespace(is_long=long, is_short=not long, avg_px_open=entry)
+
+    def _desk(self, bid: float | None, ask: float | None):
+        from types import SimpleNamespace
+
+        desk = bands.Bands.__new__(bands.Bands)
+        desk.counts = {}
+        tick = None if bid is None else SimpleNamespace(bid=bid, ask=ask)
+        desk._tick = lambda: tick  # type: ignore[method-assign]
+        return desk
+
+    def test_a_long_is_judged_on_the_bid_it_would_exit_on(self):
+        """Not the mid and not the ask: the question is whether the trade is
+        behind at the price it would actually get."""
+        held = self._position(long=True, entry=1.1000)
+
+        assert self._desk(1.0990, 1.1010)._behind(held) is True
+        assert self._desk(1.1010, 1.1030)._behind(held) is False
+        # The ask alone is above the entry and the bid is not, which is the
+        # case a mid would get wrong.
+        assert self._desk(1.0999, 1.1005)._behind(held) is True
+
+    def test_a_short_is_judged_on_the_ask(self):
+        held = self._position(long=False, entry=1.1000)
+
+        assert self._desk(1.0990, 1.0995)._behind(held) is False
+        assert self._desk(1.1005, 1.1010)._behind(held) is True
+
+    def test_a_position_with_no_entry_is_left_alone(self):
+        """Cutting on a price nothing measured would close the winners this arm
+        exists to keep, so the missing case leans the safe way."""
+        held = self._position(long=True, entry=0.0)
+        assert self._desk(1.0, 1.1)._behind(held) is False
+
+    def test_no_quote_leaves_everything_alone_and_is_counted(self):
+        """The same safe direction, and counted so a run that lost its quote
+        stream is visible in the tally rather than in the fills."""
+        desk = self._desk(None, None)
+        held = self._position(long=True, entry=1.1000)
+
+        assert desk._behind(held) is False
+        assert desk.counts["no_quote"] == 1

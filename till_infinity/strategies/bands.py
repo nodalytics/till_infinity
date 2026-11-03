@@ -113,6 +113,26 @@ DEFAULT_MODE = "cross"
 DEFAULT_ATR_PERIOD = 14
 
 
+#: What `TRADING_BAND_EXIT_TURN` may say. `1`/`0` are accepted because the
+#: flag was a boolean first and a sweep script may still pass one.
+TURNS: dict[str, str] = {
+    "both": "both",
+    "1": "both",
+    "true": "both",
+    "never": "never",
+    "0": "never",
+    "false": "never",
+    "losers": "losers",
+}
+
+
+def _turn(raw: str | None) -> str:
+    name = (raw or "both").strip().lower()
+    if name not in TURNS:
+        raise ValueError(f"{name!r} is not a turn exit: {', '.join(sorted(set(TURNS.values())))}.")
+    return TURNS[name]
+
+
 def _float(name: str, fallback: float) -> float:
     try:
         return float(os.environ.get(name) or fallback)
@@ -151,13 +171,48 @@ class Tuning:
     #: Standard deviations either side of the mean for the `sigma` kind. Two
     #: is the conventional choice and is not measured here.
     sigma_k: float = 2.0
-    #: Close the position when the pair turns against it. **Without this the
-    #: win rate is 0.00 by construction**: with no target and no hold clock
-    #: the only exit is the stop, which is what the first run of this rule
-    #: measured on all 57 positions across five estimators. An average
-    #: crossover rule exits on the opposite cross; that is the rule, not an
-    #: addition to it.
-    exit_on_turn: bool = True
+    #: What the opposite cross closes. **The asymmetry a trend rule lives on.**
+    #:
+    #: * `both` - winners and losers, the conventional crossover rule. Without
+    #:   any turn exit the win rate is 0.00 by construction, because with no
+    #:   target and no hold clock the only exit is the stop: that is what the
+    #:   first run measured on all 57 positions across five estimators.
+    #: * `never` - nothing. Measured at **6 positions over 5,135 bars**, since
+    #:   a held position blocks re-entry and only a stop ends it. Kept as the
+    #:   arm that shows what the turn exit is worth, not as a candidate.
+    #: * `losers` - the losing side only, so the left tail is cut on the cross
+    #:   and the right tail is left to the stop and the trail.
+    #:
+    #: **`losers` is measured degenerate on this desk and the reason is
+    #: structural, not a defect.** The venue is `MARGIN NETTING` and the desk
+    #: holds one position per instrument, so a winner left open blocks every
+    #: later signal. Instrumented over 5,082 bars: `_leave` fired 98 times
+    #: across 92 held positions and `_behind` read **False on 91 of them** -
+    #: an average crossover is slow, so a position already in profit stays in
+    #: profit through one adverse cross. The arm therefore cut once, never
+    #: released the slot, and finished on **6 positions, identical to
+    #: `never`**, against `both`'s 60.
+    #:
+    #: That is a real finding about the asymmetry rather than a bug to code
+    #: around: cutting the left tail only cannot pay for itself while one
+    #: instrument supports one position, because the cost of holding a winner
+    #: is every signal it blocks. Making it work needs concurrent positions or
+    #: a hold cap, and both are different rules.
+    #:
+    #: `losers` was the arm with a prior.
+    #: `fade-to-value-loses-on-the-entry-not-the-target` measured entries
+    #: bleeding -10.81 on setups whose targets paid +28.16, and the smoke run
+    #: of `band_asymmetry.py` measured `both` at a payoff ratio of **2.61
+    #: against the 2.75 its 0.27 win rate requires** - while a trail at 2.0
+    #: took the same cell to 1.28 against 2.14. Both policies that looked like
+    #: improvements cut the right tail that pays for everything.
+    exit_turn: str = "both"
+
+    @property
+    def exit_on_turn(self) -> bool:
+        """Whether the cross closes anything at all. Kept so a reader asking
+        the old question gets the old answer."""
+        return self.exit_turn != "never"
 
     @classmethod
     def read(cls) -> Tuning:
@@ -184,8 +239,7 @@ class Tuning:
             span_tilt=max(1e-6, _float("TRADING_BAND_SPAN_TILT", 1.0)),
             stop_tilt=max(1e-6, _float("TRADING_BAND_STOP_TILT", 1.0)),
             sigma_k=max(0.0, _float("TRADING_BAND_SIGMA_K", 2.0)),
-            exit_on_turn=(os.environ.get("TRADING_BAND_EXIT_ON_TURN", "1") or "1")
-            not in ("0", "false", "False", "no"),
+            exit_turn=_turn(os.environ.get("TRADING_BAND_EXIT_TURN")),
         )
 
     def _sided(self, shared: float, tilt: float, sign: int) -> float:
@@ -487,8 +541,8 @@ class Bands:
                 self.standing[sign] = side or self.standing[sign]
                 continue
             self.standing[sign] = side
-            if side == -sign and self.tuning.exit_on_turn:
-                self._leave(sign)
+            if side == -sign and self.tuning.exit_turn != "never":
+                self._leave(sign, losers_only=self.tuning.exit_turn == "losers")
             if side != sign:
                 # Each pair trades its own side only, so the asymmetric spans
                 # are attributable: a long taken on the short pair's spans
@@ -499,21 +553,64 @@ class Bands:
             # the desk counts what it took and follows what it declined.
             self.on_data(self._payload(side, fast, slow, bar))
 
-    def _leave(self, sign: int) -> None:
-        """Close anything this pair opened, because its own signal reversed.
+    def _leave(self, sign: int, *, losers_only: bool = False) -> None:
+        """Close what this pair opened, because its own signal reversed.
 
-        Through `close_all_positions` on the desk's instrument rather than by
-        position id: this rule holds at most one position per side and the
-        desk refuses a second, so there is nothing to disambiguate, and a
-        lookup that returned nothing would be indistinguishable from a close
-        that failed.
+        `losers_only` leaves a position in profit to the stop and the trail,
+        which is the asymmetric arm: the left tail is cut on the cross and the
+        right tail is not.
+
+        **Through `ExitMechanism._close` and the desk's own position registry**,
+        not through `close_all_positions` or `cache.positions_open`. Two
+        reasons, both measured. `_close` holds the `Held.closing` latch, so a
+        position asked for by this rule and by the stop in the same instant is
+        flattened once rather than twice. And `cache.positions_open(
+        instrument_id=..., strategy_id=self.id)` returned **nothing** here, so
+        the first version of this arm closed no position at all and reported
+        **6 positions - identical to the `never` control** - while looking like
+        it had run.
         """
         self.counts["turns_out"] = self.counts.get("turns_out", 0) + 1
-        try:
-            self.close_all_positions(self._cfg.instrument_id)
-        except Exception as exc:  # a failed close is counted, not fatal
-            self.counts["close_failed"] = self.counts.get("close_failed", 0) + 1
-            self.log.warning(f"the {sign:+d} pair turned and the close failed: {exc}")
+        why = f"the {sign:+d} pair turned"
+        for position_id in tuple(self.exits.positions):
+            position = self.cache.position(position_id)
+            if position is None or position.is_closed:
+                continue
+            if losers_only and not self._behind(position):
+                self.counts["left_winners"] = self.counts.get("left_winners", 0) + 1
+                continue
+            if self._close(position_id, why):
+                key = "cut_losers" if losers_only else "closed_on_turn"
+                self.counts[key] = self.counts.get(key, 0) + 1
+
+    def _behind(self, position: Any) -> bool:
+        """Whether this position is losing at the quote it would exit on.
+
+        **Computed from the prices and not from `unrealized_pnl`.** That method
+        takes a Nautilus `Price` while `Desk._tick()` returns this desk's own
+        tick with plain floats, so passing one raised `Argument 'price' has
+        incorrect type (expected Price, got float)` - **34,130 times in one
+        sweep**, every one swallowed into a counted warning, which left the
+        whole `losers` arm closing nothing while still reporting cells.
+
+        A long exits on the bid and a short on the ask, so that is the side
+        read: the question is whether the trade is behind at the price it would
+        actually get, not at the mid.
+
+        No quote means not behind, which leaves the position alone - the safe
+        direction, since cutting blind would close the winners this arm exists
+        to keep.
+        """
+        tick = self._tick()
+        if tick is None:
+            self.counts["no_quote"] = self.counts.get("no_quote", 0) + 1
+            return False
+        entry = float(position.avg_px_open)
+        if entry <= 0.0:
+            return False
+        if position.is_long:
+            return float(tick.bid) < entry
+        return float(tick.ask) > entry
 
     def _side(self, fast: Band, slow: Band, bar: Bar) -> int:
         """Which way this pair reads now: +1, -1, or 0 for neither."""
