@@ -9,9 +9,9 @@ deliberately coarser so its cells are not noise with a ranking printed over them
 from __future__ import annotations
 
 from till_infinity.bus import Bus
-from till_infinity.trading import Settings
-from till_infinity.trading.service import Trader
-from till_infinity.trading.strategies.policy import Entries, context_of, family_of
+from till_infinity.strategies import Settings
+from till_infinity.strategies.service import Trader
+from till_infinity.strategies.strategies.policy import Entries, context_of, family_of
 
 
 class TestItRecordsTheStrategyRatherThanTheShape:

@@ -1,78 +1,71 @@
-# One process per service over Redis, so they fail independently.
-# `till-infinity run` is the single-process shape - see docs/deployment.md.
+# One node, because that is what the port left behind.
 #
-#   docker compose up -d                     all but agents and trading
-#   docker compose --profile trading up -d   adds the one that can lose money
+#   docker compose up -d                     the node, unarmed
+#   TRADING_LIVE=1 docker compose up -d      the node, able to place orders
 #
 # Config from .env; see .env.example.
-
-x-common: &common
-  build: .
-  image: till-infinity:latest
-  restart: unless-stopped
-  env_file: [.env]
-  environment:
-    TILL_REDIS_URL: redis://redis:6379
-    TZ: UTC
-  volumes:
-    - data:/app/.data
-  depends_on:
-    redis:
-      condition: service_healthy
+#
+# ── what this file used to say, and why it could not work ────────────────────
+#
+# Until 2026-11-01 it started six services - `prices collect`, `news collect`,
+# `statespace watch`, `journal listen`, `notify listen`, `trading run` - each a
+# subcommand of a `till-infinity` console script. **None of those existed.**
+# The 2,852-line CLI retired to `research/retire/bus/` with the services it
+# drove, and `pyproject.toml` declares no console script on purpose: a second
+# way to run the desk is a second thing to go stale. So every container in this
+# file failed immediately, and so did the image, whose `ENTRYPOINT` named the
+# same missing script.
+#
+# ── why one service and not six ──────────────────────────────────────────────
+#
+# The Nautilus port collapsed the topology rather than renaming it. `statespace`
+# is an `Actor`; the journal is an `Actor`; notifications is an `Actor`; the
+# desks are `Strategy`s. They share one kernel, one message bus, one cache and
+# one portfolio - and that sharing is the point, not packaging convenience. It
+# is what makes exposure answerable across venues at all, and `risk/exposure.py`
+# exists because what is at risk is a question about an *account* rather than
+# about a ticket. A process per service would put each one's positions out of
+# the others' sight.
+#
+# **Redis is gone, and not by omission.** Nothing under `till_infinity/` imports
+# it any more; Nautilus's bus is in-process, with its own optional Redis backing
+# if a future deploy wants one. A bus nothing publishes to is a dependency that
+# can only fail.
+#
+# ── what is still a separate container ───────────────────────────────────────
+#
+# The MT5 terminal, necessarily: it is a Windows program under Wine, so it
+# cannot live here. `TRADING_MT5_URL` points at its bridge - the lab box in
+# production - or the node starts one itself through
+# `MT5ExecClientConfig(dockerized_terminal=...)`, which is the shape the
+# Interactive Brokers adapter uses for TWS. See `adapters/mt5/terminal.py`.
 
 services:
-  # The bus. Everything talks through it, so it is the one hard dependency.
-  redis:
-    image: redis:7-alpine
+  node:
+    build: .
+    image: till-infinity:latest
     restart: unless-stopped
-    # The settings live in `services/redis/redis.conf`, where each one can
-    # carry the reason it is not the default. `--appendonly yes` on the command
-    # line was the only one, and it is now the first line of that file.
-    command: ["redis-server", "/usr/local/etc/redis/redis.conf"]
+    env_file: [.env]
+    environment:
+      TZ: UTC
+      # Where the node writes what it has established about itself, and where
+      # the healthcheck reads it. On the volume, so a probe can tell "not yet
+      # up" from "up two minutes ago and now gone".
+      TILL_STATUS_PATH: /app/.data/status.json
     volumes:
-      - redis:/data
-      - ./services/redis/redis.conf:/usr/local/etc/redis/redis.conf:ro
-    healthcheck:
-      test: ["CMD", "redis-cli", "ping"]
-      interval: 10s
-      timeout: 3s
-      retries: 5
-
-  # ── collectors ────────────────────────────────────────────────────────────
-  prices:
-    <<: *common
-    command: ["prices", "collect", "--publish", "redis://redis:6379"]
-
-  news:
-    <<: *common
-    command: ["news", "collect", "--publish", "redis://redis:6379"]
-
-  # ── the numeric layer: no credentials, always on ──────────────────────────
-  # `structures` stood here until 2026-10-29 and is retired. This file had been
-  # left describing the old topology: a desk started from it ran no statespace
-  # at all, so nothing proposed and trading had nothing to decide on.
-  statespace:
-    <<: *common
-    command: ["statespace", "watch", "--redis", "redis://redis:6379"]
-
-  # ── the record: one writer, which is why it is on the bus ─────────────────
-  journal:
-    <<: *common
-    command: ["journal", "listen", "--redis", "redis://redis:6379"]
-
-  # ── delivery: exits quietly with no channel configured ────────────────────
-  notifications:
-    <<: *common
-    command: ["notify", "listen", "--redis", "redis://redis:6379"]
-
-  # ── execution: the only part that can *lose* money, so opt in twice ───────
-  # The profile starts it; TRADING_LIVE arms it. No terminal in this container
-  # (Windows-only) - TRADING_MT5_URL must point at a bridge, or it stays paper.
-  trading:
-    <<: *common
-    profiles: ["trading"]
-    command: ["trading", "run", "--redis", "redis://redis:6379"]
+      # The journal, the status file and any online model state. Mount it or
+      # the record starts empty on every deploy.
+      - data:/app/.data
+    # **Nothing arms this but `TRADING_LIVE`.** Unset, the node still connects,
+    # reconciles, subscribes and computes - those are reads, and they are how
+    # the desk is observed - but its risk engine sits in `HALTED` and every
+    # order is denied inside the engine, below the strategies and above the
+    # client. See `node/live._arm`.
+    #
+    # There is no `profiles:` guard any more. It guarded a `trading` service
+    # against being started by accident, and the guard that actually holds is
+    # the one in the risk engine: a profile is a thing somebody forgets to
+    # pass, and `HALTED` is a thing the venue never sees past.
 
 volumes:
   data:
-  redis:

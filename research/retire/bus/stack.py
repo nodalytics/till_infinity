@@ -1,0 +1,803 @@
+"""The whole thing, running together.
+
+Every part of this project is a service that talks over the bus, which is the
+right shape for deploying them separately and an awkward one for answering
+"does it work". This module starts all of them in one process against one bus,
+so an end-to-end run is a single command.
+
+    prices ──┬─▶ statespace ─┬─▶ statespace.proposals ─┬─▶ trading ─▶ broker
+             │               └─────────────────────────┼─▶ alerts ─▶ notifications
+    news  ───┴──────────────────────────────────────────┘
+                                      │
+        statespace, trading ──────────┴─▶ journal ─▶ journal.db
+
+The levels service that used to sit where `statespace` sits was retired on
+2026-10-28; see `docs/adr/0002-services-are-self-contained.md`.
+
+## What is optional, and why
+
+**Notifications are off unless configured.** Same reasoning: no Telegram token
+is a reason to skip delivery, not to stop collecting.
+
+**Trading is off unless asked for**, and on paper unless armed on top of that.
+It is the only service that can lose money, so it is the one service whose
+absence should never be a surprise and whose presence always is a choice:
+`TRADING_ENABLED=1` starts it, and `TRADING_LIVE=1` is separately required
+before an order reaches an account. Neither is implied by the other.
+
+Everything else runs. If a service fails to start, the others carry on and the
+run reports which one is missing - a stack that dies because one collector
+cannot reach a venue would be less useful than the collector it replaced.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import functools
+import json
+import os
+import signal
+import time
+from collections.abc import Awaitable, Callable
+from dataclasses import dataclass, field
+from pathlib import Path
+
+from till_platform import effects
+from till_platform.logging import get_logger
+
+from . import journal as jr
+from . import news as nw
+from . import notifications as nt
+from . import prices as px
+from . import strategies as td
+from .bus import Bus
+
+log = get_logger(__name__)
+
+#: Services in start order. Consumers first, so nothing published during
+#: start-up is dropped for want of a subscriber - an in-memory bus only
+#: delivers to groups that already exist when publish is called.
+ORDER: tuple[str, ...] = (
+    "journal",
+    "notifications",
+    "trading",
+    # After its consumer and before its producer, like everything else in this
+    # tuple: it publishes `statespace.proposals` and `statespace.dispersion`,
+    # which `trading` subscribes to, and consumes `prices.bars`.
+    "statespace",
+    "prices",
+    "news",
+)
+
+#: Bars in the store below which a fresh backfill is worth the thirty seconds.
+#: A level needs a few hundred bars per timeframe, and six instruments across
+#: six timeframes is thousands before the first one can be placed.
+MIN_BARS = 20_000
+
+#: Depth per series when backfilling on start. Enough for the level windows
+#: without pulling years nobody asked for.
+BACKFILL_BARS = 1_500
+
+
+#: The services that finish. Everything else is a consumer that runs until it
+#: is stopped, which is why `--once` has to know the difference: waiting for
+#: all of them would wait forever.
+COLLECTORS: frozenset[str] = frozenset({"prices", "news"})
+
+
+def first_cause(exc: BaseException, depth: int = 0) -> str:
+    """The innermost real error, not the group that wrapped it.
+
+    TaskGroups raise `ExceptionGroup`, whose message is "unhandled errors in a
+    TaskGroup (1 sub-exception)" - which names neither the error nor where it
+    came from. A supervisor that reports that has told nobody anything, so this
+    walks down to the exception that actually happened.
+    """
+    inner = getattr(exc, "exceptions", None)
+    if inner and depth < 6:
+        return first_cause(inner[0], depth + 1)
+    return f"{type(exc).__name__}: {exc}"
+
+
+def truthy(name: str, default: str = "0") -> bool:
+    return os.environ.get(name, default).strip().lower() not in ("", "0", "false", "no", "off")
+
+
+@dataclass(slots=True)
+class Plan:
+    """Which services to run, and where their data lives."""
+
+    redis_url: str | None = None
+    #: Off by default: the only part that can lose money. See the docstring.
+    trading: bool = False
+    notifications: bool = True
+    #: On by default, and cheap: the numeric layer folds one bar at a time
+    #: through one member per feed and interval, which measured 1.2ms a bar.
+    #: It warms by replay rather than by restore, so start-up costs nothing -
+    #: and it publishes nothing for a feed until `warm_bars` bars have
+    #: arrived, because a readout whose band is missing is worse than none.
+    statespace: bool = True
+    prices: bool = True
+    news: bool = True
+    journal: bool = True
+
+    symbols: tuple[str, ...] = ()
+    intervals: tuple[str, ...] = ()
+    #: Stop after this long. None runs until interrupted.
+    duration: float | None = None
+    once: bool = False
+    #: Pull history before starting, when the store has too little for levels
+    #: to form. A fresh machine otherwise collects for days before the levels
+    #: model can place anything - the bus carries a notice per sweep, not a
+    #: series, so it is not a source of history however long it runs.
+    backfill: bool = True
+
+    @classmethod
+    def from_env(cls) -> Plan:
+        symbols = os.environ.get("SYMBOLS", "")
+        intervals = os.environ.get("INTERVALS", "")
+        return cls(
+            redis_url=os.environ.get("TILL_REDIS_URL") or None,
+            trading=truthy("TRADING_ENABLED"),
+            notifications=truthy("NOTIFICATIONS_ENABLED", "1"),
+            statespace=truthy("STATESPACE_ENABLED", "1"),
+            prices=truthy("PRICES_ENABLED", "1"),
+            news=truthy("NEWS_ENABLED", "1"),
+            journal=truthy("JOURNAL", "1"),
+            backfill=truthy("BACKFILL_ON_START", "1"),
+            symbols=tuple(s.strip() for s in symbols.split(",") if s.strip()),
+            intervals=tuple(i.strip() for i in intervals.split(",") if i.strip()),
+        )
+
+    def wanted(self) -> list[str]:
+        return [name for name in ORDER if getattr(self, name)]
+
+
+#: Where the running stack leaves what it is doing, for anything outside the
+#: process to read.
+#:
+#: **The container reported `healthy` for three hours with no trading service.**
+#: On 2026-09-11 the MT5 bridge missed one health check at start-up, `listen`
+#: raised out of `trader.start()`, `_start`'s supervisor caught it and wrote one
+#: ERROR line, and nothing restarted it. `Dockerfile`'s probe is
+#: `till-infinity --version`, which proves the package imports and the entry
+#: point resolves - and a dead service is exactly the thing a restart would fix,
+#: so it is exactly what the probe should have seen and could not.
+#:
+#: A file rather than a port: the probe runs as a separate `docker exec` and
+#: cannot reach an in-process object, and adding a socket to be scraped is more
+#: surface than the question deserves.
+STATUS_FILE = Path(os.environ.get("STACK_STATUS_FILE") or ".data/stack.json")
+
+#: Seconds between status heartbeats.
+#:
+#: The staleness check in `health` exists to catch a process that is up and no
+#: longer doing anything - the one case a liveness probe can never see. That only
+#: works if a *working* stack keeps saying so, and the first version of
+#: `Status.publish` was called on change alone. A stack where nothing changes is
+#: the healthy case, so it wrote once and aged out: nine hours after shipping,
+#: seven services running, nothing failed, and the container marked unhealthy on
+#: a 33,138-second-old file.
+#:
+#: Sixty seconds against a `--max-age` of 300 leaves four missed beats before the
+#: probe complains, so a slow moment is not an outage.
+#: Buffers smaller than this are not worth naming in a heap dump. 64KB keeps
+#: the report to the handful of allocations that could account for hundreds of
+#: megabytes, rather than every small bytes object in the process.
+BUFFER_WORTH_NAMING = 64 * 1024
+
+#: The types whose size a heap dump may read, **by name**.
+#:
+#: **A heap walk must not touch attributes.** The first version asked every object
+#: for `nbytes` with `getattr`, which runs `__getattr__` on whatever happens to be
+#: live: a `pytest.mark` object answered by *creating a mark* called `nbytes`, and
+#: a `ctypes` library loader answered by trying to dlopen a shared object called
+#: "nbytes" and raising. Arbitrary code, inside a signal handler, on a live desk.
+#: Matching on the type's name touches no instance at all.
+BUFFER_TYPES: frozenset[str] = frozenset({"ndarray", "bytes", "bytearray", "memoryview", "array"})
+
+HEARTBEAT = float(os.environ.get("STACK_HEARTBEAT") or 60.0)
+
+
+@dataclass(slots=True)
+class Status:
+    """What actually started, and why anything did not."""
+
+    running: list[str] = field(default_factory=list)
+    skipped: dict[str, str] = field(default_factory=dict)
+    failed: dict[str, str] = field(default_factory=dict)
+    started: float = field(default_factory=time.time)
+
+    @property
+    def elapsed(self) -> float:
+        return time.time() - self.started
+
+    def __str__(self) -> str:
+        parts = [f"{len(self.running)} running: {', '.join(self.running)}"]
+        if self.skipped:
+            parts.append(f"skipped {', '.join(sorted(self.skipped))}")
+        if self.failed:
+            parts.append(f"failed {', '.join(sorted(self.failed))}")
+        return " · ".join(parts)
+
+    def publish(self) -> None:
+        """Leave the picture where a healthcheck can read it. Never raises.
+
+        See `stack.md` in research/docs.
+        """
+        try:
+            STATUS_FILE.parent.mkdir(parents=True, exist_ok=True)
+            STATUS_FILE.write_text(
+                json.dumps(
+                    {
+                        "running": sorted(self.running),
+                        # **What is switched on and has never run.** Six
+                        # defects in one week were features that were enabled,
+                        # correct and reached by nothing, and every one of them
+                        # passed its own tests - see `shared/effects.py`.
+                        "inert": effects.inert(),
+                        "failed": dict(self.failed),
+                        "skipped": dict(self.skipped),
+                        "started": self.started,
+                        "written": time.time(),
+                    }
+                )
+            )
+        except Exception:  # pragma: no cover - the reporter must not be the fault
+            log.debug("stack: could not write %s", STATUS_FILE, exc_info=True)
+
+
+def check(plan: Plan) -> dict[str, str]:
+    """Reasons a wanted service cannot run. Empty means everything can.
+
+    Checked up front so a stack reports "no ANTHROPIC_API_KEY" at second zero
+    rather than after a collector has been running for a minute.
+    """
+    reasons: dict[str, str] = {}
+    if plan.notifications:
+        settings = nt.Settings.from_env()
+        if not nt.build_notifiers(None, settings):
+            reasons["notifications"] = "no Telegram or Discord channel configured"
+    if plan.trading:
+        # Only the things that can be known without touching a terminal.
+        # Whether the broker actually offers gold is a question for start-up,
+        # where the answer can be reported per instrument.
+        try:
+            trading = td.Settings.from_env()
+            td.choose(trading)
+        except Exception as exc:
+            reasons["trading"] = first_cause(exc)
+    return reasons
+
+
+async def _forever(
+    name: str,
+    make: Callable[[], Awaitable[None]],
+    *,
+    settle: float = 1.0,
+    stopping: Callable[[], bool] | None = None,
+) -> None:
+    """Run a collector that must never stop, and start it again when it does.
+
+    See `stack.md` in research/docs.
+    """
+
+    async def survive(what: Callable[[], Awaitable[None]]) -> str:
+        """Run `what` and say why it stopped, or raise on a real shutdown.
+
+        See `stack.md` in research/docs.
+        """
+        try:
+            await what()
+        except asyncio.CancelledError:
+            # **Honoured unless a caller has said how to tell.** Without a
+            # `stopping` predicate there is no way to distinguish a library's
+            # cancel from a shutdown, and the safe default when you cannot
+            # tell is to stop - a desk that cannot be shut down is a worse bug
+            # than one that stops when it should not.
+            if stopping is None or stopping():
+                raise
+            mine = asyncio.current_task()
+            if mine is not None:
+                # Balance the request, or the next await raises it again.
+                mine.uncancel()
+            return "was cancelled while the desk was still running"
+        except Exception as exc:
+            return f"ended: {exc!r}"
+        return ""
+
+    async def attempt() -> str:
+        """Run the collector in a task of its own, and say why it stopped.
+
+        See `stack.md` in research/docs.
+        """
+        task = asyncio.create_task(make(), name=f"stack:{name}")
+        try:
+            await asyncio.wait({task})
+        except asyncio.CancelledError:
+            task.cancel()
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+            raise
+        if task.cancelled():
+            return "was cancelled while the desk was still running"
+        failed = task.exception()
+        if failed is not None:
+            return f"ended: {failed!r}"
+        return "returned on its own"
+
+    attempts = 0
+    said = 0
+    while True:
+        why = await attempt()
+        attempts += 1
+        # Logged at widening intervals. A collector restarting in a tight loop
+        # is one fact, not a hundred thousand of them, and the line that says
+        # so must not be the reason the log is useless.
+        if attempts >= said * 2 or attempts <= 3:
+            said = attempts
+            log.error("stack: %s %s - restarting (attempt %d)", name, why, attempts)
+        wait = min(60.0, settle * attempts)
+        await survive(functools.partial(asyncio.sleep, wait))
+
+
+def _watch_end(task: asyncio.Task[None]) -> asyncio.Task[None]:
+    """Say when a task that should run forever stops running.
+
+    See `stack.md` in research/docs.
+    """
+
+    def ended(done: asyncio.Task[None]) -> None:
+        # **Cancellation is reported, not skipped, and that omission cost a
+        # day.** The first version of this returned early on a cancelled task,
+        # on the reasonable-sounding grounds that a cancellation is somebody
+        # shutting things down deliberately. For a collector that should run
+        # forever it is nothing of the sort, and it is what was actually
+        # happening: on 2026-09-16 `prices:quotes` vanished from a task dump
+        # with no log line anywhere, because the one callback watching for it
+        # treated the single case that occurred as the uninteresting one.
+        if done.cancelled():
+            log.error("stack: %s was cancelled - it should run forever", done.get_name())
+            return
+        exc = done.exception()
+        if exc is not None:
+            log.error("stack: %s ended: %r", done.get_name(), exc)
+        else:
+            log.error("stack: %s returned on its own - it should run forever", done.get_name())
+
+    task.add_done_callback(ended)
+    return task
+
+
+def _arm_task_dump() -> None:
+    """`kill -USR1` the process and it says what every task is doing.
+
+    See `stack.md` in research/docs.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - only outside a loop
+        return
+
+    def dump() -> None:
+        tasks = asyncio.all_tasks(loop)
+        log.warning("stack: %d task(s) running - dumping on request", len(tasks))
+        for task in sorted(tasks, key=lambda t: t.get_name()):
+            frames = task.get_stack(limit=8)
+            where = " <- ".join(f"{f.f_code.co_name}:{f.f_lineno}" for f in reversed(frames))
+            log.warning("stack: task %s | %s", task.get_name(), where or "no stack (not started)")
+
+    with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
+        loop.add_signal_handler(signal.SIGUSR1, dump)
+        log.info("stack: SIGUSR1 will dump every task")
+
+
+def _arm_heap_dump() -> None:
+    """`kill -USR2` and it says what the heap is full of.
+
+    The container's memory is anonymous heap, not page cache - the kernel
+    reports 2.2GB anon against 331MB file, and the OOM kills recorded
+    `anon-rss: 2.7GB`. The persisted state is only 150MB, so whatever grows is
+    not saved, which rules the state file out as evidence and leaves code
+    reading, which has already ruled out the bounded structures. This counts
+    live objects by type instead of guessing.
+
+    Counts **and the bytes behind buffers**, because counts alone were blind to
+    the growth they were added to find. On 2026-09-20 the desk gained about 300MB
+    in twenty minutes while the object count rose 2,900 a minute - some 17MB an
+    hour at any plausible size per object. A numpy array is *one* object holding
+    megabytes, so a buffer-backed leak is invisible to a census and obvious to a
+    byte count. `getsizeof` over four million objects is still too slow, so only
+    the types that carry a buffer are measured and the rest are counted.
+
+    Guarded and rate-limited, because walking the heap pauses the loop and this
+    runs on a live desk.
+    """
+    try:
+        loop = asyncio.get_running_loop()
+    except RuntimeError:  # pragma: no cover - only outside a loop
+        return
+
+    def dump() -> None:
+        import gc
+
+        started = time.monotonic()
+        counts: dict[str, int] = {}
+        # type -> (objects, bytes). Only for things whose size is a cheap read:
+        # `nbytes` on an array, `len` on a buffer. Anything else is counted.
+        heavy: dict[str, list[int]] = {}
+        for obj in gc.get_objects():
+            name = type(obj).__name__
+            counts[name] = counts.get(name, 0) + 1
+            size = 0
+            if name in BUFFER_TYPES:
+                with contextlib.suppress(Exception):
+                    got = obj.nbytes if name in ("ndarray", "array") else len(obj)
+                    size = got if isinstance(got, int) else 0
+            if size >= BUFFER_WORTH_NAMING:
+                row = heavy.setdefault(name, [0, 0])
+                row[0] += 1
+                row[1] += size
+        top = sorted(counts.items(), key=lambda kv: -kv[1])[:15]
+        log.warning(
+            "stack: heap has %d tracked object(s), walked in %.1fs",
+            sum(counts.values()),
+            time.monotonic() - started,
+        )
+        for name, n in top:
+            log.warning("stack: heap %-28s %d", name, n)
+        if heavy:
+            total = sum(row[1] for row in heavy.values())
+            log.warning("stack: heap buffers hold %.0fMB in all", total / 1e6)
+            for name, (n, size) in sorted(heavy.items(), key=lambda kv: -kv[1][1])[:10]:
+                log.warning("stack: heap buffer %-21s %6d objects %8.1fMB", name, n, size / 1e6)
+        else:
+            log.warning(
+                "stack: heap no buffer over %dKB - growth is not buffers",
+                BUFFER_WORTH_NAMING // 1024,
+            )
+
+    with contextlib.suppress(NotImplementedError, RuntimeError, ValueError):
+        loop.add_signal_handler(signal.SIGUSR2, dump)
+        log.info("stack: SIGUSR2 will dump what the heap is full of")
+
+
+class StackEndedError(RuntimeError):
+    """Every service stopped without anybody asking for a shutdown.
+
+    Raised rather than returned so the process exits non-zero. A supervisor
+    that restarts on any exit cannot tell a crash from a clean stop, and the
+    difference is the whole question when a desk goes quiet overnight.
+    """
+
+
+class Stack:
+    """Every service, one bus, one process."""
+
+    def __init__(self, plan: Plan | None = None) -> None:
+        self.plan = plan or Plan.from_env()
+        self.bus = Bus(redis_url=self.plan.redis_url)
+        self.status = Status()
+        self._stack = contextlib.AsyncExitStack()
+        #: Set by the heartbeat when the last service has gone, and raised out
+        #: of `run` so the process exits non-zero rather than looking stopped.
+        self._ended: StackEndedError | None = None
+        #: Set when *this desk* is stopping. `_forever` consults it rather than
+        #: `Task.cancelling()`, because anyio's cancel scopes - how httpx
+        #: implements every timeout - call `task.cancel()` on their host task,
+        #: so "did somebody ask" reads true for a library timeout as well as
+        #: for a shutdown. Only this says which.
+        self._stopping = False
+
+    async def run(
+        self,
+        *,
+        on_event: Callable[[str, str], None] | None = None,
+    ) -> Status:
+        """Start everything wanted and available, then wait.
+
+        See `stack.md` in research/docs.
+        """
+        blocked = check(self.plan)
+        wanted = self.plan.wanted()
+        for name in wanted:
+            if name in blocked:
+                self.status.skipped[name] = blocked[name]
+                log.warning("stack: %s skipped - %s", name, blocked[name])
+
+        runnable = [name for name in wanted if name not in blocked]
+        say = on_event or (lambda name, note: log.info("stack: %s %s", name, note))
+
+        if self.plan.backfill and self.plan.prices:
+            await self._backfill(say)
+
+        async with self._stack:
+            book = None
+            if self.plan.journal:
+                book = await self._stack.enter_async_context(jr.Journal(_journal_db()))
+
+            _arm_task_dump()
+            _arm_heap_dump()
+            async with asyncio.TaskGroup() as group:
+                collectors: list[asyncio.Task[None]] = []
+                for name in runnable:
+                    task = self._start(group, name, book, say)
+                    if task is not None:
+                        self.status.running.append(name)
+                        self.status.publish()
+                        say(name, "started")
+                        if name in COLLECTORS:
+                            collectors.append(task)
+
+                group.create_task(self._beat(), name="stack:heartbeat")
+
+                if self.plan.once and collectors:
+                    await asyncio.wait(collectors)
+                    say("stack", "collection pass complete")
+                    self._stopping = True
+                    group._abort()
+                elif self.plan.duration is not None:
+                    await asyncio.sleep(self.plan.duration)
+                    self._stopping = True
+                    group._abort()
+
+        if self._ended is not None:
+            raise self._ended
+        return self.status
+
+    async def _backfill(self, say) -> int:
+        """Pull history before anything starts, if the store is too thin.
+
+        See `stack.md` in research/docs.
+        """
+        settings = px.Settings.from_env()
+        have = _stored_bars(settings.database)
+        if have >= MIN_BARS:
+            return 0
+
+        say("backfill", f"store has {have:,} bars, pulling history first")
+        feeds = px.resolve_symbols(self.plan.symbols or None)
+        intervals = px.resolve_intervals(self.plan.intervals or None)
+        store = px.open_store("sqlite", database=settings.database, data_dir=settings.data_dir)
+        try:
+            async with store:
+                summary = await px.backfill(
+                    settings=settings,
+                    store=store,
+                    feeds=feeds,
+                    intervals=intervals,
+                    bars=BACKFILL_BARS,
+                )
+            say("backfill", str(summary))
+            return summary.total.touched
+        except Exception as exc:
+            # A thin store is a slow start, not a reason to refuse to run.
+            say("backfill", f"skipped: {first_cause(exc)}")
+            return 0
+
+    async def _beat(self) -> None:
+        """Republish the status on a timer for as long as the stack runs.
+
+        Cancelled with the group on shutdown, which is the point: the file stops
+        being refreshed the moment the stack stops, and `health` reads that as
+        the outage it is.
+        """
+        while True:
+            await asyncio.sleep(HEARTBEAT)
+            self.status.publish()
+            # **A desk with nothing running is dead, and has to say so.**
+            #
+            # An actor ends by failing: `supervised` catches it, records it and
+            # returns. When the last one goes the process would simply sit here
+            # publishing a status of nothing, or - once this task is also gone -
+            # exit zero, which `docker` reads as a deliberate stop and restarts
+            # on its policy. That happened twice overnight on 2026-09-17 with
+            # quotes ninety minutes stale, and nothing anywhere distinguished a
+            # desk that had died from one that had been stopped.
+            #
+            # `once` and `duration` are the two cases where finishing is the
+            # point, and they never reach here with an empty book.
+            if not self.status.running and self.status.failed:
+                self._ended = StackEndedError(
+                    "every service has ended and none was asked to: "
+                    + ", ".join(f"{name} ({why})" for name, why in self.status.failed.items())
+                )
+                log.error("stack: %s", self._ended)
+                return
+
+    def _start(self, group: asyncio.TaskGroup, name: str, book, say):
+        """Launch one service as a supervised task. Returns it, or None.
+
+        **A runner that does synchronous start-up work must thread it.** Every
+        actor here shares one event loop, so a restore or a replay run inline
+        holds every other service behind it. The retired levels runner read a
+        150MB state file and replayed a few hundred thousand bars, and the same
+        shape elsewhere - one synchronous query at the top of the collector -
+        stopped the desk for twenty minutes on 2026-09-16 and wrote no quotes
+        for the whole of it. `asyncio.to_thread` is safe at start-up precisely
+        because nothing has subscribed to the bus yet.
+
+        No current runner needs it: `statespace` warms by replay rather than by
+        restoring a file, which is why there is no `to_thread` left in this
+        module. The rule is here because the test that used to carry it was
+        asserted against the runner that is gone.
+        """
+        runner = getattr(self, f"_run_{name}", None)
+        if runner is None:  # pragma: no cover - ORDER and methods are written together
+            self.status.failed[name] = "no runner"
+            return None
+
+        async def supervised() -> None:
+            try:
+                await runner(book)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # One service failing is a service failing, not a stack failing.
+                reason = first_cause(exc)
+                self.status.failed[name] = reason
+                if name in self.status.running:
+                    self.status.running.remove(name)
+                self.status.publish()
+                log.error("stack: %s stopped: %s", name, reason, exc_info=True)
+                say(name, f"stopped: {reason}")
+
+        return group.create_task(supervised(), name=f"stack:{name}")
+
+    # ----------------------------------------------------------- the services
+
+    async def _run_journal(self, book) -> None:
+        if book is None:
+            return
+        await jr.listen(self.bus, book)
+
+    async def _run_notifications(self, _book) -> None:
+        await nt.listen(self.bus)
+
+    async def _run_trading(self, book) -> None:
+        await td.listen(self.bus, journal=book)
+
+    async def _run_statespace(self, _book) -> None:
+        # Imported here rather than at the top because this package **did**
+        # lift out in one move: it is `services/statespace/` with its own
+        # manifest as of 2026-10-29, and a workspace dependency rather than a
+        # subpackage. `TestVendoredCusum` asserts it imports nothing from
+        # outside itself but `till_platform`, and a top-level import
+        # here would make a stack that cannot start without it. The seam is
+        # the bus: `watch` takes a carrier and the topics are named on both
+        # sides, with a test asserting the two names match.
+        from till_infinity.statespace import config as ss_config
+        from till_infinity.statespace import service as ss_service
+
+        await ss_service.watch(self.bus, ss_config.Settings.from_env())
+
+    async def _run_prices(self, _book) -> None:
+        settings = px.Settings.from_env()
+        feeds = px.resolve_symbols(self.plan.symbols or None)
+        # Broker-only feeds are added whatever `SYMBOLS` says, and that is the
+        # correction of a bug rather than a convenience. `PRICES_BROKER_SYMBOLS`
+        # is already an explicit opt-in list and it is the only way to reach an
+        # instrument nothing else quotes - so naming one there and having it
+        # collected by nothing is never what anybody wanted. Eleven synthetics
+        # were registered, made tradable, given exposure legs, and polled by
+        # nothing: zero quotes and zero bars, which looks exactly like a feed
+        # that does not exist.
+        #
+        # `resolve_symbols` stays pure. A one-off `prices bars --symbols gold`
+        # should get gold, not the whole synthetic book; this is the running
+        # deployment, where the two lists are meant to describe one intent.
+        # The exchange is asked what it lists before the feed set is settled,
+        # because a ccxt pair has no entry in `SYMBOLS` to resolve - it is
+        # discovered, filtered and registered, or it does not exist. Skipped
+        # entirely unless a filter says how much to carry, so a deployment that
+        # has not opted in pays no start-up call.
+        if settings.ccxt_top or settings.ccxt_min_volume or settings.ccxt_quotes:
+            carried = await px.discover_ccxt(settings)
+            if carried:
+                px.register_ccxt_feeds(carried)
+        known = {feed.name for feed in feeds}
+        extra = tuple(n for n in (*px.broker_feed_names(), *px.ccxt_feed_names()) if n not in known)
+        if extra:
+            feeds = feeds + px.resolve_symbols(extra)
+            log.info(
+                "stack: %d source-only feed(s) carried that SYMBOLS does not name: %s",
+                len(extra),
+                ", ".join(extra),
+            )
+        intervals = px.resolve_intervals(self.plan.intervals or None)
+        store = px.open_store("sqlite", database=settings.database, data_dir=settings.data_dir)
+        async with store, asyncio.TaskGroup() as group:
+            # **Supervised, not merely watched.** `_watch_end` said when a
+            # collector stopped; it did not put it back, and a desk whose quote
+            # poll has silently ended looks identical to a quiet market. Both
+            # run under `_forever` now - see its note for why the claim there
+            # is deliberately smaller than "the cause is fixed".
+            #
+            # `once` is the exception: a collection pass is *meant* to end, and
+            # restarting it would turn a one-shot into a loop.
+            def bars() -> Awaitable[None]:
+                return px.collect(
+                    settings=settings,
+                    store=store,
+                    feeds=feeds,
+                    intervals=intervals,
+                    # Chosen rather than defaulted, for the reason the quote
+                    # list is: a broker-only feed has no other candle source,
+                    # and quotes without bars build no level at all.
+                    sources=px.bar_source_names(),
+                    cycles=1 if self.plan.once else None,
+                    bus=self.bus,
+                )
+
+            def quotes() -> Awaitable[None]:
+                return px.stream(
+                    settings=settings,
+                    feeds=feeds,
+                    # Chosen rather than defaulted, so a broker-only feed is
+                    # actually polled. Registering a synthetic and leaving the
+                    # transport at its default would give a feed that exists,
+                    # is asked for, and never quotes.
+                    sources=px.quote_source_names(),
+                    sink=store.write_quote,
+                    ticks=1 if self.plan.once else None,
+                    bus=self.bus,
+                )
+
+            if self.plan.once:
+                _watch_end(group.create_task(bars(), name="prices:bars"))
+                _watch_end(group.create_task(quotes(), name="prices:quotes"))
+            else:
+                stopping = lambda: self._stopping  # noqa: E731
+                for label, make in (("prices:bars", bars), ("prices:quotes", quotes)):
+                    # Still watched as well as supervised: a supervisor that is
+                    # itself cancelled would otherwise vanish exactly as
+                    # quietly as the collector it was put there to watch.
+                    _watch_end(
+                        group.create_task(_forever(label, make, stopping=stopping), name=label)
+                    )
+
+    async def _run_news(self, _book) -> None:
+        settings = nw.Settings.from_env()
+        store = nw.open_store("sqlite", database=settings.database, data_dir=settings.data_dir)
+        async with store:
+            await nw.collect(
+                settings=settings,
+                store=store,
+                # Chosen rather than defaulted. Without this the default source
+                # list won whatever a deployment asked for, silently: `fred`
+                # was configured with its key present and was never built.
+                sources=settings.sources or None,
+                cycles=1 if self.plan.once else None,
+                bus=self.bus,
+            )
+
+    async def close(self) -> None:
+        self._stopping = True
+        await self.bus.close()
+
+
+def _stored_bars(database: Path) -> int:
+    """How many bars are already stored. Zero when there is no store yet."""
+    import sqlite3
+
+    if not Path(database).exists():
+        return 0
+    try:
+        with sqlite3.connect(f"file:{Path(database)}?mode=ro", uri=True) as conn:
+            return int(conn.execute("SELECT COUNT(*) FROM bars").fetchone()[0])
+    except sqlite3.Error:
+        return 0
+
+
+def _journal_db() -> Path:
+    return Path(os.environ.get("JOURNAL_DB") or jr.DEFAULT_DB)
+
+
+async def run(plan: Plan | None = None, **kwargs) -> Status:
+    """Start the stack, run it, and shut it down cleanly."""
+    stack = Stack(plan)
+    try:
+        return await stack.run(**kwargs)
+    finally:
+        await stack.close()

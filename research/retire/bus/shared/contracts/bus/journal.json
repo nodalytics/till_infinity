@@ -1,0 +1,36 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "journal",
+  "title": "A decision, an observation, an outcome or a note",
+  "description": "Decisions and their reasoning on their way to the record. Any service may publish; `journal listen` is the single writer, which is why this is on the bus at all. Built by journal.bus.to_message from Entry.to_dict.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["id", "time", "kind", "actor", "title", "rationale", "context", "tags", "confidence", "parent"],
+  "properties": {
+    "id": {
+      "type": "string",
+      "description": "**Ignored by the reader, and sent anyway.** It is derived from the content, so the consumer recomputes it locally: a sender cannot claim an id that does not match what it sent, and two services publishing the same decision still collapse to one row. Present because `Entry.to_dict` is the wire format and the record's own format alike."
+    },
+    "time": {"type": "number", "description": "Epoch seconds. Part of the content the id is derived from, with actor and title."},
+    "kind": {
+      "type": "string",
+      "enum": ["decision", "observation", "outcome", "note"],
+      "description": "A decision carries a rationale; an observation is something noticed and not acted on, which is useful as a negative example; an outcome links to an earlier entry by `parent`."
+    },
+    "actor": {"type": "string", "description": "Which service or person. Also the bus message's source when publishing."},
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The only field without a usable default: `journal.bus.from_message` returns None for an empty one and the entry is dropped."
+    },
+    "rationale": {"type": "string"},
+    "context": {
+      "type": "object",
+      "additionalProperties": true,
+      "description": "The structured record a later study reads. Deliberately open: this is where a service writes what it knew at the time, and pinning its keys here would make every new measurement a change to this contract."
+    },
+    "tags": {"type": "array", "items": {"type": "string"}},
+    "confidence": {"type": ["number", "null"], "description": "Null rather than absent when unknown, because 0.0 and \"not stated\" are different claims."},
+    "parent": {"type": "string", "description": "The id of the entry this is an outcome of. Empty for entries that are not."}
+  }
+}

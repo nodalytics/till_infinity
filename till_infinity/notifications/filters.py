@@ -9,10 +9,12 @@ Level routing was the only filter there was - `info`, `warning`, `critical` -
 and it is the wrong axis on its own. A stale feed and a level call can both be
 `warning` while being completely different things to a reader.
 
-Four filters, each answering a question the others cannot:
+Five filters, each answering a question the others cannot:
 
 - **shape** - a kind of finding. "I want level calls, not every wide spread."
 - **instrument** - "gold and BTC only."
+- **interval** - a floor on the timeframe, because sub-15m is where the noise
+  and the losses both live. See `Filter.floor`.
 - **repeat** - the same finding again inside a cooling-off window. A stale feed
   is one situation, not one situation per second.
 - **rate** - a ceiling per hour, whatever else got through. The backstop for
@@ -31,7 +33,9 @@ from collections import OrderedDict
 from dataclasses import dataclass, field
 from typing import Any
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
+
+from .models import Level, read_level
 
 log = get_logger(__name__)
 
@@ -60,6 +64,18 @@ def _names(raw: str) -> frozenset[str]:
 #:
 #: They still *count* toward the hour, so the tally stays honest and a burst of
 #: trading correctly quietens everything else.
+#:
+#: **A `critical` alert is uncapped too, and this list could not express it.**
+#: The hourly cap carried the same off-by-a-word as the shape gate that was
+#: fixed on 2026-09-12: `key` falls back to the payload's **source** when there
+#: is no shape field, trading publishes source `trading`, and the word here is
+#: `trade` - so `AutoTrading is off` was inside the cap all along. Measured on
+#: the live actor path: 20 gold level calls in an hour, then the alarm, and the
+#: filter answered `20 already sent this hour`. That is the worst day exactly -
+#: the broker is down, the channel is full of level calls, and the one message
+#: that matters is the one the budget refuses. Severity is checked directly in
+#: `rejects` rather than added here, because a severity is not a shape and a
+#: list of shapes cannot hold one.
 UNCAPPED: frozenset[str] = frozenset({"trade"})
 
 
@@ -145,11 +161,21 @@ class Filter:
         # so was `trading is not attached`, and so was the broker-unreachable
         # alarm added the same day.
         #
-        # The cooldown and the hourly cap still apply. Those exist to stop a
-        # channel being flooded, which is a different job from deciding what
-        # somebody cares about, and a critical alert that repeats every heartbeat
-        # is its own kind of broken.
-        urgent = str(payload.get("level") or "").strip().lower() == "critical"
+        # The **cooldown** still applies. It exists to stop a channel being
+        # flooded, which is a different job from deciding what somebody cares
+        # about, and a critical alert that repeats every heartbeat is its own
+        # kind of broken. The **hourly cap** does not, any more: a budget
+        # spent on level calls was refusing the alarm that said the desk was
+        # down, which is the same mistake `UNCAPPED` was added for.
+        #
+        # `read_level` and not a string comparison. The bus contract
+        # (`research/shared/contracts/bus/alerts.json`) says a level may be
+        # "a name or its ordinal", and `== "critical"` matched only the name - so a
+        # publisher sending `level: 2`, which the contract explicitly allows,
+        # got no bypass and was filtered like a topic preference. The same
+        # defect this whole gate was written for, in the other encoding. One
+        # reading of what a payload says, shared with `from_message`.
+        urgent = read_level(payload.get("level")) is Level.CRITICAL
         if not urgent:
             if self.shapes and shape.lower() not in self.shapes:
                 return f"shape {shape!r} not in {sorted(self.shapes)}"
@@ -166,6 +192,7 @@ class Filter:
         if (
             self.max_per_hour
             and len(self._recent) >= self.max_per_hour
+            and not urgent
             and shape.lower() not in UNCAPPED
         ):
             return f"{len(self._recent)} already sent this hour"
@@ -182,7 +209,7 @@ class Filter:
         """
         if not self.floor:
             return ""
-        from till_platform.intervals import SECONDS
+        from till_infinity.utils.intervals import SECONDS
 
         want = SECONDS.get(self.floor, 0.0)
         if want <= 0:

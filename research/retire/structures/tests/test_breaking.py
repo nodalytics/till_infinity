@@ -1,0 +1,614 @@
+"""Will this level break? The question nothing here had ever asked.
+
+`up_rate` is the strongest feature for *direction* - weight +2.29 in
+learning.md, ten times the next - and predicts a break at AUC 0.4892. Nothing.
+That is the evidence these are separate questions rather than two views of one,
+and it is why this model exists at all.
+"""
+
+from __future__ import annotations
+
+import random
+
+import pytest
+
+from till_infinity.structures.learning.breaking import BROKE, HELD, MIN_SEEN, NAMES, Breaks
+
+
+class Touch:
+    def __init__(
+        self,
+        approach_vol=0.0,
+        depth_vol=0.0,
+        slowing=0.0,
+        slope=0.0,
+        prior_slope=0.0,
+        interval_log=0.0,
+        experience=0.0,
+        strength=0.0,
+        up_rate=0.5,
+    ):
+        self.approach_vol = approach_vol
+        self.depth_vol = depth_vol
+        self.slowing = slowing
+        self.slope = slope
+        self.prior_slope = prior_slope
+        self.interval_log = interval_log
+        self.experience = experience
+        self.strength = strength
+        self.up_rate = up_rate
+
+
+def teach(model, n=400, seed=3):
+    """Fast arrivals break, deep touches hold - the measured directions."""
+    rng = random.Random(seed)
+    for _ in range(n):
+        fast, deep = rng.gauss(0, 1), rng.gauss(0, 1)
+        broke = (fast - deep) > 0
+        model.observe(Touch(approach_vol=fast, depth_vol=deep), "break" if broke else "reject")
+    return model
+
+
+# ------------------------------------------------------------- what it reads
+
+
+def test_it_reads_the_features_that_separate():
+    """`slowing` earns its place by being nearly orthogonal to `approach_vol` -
+    correlation +0.008 - rather than by being strong. A weak separator that
+    disagrees adds; a strong one that agrees restates.
+
+    The two slope terms were added on the same argument and a measured lift:
+    0.6104 to 0.6408 AUC, out of sample, over 5,452 five-minute touches.
+
+    `experience` and `strength` were added 2026-09-23 on the opposite argument -
+    not orthogonality but raw strength. On the **unconditional** population they
+    are the two best single separators here, AUC 0.6272 and 0.6076 read the right
+    way round over 320,811 touches, and they were missing because force.md
+    measured them inside the 300-1,800s band where the sign reverses. See
+    research/break-trade.md.
+    """
+    assert NAMES == (
+        "approach_vol",
+        "depth_vol",
+        "slowing",
+        "slope",
+        "prior_slope",
+        "interval_log",
+        "experience",
+        "strength",
+        "conviction",
+    )
+
+
+def test_it_takes_a_plain_dictionary_too():
+    """A signal carries its features as a dict, not as a Features object."""
+    got = {
+        "approach_vol": 1.5,
+        "depth_vol": 0.5,
+        "slowing": 0.8,
+        "slope": 0.2,
+        "prior_slope": 0.4,
+        "interval_log": 6.8,
+        "experience": 1.1,
+        "strength": 0.7,
+        "up_rate": 0.9,
+    }
+    # The last entry is `conviction` - |up_rate - 0.5| - derived rather than carried.
+    assert Breaks.inputs(got) == [1.5, 0.5, 0.8, 0.2, 0.4, 6.8, 1.1, 0.7, 0.4]
+    assert Breaks.inputs(
+        Touch(
+            approach_vol=1.5,
+            depth_vol=0.5,
+            slowing=0.8,
+            slope=0.2,
+            prior_slope=0.4,
+            interval_log=6.8,
+            experience=1.1,
+            strength=0.7,
+            up_rate=0.9,
+        )
+    ) == [1.5, 0.5, 0.8, 0.2, 0.4, 6.8, 1.1, 0.7, 0.4]
+
+
+def test_a_missing_feature_reads_as_zero_rather_than_shortening_the_vector():
+    assert Breaks.inputs({}) == [0.0] * len(NAMES)
+
+
+def test_the_slope_is_read_as_a_magnitude():
+    """Which way the fit points is a different question from whether the level
+    survives, and a signed slope would ask a linear model to learn that steep
+    up and steep down both break - the one shape it cannot represent."""
+    down = Breaks.inputs({"slope": -0.9, "prior_slope": -1.4, "approach_vol": -2.0})
+    up = Breaks.inputs({"slope": 0.9, "prior_slope": 1.4, "approach_vol": -2.0})
+    assert down == up
+    # And only the slopes are folded; the rest keep their sign.
+    assert down[0] == -2.0
+
+
+# --------------------------------------------------------- what it will say
+
+
+def test_it_says_nothing_until_it_has_seen_enough():
+    """None rather than 0.5: "no opinion" and "an even chance" are different
+    claims, and a consumer that cannot tell them apart will act on the second
+    when it was handed the first."""
+    model = Breaks()
+    assert model.predict(Touch(approach_vol=3.0)) is None
+    assert model.reading(Touch(approach_vol=3.0)) == {}
+    assert not model.warm
+
+
+def test_it_speaks_once_it_is_warm():
+    model = teach(Breaks(), n=int(MIN_SEEN) + 50)
+    assert model.warm
+    said = model.predict(Touch(approach_vol=1.0, depth_vol=0.0))
+    assert said is not None
+    assert 0.0 < said < 1.0
+
+
+def test_a_fast_shallow_arrival_is_likelier_to_break_than_a_slow_deep_one():
+    """The whole claim, end to end: arrive hard at a level barely entered and
+    it goes; arrive gently having pushed deep into it and it holds."""
+    model = teach(Breaks(), n=1200)
+    hard = model.predict(Touch(approach_vol=2.0, depth_vol=-1.0))
+    gentle = model.predict(Touch(approach_vol=-1.0, depth_vol=2.0))
+    assert hard > gentle
+
+
+def test_the_weights_point_the_way_the_measurement_did():
+    """approach_vol positive, depth_vol negative - fitted, not asserted."""
+    model = teach(Breaks(), n=1200)
+    weights = dict(model.importance())
+    assert weights["approach_vol"] > 0
+    assert weights["depth_vol"] < 0
+
+
+# ------------------------------------------------------------ what it learns
+
+
+def test_chop_is_not_evidence_that_the_level_held():
+    """A touch that went nowhere is not a hold, and counting it as one is the
+    discipline the rest of the package already applies to chop."""
+    model = Breaks()
+    before = model.model.seen
+    assert model.observe(Touch(), "chop") is None
+    assert model.model.seen == before
+
+
+def test_an_unrecognised_outcome_is_ignored():
+    model = Breaks()
+    assert model.observe(Touch(), "something new") is None
+    assert model.model.seen == 0.0
+
+
+def test_both_break_outcomes_count_as_breaks():
+    for outcome in BROKE:
+        model = Breaks()
+        model.observe(Touch(approach_vol=1.0), outcome)
+        assert model.model.seen == 1.0
+
+
+def test_both_hold_outcomes_count_as_holds():
+    for outcome in HELD:
+        model = Breaks()
+        model.observe(Touch(approach_vol=1.0), outcome)
+        assert model.model.seen == 1.0
+
+
+def test_it_predicts_before_it_learns():
+    """The discipline every model here keeps: `observe` returns what it said
+    beforehand, not what it would say now.
+
+    Not bit-identical to a prior `predict`, and the reason is worth knowing.
+    `Logistic.observe` updates the **standardiser** with the input before it
+    predicts - deliberately, because knowing the distribution of the inputs is
+    not knowing the outcome, and refusing that would mean standardising from
+    nothing on the first example. The *weights* are untouched until after, which
+    is the part that makes the score walk-forward.
+    """
+    model = teach(Breaks(), n=400)
+    touch = Touch(approach_vol=0.4, depth_vol=0.1)
+    before = model.predict(touch)
+    said = model.observe(touch, "break")
+    assert said == pytest.approx(before, abs=1e-3)
+    # And the weights did move, which is the other half.
+    assert model.predict(touch) > said
+
+
+# ------------------------------------------------------------- the handover
+
+
+def test_the_reading_is_floats_for_the_journal():
+    model = teach(Breaks(), n=1200)
+    got = model.reading(Touch(approach_vol=1.0))
+    # The raw estimate is always there. The calibrated one joins it once the
+    # correction has enough behind it, **beside** the raw number rather than in
+    # place of it - the record decides which is better before either is used.
+    assert {"break_probability", "break_seen"} <= set(got)
+    assert set(got) <= {
+        "break_probability",
+        "break_seen",
+        "break_probability_calibrated",
+        "calibrated_loss",
+        "uncalibrated_loss",
+    }
+    assert all(isinstance(v, float) for v in got.values())
+
+
+def test_the_correction_is_published_beside_the_raw_number_never_instead():
+    """A calibrated probability that silently replaced the raw one would make
+    the comparison unrecoverable from the journal."""
+    model = teach(Breaks(), n=1200)
+
+    got = model.reading(Touch(approach_vol=1.0))
+
+    if "break_probability_calibrated" in got:
+        assert "break_probability" in got
+        assert {"calibrated_loss", "uncalibrated_loss"} <= set(got)
+
+
+def test_the_correction_does_not_outlive_the_model_it_corrects():
+    """It is fitted on this model's output. Carried across a reset it would be
+    correcting a stream that no longer exists."""
+    import till_infinity.structures.learning.breaking as br
+
+    model = teach(Breaks(), n=1200)
+    assert model.calibrator.seen > 0
+
+    model.recipe = "something else"
+    model.observe(Touch(approach_vol=1.0), "break")
+
+    assert model.calibrator.seen <= 1
+    assert model.recipe == br.RECIPE
+
+
+def test_the_service_learns_from_every_resolution_and_publishes_it():
+    """A model nothing calls is not a model - this repository shipped that five
+    times in two days."""
+    import inspect
+
+    from till_infinity.structures import service
+
+    assert "self.breaks.observe(" in inspect.getsource(service.Watcher.record_outcomes)
+    assert "self.breaks.reading(" in inspect.getsource(service.Watcher._level_calls)
+
+
+def test_it_survives_a_restart():
+    import inspect
+
+    from till_infinity.structures import service
+
+    assert '"breaks": self.breaks' in inspect.getsource(service.Watcher.save)
+    assert 'state.get("breaks"' in inspect.getsource(service.Watcher.load)
+
+
+def test_the_alert_shows_the_break_risk_when_there_is_one():
+    """A number nobody sees is a number nobody can sanity-check, and this one is
+    new enough to want checking against what the chart actually did."""
+    from till_infinity.structures.models import Shape, Signal
+    from till_infinity.structures.service import alert_payload
+
+    signal = Signal(
+        shape=Shape.LEVEL,
+        feed="gold",
+        venue="consensus",
+        score=0.3,
+        direction="up",
+        features={"level": 4400.0, "probability_up": 0.7, "break_probability": 0.62},
+    )
+    assert "break risk 62%" in alert_payload(signal)["body"]
+
+
+def test_the_alert_says_nothing_when_the_model_is_cold():
+    """Silence rather than 50%, for the same reason `predict` returns None."""
+    from till_infinity.structures.models import Shape, Signal
+    from till_infinity.structures.service import alert_payload
+
+    signal = Signal(
+        shape=Shape.LEVEL,
+        feed="gold",
+        venue="consensus",
+        score=0.3,
+        direction="up",
+        features={"level": 4400.0, "probability_up": 0.7},
+    )
+    assert "break risk" not in alert_payload(signal)["body"]
+
+
+def test_it_reaches_trading_as_a_feature():
+    """`trading` copies the signal's features onto the intent, so the estimate
+    is journalled beside every decision that was taken while it existed - which
+    is what will make it possible to ask later whether it was worth gating on."""
+    from till_infinity.strategies.models import Intent, Side
+
+    intent = Intent(
+        feed="gold",
+        symbol="XAUUSD",
+        side=Side.BUY,
+        volume=0.05,
+        entry=4400.0,
+        stop=4395.0,
+        target=4410.0,
+        features={"break_probability": 0.62},
+    )
+    assert intent.to_context()["break_probability"] == pytest.approx(0.62)
+
+
+# --------------------------------------------------- the gate every strategy runs
+
+
+def test_the_outcome_records_which_timeframes_agreed():
+    """It was on the signal and on the touch and not on the outcome, so all
+    12,504 resolutions recorded zero timeframes and "does agreement across
+    timeframes predict anything" could not be asked of the only record that
+    can answer it."""
+    import inspect
+
+    from till_infinity.structures import service
+
+    source = inspect.getsource(service.Watcher.record_outcomes)
+    assert '"confluence": touch.confluence' in source
+    assert '"confluence_n"' in source
+
+
+def test_deceleration_needs_no_new_state():
+    """It was parked for a day on a guess about the plumbing. The series window
+    already holds five hundred closes, so this reads six where `_speed` reads
+    two."""
+    from till_infinity.structures.engine import Engine
+
+    engine = Engine()
+    assert engine._slowing("nothing", "5m") == 0.0
+
+
+# ------------------------------------------------- the slope, end to end
+
+
+class _Vol:
+    bps = 10.0
+    warm = True
+    tick = 0.01
+
+
+def test_the_slope_is_zero_without_enough_series():
+    """Forty closes, because the pair needs two windows. Zero reads as "no
+    reading" everywhere downstream."""
+    from till_infinity.structures.engine import Engine
+
+    engine = Engine()
+    assert engine._slope("nothing", "5m", _Vol()) == (0.0, 0.0)
+
+
+def _drive(engine, feed, interval, prices):
+    for price in prices:
+        engine._bar(feed, interval, price)
+
+
+def test_the_engine_publishes_the_slope_onto_the_touch():
+    """The check this repository keeps failing: computed correctly, recorded
+    where nothing reads it. `Breaks.inputs` names them, so the features object
+    has to carry them or every touch scores zero forever."""
+    import dataclasses
+    import inspect
+
+    from till_infinity.structures import reactions
+    from till_infinity.structures.learning.breaking import DERIVED, NAMES
+
+    # A derived input is satisfied through its source: `conviction` is |up_rate - 0.5| and it is
+    # `up_rate` that has to be carried and published. The invariant is unchanged - nothing in
+    # NAMES may score zero forever because it never reaches the signal.
+    needed = {DERIVED.get(name, name) for name in NAMES}
+    carried = {f.name for f in dataclasses.fields(reactions.Features)}
+    for name in needed:
+        assert name in carried, f"{name} is needed by NAMES and not on the features"
+
+    # And published, not merely held: `Breaks` reads a signal's dictionary.
+    published = inspect.getsource(reactions.Features.to_dict)
+    for name in needed:
+        assert f'"{name}"' in published, f"{name} never reaches the signal"
+
+    # And threaded through the builder the engine calls.
+    builder = inspect.signature(reactions.features_for).parameters
+    assert "slope" in builder
+    assert "prior_slope" in builder
+
+
+def test_the_engine_actually_calls_the_slope():
+    """A feature the engine computes and does not pass on is the defect that
+    left STRUCTURES_FORMATION inert for its whole life."""
+    import inspect
+
+    from till_infinity.structures import engine as eng
+
+    source = inspect.getsource(eng.Engine)
+    assert "self._slope(feed, interval, vol)" in source
+    assert '"slope", "prior_slope"' in source
+
+
+def test_every_feature_the_builder_takes_has_a_producer():
+    """The generalisation of the test above, written because the narrow one
+    covered `slope` and missed `run_vol`.
+
+    `run_vol` was a keyword-only argument of `features_for` with a default of
+    0.0 and **no producer in any revision** - so it was 0.0 on every journal row
+    ever written, three models carried a dead input each, and
+    `research/harness/force.py` scored the column and got AUC exactly 0.5000,
+    which was then published as "distance already covered does not matter".
+
+    An AUC of *exactly* 0.5 is the signature of a constant. The tell was in the
+    number and nobody read it that way, so this asserts the mechanism instead:
+    every numeric feature the builder accepts must be named at the engine's own
+    construction site."""
+    import inspect
+
+    from till_infinity.structures import engine as eng
+    from till_infinity.structures import reactions
+
+    source = inspect.getsource(eng.Engine)
+    taken = {
+        name
+        for name, p in inspect.signature(reactions.features_for).parameters.items()
+        if p.kind is inspect.Parameter.KEYWORD_ONLY and isinstance(p.default, float)
+    }
+    # Named where the engine builds them, whether directly or via the `zip`
+    # spread it uses for the slope pair.
+    missing = sorted(
+        name for name in taken if f"{name}=" not in source and f'"{name}"' not in source
+    )
+    assert not missing, f"features the builder accepts and the engine never supplies: {missing}"
+
+
+def test_slowing_is_bounded():
+    """It is a ratio and its denominator can be almost zero. The break model's
+    own standardiser had a running mean of 141,380,329 for this feature against
+    1.36 for `approach_vol` - one input eight orders of magnitude wider than
+    its neighbours, which makes every other weight rescale whenever a new
+    extreme lands."""
+    from till_infinity.structures.engine import SLOWING_CAP, Engine
+
+    assert SLOWING_CAP == 10.0
+    src = __import__("inspect").getsource(Engine._slowing)
+    assert "min(after / before, SLOWING_CAP)" in src
+
+
+def test_a_changed_recipe_drops_the_saved_model():
+    """A fix to an input is not a fix if the statistics describing it survive.
+
+    `slowing` was capped at 10.0 while its running mean in the standardiser was
+    141,380,329. `Scaler` is plain Welford with no decay, so at n=5,256 a
+    clamped observation moves the mean by (10 - 141M)/5256 and recovery would
+    take on the order of 1e11 samples. The cap read as done and changed
+    nothing.
+    """
+    from till_infinity.structures.learning.breaking import RECIPE, Breaks
+
+    trained = teach(Breaks(), n=int(MIN_SEEN) + 50)
+    assert trained.warm
+    before = trained.model.seen
+
+    # Same recipe: nothing is thrown away.
+    trained.observe(Touch(approach_vol=1.0), "reject")
+    assert trained.model.seen >= before
+    assert trained.warm
+
+    # A different one: it starts again rather than trusting stale statistics.
+    stale = teach(Breaks(), n=int(MIN_SEEN) + 50)
+    stale.recipe = "trained when slowing was unbounded"
+    stale.observe(Touch(approach_vol=1.0), "reject")
+    assert stale.recipe == RECIPE
+    assert stale.model.seen <= 1.0
+    assert not stale.warm
+
+
+def test_adding_an_input_is_already_handled():
+    """`Logistic` and `Scaler` rebuild on a length change, so the recipe is for
+    re-*meaning* an input rather than adding one."""
+    import inspect
+
+    from till_infinity.structures.learning import online
+
+    assert "len(x) != len(self.mean)" in inspect.getsource(online.Scaler.observe)
+
+
+def test_every_unbounded_ratio_in_the_record_is_bounded():
+    """Measured on 2026-09-03 over the published record. Four fields had a max
+    more than a hundred times their own 99th percentile:
+
+    | field | median | p99 | max |
+    | --- | --- | --- | --- |
+    | forecast_ratio | 1.12 | 629 | 132,923,621,621 |
+    | slowing | 1.00 | 67.6 | 934,584,883,610 |
+    | reward_to_risk | 0.364 | 13.2 | 15,846 |
+    | push_sigma_vol | 0.51 | 3.43 | 22,415 |
+
+    A guard against a zero denominator is not a guard against a small one, and
+    one such field disabled the break model for weeks without breaking it - see
+    research/standardising.md.
+    """
+    import inspect
+
+    from till_infinity.structures import engine, levels, reactions
+    from till_infinity.structures.vol import har
+
+    assert har.RATIO_CAP == 10.0
+    assert reactions.RR_CAP == 20.0
+    assert levels.SIGMA_CAP == 20.0
+    assert engine.SLOWING_CAP == 10.0
+
+    # Applied, not merely defined. A constant nothing multiplies is decoration.
+    # `fget` because these are properties, and `getsource` wants the function.
+    assert "RATIO_CAP)" in inspect.getsource(har.Har.ratio.fget)
+    assert "SIGMA_CAP)" in inspect.getsource(levels.SideStats.push_sigma.fget)
+    assert "RR_CAP)" in inspect.getsource(reactions.Inference.reward_to_risk.fget)
+    assert "SLOWING_CAP)" in inspect.getsource(engine.Engine._slowing)
+
+
+def test_the_caps_sit_above_the_measured_ninety_ninth_percentile():
+    """Except `slowing`, deliberately: its p99 is 67.6, which is already the
+    denominator talking rather than a real acceleration."""
+    from till_infinity.structures import levels, reactions
+    from till_infinity.structures.vol import har
+
+    assert har.RATIO_CAP > 1.12 * 5
+    assert reactions.RR_CAP > 13.2
+    assert levels.SIGMA_CAP > 3.43
+
+
+def test_the_timeframe_reaches_the_model():
+    """The largest single separator on this book: break rate by the interval a
+    level was drawn on runs 57.9% at 1m to 1.4% at 1h over 126,296
+    resolutions. It was invisible because every other feature is scale-free by
+    construction, which is exactly why it is orthogonal to them."""
+    from till_infinity.structures.engine import _interval_log
+    from till_infinity.structures.learning.breaking import NAMES
+    from till_infinity.structures.reactions import Features
+
+    assert "interval_log" in NAMES
+    assert "interval_log" in {f.name for f in __import__("dataclasses").fields(Features)}
+    assert _interval_log("1m") < _interval_log("15m") < _interval_log("4h")
+    # An interval the table does not know reads as no reading, not as a fast one.
+    assert _interval_log("nonsense") == 0.0
+    assert _interval_log("") == 0.0
+
+
+def test_lengthening_the_vector_bumps_the_recipe():
+    """`Scaler` silently returns raw values when the vector length changes, so
+    a longer feature set without a reset standardises new inputs against
+    statistics gathered for a shorter one. That is the trap in
+    research/inert.md, and the recipe is what avoids walking into it."""
+    from till_infinity.structures.learning.breaking import NAMES, RECIPE
+
+    assert len(NAMES) == 9
+    assert "conviction" in RECIPE
+
+
+def test_conviction_is_the_records_magnitude_and_not_its_direction():
+    """**The reason `up_rate` was excluded and the reason this is not.**
+
+    A linear model cannot represent `|x - 0.5|` from `x`, so the raw record scored AUC 0.4892 here
+    and was dropped. Measured over 293,252 journal touches the direction really is worthless
+    (0.5005) and the *conviction* is one of the best features in the set (0.6006 read the right
+    way round) - hold rate 83.8%, 88.2%, 92.0%, 92.8% across its quartiles.
+
+    So a level whose same-side touches all went one way and one whose all went the other must read
+    **identically**, and a level with a split record must read zero.
+    """
+    from till_infinity.structures.learning.breaking import NAMES
+
+    at = NAMES.index("conviction")
+    all_up = Breaks.inputs({"up_rate": 1.0})[at]
+    all_down = Breaks.inputs({"up_rate": 0.0})[at]
+    split = Breaks.inputs({"up_rate": 0.5})[at]
+    assert all_up == all_down == 0.5, "direction must not survive; magnitude must"
+    assert split == 0.0
+    assert Breaks.inputs({"up_rate": 0.9})[at] == pytest.approx(0.4)
+
+
+def test_a_level_with_no_record_reads_as_no_conviction():
+    """`up_rate` is 0.5 for "no history", which is different from an even split only in how much
+    evidence sits behind it - and `experience` is the feature that carries that."""
+    from till_infinity.structures.learning.breaking import NAMES
+
+    at = NAMES.index("conviction")
+    assert Breaks.inputs({})[at] == 0.0
+    assert Breaks.inputs({"up_rate": None})[at] == 0.0

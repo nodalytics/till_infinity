@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "alerts",
+  "title": "Something a person should read",
+  "description": "Consumed by notifications, which delivers it to Telegram or Discord. Published by trading and - until it retires - by structures, so this is one of the two topics with more than one producer. Filtered at the consumer rather than the publisher, deliberately: what is worth recording and what is worth interrupting someone with are different questions, and the journal keeps everything either way.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["title"],
+  "properties": {
+    "title": {
+      "type": "string",
+      "minLength": 1,
+      "description": "The only required field. `notifications.service.from_message` returns None for an empty or missing one and the loop drops the message with a warning, so a producer that forgets it is silently not alerting."
+    },
+    "body": {"type": "string"},
+    "level": {
+      "description": "Drives colour and prefix, nothing else. Parsed leniently - absent is INFO - so a name or its ordinal both work.",
+      "oneOf": [
+        {"type": "string", "enum": ["info", "warning", "critical", "INFO", "WARNING", "CRITICAL"]},
+        {"type": "integer", "enum": [0, 1, 2]}
+      ]
+    },
+    "url": {"type": "string"},
+    "source": {
+      "type": "string",
+      "description": "Which service sent it. Left empty by most producers and filled in by the consumer from the bus message's own source, so an empty string here is normal rather than a gap."
+    },
+    "fields": {
+      "type": "object",
+      "description": "The structured bits a destination may render. Every value is coerced to a string by the consumer, because a notifier renders text and not arbitrary JSON - so nesting here is silently flattened to its repr. `shape` is what NOTIFY_SHAPES routes on and must match the producer's own word exactly; a mismatch drops every alert of that shape while the path itself works.",
+      "additionalProperties": {"type": ["string", "number", "boolean", "null"]}
+    },
+    "image": {
+      "type": "object",
+      "description": "An optional picture. Untrusted like the rest: the bytes must decode, be a PNG or JPEG by their own header, and fit MAX_IMAGE_BYTES (5,000,000). A destination that fails to send it retries once without it, because an alert must never be lost for its picture.",
+      "additionalProperties": false,
+      "required": ["data"],
+      "properties": {
+        "name": {"type": "string"},
+        "data": {"type": "string", "contentEncoding": "base64"}
+      }
+    }
+  }
+}

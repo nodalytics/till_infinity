@@ -58,7 +58,7 @@ for q in (HERE, HERE.parent, HERE.parent / "harness", HERE.parents[1]):
 import spikerisk  # noqa: E402
 from anomalies import FEATS, GROUPS, frame, releases  # noqa: E402
 
-from till_infinity.statespace.changepoint import Changepoint  # noqa: E402
+from till_infinity.indicators.changepoint import Changepoint  # noqa: E402
 from till_infinity.statespace.engine import dispersion  # noqa: E402
 from till_infinity.statespace.facade import Desk  # noqa: E402
 

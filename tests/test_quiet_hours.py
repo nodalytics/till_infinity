@@ -11,9 +11,9 @@ from __future__ import annotations
 
 import datetime as dt
 
-from till_infinity.trading import Settings
-from till_infinity.trading.models import Intent, Side
-from till_infinity.trading.risk import Guard
+from till_infinity.domain.models import Intent, Side
+from till_infinity.risk.guard import Guard
+from till_infinity.strategies import Settings
 
 
 def at(hour: int) -> float:
@@ -22,10 +22,17 @@ def at(hour: int) -> float:
 
 
 def desk(**over) -> Guard:
+    """A guard on tuned settings, built the way production builds one.
+
+    Through `Settings.envelope()` rather than by naming `Envelope` fields, so
+    every test in this file also exercises the projection - a field dropped
+    from it is a gate reading the wrong number, which is the failure worth
+    catching here rather than in one test of its own.
+    """
     made = Settings()
     for k, v in over.items():
         setattr(made, k, v)
-    guard = Guard(made, currency="USD")
+    guard = Guard(made.envelope(), currency="USD")
     guard.roll(10_000.0, now=at(9))
     return guard
 

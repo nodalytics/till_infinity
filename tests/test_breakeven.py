@@ -37,6 +37,13 @@ def test_an_implausible_excursion_is_discarded():
 
 
 def test_a_missing_or_unparseable_field_is_discarded():
+    """Dropped from the sample, not defaulted into it.
+
+    These rows come off a CSV, where a missing number arrives as `nan` - and
+    `nan >= trigger` is `False`, so a defaulted row would silently never arm
+    while still counting in the denominator. That understates the arming rate,
+    which is the first of the three numbers the write-up argues from.
+    """
     assert not usable({"r_multiple": 0.5})
     assert not usable({"best_r": 1.0})
     assert not usable(trade(float("nan"), 0.5))
@@ -52,6 +59,13 @@ def test_the_boundary_itself_is_kept():
 
 
 def test_the_payoff_ratio_is_mean_win_over_mean_loss():
+    """Mean over mean, and not the mean of the per-trade ratios.
+
+    The two are different numbers and the second is the easier one to write.
+    A book of 2R wins and 1R losses has a payoff of 2.0 either way here, which
+    is why the fixture is symmetric: it pins the definition without the
+    assertion resting on a number only one of the two produces.
+    """
     rate, mean_win, mean_loss, ratio = payoff([2.0, 2.0, -1.0, -1.0])
     assert rate == 0.5
     assert mean_win == 2.0
@@ -75,6 +89,9 @@ def test_scratches_do_not_count_as_wins():
 
 
 def test_only_trades_that_reached_the_trigger_are_armed():
+    """The trigger is the whole lever, so the boundary either side of it is
+    the thing to hold. 0.4 and 0.6 against a 0.5 trigger: one armed, one not,
+    and the unarmed loser keeps its own result rather than being dropped."""
     rows = [trade(0.4, -1.0), trade(0.6, -1.0)]
     got = applied(rows, 0.5)
     assert got["losers"] == 1
@@ -84,6 +101,12 @@ def test_only_trades_that_reached_the_trigger_are_armed():
 
 
 def test_an_armed_loser_exits_at_zero_and_the_gain_is_its_whole_loss():
+    """The saving is the entire loss, not the loss less the trigger.
+
+    A stop moved to entry exits at 0R, so a trade that would have lost 0.8R
+    loses nothing - the 0.8 is saved in full. Crediting `0.8 - 1.0` instead is
+    the off-by-a-term that still produces a plausible table.
+    """
     got = applied([trade(1.2, -0.8)], 1.0)
     assert got["after"] == [0.0]
     assert got["saved"] == 0.8
@@ -99,6 +122,13 @@ def test_a_winner_that_never_went_below_entry_is_not_exposed():
 
 
 def test_a_winner_that_dipped_below_entry_is_exposed():
+    """And the cost is the whole win, which is the pessimistic bound.
+
+    A 1.2R winner that went 0.3R against us after arming *might* have been
+    scratched - the bar's ordering is not in the record, so this cannot be
+    known. Charging the full 1.2R is the bound that makes the write-up's third
+    number an upper limit on the cost rather than an estimate of it.
+    """
     got = applied([trade(1.5, 1.2, adverse=0.3)], 1.0)
     assert got["exposed"] == 1
     assert got["exposed_cost"] == 1.2

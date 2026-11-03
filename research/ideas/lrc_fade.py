@@ -67,16 +67,16 @@ class Clock:
 
 
 def patch_clock():
-    import till_infinity.trading.book as book
-    import till_infinity.trading.strategies.swing as swing
+    import till_infinity.strategies.book as book
+    import till_infinity.strategies.strategies.swing as swing
     fake = Clock()
     book.time = fake
     swing.time = fake
 
 
 def strategies():
-    from till_infinity import trading as td
-    from till_infinity.trading.strategies.swing import FadeToValue
+    from till_infinity import strategies as td
+    from till_infinity.strategies.strategies.swing import FadeToValue
 
     class Core(FadeToValue):
         def quality(self, feed, features, side, interval=""):  # noqa: ARG002
@@ -102,7 +102,7 @@ def SPEC(feed):
     """A neutral instrument: one money unit per price unit per lot, so sizing never refuses a trade.
     (The first replay used tick_value 1 on a 1e-10 tick, which made production's sizing refuse wide
     stops on high-priced series as below the minimum volume: see `redecide`.)"""
-    from till_infinity.trading.models import SymbolSpec
+    from till_infinity.strategies.models import SymbolSpec
     if os.environ.get("OLD_SPEC"):  # the first replay's spec, to check that redecide reproduces it
         return SymbolSpec(symbol=feed, digits=10, point=1e-10, tick_size=1e-10, tick_value=1.0, volume_min=1e-6,
                           volume_max=1e12, volume_step=1e-6, contract_size=1.0)
@@ -117,8 +117,8 @@ def redecide_one(path):
     in the original order, so the quality gates' running floors see the same sequence."""
     import logging
     logging.disable(logging.WARNING)
-    from till_infinity.trading.book import Seen
-    from till_infinity.trading.models import Intent, Side, Tick
+    from till_infinity.strategies.book import Seen
+    from till_infinity.strategies.models import Intent, Side, Tick
     patch_clock()
     log = pd.read_pickle(path)  # our own replay logs
     tag = path.stem
@@ -172,7 +172,7 @@ def replay(feed, df15, spread_px):
     """Every Intent each variant produces: (variant, call time, interval, side, entry, stop, target, hold)."""
     from till_infinity.structures import zma as zm
     from till_infinity.structures.engine import Engine
-    from till_infinity.trading.models import Intent, Side, Tick
+    from till_infinity.strategies.models import Intent, Side, Tick
     patch_clock()
     frames = {"15m": df15}
     for iv in IVS[1:]:

@@ -135,9 +135,11 @@ The valuation fixes the side by arithmetic. On top of that sit two families that
 genuinely predict, both measured on the desk's own record rather than on stored
 history:
 
-**Whether a level gives way.** `structures/learning/breaking.py` fits nine
-inputs online and reaches **AUC 0.658**; the live instance refuses a call above
-a 35% break risk. The largest single effect is free: `P(break | the touch is
+**Whether a level gives way.** `research/retire/structures/engine/learning/
+breaking.py` fits nine inputs online and reaches **AUC 0.658**; it refused a
+call above a 35% break risk. That file retired with the rest of `structures`
+on 2026-10-29 and `statespace/` is its successor, so the measurement stands
+and the implementation is in the archive rather than on the traded path. The largest single effect is free: `P(break | the touch is
 still open at t)` runs from **14.4% to 77.8%** and crosses even money at **four
 to seven bars of the level's own timeframe**, on every timeframe from 1m to 30m
 - a thirtyfold span, so the rule is scale-free with one parameter.
@@ -150,6 +152,13 @@ hours before a scheduled release and 2.42x on the print itself**, decaying to
 0.92x - *below* normal - four hours later. A release time is published days
 ahead, so that forecast needs no model of the future at all.
 
+Every number in this section and the last is measured, and the measurement is
+written down: [research/docs/](research/docs/) holds one document per question
+with the harness that answered it, indexed in its own README, and
+[docs/idea.md](docs/idea.md) carries the same figures in their argument. A
+number here without a document there would be a guess, and there are not
+supposed to be any.
+
 **Direction is still not forecast**, and that is a finding rather than a gap.
 Every directional candidate here has died on measurement, most recently a
 momentum-trajectory model whose velocity term prices at -0.00006 out of sample.
@@ -157,75 +166,92 @@ Hit rates land between 49% and 51% and the round trip costs 4bp. The two
 families above work because they answer questions the data can answer: a
 *magnitude* and a *conditional probability*, not a sign.
 
-Every one of them is scored **live against the backtest that claimed it**
-(`structures/context/registry.py`), because the record here is that point
-estimates from backtests decay and nothing was previously arranged to notice.
+Every one of them is scored **live against the backtest that claimed it** -
+`research/retire/structures/engine/context/registry.py`, archived with the
+package it belonged to - because the record here is that point estimates from
+backtests decay and nothing was previously arranged to notice. The successor
+in `statespace/` has not yet been given the same scoring, which is a gap
+rather than a decision.
 
 ### The parts
 
-Six, in dependency order:
+Seven, in dependency order. The names changed with the port on 2026-11-01:
+`prices`, `news`, `structures`, `trading` and `bus` were five of six services,
+and what each of them did is now either an adapter, an indicator or an actor
+inside one node.
 
 | | |
 |---|---|
-| `prices` | one instrument from **many venues**, because the disagreement between feeds carries information no single feed does |
-| `structures` | arithmetic, not judgement - the online models that estimate fair value, and the **key levels** price keeps turning at, answered per approach side |
-| `news` | the calendar and the headlines on the same clock, because a move with a release behind it is a different animal |
-| `trading` | the only part that can lose money, and the only one armed by a switch of its own - MT5 on Windows, the same code over a Wine bridge on Linux |
-| `journal` | what was decided, **why at that moment**, and what followed. Prices can be recomputed forever; the reasoning cannot be reconstructed once lost |
+| `adapters/` | the venues, as Nautilus adapters. `mt5/` is the Deriv/MT5 feed and the only thing here that can place an order. `news/` is the calendar and the headlines on the same clock, because a move with a release behind it is a different animal - written, and registered by no node yet |
+| `domain/` | the vocabulary - an `Intent`, a `Position`, a `Side` - with no dependency on a venue or on a model |
+| `indicators/` | arithmetic, not judgement, as `nautilus_trader` `Indicator`s: momentum, trend, changepoints, and the **key levels** price keeps turning at, answered per approach side |
+| `statespace/` | the online models that price an instrument against where it should be, as a predictive distribution rather than a pattern that matched or did not |
+| `risk/` | how much may be lost, per trade and per day, and whether *this account, right now* may take another one. Above Nautilus rather than inside it, because its risk engine is not pluggable |
+| `strategies/` | the only part that can lose money, and the only one armed by a switch of its own. One `Strategy` per rule, entry and instrument |
+| `journal/` | what was decided, **why at that moment**, and what followed. Prices can be recomputed forever; the reasoning cannot be reconstructed once lost |
+
+`node/` assembles them and `utils/` is beneath all of it.
 
 ## Run it
 
 ### On a server
 
 ```bash
-docker compose up -d        # one container per service, over Redis
+docker compose up -d                     # the node, unarmed
+TRADING_LIVE=1 docker compose up -d      # the node, able to place orders
 ```
 
-Or push to `main` and let CI build, publish and deploy it. Sizing matters more
-than preference - six services need about 861 MB, so a small box wants the
+Or push to `main` and let CI build, publish and deploy it. There is one
+service in the compose file, because the port left one process behind; see
+[deployment.md](docs/deployment.md) for what it needs from a box.
 
 ### Locally
 
-Requires [uv](https://docs.astral.sh/uv/). Python 3.11 is pinned in `.python-version`.
+Requires [uv](https://docs.astral.sh/uv/). Python 3.13 is pinned in
+`.python-version` - 3.12 is the floor, because every `nautilus_trader` release
+that does not abort inside `BacktestEngine.run()` requires it.
 
 ```bash
-uv sync                      # runtime + dev deps
-cp .env.example .env         # optional: every setting, documented
-uv run till-infinity run     # collectors, levels, journal - all of it
+uv sync                                  # runtime + dev deps
+cp .env.example .env                     # optional: every setting, documented
+uv run python -m till_infinity.node.live      # the node
+uv run python -m till_infinity.node.backtest  # whether this box may sweep, and what it would cost
 ```
 
-That is the whole thing running: prices and news collecting, `structures`
-finding levels and anomalies, the journal recording, notifications delivering.
-One bus, one process.
+That is one `TradingNode`: the MT5 adapter for data and execution, the
+statespace fold as an `Actor`, the journal and the notifier as `Actor`s, and
+one `Strategy` per (rule, entry, instrument). They share one message bus, one
+cache and one portfolio - which is what makes exposure answerable across
+venues rather than a packaging choice.
 
-```
-till infinity · in-process bus · journal, structures, prices, news
-00:33:18  structures  dislocation gold/PEPPERSTONE +1.06bps off where 5 other venues agree
-00:33:22  structures  spread gold/SAXO 2.2x the group at 0.88bps
-```
+**There is no `till-infinity` command**, deliberately. A 2,852-line CLI
+retired with the services it drove, and a second way to run the desk is a
+second thing to go stale. The node module is the entry point, and the image's
+`ENTRYPOINT` is the same line.
+
+**Nothing arms it but `TRADING_LIVE`.** Unset, the node connects, reconciles,
+subscribes and computes - those are reads, and they are how the desk is
+observed - while its risk engine sits in `HALTED` and every order is denied
+inside the engine, below the strategies and above the client.
 
 ```bash
-uv run till-infinity run --for 300 -s gold    # one instrument, five minutes
-uv run till-infinity run --once               # one collection pass, then stop
+uv run python -m till_infinity.node.status   # up, fresh, and trading something?
 ```
 
-Anything that cannot start says why at second zero and the others carry on.
 Settings come from `.env` - see [.env.example](.env.example) - with real
 environment variables winning, so a deployment is never overridden by a file.
 
-For a shared bus across machines, set `TILL_REDIS_URL` and run the services
-separately; see [how the parts talk](#how-the-parts-talk).
-
 ## Structures
 
-Online models over the price data: every venue measured against the consensus
-of the others, and the key levels price keeps turning at.
+**Retired on 2026-10-29**, with the eight level-scalper strategies that read
+it. The commands below no longer exist and the package is in
+`research/retire/structures/`; what it did is described here because the model
+is the ancestor of `statespace/` and the reasoning is worth keeping.
 
-```bash
-uv run till-infinity structures levels            # what it has found
-uv run till-infinity structures levels --at 4405  # what the history says
-uv run till-infinity structures watch             # run it on its own
-```
+The successor answers the same question - "is this instrument away from where
+it should be, and by how much" - as a predictive distribution with a
+likelihood that can be scored against a null, rather than as a pattern that
+either matched or did not.
 
 A level is a **latent state in a state-space model** rather than a line - each
 touch is a noisy observation of where it sits, so the model's variance *is* the
@@ -270,51 +296,27 @@ money.
 
 ## How the parts talk
 
-Collectors publish what they store, agents consume it and publish alerts,
-notifications deliver those. The databases stay the source of truth - the bus
-carries notice that something happened, not the data itself.
+Everything above happens inside one `TradingNode`, on one message bus, over
+one cache and one portfolio.
 
 ```
-  tradingview ─┐
-  yahoo ───────┤
-  ccxt ────────┤
-  MT5 bridge ──┴──▶ prices ──▶ prices.bars, prices.quotes ──┐
-                                                            │
-  news ──────────▶ news.articles, news.events ──────────────┤
-                                                            ▼
-                                                       structures
-                                                            │
-                                                            ▼
-                                                  structures.signals
-                                                       │        │
-                                       ┌───────────────┘        └───────────┐
-                                       ▼                                    ▼
-                                    agents                               trading
-                                       │                                    │
-                                       └──────────▶ alerts ◀────────────────┤
-                                                       │                    │
-                                                       ▼                    ▼
-                                                 notifications         MT5 bridge
-                                                                            │
-                                                                            ▼
-                                                                   trading terminal
+  MT5 bridge ──▶ MT5DataClient ──┐
+                                 │
+  stored bars (backtest) ────────┤
+                                 ▼
+                        statespace Actor ──▶ readings ──┐
+                                                        ▼
+                                  Strategy per (rule, entry, instrument)
+                                              │                 │
+                                     orders   │                 │   intents, refusals
+                                              ▼                 ▼
+                                      MT5ExecClient       journal Actor ──▶ journal.db
+                                              │                 │
+                                              ▼                 ▼
+                                    trading terminal     notifier Actor ──▶ Telegram, Discord
 
-  structures, agents, trading ──▶ journal ──▶ journal.db
+  the node ──▶ heartbeat Actor ──▶ status.json ──▶ the container's HEALTHCHECK
 ```
-
-`ccxt` is the crypto leg and it discovers its own instruments rather than being
-given a list: the board is ranked across exchanges by 24h volume, the top slice
-is registered as ordinary feeds, and a pair several of them carry becomes one
-feed with a symbol per exchange - the same shape a TradingView instrument has,
-so the consensus layer treats them alike. See
-[research/crypto.md](research/crypto.md).
-
-**Two crypto collectors are written and not in this diagram, deliberately.**
-`prices/funding.py` and `prices/positioning.py` read funding rates, open
-interest and the long/short split, and nothing calls them yet - they are
-library code with no caller. Drawing an arrow for them would say the desk is
-collecting something it is not, which is the failure this project keeps
-finding rather than one to add to the picture.
 
 The bridge appears twice on purpose. It is the **execution** path - orders out,
 fills and positions back - and since synthetics exist it is also a **price**
@@ -322,38 +324,57 @@ source, because instruments with no underlying are quoted nowhere else. One
 transport, two directions, and the same tick time is read for both: a frozen
 one is how a shut market is recognised.
 
-Every part is a service and every arrow is a bus topic - including the
-journal, so one process writes it and a service on another machine can record
-a decision at all. `structures` reaches `alerts` directly for findings that
-interpret themselves: a feed that has stopped needs no model and no calendar.
+The sharing is the reason the node is one process rather than a convenience.
+One cache and one portfolio is what makes "what is this account risking,
+across every venue" a question with an answer - `risk/exposure.py` exists
+because that is a property of an account and not of a ticket - and a process
+per service would put each one's positions out of the others' sight.
 
-`till-infinity run` starts all of these in one process against one bus, which
-is what you want for a laptop or an end-to-end check. Run them separately when
-they should scale or fail independently:
+**Until 2026-11-01 each part was its own service over Redis**, started by its
+own subcommand of the `till-infinity` CLI, publishing to bus topics that the
+next one subscribed to. The collectors wrote SQLite and the bus carried notice
+that something had happened rather than the data itself. That topology, the
+CLI and the six processes retired together, and Redis went with them: nothing
+under `till_infinity/` imports it, Nautilus's bus is in-process, and a bus
+nothing publishes to is a dependency that can only fail.
 
-```bash
-uv run till-infinity prices collect    --publish redis://localhost:6379 &
-uv run till-infinity news collect      --publish redis://localhost:6379 &
-uv run till-infinity structures watch  --redis   redis://localhost:6379 &
-uv run till-infinity journal listen    --redis   redis://localhost:6379 &
-uv run till-infinity notify listen     --redis   redis://localhost:6379 &
-```
+**Two things are written, wired to nothing, and deliberately absent from the
+diagram above.** `adapters/news/` is a complete Nautilus data client for the
+calendar and the headlines, and no node registers it. `research/retire/prices/
+funding.py` and `positioning.py` read funding rates, open interest and the
+long/short split, and retired with the collector that would have called them.
+Drawing an arrow for either would say the desk is collecting something it is
+not, which is the failure this project keeps finding rather than one to add to
+the picture.
 
 ## Where it lands
 
-SQLite by default, under `.data/` and gitignored. JSONL alongside it with
-`--store both`.
+Under `.data/`, gitignored, mounted as a volume in the compose file. Unmounted
+the record starts empty on every deploy and the health probe has nothing to
+read.
 
 ```
-.data/prices/prices.db      bars + quotes
-.data/news/news.db          articles + events + observations
-.data/journal/journal.db    decisions + observations + outcomes
-.data/structures/           online model state, restored on restart
-.data/trading/day.json      the day: high-water marks, the running loss, the ranking
+.data/journal/journal.db            decisions + observations + outcomes
+.data/statespace/progress.msgpack   online model state, restored on restart
+.data/status.json                   what the node established about itself; the HEALTHCHECK reads it
+.data/news/news.db                  articles + events + observations
 ```
+
+The first three are written by a running node. The fourth is written by
+`adapters/news/`, which nothing registers, so on a node today that file is
+whatever the retired collector last left there.
+
+Bars and quotes are **not** stored any more. `.data/prices/prices.db` was the
+price collector's database and the collector retired with the CLI; the node
+subscribes to the venue and keeps what it needs in the Nautilus cache, and a
+backtest reads a catalogue it is given rather than that file. An existing
+`prices.db` is history, not a live store - see
+[recovering-a-grown-wal.md](docs/recovering-a-grown-wal.md) for what it cost
+when it grew to 29.5 GB.
 
 Nothing is regenerated on restart that does not have to be: the online models
-are restored, and the level windows warm from the stored bars.
+are restored from `progress.msgpack`, and the level windows warm from the bars
+the venue replays.
 
 Everything is stored as epoch seconds in **UTC** - local time never enters the
 project. Re-running a collector is cheap and safe: bars key on their open time,

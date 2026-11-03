@@ -28,7 +28,7 @@ from datetime import UTC, datetime
 
 import httpx
 
-from till_infinity.news.cot import LEV_LONG, LEV_SHORT, MARKETS, NAME, OPEN_INTEREST, direction
+from till_infinity.adapters.news.sources.cot import LEV_LONG, LEV_SHORT, MARKETS, NAME, OPEN_INTEREST, direction
 
 YEARS = (2025, 2026)
 HISTORY = "https://www.cftc.gov/files/dea/history/fut_fin_txt_{year}.zip"

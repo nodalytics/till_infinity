@@ -43,7 +43,7 @@ HERE = Path(__file__).resolve().parent
 for p in (HERE, HERE.parent, HERE.parents[1]):
     sys.path.insert(0, str(p))
 
-from till_infinity.trading import regression as RG  # noqa: E402
+from till_infinity.strategies import regression as RG  # noqa: E402
 
 DB = os.environ.get("MT5BT_DB", os.path.expanduser("~/till_infinity/data/mt5bt.db"))
 OUT = Path(os.environ.get("OUT", ".data/spike"))

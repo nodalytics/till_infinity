@@ -83,7 +83,7 @@ def funding(sym: str) -> pd.DataFrame:
 
 def crypto_book(sym: str, iv: str):
     from mt5bt import Book
-    from till_infinity.trading.models import SymbolSpec
+    from till_infinity.strategies.models import SymbolSpec
 
     z = np.load(BIN / f"{sym}.klines.{iv}.npz")
     k = pd.DataFrame({c: z[c] for c in ("time", "open", "high", "low", "close", "count")})
@@ -100,7 +100,7 @@ def crypto_book(sym: str, iv: str):
 
 def stock_book(path: Path):
     from mt5bt import Book, load_bars
-    from till_infinity.trading.models import SymbolSpec
+    from till_infinity.strategies.models import SymbolSpec
 
     sym = path.name[: -len(".1h.npz")]
     spec = SymbolSpec(symbol=sym, digits=2, point=0.01, tick_size=0.01, tick_value=0.01,

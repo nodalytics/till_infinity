@@ -123,7 +123,7 @@ def test_the_sweep_gate_judges_each_strategy_own_stop():
     """`confluence-scalp` stops 1.5x wider, so the same level can be open ground
     for `sweep-aware` and in front of the pool for this one. That is the gate
     working on the stop that would actually be placed, not an inconsistency."""
-    from till_infinity.trading.strategies.scalper import ConfluenceScalp, SweepAware
+    from till_infinity.strategies.strategies.scalper import ConfluenceScalp, SweepAware
 
     assert ConfluenceScalp.stop_multiple > SweepAware.stop_multiple
 
@@ -353,7 +353,7 @@ def test_the_arithmetic_strategies_stay_synchronous():
     """Making every strategy async would be a lie about what the others cost."""
     import inspect
 
-    from till_infinity.trading.strategies.strategy import Strategy
+    from till_infinity.strategies.strategies.strategy import Strategy
 
     plain = td.STRATEGIES["level-scalp"]
     assert not inspect.iscoroutinefunction(plain.consider)
@@ -819,7 +819,7 @@ def test_the_scaling_is_capped():
 
 def test_the_hold_is_expressed_in_bars_of_the_entry_interval():
     """Thirty minutes is thirty bars to a 1m strategy and two to a 15m one."""
-    from till_infinity.trading.strategies.scalper import LevelScalp
+    from till_infinity.strategies.strategies.scalper import LevelScalp
 
     engine = LevelScalp(settings())
     LevelScalp.hold_bars = 20.0
@@ -834,7 +834,7 @@ def test_the_hold_is_expressed_in_bars_of_the_entry_interval():
 
 
 def test_no_hold_bars_leaves_the_seconds_behaviour_alone():
-    from till_infinity.trading.strategies.scalper import LevelScalp
+    from till_infinity.strategies.strategies.scalper import LevelScalp
 
     engine = LevelScalp(settings())
     assert engine.hold_for("1m") == pytest.approx(engine.hold_seconds or 1800.0)
@@ -991,7 +991,7 @@ def test_snap_holds_for_as_long_as_the_interaction_lasts():
     """Measured over 53,372 resolutions: the median touch resolves in 18
     seconds, 53% inside 30 and 72% inside 120. Every other strategy holds for
     a fraction of an hour, which is about a hundred times the event."""
-    from till_infinity.trading.strategies.scalper import LevelScalp, Snap
+    from till_infinity.strategies.strategies.scalper import LevelScalp, Snap
 
     made = settings()
     fast, slow = Snap(made), LevelScalp(made)
@@ -1001,7 +1001,7 @@ def test_snap_holds_for_as_long_as_the_interaction_lasts():
 
 def test_snap_differs_from_level_scalp_in_exactly_one_respect():
     """The comparison only says something if one thing changes."""
-    from till_infinity.trading.strategies.scalper import LevelScalp, Snap
+    from till_infinity.strategies.strategies.scalper import LevelScalp, Snap
 
     assert Snap.entries == LevelScalp.entries
     assert Snap.context == LevelScalp.context
@@ -1023,7 +1023,7 @@ def test_a_fast_strategy_protects_faster_than_a_slow_one():
     2v trail - and on a two-minute trade that is most of its life spent
     unprotected, missing exactly the case a fast strategy exists for.
     """
-    from till_infinity.trading.strategies.scalper import LevelScalp, Snap
+    from till_infinity.strategies.strategies.scalper import LevelScalp, Snap
 
     assert Snap.break_even_at < 1.0
     assert Snap.trail_vol < 2.0
@@ -1069,7 +1069,7 @@ def test_every_registered_strategy_has_a_magic_slot():
     `snap` and `thesis-only` ran live for an hour that way, and their trades
     are unattributable in the record.
     """
-    from till_infinity.trading.strategies.strategy import STRATEGIES
+    from till_infinity.strategies.strategies.strategy import STRATEGIES
 
     missing = [n for n in STRATEGIES if n not in td.MAGIC_ORDER]
     assert not missing, f"no magic slot for {missing} - their trades cannot be attributed"
@@ -1079,7 +1079,7 @@ def test_every_registered_strategy_has_a_magic_slot():
 
 
 def test_inverse_flips_the_side():
-    from till_infinity.trading.strategies.scalper import Inverse, LevelScalp
+    from till_infinity.strategies.strategies.scalper import Inverse, LevelScalp
 
     assert Inverse(settings()).orient(Side.BUY) is Side.SELL
     assert Inverse(settings()).orient(Side.SELL) is Side.BUY
@@ -1095,7 +1095,7 @@ def test_inverse_gates_on_the_side_the_call_named():
     """
     import inspect
 
-    from till_infinity.trading.strategies.scalper import LevelStrategy
+    from till_infinity.strategies.strategies.scalper import LevelStrategy
 
     source = inspect.getsource(LevelStrategy.consider)
     gate = source.index("self.quality(")
@@ -1104,14 +1104,14 @@ def test_inverse_gates_on_the_side_the_call_named():
 
 
 def test_a_scalper_still_defers_to_the_deployment():
-    from till_infinity.trading.strategies.scalper import LevelScalp
+    from till_infinity.strategies.strategies.scalper import LevelScalp
 
     assert LevelScalp(settings()).pullback_fraction == 0.0
 
 
 def test_strategies_that_did_not_ask_are_unaffected():
     """It is a filter strategies opt into, not a new global gate."""
-    from till_infinity.trading.strategies.scalper import LevelScalp
+    from till_infinity.strategies.strategies.scalper import LevelScalp
 
     engine = LevelScalp(settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0))
     assert engine.max_against_vol == 0.0
@@ -1122,7 +1122,7 @@ def test_strategies_that_did_not_ask_are_unaffected():
 def test_the_inverse_control_carries_the_filter():
     """Fading a live run is the worst version of what it does, and would
     confound the direction test it exists for."""
-    from till_infinity.trading.strategies.scalper import Inverse
+    from till_infinity.strategies.strategies.scalper import Inverse
 
     assert Inverse(settings()).max_against_vol > 0
 
@@ -1130,7 +1130,7 @@ def test_the_inverse_control_carries_the_filter():
 def test_an_unknown_context_is_not_refused():
     """A feed without enough history trades as it did before this existed -
     silence is not evidence of chop."""
-    from till_infinity.trading.strategies.scalper import LevelScalp
+    from till_infinity.strategies.strategies.scalper import LevelScalp
 
     engine = LevelScalp(
         settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0, min_efficiency=0.3)
@@ -1145,7 +1145,7 @@ def test_sizing_scales_the_fraction_so_every_cap_still_binds():
     """
     import inspect
 
-    from till_infinity.trading.strategies.scalper import LevelStrategy
+    from till_infinity.strategies.strategies.scalper import LevelStrategy
 
     source = inspect.getsource(LevelStrategy.consider)
     # Every size factor multiplies the *fraction*, never the lot count, so
@@ -1371,7 +1371,7 @@ def test_the_tight_stop_halves_the_risk_on_an_ordinary_rest():
 
 def test_the_reward_floor_only_ever_pushes_a_target_further_out():
     """It raises a target the push model put too close and never pulls one in."""
-    from till_infinity.trading.strategies.scalper import LevelStrategy
+    from till_infinity.strategies.strategies.scalper import LevelStrategy
 
     aim = LevelStrategy._aim  # unbound, so a stub can stand in for `self`
 
@@ -1536,7 +1536,7 @@ class TestOneStoppedTradeMustNotStallEveryFeed:
     def _shadow(self, feed: str):
         import time
 
-        from till_infinity.trading.service import Shadow
+        from till_infinity.strategies.service import Shadow
 
         return Shadow(
             feed=feed,
@@ -1588,7 +1588,7 @@ class TestOneStoppedTradeMustNotStallEveryFeed:
 def test_zero_on_a_limit_means_the_deployments_own():
     """The idiom the rest of the module already uses, so a strategy that names
     nothing is governed exactly as it was before any of this existed."""
-    from till_infinity.trading.risk import Limits
+    from till_infinity.strategies.risk import Limits
 
     guard = Guard(settings(loss_cooldown=900.0))
     guard.roll(10_000.0, now=1_000.0)
@@ -1604,7 +1604,7 @@ def test_zero_on_a_limit_means_the_deployments_own():
 
 def test_the_daily_stop_still_measures_the_whole_account():
     """Whatever a strategy asks for, the halt is the account's."""
-    from till_infinity.trading.risk import Limits
+    from till_infinity.strategies.risk import Limits
 
     guard = Guard(settings(daily_loss_fraction=0.03))
     guard.roll(10_000.0, now=1_000.0)
@@ -1806,7 +1806,7 @@ async def test_a_fill_already_better_than_the_rest_is_taken():
 
 def _floor_for(spread, margin=1.25, anchored=0.85750):
     """The stop a buy at 0.85754 ends up with, given a near-entry anchor."""
-    from till_infinity.trading.strategies.scalper import LevelScalp
+    from till_infinity.strategies.strategies.scalper import LevelScalp
 
     engine = LevelScalp(settings(stops_level_margin=margin, min_stop_vol=0.0))
     return engine._floored_stop(EURGBP, Side.BUY, 0.85754, anchored, unit=1e-05, spread=spread)
@@ -1814,7 +1814,7 @@ def _floor_for(spread, margin=1.25, anchored=0.85750):
 
 def _momentum(pressure, side=Side.BUY, limit=1.5):
     """The gate's verdict for this much accumulated pressure."""
-    from till_infinity.trading.strategies.scalper import SweepAware
+    from till_infinity.strategies.strategies.scalper import SweepAware
 
     engine = SweepAware(settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0))
     assert engine.max_against_vol == limit
@@ -1823,7 +1823,7 @@ def _momentum(pressure, side=Side.BUY, limit=1.5):
 
 
 def _chop(ratio, floor=0.3):
-    from till_infinity.trading.strategies.scalper import LevelScalp
+    from till_infinity.strategies.strategies.scalper import LevelScalp
 
     engine = LevelScalp(
         settings(min_probability=0.0, min_edge=0.0, min_base_rate=0.0, min_efficiency=floor)
@@ -1832,7 +1832,7 @@ def _chop(ratio, floor=0.3):
 
 
 def _scale(ratio, span=0.3):
-    from till_infinity.trading.strategies.scalper import LevelScalp
+    from till_infinity.strategies.strategies.scalper import LevelScalp
 
     engine = LevelScalp(settings(trend_sizing=span))
     return engine.trend_scale({} if ratio is None else {"efficiency": ratio})
@@ -2140,7 +2140,7 @@ def test_the_scale_out_names_the_reason_it_declined():
     """`scale_out_at` has been 1.0 for the life of this desk and not one
     scale-out has fired. `partial` declined from five places and every one
     returned a bare `None`, so there was no way to ask which."""
-    from till_infinity.trading import manage
+    from till_infinity.strategies import manage
 
     made = settings(scale_out_at=1.0, scale_out_fraction=0.5)
     spec = td.SymbolSpec(symbol="XAUUSD", volume_min=0.01, volume_step=0.01, tick_size=0.01)
@@ -2162,7 +2162,7 @@ def test_the_regime_scaler_is_off_until_a_band_is_set():
     """Every scaler here is off unless configured, and this one is not measured
     well enough to be on: seven days is the window in which a volatility
     conditional is most likely to be a period effect."""
-    from till_infinity.trading import scaling
+    from till_infinity.strategies import scaling
 
     assert scaling.by_regime(1.0, 0.0) == 1.0
     assert scaling.by_regime(5.0, 0.0) == 1.0
@@ -2177,7 +2177,7 @@ def test_the_regime_scaler_cuts_both_tails_and_not_the_middle():
 
     The ratio is expected *change* of scale, not the regime level - the level
     is `vol_stretch` and it is flat across its quintiles."""
-    from till_infinity.trading import scaling
+    from till_infinity.strategies import scaling
 
     # Normal volatility keeps full size.
     assert scaling.by_regime(1.0, 0.35) == 1.0
@@ -2194,13 +2194,13 @@ def test_the_regime_scaler_treats_half_and_double_alike():
     """Log distance, because a ratio is multiplicative. Read additively, the
     quiet tail is bounded below by zero and would look far closer than the
     loud one."""
-    from till_infinity.trading import scaling
+    from till_infinity.strategies import scaling
 
     assert scaling.by_regime(0.5, 0.2) == pytest.approx(scaling.by_regime(2.0, 0.2))
 
 
 def test_the_regime_scaler_never_enlarges_and_never_reaches_zero():
-    from till_infinity.trading import scaling
+    from till_infinity.strategies import scaling
 
     for ratio in (0.01, 0.5, 1.0, 2.0, 50.0):
         got = scaling.by_regime(ratio, 0.35, floor=0.5)

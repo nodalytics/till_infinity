@@ -4,7 +4,21 @@ Date: 2026-10-29
 
 ## Status
 
-Accepted.
+Accepted, and the transport underneath it changed.
+
+> The bus this ADR puts the journal on is Nautilus's bus now, and the journal
+> is a `JournalActor` registered by `node/live.py` rather than a service on a
+> subcommand. **The separation is what mattered and it survived**: the actor
+> subscribes and writes, nothing reads it inline, and `node/live.py` adds it by
+> default and switches it off by name - because a node that trades without a
+> record is the state this desk was actually in after the port, with both
+> actors written and neither registered.
+>
+> Of the three importers named in the Context, two went with `trading/`:
+> `service.py` is in `research/retire/strategies/` and
+> `structures/service.py` in `research/retire/structures/engine/`.
+> `trading/report.py` is live, as `strategies/report.py`. The rule they
+> motivated is unchanged.
 
 ## Context
 

@@ -11,14 +11,19 @@ Three things multiply into a verdict and only the first is obvious - the
 minimum lot, the narrowest stop the broker will accept, and what a stop
 actually costs once slippage is counted - so each has a test that would fail if
 it were dropped.
+
+**The subject moved to `risk/` on 2026-11-01** and this file kept its name and
+its path, because `tests/` is flat - there is nowhere for it to move to. The
+import below is the only record of it here, which is why that import is worth
+reading rather than skipping.
 """
 
 from __future__ import annotations
 
 import pytest
 
-from till_infinity.trading import affordable as af
-from till_infinity.trading.models import SymbolSpec
+from till_infinity.domain.models import SymbolSpec
+from till_infinity.risk import affordable as af
 
 
 def spec(
@@ -46,6 +51,8 @@ def spec(
 
 class TestOneInstrument:
     def test_a_normal_instrument_is_affordable(self):
+        """The control. Without it every refusal below would also be satisfied
+        by a `judge` that refuses everything."""
         got = af.judge(
             spec(),
             feed="eurusd",
@@ -145,7 +152,20 @@ class TestOneInstrument:
         assert real.min_lot_risk > drawn.min_lot_risk
         assert real.volume <= drawn.volume
 
-    def test_an_instrument_the_broker_prices_at_nothing_is_unknown_not_affordable(self):
+    def test_an_instrument_the_broker_prices_at_nothing_is_refused_not_unknown(self):
+        """A `tick_value` of zero means the broker will not say what a move is
+        worth, so nothing downstream can size the trade.
+
+        **It is refused rather than called unknown**, which is the opposite
+        choice to the two tests below and worth stating, because the two cases
+        read alike. "Unknown" is a gap in *our* inputs - no volatility yet, no
+        equity read - and it resolves on the next tick. A symbol the broker
+        cannot price is a property of the symbol, and watching it until
+        somebody notices is the thing this catalogue exists to prevent.
+
+        This test was named `..._is_unknown_not_affordable` and asserted
+        `unaffordable`, so the name argued against its own assertion.
+        """
         got = af.judge(
             spec(tick_value=0.0),
             feed="odd",
@@ -157,6 +177,9 @@ class TestOneInstrument:
         assert got.verdict == "unaffordable"
 
     def test_no_stop_distance_is_unknown_rather_than_a_guess(self):
+        """A volatility reading of zero is a feed that has not warmed up, not a
+        feed that cannot move. Treated as a distance it would make every
+        instrument affordable at any equity."""
         got = af.judge(
             spec(),
             feed="eurusd",
@@ -168,6 +191,9 @@ class TestOneInstrument:
         assert got.verdict == "unknown"
 
     def test_no_equity_is_unknown(self):
+        """The account read has failed or not arrived. Nothing is affordable at
+        zero equity, which is true and useless - the catalogue would name every
+        feed on the desk and mean nothing by it."""
         got = af.judge(
             spec(), feed="eurusd", equity=0.0, risk_fraction=0.0025, price=1.08, vol_bps=8.0
         )
@@ -183,6 +209,9 @@ class TestSurvey:
         }
 
     def test_every_instrument_is_judged_at_every_stop_width(self, book):
+        """Affordability is a property of the pair, not of the instrument: a
+        2v stop and a 4v stop cost different amounts, and an instrument
+        affordable at one and not the other has to be visible as both."""
         got = af.survey(
             book,
             equity=5_000.0,
@@ -192,7 +221,7 @@ class TestSurvey:
         )
         assert len(got) == len(book) * len(af.STOPS)
 
-    def test_worst_first(self, book):
+    def test_the_survey_puts_the_worst_case_first(self, book):
         """The question this exists to answer is whether one loss is survivable,
         not what the average outcome is."""
         got = af.survey(
@@ -206,6 +235,9 @@ class TestSurvey:
         assert shares == sorted(shares, reverse=True)
 
     def test_an_instrument_with_no_quote_is_skipped_not_guessed(self, book):
+        """Skipped and not reported unknown, because a survey is read as a list
+        of problems and a missing quote is not one - it is this process not
+        having a price yet."""
         got = af.survey(
             book,
             equity=5_000.0,
@@ -230,6 +262,7 @@ class TestSurvey:
 
 class TestUnaffordable:
     def test_a_feed_refused_at_every_width_is_named(self):
+        """The one output anybody acts on: the list of feeds to stop watching."""
         book = {"boom": spec("Boom 1000 Index", volume_min=5.0, tick_size=0.01, tick_value=1.0)}
         got = af.survey(
             book,
@@ -255,11 +288,24 @@ class TestUnaffordable:
         assert af.unaffordable(got) == []
 
     def test_nothing_surveyed_names_nothing(self):
+        """An empty survey is a node that has not read its specs yet. Naming
+        every feed unaffordable at that moment would be a cold start that reads
+        as an outage."""
         assert af.unaffordable([]) == []
 
 
 class TestPublished:
     def test_a_verdict_serialises_to_plain_numbers(self):
+        """The verdict is published, so every field has to survive `json`.
+
+        A `SymbolSpec`, a `numpy` float or a `Decimal` left in the dict raises
+        at the point of publishing - in a node, inside an actor, on the one
+        path that is meant to be reporting a problem. `json.dumps` is the
+        assertion rather than a type check per field, because it is the thing
+        that will actually be run and it covers fields added later.
+        """
+        import json
+
         got = af.judge(
             spec(),
             feed="eurusd",
@@ -268,14 +314,14 @@ class TestPublished:
             price=1.08,
             vol_bps=8.0,
         ).to_dict()
+        assert json.loads(json.dumps(got)) == got
         assert got["feed"] == "eurusd"
-        assert isinstance(got["share_of_equity"], float)
-        assert got["verdict"] in {"affordable", "minimum only", "unaffordable", "unknown"}
+        assert got["verdict"] == "affordable"
 
     def test_it_is_not_the_other_verdict(self):
         """`trading.models.Verdict` is whether a *trade* passed its gates. Two
         objects with one name in a package is how a reader ends up sure they
         know what an import means."""
-        from till_infinity.trading import models
+        from till_infinity.domain import models
 
         assert af.Affordability is not getattr(models, "Verdict", None)

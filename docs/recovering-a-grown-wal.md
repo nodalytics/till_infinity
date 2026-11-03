@@ -1,9 +1,18 @@
 # Recovering an overgrown prices database
 
+> **The `till-infinity` commands in this document no longer exist.** The
+> 2,852-line CLI retired to `research/retire/bus/` with the services it drove,
+> and `pyproject.toml` declares no console script on purpose: a second way to
+> run the desk is a second thing to go stale. The entry point is
+> `python -m till_infinity.node.live`, and
+> `python -m till_infinity.node.status` says whether it is up.
+
 Written after it took the desk out on 2026-09-23: a 29.5 GB database with a 13 GB write-ahead log on
-a box with 3 GB of memory. The code fixes that stop it recurring are in `shared/db.py` and
-`prices/config.py`, and are listed at the bottom; **this page is the one-off recovery**, because
-neither a log nor a table that has already grown shrinks on its own.
+a box with 3 GB of memory. The code fix that stops it recurring is in
+`till_infinity/utils/db.py` and is listed at the bottom; **this page is the one-off recovery**,
+because neither a log nor a table that has already grown shrinks on its own. The retention settings
+that were the other half of it went with `prices/config.py` to `research/retire/prices/`, and
+nothing collects into a SQLite price store any more - the node keeps bars in the Nautilus cache.
 
 ## What it looks like
 
@@ -40,7 +49,7 @@ ever**, and every connection opened afterwards pays to map it. The `-shm` index 
 here - and on a box this size a new reader can sit in uninterruptible disk wait for minutes, which is
 what the writer then reports as a locked database.
 
-`shared/db.py` now sets `journal_size_limit`, so a *new* database cannot reach this state. The pragma
+`utils/db.py` now sets `journal_size_limit`, so a *new* database cannot reach this state. The pragma
 takes effect at the next checkpoint and does not shrink a log that is already large.
 
 **It is per-connection and not stored in the file**, which is easy to misread: opening the database
@@ -214,7 +223,7 @@ Three separate omissions, all now closed in code:
 
 | | was | now |
 | --- | --- | --- |
-| the log file | `journal_size_limit` unset, so it never shrank | capped at 64 MiB in `shared/db.py` |
+| the log file | `journal_size_limit` unset, so it never shrank | capped at 64 MiB in `utils/db.py` |
 | `quotes` | pruned by nothing, ever | `retain_quote_days`, 14 days, trimmed by the collector hourly |
 | `bars` | a 1,000-per-series policy reachable only from the CLI | still the CLI - see below |
 

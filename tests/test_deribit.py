@@ -39,6 +39,14 @@ LISTING = {
 
 
 def test_the_expiry_is_seconds_not_milliseconds():
+    """Deribit quotes milliseconds and everything downstream takes seconds.
+
+    Read as seconds the expiry lands 20,699,613 days out, which makes every
+    horizon pass the "closes inside the recording" filter and scores nothing
+    against a window that never ends. The second assertion is the one that
+    generalises: an expiry has to be within two days of the sweep, because
+    these are the short-dated options the study selects.
+    """
     rows = parse_summary({"result": [SUMMARY]}, instruments=LISTING, at=1790233483.0)
     assert len(rows) == 1
     # 1790236800000 ms is 1790236800 s. Read as seconds it would be 20,699,613

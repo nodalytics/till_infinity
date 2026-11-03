@@ -1,0 +1,1002 @@
+"""Realtime top-of-book: the same instrument priced by many brokers at once.
+
+Two transports, because they are not equivalent:
+
+* **socket** (default) - TradingView's quote websocket. One connection carries
+  every symbol and the server *pushes* each change, so a write happens the
+  moment a broker moves, not on a timer. It also covers venues the HTTP
+  endpoint does not (DERIV 404s there) and fills in the last price, which the
+  scanner returns as null for FX.
+* **scanner** - the keyless ``scanner.tradingview.com/symbol`` endpoint. Purely
+  request/response, so it has to be polled. Stateless and simple; use it when a
+  long-lived socket is inconvenient.
+
+Yahoo has no real book for FX or futures, so its quote is the last trade. It is
+here so a Yahoo-only run still produces something.
+
+FXCM is not in the feed list: TradingView delisted it, and symbol search returns
+nothing for that exchange on any transport.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import math
+import time
+from collections.abc import Awaitable, Callable, Sequence
+from contextlib import AsyncExitStack, suppress
+from dataclasses import dataclass, field
+from typing import Any, Self
+
+import httpx
+import orjson
+from httpx_ws import aconnect_ws
+from till_platform.logging import get_logger
+
+from ..bus import QUOTES, Bus
+from .config import BROKER, TRADINGVIEW, YAHOO, Feed, Settings
+from .models import Quote, QuoteKey, Symbol, WriteResult
+from .tradingview import MAX_MESSAGE_BYTES, decode, encode, message, session_id
+
+log = get_logger(__name__)
+
+SCANNER_URL = "https://scanner.tradingview.com/symbol"
+
+#: Fields to ask for. Both transports name them the same way.
+QUOTE_FIELDS: tuple[str, ...] = ("lp", "bid", "ask", "volume", "ch", "chp", "lp_time")
+#: The scanner accepts `lp_time` and answers `null` for it (checked 2026-09-11,
+#: the same response that returns `lp` as null unauthenticated), so it is left
+#: out rather than requested for nothing. Only the websocket carries the venue
+#: clock; scanner-sourced quotes have `venue_time` None, which is honest.
+SCANNER_FIELDS = ",".join(f for f in QUOTE_FIELDS if f != "lp_time")
+
+QuoteSink = Callable[[QuoteKey, Quote], Awaitable[WriteResult]]
+
+
+def announce_quote(key: QuoteKey, quote: Quote) -> dict[str, object]:
+    """Top of book as it goes on the wire. Time in epoch seconds, like the model."""
+    return {
+        "source": key.source,
+        "feed": key.feed,
+        "venue": key.symbol.venue,
+        "ticker": key.symbol.ticker,
+        "bid": quote.bid,
+        "ask": quote.ask,
+        "mid": quote.mid,
+        "spread_bps": quote.spread_bps,
+        "time": quote.time,
+    }
+
+
+def publishing(sink: QuoteSink | None, bus: Bus) -> QuoteSink:
+    """Wrap a sink so every stored quote is also announced.
+
+    Wrapping rather than publishing at the call sites is what makes pushed and
+    polled quotes behave the same: a streaming source is handed this sink in
+    `prepare()` and writes through it on push, so nothing has to know which
+    transport a venue happens to use.
+    """
+
+    async def announcing(key: QuoteKey, quote: Quote) -> WriteResult:
+        result = await sink(key, quote) if sink is not None else WriteResult()
+        await bus.publish(QUOTES, announce_quote(key, quote), source="prices")
+        return result
+
+    return announcing
+
+
+@dataclass(slots=True)
+class QuoteTick:
+    """A snapshot of every symbol, taken at one instant."""
+
+    quotes: dict[QuoteKey, Quote] = field(default_factory=dict)
+    written: WriteResult = field(default_factory=WriteResult)
+    pushed: WriteResult = field(default_factory=WriteResult)
+    #: Per source, because the totals cannot answer "has *this* transport gone
+    #: quiet". One source still producing made every poll look productive
+    #: while the rest of the book was dark - which is why the stall watchdog
+    #: reported nothing through a thirteen-minute outage on 2026-09-16.
+    by_source: dict[str, WriteResult] = field(default_factory=dict)
+    missing: int = 0
+    #: Symbols whose read threw rather than came back empty. Counted apart from
+    #: `missing`, because a provider saying "no quote" and a provider breaking
+    #: are different facts and only one of them is a fault.
+    failed: int = 0
+    elapsed: float = 0.0
+
+    @property
+    def stored(self) -> int:
+        return self.written.inserted + self.pushed.inserted
+
+    def __str__(self) -> str:
+        return (
+            f"{len(self.quotes)} quotes, {self.stored} stored"
+            + (f" ({self.pushed.inserted} pushed)" if self.pushed.inserted else "")
+            + (f", {self.missing} unavailable" if self.missing else "")
+            + f" in {self.elapsed:.2f}s"
+        )
+
+    def by_feed(self, feed: str) -> list[tuple[QuoteKey, Quote]]:
+        """This feed's brokers, tightest spread first. A zero spread is the
+        tightest there is, so sort on ``is None`` rather than truthiness."""
+        rows = [(k, q) for k, q in self.quotes.items() if k.feed == feed]
+        return sorted(
+            rows,
+            key=lambda row: (row[1].spread_bps is None, row[1].spread_bps or 0.0),
+        )
+
+
+def _number(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return None if math.isnan(number) else number
+
+
+def parse_quote(payload: Any, *, now: float) -> Quote | None:
+    """Build a Quote from a field dict - the shape both transports return."""
+    if not isinstance(payload, dict) or "code" in payload:
+        return None
+    quote = Quote(
+        time=now,
+        # **The venue's own clock, which was being requested and discarded.**
+        # See `Quote.venue_time`: without it every venue on the record carries
+        # our receive time and no lead-lag is measurable from stored data.
+        venue_time=_number(payload.get("lp_time")),
+        bid=_number(payload.get("bid")),
+        ask=_number(payload.get("ask")),
+        last=_number(payload.get("lp")),
+        volume=_number(payload.get("volume")),
+        change=_number(payload.get("ch")),
+        change_pct=_number(payload.get("chp")),
+    )
+    return None if quote.is_empty else quote
+
+
+class QuoteSource:
+    """Provides top-of-book for one provider."""
+
+    #: How the caller selects this source.
+    name: str
+    #: Which entry of ``Feed.symbols`` it reads, and the source recorded in
+    #: storage - so the same venue lands in the same series whichever
+    #: transport fetched it.
+    feed_key: str
+    #: True when the provider pushes updates instead of answering polls.
+    streaming: bool = False
+
+    def diagnose(self) -> str:
+        """One line about why this source might not be producing anything.
+
+        The default is the little that is true of every source. The point is
+        that a stall report asks *each* source rather than guessing which one
+        stopped: on 2026-09-16 both transports stopped together four times and
+        three fixes were aimed at the wrong one.
+        """
+        return f"{self.name} streaming={self.streaming}"
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self._unavailable: set[str] = set()
+
+    def keys(self, feeds: Sequence[Feed]) -> list[QuoteKey]:
+        return [
+            QuoteKey(self.feed_key, feed.name, symbol)
+            for feed in feeds
+            for symbol in feed.for_source(self.feed_key)
+        ]
+
+    async def __aenter__(self) -> Self:
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        return None
+
+    async def prepare(self, keys: Sequence[QuoteKey], sink: QuoteSink | None = None) -> None:
+        """Called once with every symbol before the first read."""
+
+    async def quote(self, symbol: Symbol) -> Quote | None:
+        raise NotImplementedError
+
+    def drain_pushed(self) -> WriteResult:
+        """Writes this source made on its own since the last call."""
+        return WriteResult()
+
+    def _note_unavailable(self, symbol: Symbol, reason: str) -> None:
+        """Log a symbol the provider does not carry - once, not every tick."""
+        if symbol.full not in self._unavailable:
+            self._unavailable.add(symbol.full)
+            log.warning("%s has no quote for %s (%s)", self.name, symbol.full, reason)
+
+
+class TradingViewQuotes(QuoteSource):
+    """Streaming bid/ask over TradingView's quote websocket.
+
+    One connection serves every symbol. The reader task merges each ``qsd``
+    update into a per-symbol field map and hands it straight to the sink, so
+    storage tracks the market rather than the polling clock. Sampling the cache
+    (``quote()``) is then free - no network involved.
+    """
+
+    name = "tradingview"
+    feed_key = TRADINGVIEW
+    streaming = True
+
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(settings)
+        self._stack: AsyncExitStack | None = None
+        self._ws: Any = None
+        self._session = ""
+        self._reader: asyncio.Task[None] | None = None
+        self._repair: asyncio.Task[None] | None = None
+        self._sink: QuoteSink | None = None
+        self._keys: dict[str, QuoteKey] = {}
+        self._fields: dict[str, dict[str, Any]] = {}
+        #: When each symbol's fields last *moved*. The cache answers polls, so
+        #: without this a quote read out of it is stamped with the current
+        #: clock and a dead socket produces prices that look live.
+        self._touched: dict[str, float] = {}
+        self._ready: dict[str, asyncio.Event] = {}
+        self._failed: set[str] = set()
+        self._pushed = WriteResult()
+        self._lock = asyncio.Lock()
+
+    # -- connection ---------------------------------------------------------
+
+    async def __aenter__(self) -> Self:
+        await self._connect()
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        repair, self._repair = self._repair, None
+        if repair is not None and not repair.done():
+            repair.cancel()
+            await asyncio.wait({repair}, timeout=self.settings.quote_timeout)
+        await self._disconnect()
+
+    async def _connect(self) -> None:
+        stack = AsyncExitStack()
+        try:
+            client = await stack.enter_async_context(
+                httpx.AsyncClient(
+                    headers={
+                        "Origin": self.settings.tv_origin,
+                        "User-Agent": self.settings.user_agent,
+                    },
+                    timeout=httpx.Timeout(self.settings.tv_connect_timeout),
+                )
+            )
+            ws = await stack.enter_async_context(
+                aconnect_ws(
+                    self.settings.tv_ws_url,
+                    client,
+                    max_message_size_bytes=MAX_MESSAGE_BYTES,
+                    # TradingView drives its own ~h~ heartbeat.
+                    keepalive_ping_interval_seconds=None,
+                )
+            )
+        except Exception:
+            await stack.aclose()
+            raise
+
+        self._stack, self._ws = stack, ws
+        self._session = session_id("qs_")
+        await ws.send_text(message("set_auth_token", [self.settings.tv_auth_token]))
+        await ws.send_text(message("quote_create_session", [self._session]))
+        await ws.send_text(message("quote_set_fields", [self._session, *QUOTE_FIELDS]))
+        self._reader = asyncio.create_task(self._read(), name="tv-quotes-reader")
+
+    async def _disconnect(self) -> None:
+        reader, self._reader = self._reader, None
+        if reader is not None:
+            reader.cancel()
+            # **`asyncio.wait`, not `await reader` under `suppress`.** Catching
+            # `CancelledError` there swallowed *our own* cancellation, so a
+            # reconnect wrapped in `wait_for` could not be interrupted and the
+            # timeout meant nothing. `wait` returns rather than raising, honours
+            # its own deadline, and leaves a real cancellation of this coroutine
+            # free to propagate.
+            await asyncio.wait({reader}, timeout=self.settings.quote_timeout)
+        stack, self._stack = self._stack, None
+        self._ws = None
+        if stack is not None:
+            with suppress(Exception):
+                await stack.aclose()
+
+    async def _ensure_live(self) -> None:
+        """Reconnect and resubscribe if the reader died.
+
+        **Nothing retrieves the reader's exception, so this is the only place
+        the cause is ever seen.** `_read` is a bare task held on `self`, which
+        means it is never garbage collected and asyncio's "task exception was
+        never retrieved" warning never fires either: the socket closes, the
+        task ends, and the process carries on with no trace at all.
+        """
+        if self._reader is not None and not self._reader.done():
+            return
+        why = ""
+        if self._reader is not None:
+            with suppress(Exception):
+                exc = self._reader.exception()
+                why = f": {exc!r}" if exc is not None else " (ended without raising)"
+        log.warning("tradingview quote socket dropped; reconnecting%s", why)
+        await self._disconnect()
+        self._ready.clear()
+        await self._connect()
+        if self._keys:
+            await self._subscribe(list(self._keys))
+
+    # -- subscription -------------------------------------------------------
+
+    async def prepare(self, keys: Sequence[QuoteKey], sink: QuoteSink | None = None) -> None:
+        self._sink = sink
+        async with self._lock:
+            await self._ensure_live()
+            fresh = [key.symbol.full for key in keys if key.symbol.full not in self._keys]
+            for key in keys:
+                self._keys[key.symbol.full] = key
+            if fresh:
+                await self._subscribe(fresh)
+        await self._await_first([k.symbol.full for k in keys], timeout=self.settings.quote_timeout)
+
+    async def _subscribe(self, names: Sequence[str]) -> None:
+        for name in names:
+            self._ready.setdefault(name, asyncio.Event())
+        # One frame for the whole watchlist rather than one per symbol.
+        await self._ws.send_text(message("quote_add_symbols", [self._session, *names]))
+
+    async def _await_first(self, names: Sequence[str], timeout: float) -> None:
+        """Wait for a first tick on each name, or give up.
+
+        See `prices-quotes.md` in research/docs.
+        """
+        waiters = [
+            asyncio.ensure_future(self._ready[name].wait()) for name in names if name in self._ready
+        ]
+        if not waiters:
+            return
+        try:
+            await asyncio.wait(waiters, timeout=timeout)
+        finally:
+            for waiter in waiters:
+                waiter.cancel()
+
+    # -- reading ------------------------------------------------------------
+
+    async def _read(self) -> None:
+        while True:
+            raw = await self._ws.receive_text()
+            for payload in decode(raw):
+                if payload.startswith("~h~"):
+                    await self._ws.send_text(encode(payload))
+                    continue
+                try:
+                    obj = orjson.loads(payload)
+                except orjson.JSONDecodeError:
+                    continue
+                if isinstance(obj, dict) and obj.get("m") == "qsd":
+                    await self._on_update(obj.get("p"))
+
+    async def _on_update(self, params: Any) -> None:
+        if not isinstance(params, list) or len(params) < 2:
+            return
+        data = params[1]
+        if not isinstance(data, dict):
+            return
+        name = data.get("n")
+        if not isinstance(name, str):
+            return
+
+        if data.get("s") == "error":
+            self._failed.add(name)
+            self._wake(name)
+            return
+
+        values = data.get("v")
+        if not isinstance(values, dict):
+            return
+        # Updates are partial - a tick may carry only the fields that moved.
+        merged = self._fields.setdefault(name, {})
+        merged.update(values)
+        if not any(field in values for field in ("bid", "ask", "lp")):
+            return
+        self._wake(name)
+        now = time.time()
+        self._touched[name] = now
+
+        quote = parse_quote(merged, now=now)
+        key = self._keys.get(name)
+        if quote is None or key is None or self._sink is None:
+            return
+        # The store drops repeats, so this writes only genuine moves.
+        self._pushed += await self._sink(key, quote)
+
+    def _wake(self, name: str) -> None:
+        event = self._ready.get(name)
+        if event is not None:
+            event.set()
+
+    # -- reading the cache --------------------------------------------------
+
+    def _dead(self) -> bool:
+        """Whether anything is still filling the cache.
+
+        `None` counts as dead, and that is not a detail: a reconnect that fails
+        leaves it `None`, so a check written as "not None and done" stops
+        asking after the first failure and the source never comes back.
+        """
+        return self._reader is None or self._reader.done()
+
+    def _schedule_repair(self) -> None:
+        """Reconnect in its own task, so the poll that noticed does not wait."""
+        if self._repair is not None and not self._repair.done():
+            return
+        self._repair = asyncio.create_task(self._repair_now(), name="tv-quotes-repair")
+
+    async def _repair_now(self) -> None:
+        async with self._lock:
+            if self._dead():
+                await self._revive()
+
+    async def _revive(self) -> None:
+        """Reconnect, bounded, and never raise into the poll.
+
+        See `prices-quotes.md` in research/docs.
+        """
+        # `asyncio.wait` for the same reason `_await_first` uses it: `wait_for`
+        # would bound this by cancelling whichever task is running it, and one
+        # of the callers is the quote poll itself.
+        job = asyncio.ensure_future(self._ensure_live())
+        done, _ = await asyncio.wait({job}, timeout=self.settings.tv_connect_timeout)
+        if not done:
+            job.cancel()
+            log.warning(
+                "tradingview quote socket would not reconnect within %.0fs; serving the cache",
+                self.settings.tv_connect_timeout,
+            )
+            return
+        with suppress(asyncio.CancelledError):
+            exc = job.exception()
+            if exc is not None:
+                log.warning("tradingview quote socket would not reconnect: %r", exc)
+
+    async def quote(self, symbol: Symbol) -> Quote | None:
+        """Read the cache - and check first that something is still filling it.
+
+        See `prices-quotes.md` in research/docs.
+        """
+        name = symbol.full
+        if name in self._keys:
+            # **The hot path awaits nothing on the network. It is a cache read
+            # and a flag.** Repairing here - even bounded, even without
+            # queueing - was wrong twice in one morning: `poll_once` runs one
+            # task group across every source and waits for all of it, so any
+            # task that does not return stops the broker half of the book too.
+            # That is both outages: 08:58 and 09:47, quotes from both
+            # transports ending on the same minute as a socket drop while
+            # `collect` carried on writing bars.
+            if self._dead():
+                self._schedule_repair()
+            return self._cached(name)
+
+        # A symbol nobody prepared. Not the hot path - it happens once - so it
+        # may wait, and every wait in it is bounded.
+        async with self._lock:
+            await self._revive()
+            if name not in self._keys:
+                self._keys[name] = QuoteKey(self.feed_key, "", symbol)
+                with suppress(Exception):
+                    await self._subscribe([name])
+        await self._await_first([name], timeout=self.settings.quote_timeout)
+
+        if name in self._failed:
+            self._note_unavailable(symbol, "quote_error")
+            return None
+        return self._cached(name)
+
+    def _cached(self, name: str) -> Quote | None:
+        """The last fields seen, dated **when they moved** rather than now.
+
+        Reading a cache and stamping it with the present makes a stale price
+        indistinguishable from a live one - to the store, to liveness checks,
+        and to anything deciding on it. A quote that has not changed is a
+        repeat, and the store already drops those.
+        """
+        fields = self._fields.get(name)
+        if not fields:
+            return None
+        return parse_quote(fields, now=self._touched.get(name, time.time()))
+
+    def drain_pushed(self) -> WriteResult:
+        out, self._pushed = self._pushed, WriteResult()
+        return out
+
+    def diagnose(self) -> str:
+        newest = max(self._touched.values(), default=0.0)
+        age = f"{time.time() - newest:.0f}s" if newest else "never"
+        return (
+            f"tradingview reader={_task_state(self._reader)} "
+            f"repair={_task_state(self._repair)} subscribed={len(self._keys)} "
+            f"failed={len(self._failed)} newest_field={age} "
+            f"sink={'set' if self._sink else 'MISSING'}"
+        )
+
+
+class TradingViewScannerQuotes(QuoteSource):
+    """Bid/ask from the keyless scanner endpoint. Request/response, so polled."""
+
+    name = "scanner"
+    feed_key = TRADINGVIEW
+
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(settings)
+        self._client: httpx.AsyncClient | None = None
+
+    async def __aenter__(self) -> Self:
+        self._client = httpx.AsyncClient(
+            headers={"User-Agent": self.settings.user_agent},
+            timeout=httpx.Timeout(self.settings.quote_timeout),
+            limits=httpx.Limits(max_connections=self.settings.quote_concurrency * 2),
+        )
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        client, self._client = self._client, None
+        if client is not None:
+            await client.aclose()
+
+    async def quote(self, symbol: Symbol) -> Quote | None:
+        if self._client is None:
+            raise RuntimeError("quote source is not open")
+        try:
+            response = await self._client.get(
+                SCANNER_URL, params={"symbol": symbol.full, "fields": SCANNER_FIELDS}
+            )
+        except httpx.HTTPError as exc:
+            log.debug("scanner request failed for %s: %s", symbol.full, exc)
+            return None
+
+        if response.status_code == httpx.codes.NOT_FOUND:
+            # The scanner does not carry every venue TradingView charts.
+            self._note_unavailable(symbol, "symbol_not_exists - try --source tradingview")
+            return None
+        if response.status_code != httpx.codes.OK:
+            log.debug("scanner returned %s for %s", response.status_code, symbol.full)
+            return None
+        try:
+            return parse_quote(response.json(), now=time.time())
+        except ValueError:
+            return None
+
+
+class YahooQuotes(QuoteSource):
+    """Last trade and previous close from Yahoo. No real book for FX or futures."""
+
+    name = YAHOO
+    feed_key = YAHOO
+
+    async def __aenter__(self) -> Self:
+        import yfinance  # noqa: F401
+
+        return self
+
+    async def quote(self, symbol: Symbol) -> Quote | None:
+        return await asyncio.to_thread(self._quote, symbol)
+
+    def _quote(self, symbol: Symbol) -> Quote | None:
+        import yfinance as yf
+
+        try:
+            info = yf.Ticker(symbol.ticker).fast_info
+            last = _number(info.get("lastPrice"))
+            previous = _number(info.get("previousClose"))
+        except Exception as exc:  # yfinance raises a grab bag of types
+            self._note_unavailable(symbol, str(exc)[:60])
+            return None
+
+        if last is None:
+            return None
+        change = None if previous is None else last - previous
+        return Quote(
+            time=time.time(),
+            bid=_number(info.get("bid")),
+            ask=_number(info.get("ask")),
+            last=last,
+            volume=_number(info.get("lastVolume")),
+            change=change,
+            change_pct=None if not previous or change is None else change / previous * 100,
+        )
+
+
+class BrokerQuotes(QuoteSource):
+    """Top of book straight from the trading terminal, over the MT5 bridge.
+
+    See `prices-quotes.md` in research/docs.
+    """
+
+    name = BROKER
+    feed_key = BROKER
+    streaming = False
+
+    #: Read from the same variables the trading service uses, so one bridge is
+    #: configured once. A deployment that can trade can quote.
+    URL_VAR = "TRADING_MT5_URL"
+    KEY_VAR = "TRADING_MT5_API_KEY"
+
+    def __init__(self, settings: Settings) -> None:
+        super().__init__(settings)
+        self._client: Any = None
+
+    async def __aenter__(self) -> Self:
+        import os
+
+        import httpx
+
+        url = os.environ.get(self.URL_VAR, "")
+        if not url:
+            raise RuntimeError(
+                f"{self.name} quotes need {self.URL_VAR} - there is no bridge to read"
+            )
+        headers = {"Accept": "application/json"}
+        key = os.environ.get(self.KEY_VAR, "")
+        if key:
+            headers["X-API-Key"] = key
+        self._client = httpx.AsyncClient(base_url=url, headers=headers, timeout=10.0)
+        return self
+
+    async def __aexit__(self, *exc_info: object) -> None:
+        if self._client is not None:
+            await self._client.aclose()
+            self._client = None
+
+    async def prepare(self, keys: Sequence[QuoteKey], sink: QuoteSink | None = None) -> None:
+        """Select every symbol in the terminal before reading any of them.
+
+        See `prices-quotes.md` in research/docs.
+        """
+        # This source has nothing to push: it writes through the caller's poll
+        # like every other request/response source here.
+        del sink
+        if self._client is None:
+            return
+        picked = 0
+        for key in keys:
+            try:
+                response = await self._client.post(f"/api/v1/symbols/select/{key.symbol.ticker}")
+            except Exception as exc:  # httpx raises a family of transport errors
+                self._note_unavailable(key.symbol, str(exc)[:60])
+                continue
+            if response.status_code != 200:
+                self._note_unavailable(key.symbol, f"select: HTTP {response.status_code}")
+                continue
+            picked += 1
+        log.info("%s selected %d of %d symbols in the terminal", self.name, picked, len(keys))
+
+    async def quote(self, symbol: Symbol) -> Quote | None:
+        if self._client is None:
+            return None
+        try:
+            response = await self._client.get(f"/api/v1/symbols/ticks/{symbol.ticker}")
+        except Exception as exc:  # httpx raises a family of transport errors
+            self._note_unavailable(symbol, str(exc)[:60])
+            return None
+        if response.status_code != 200:
+            self._note_unavailable(symbol, f"HTTP {response.status_code}")
+            return None
+        try:
+            row = response.json()
+        except ValueError:
+            self._note_unavailable(symbol, "not JSON")
+            return None
+        if not isinstance(row, dict):
+            return None
+
+        bid, ask = _number(row.get("bid")), _number(row.get("ask"))
+        if not bid or not ask:
+            return None
+        # The bridge's own tick time, in epoch seconds and on our clock - the
+        # rates endpoint sends ISO strings but this one does not. Kept rather
+        # than stamped with `time.time()` because a frozen tick time is how a
+        # shut market is recognised, and overwriting it would erase exactly
+        # that evidence.
+        when = _number(row.get("time")) or time.time()
+        # `venue_time` as well as `time`: every other source puts its own clock
+        # there and our receive clock in `time`, and lead-lag work reads
+        # `venue_time` across sources expecting one meaning. Leaving it None here
+        # would make the broker - the only book we actually deal on - the one row
+        # that drops out of that comparison.
+        return Quote(time=when, venue_time=when, bid=bid, ask=ask, last=(bid + ask) / 2.0)
+
+
+QUOTE_SOURCES: dict[str, type[QuoteSource]] = {
+    TradingViewQuotes.name: TradingViewQuotes,
+    TradingViewScannerQuotes.name: TradingViewScannerQuotes,
+    YahooQuotes.name: YahooQuotes,
+    BrokerQuotes.name: BrokerQuotes,
+}
+
+DEFAULT_QUOTE_SOURCES: tuple[str, ...] = (TradingViewQuotes.name,)
+
+
+def build_quote_sources(names: Sequence[str] | None, settings: Settings) -> list[QuoteSource]:
+    chosen = tuple(names) if names else DEFAULT_QUOTE_SOURCES
+    unknown = [n for n in chosen if n not in QUOTE_SOURCES]
+    if unknown:
+        raise ValueError(
+            f"unknown quote source(s): {', '.join(unknown)} (have: {', '.join(QUOTE_SOURCES)})"
+        )
+    return [QUOTE_SOURCES[name](settings) for name in chosen]
+
+
+async def poll_once(
+    sources: Sequence[QuoteSource],
+    feeds: Sequence[Feed],
+    *,
+    concurrency: int,
+    sink: QuoteSink | None = None,
+) -> QuoteTick:
+    """Take one snapshot across every broker.
+
+    Streaming sources answer from their live cache and have already written
+    what they saw; only request/response sources go to the network here.
+    """
+    started = time.monotonic()
+    tick = QuoteTick()
+    limit = asyncio.Semaphore(max(1, concurrency))
+    # **The poll's own task, so a child can tell a shutdown from a library.**
+    # `gather` runs each symbol in its own task, and anyio's cancel scopes -
+    # which is how httpx implements every timeout - cancel the task they are
+    # *hosted in*. Under `gather` that host is the child, so the child's own
+    # `cancelling()` reads as a real request when it is nothing of the sort.
+    # Asking the poll instead gives the honest answer: only a cancellation of
+    # the poll means the poll should stop.
+    poll = asyncio.current_task()
+
+    async def one(source: QuoteSource, key: QuoteKey) -> None:
+        """One symbol, and **it may not raise**.
+
+        See `prices-quotes.md` in research/docs.
+        """
+        try:
+            async with limit:
+                quote = await source.quote(key.symbol)
+            if quote is None:
+                tick.missing += 1
+                return
+            tick.quotes[key] = quote
+            if sink is None or source.streaming:
+                return
+            # Bind the result before accumulating: `x += await f()` loads x
+            # *before* suspending, so concurrent tasks lose each other's writes.
+            written = await sink(key, quote)
+            tick.written += written
+            tick.by_source[source.name] = tick.by_source.get(source.name, WriteResult()) + written
+        except asyncio.CancelledError:
+            # **A cancellation nobody asked for is a failure wearing a
+            # different exception.** Containing ordinary exceptions was not
+            # enough: the poll was still being cancelled through `poll_once`'s
+            # task group, because a child that *ends cancelled* cancels the
+            # parent just as a child that raises does - and an httpx timeout
+            # unwinding through an anyio cancel scope can leak one without
+            # anybody having cancelled this task.
+            #
+            # **The poll is asked, not this task.** `cancelling()` counts
+            # requests made against whichever task it is called on, and under
+            # `gather` that is this one symbol's task - which anyio cancels on
+            # every httpx timeout. Reading it here called a library timeout a
+            # shutdown and re-raised, and `gather` then carried it up and
+            # killed the collector. Only a cancellation of the *poll* means the
+            # poll should stop.
+            if poll is not None and poll.cancelling() > 0:
+                raise
+            mine = asyncio.current_task()
+            if mine is not None:
+                # Balance the request anyio made, or this task stays flagged
+                # and the next await inside it raises again.
+                mine.uncancel()
+            tick.failed += 1
+            log.debug("quote %s %s was cancelled under it", source.name, key.symbol.full)
+        except Exception as exc:
+            tick.failed += 1
+            log.debug("quote %s %s failed: %r", source.name, key.symbol.full, exc)
+
+    # **`gather`, not a task group, and this is load-bearing.** A task group
+    # cancels the task it is running in whenever a child ends badly, and that
+    # task is the quote poll - the collector that must never stop. Containing
+    # what the children do was not enough: the cancellation arrives through the
+    # group's own `__aexit__`, which is the mechanism rather than the symptom,
+    # and on 2026-09-16 it stopped the desk roughly twice an hour.
+    #
+    # The blast radius is what makes this worth being careful about. Losing the
+    # poll does not merely stale the quotes it writes: the broker half of the
+    # book is what `trading` deals on, so a stale broker tick makes every
+    # signal undealable - silently, on a path that increments no counter and
+    # journals nothing. The desk goes quiet and every gauge reads healthy.
+    #
+    # `return_exceptions=True` so nothing a symbol does can reach this frame,
+    # while a genuine cancellation of the poll still propagates.
+    await asyncio.gather(
+        *(one(source, key) for source in sources for key in source.keys(feeds)),
+        return_exceptions=True,
+    )
+
+    for source in sources:
+        got = source.drain_pushed()
+        tick.pushed += got
+        tick.by_source[source.name] = tick.by_source.get(source.name, WriteResult()) + got
+
+    tick.elapsed = time.monotonic() - started
+    return tick
+
+
+def _task_state(task: asyncio.Task[Any] | None) -> str:
+    """What became of a background task, including what it died of."""
+    if task is None:
+        return "none"
+    if not task.done():
+        return "alive"
+    with suppress(Exception):
+        exc = task.exception()
+        return f"dead({exc!r})" if exc is not None else "ended"
+    return "done"
+
+
+def _keeper_ended(task: asyncio.Task[None]) -> None:
+    if task.cancelled():
+        return
+    exc = task.exception()
+    if exc is not None:
+        log.error("prices: the quote watchdog died - nothing is watching the poll: %r", exc)
+    else:
+        log.warning("prices: the quote watchdog ended on its own - nothing is watching the poll")
+
+
+async def _watch_polls(
+    live: Sequence[QuoteSource],
+    settings: Settings,
+    finished: list[float],
+    wrote: dict[str, float],
+) -> None:
+    """Say when the quote poll stops producing, and which kind of stop it is.
+
+    See `prices-quotes.md` in research/docs.
+    """
+    patience = max(180.0, settings.quote_poll_seconds * 6)
+    # **Said out loud, because a watchdog that died at birth is indis-
+    # tinguishable from a quiet one.** `_read` taught that: a bare task held on
+    # an attribute is never collected, so asyncio never reports the exception
+    # that ended it either.
+    log.info(
+        "prices: quote watchdog armed - %.0fs patience over %s",
+        patience,
+        ", ".join(source.name for source in live) or "no sources",
+    )
+    told = ""
+    beat = time.monotonic()
+    while True:
+        await asyncio.sleep(30.0)
+        now = time.monotonic()
+        idle = now - finished[0]
+        # **A heartbeat, because silence has meant two different things all
+        # day.** Without it, a watcher that has died and a watcher that is
+        # content look identical - and on 2026-09-16 the desk sat dark for
+        # nine minutes against three minutes of patience while this said
+        # nothing, which could have been either. The line is cheap and it
+        # makes the next such silence mean exactly one thing.
+        if now - beat >= 300.0:
+            beat = now
+            log.info(
+                "prices: quote poll alive - last finished %.0fs ago, %s",
+                idle,
+                ", ".join(f"{name} wrote {now - when:.0f}s ago" for name, when in wrote.items())
+                or "no sources",
+            )
+        quiet = sorted(
+            (name for name, when in wrote.items() if now - when >= patience),
+            key=lambda name: wrote[name],
+        )
+        kind = "hung" if idle >= patience else ("dry" if quiet else "")
+        if not kind:
+            told = ""
+            continue
+        if told == kind + ",".join(quiet):
+            continue
+        told = kind + ",".join(quiet)
+        if kind == "hung":
+            log.warning("prices: no quote poll has finished for %.0fs - dumping every task", idle)
+            for task in asyncio.all_tasks():
+                frames = task.get_stack(limit=6)
+                where = " <- ".join(f"{f.f_code.co_name}:{f.f_lineno}" for f in reversed(frames))
+                log.warning("prices: stuck task %s | %s", task.get_name(), where or "no stack")
+        else:
+            log.warning(
+                "prices: polls are finishing but %s %s written nothing for %.0fs",
+                " and ".join(quiet),
+                "has" if len(quiet) == 1 else "have",
+                now - min(wrote[name] for name in quiet),
+            )
+        for source in live:
+            log.warning("prices: quote source %s", source.diagnose())
+
+
+async def stream(
+    *,
+    settings: Settings,
+    feeds: Sequence[Feed],
+    sink: QuoteSink | None = None,
+    sources: Sequence[str] | None = None,
+    ticks: int | None = None,
+    on_tick: Callable[[int, QuoteTick], None] | None = None,
+    bus: Bus | None = None,
+) -> None:
+    """Keep quotes flowing until `ticks` snapshots have been taken (or forever).
+
+    With a streaming source, writes happen on push between snapshots;
+    ``quote_poll_seconds`` only sets how often the caller gets a summary and
+    how often request/response sources are re-polled.
+    """
+    if bus is not None:
+        sink = publishing(sink, bus)
+    count = 0
+    async with AsyncExitStack() as stack:
+        live: list[QuoteSource] = []
+        for source in build_quote_sources(sources, settings):
+            try:
+                live.append(await stack.enter_async_context(source))
+            except Exception as exc:
+                log.error("quote source %s unavailable: %s", source.name, exc)
+
+        for source in live:
+            await source.prepare(source.keys(feeds), sink)
+
+        # **The desk cannot currently say where it is stuck, and that is why
+        # the same outage has been diagnosed wrongly three times.** Quotes stop
+        # while bars keep arriving, nothing raises, nothing logs, and every
+        # actor reads as running - so each fix has been a guess at which await
+        # never returned. This makes the process answer the question itself.
+        finished = [time.monotonic()]
+        wrote = {source.name: time.monotonic() for source in live}
+        keeper = asyncio.create_task(
+            _watch_polls(live, settings, finished, wrote), name="quote-watchdog"
+        )
+        # **Nothing else would ever retrieve this.** A bare task held on a
+        # local is collected eventually and asyncio's "exception was never
+        # retrieved" arrives late or not at all - which is precisely how the
+        # quote reader has been failing silently all day. A watchdog that dies
+        # quietly is worse than no watchdog, because its silence reads as calm.
+        keeper.add_done_callback(_keeper_ended)
+        try:
+            while ticks is None or count < ticks:
+                started = time.monotonic()
+                tick = await poll_once(
+                    live, feeds, concurrency=settings.quote_concurrency, sink=sink
+                )
+                finished[0] = time.monotonic()
+                # `.touched`, not the results themselves: a `WriteResult` is
+                # always truthy, so testing the objects would mark every poll
+                # productive and the dry branch would never fire.
+                for name, got in tick.by_source.items():
+                    if got.touched:
+                        wrote[name] = time.monotonic()
+                count += 1
+                if on_tick is not None:
+                    on_tick(count, tick)
+                if ticks is not None and count >= ticks:
+                    return
+                await asyncio.sleep(
+                    max(0.0, settings.quote_poll_seconds - (time.monotonic() - started))
+                )
+        except asyncio.CancelledError:
+            # **Says which await was interrupted.** Nothing in this process has
+            # any business cancelling the quote poll, and on 2026-09-16 it was
+            # being cancelled roughly twice an hour by something none of the
+            # code here can name. The traceback points at the suspension point,
+            # which is the half of the question the task dump cannot answer.
+            log.error("prices: the quote poll was cancelled", exc_info=True, stack_info=True)
+            raise
+        finally:
+            keeper.cancel()
+            await asyncio.wait({keeper}, timeout=5.0)

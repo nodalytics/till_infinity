@@ -1,12 +1,26 @@
-"""Sessions, learned from where bars are.
+"""When a market is open, learned from where its bars are rather than declared.
 
-Written against real observed shapes rather than invented ones: the windows
-here are what Wall Street 30, EURUSD and BTCUSD actually reported.
+A broker's trading hours are not in the feed, and hard-coding them means a
+table that is wrong the first time a venue changes a session or a holiday
+lands. So the schedule is inferred from the bars that arrived, which makes the
+failures statistical rather than clerical and puts all three of them here.
+
+**Too little evidence must judge nothing.** A handful of bars otherwise
+describes a market that trades for an hour on Tuesdays and is shut the rest of
+the week, and a gate reading that would stop trading everything unlearned. The
+union across weeks is taken and not the intersection, so one missing Wednesday
+does not make every Wednesday look closed. And time-to-close is counted from
+the start of the current minute, so a trade is never told it has longer than
+it has.
+
+The windows used below are observed shapes rather than invented ones: Wall
+Street 30's Monday-to-Thursday 00:00-21:00 and 22:00-24:00 with a Friday exit
+at 21:00, and BTCUSD's unbroken week.
 """
 
 import calendar
 
-from till_infinity.trading.sessions import WEEK, Schedule, Sessions, week_minute
+from till_infinity.strategies.sessions import WEEK, Schedule, Sessions, week_minute
 
 M15 = 15 * 60
 

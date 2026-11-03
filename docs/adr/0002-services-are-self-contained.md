@@ -1,7 +1,26 @@
 # 0002. Services are self-contained, and the bus is the only link between them
 
-- **Status:** Accepted (2026-10-28)
+- **Status:** Superseded (2026-11-01) by the Nautilus port
 - **Date:** 2026-10-28
+
+> **Superseded, and by a decision no ADR records.** The port on 2026-11-01
+> collapsed the six services into one `TradingNode`, so there is no `services/`
+> directory, no `packages/`, no `shared/`, no bus of ours and no Redis - the
+> last two directories this ADR created are in `research/services/`. Nothing
+> below is current. It is kept because the problem it names is permanent: a
+> module that reaches into another for its change detector or its persistence
+> layer cannot be moved, and the import counts in the Context are the
+> measurement of how bad that had become.
+>
+> The reasoning for the replacement is in
+> [`../specs/2026-10-31-service-becomes-nautilus-strategies.md`](../specs/2026-10-31-service-becomes-nautilus-strategies.md),
+> which is a spec rather than an ADR. By this repository's own rule - 0001 -
+> that is the wrong home for it, and an ADR superseding this one is owed.
+>
+> Two names below no longer resolve. `bus.py` is in `research/retire/bus/`,
+> and `channels.py` is the `till-channels` package, retired to
+> `research/retire/till-channels/` with the four bugs found in its Redis path
+> on the way out.
 
 ## Context
 

@@ -1,5 +1,12 @@
 # Notifications
 
+> **The `till-infinity` commands in this document no longer exist.** The
+> 2,852-line CLI retired to `research/retire/bus/` with the services it drove,
+> and `pyproject.toml` declares no console script on purpose: a second way to
+> run the desk is a second thing to go stale. The entry point is
+> `python -m till_infinity.node.live`, and
+> `python -m till_infinity.node.status` says whether it is up.
+
 `till_infinity.notifications` sends alerts to Telegram and Discord. Each
 provider fans out to as many channels as you list, so an on-call chat, a team
 board and a firehose can all be fed from one call.
@@ -210,7 +217,7 @@ answering something the others cannot:
 
 Shapes are the ones in [structures.md](structures.md#the-four-shapes) -
 `level`, `stale`, `spread`, `dislocation`, `drift` - plus **`agent`**, which is
-what an [agent](agents.md) finding carries. That last one matters: agents
+what an [agent](../research/retire/agents/agents.md) finding carries. That last one matters: agents
 publish to the same `alerts` topic, so a channel narrowed to `level,drift` drops
 every analysis silently, which is the worst way for one to fail. Anything
 publishing without a shape falls back to its `source`, taking the part before

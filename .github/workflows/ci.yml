@@ -55,43 +55,16 @@ jobs:
           CI: "1"
         run: uv run pytest -q
 
-  # **A second toolchain, which ADR 0003 said this would cost.** Separate from
-  # `check` rather than bolted onto it: the two have nothing to share, and a Go
-  # compile failure should not read as a Python test failure in the checks list.
-  #
-  # One job for every Go service under `services/`, found rather than listed,
-  # so adding the next one does not need this file edited - the mistake made
-  # once already in `strategy.py`, where a new strategy had to be registered in
-  # two places and the second was forgotten.
-  go:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - uses: actions/setup-go@v5
-        with:
-          go-version: '1.24'
-          cache-dependency-path: services/*/go.sum
-
-      - name: Vet, format and test every Go service
-        run: |
-          shopt -s nullglob
-          found=0
-          for mod in services/*/go.mod; do
-            dir=$(dirname "$mod")
-            found=1
-            echo "::group::$dir"
-            # `gofmt -l` prints the files it would change and exits 0, so the
-            # check is that it printed nothing.
-            unformatted=$(gofmt -l "$dir")
-            if [ -n "$unformatted" ]; then
-              echo "::error::gofmt would change: $unformatted"
-              exit 1
-            fi
-            ( cd "$dir" && go vet ./... && go build ./... && go test ./... )
-            echo "::endgroup::"
-          done
-          if [ "$found" = 0 ]; then
-            echo "::error::no Go module under services/ - this job is pointing at nothing"
-            exit 1
-          fi
+# **The Go job is gone, and that is a retirement rather than a deletion.**
+# ADR 0003 took on a second toolchain for the Go services under `services/`;
+# `a80de7e5` retired those with the rest of the legacy desk, and the module now
+# sits at `research/retire/services/ticks/`, which CI excludes on purpose.
+#
+# The job had its own guard - "no Go module under services/ - this job is
+# pointing at nothing" - and that guard had been firing on every run since the
+# retirement, so the checks list carried a red job that described nothing and
+# gated every merge. The guard was right to be an error rather than a silent
+# pass; what was missing was removing the job with the code it checked.
+#
+# Restoring it is one block if a Go service returns to `services/`: set up Go,
+# then gofmt, vet, build and test every module found under there.

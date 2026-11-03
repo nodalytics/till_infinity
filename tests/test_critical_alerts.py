@@ -25,7 +25,7 @@ import logging
 
 import pytest
 
-from till_infinity.notifications.filters import Filter
+from till_infinity.notifications.filters import DEFAULT_MAX_PER_HOUR, Filter
 
 
 @pytest.fixture
@@ -53,6 +53,20 @@ def test_every_trading_alarm_gets_through(narrow: Filter, title: str):
     """The three that could not, named individually so a regression says which."""
     assert narrow.rejects(alert(title)) == ""
     assert narrow.accept(alert(title))
+
+
+def test_an_alarm_sent_as_an_ordinal_gets_through_too(narrow: Filter):
+    """The same bypass, in the encoding the contract also allows.
+
+    `shared/contracts/bus/alerts.json` says a level is "a name or its
+    ordinal", and the bypass compared the payload against the string
+    `"critical"` - so a publisher sending `level: 2` was filtered like a topic
+    preference. The defect this file is about, in the other encoding, found by
+    reading the contract against the gate.
+    """
+    numeric = alert("AutoTrading is off")
+    numeric["level"] = 2
+    assert narrow.rejects(numeric) == ""
 
 
 def test_the_shape_really_does_fall_back_to_the_source(narrow: Filter):
@@ -98,3 +112,103 @@ def test_a_dropped_routine_message_stays_quiet(narrow: Filter, caplog):
     with caplog.at_level(logging.WARNING):
         narrow.accept(alert("a routine note", level="info"))
     assert not [r for r in caplog.records if "dropped" in r.getMessage()]
+
+
+# ------------------------------------------------- and through the Actor
+
+# **The gate above was unit-tested and wired to nothing.** `Filter` was
+# applied by `notifications/service.py:listen`, which retired on 2026-11-01,
+# and `notifications/actor.py` replaced it with a level check and a
+# title-keyed dedupe of its own - so every test in this file passed while the
+# live path had no shape gate, no instrument gate, no hourly ceiling and
+# therefore no bypass for the one thing they are all wrong about.
+#
+# These publish through Nautilus's own `MessageBus` into a started actor, so
+# what is asserted is the delivery the desk would get on the worst day.
+
+
+@pytest.fixture
+def actor(monkeypatch, narrow: Filter):
+    """A started actor reading the same environment `narrow` is built from.
+
+    It builds its own `Filter` in `on_start`, which is why `narrow` is a
+    dependency rather than something injected: the environment has to be set
+    before the actor starts, the same order a container has.
+    """
+    from nautilus_trader.test_kit.stubs.component import TestComponentStubs
+
+    from till_infinity.notifications import Delivery
+    from till_infinity.notifications.actor import Notifier, NotifierConfig
+
+    sent: list = []
+
+    async def record(message, **_):
+        sent.append(message)
+        return [Delivery("telegram[ops]", ok=True)]
+
+    monkeypatch.setattr("till_infinity.notifications.notify", record)
+    built = Notifier(NotifierConfig(minimum_level=0))
+    bus = TestComponentStubs.msgbus()
+    built.register_base(
+        portfolio=TestComponentStubs.portfolio(),
+        msgbus=bus,
+        cache=TestComponentStubs.cache(),
+        clock=TestComponentStubs.clock(),
+    )
+    built.start()
+    return built, bus, sent
+
+
+@pytest.mark.parametrize(
+    "title",
+    [
+        "the desk cannot reach its terminal",
+        "AutoTrading is off",
+        "trading is not attached",
+    ],
+)
+def test_every_trading_alarm_reaches_a_destination_through_the_actor(actor, title: str):
+    """The same three, end to end. Named individually so a regression says
+    which alarm a node would now swallow."""
+    _built, bus, sent = actor
+    bus.publish(topic="alerts", msg=alert(title))
+    assert [message.title for message in sent] == [f"live: {title}"]
+
+
+def test_a_routine_trading_message_is_still_filtered_by_the_actor(actor):
+    """The bypass is for `critical` alone, on the live path too. A shape filter
+    that stops meaning anything is a channel nobody reads."""
+    built, bus, sent = actor
+    bus.publish(topic="alerts", msg=alert("a routine note", level="info"))
+    assert sent == []
+    assert built.tally["dropped"] == 1
+
+
+def test_an_hour_of_chatter_cannot_silence_a_trading_alarm(actor):
+    """**Measured failing before it was fixed**, on the live actor path.
+
+    The hourly cap is one budget shared by everything and the noisiest
+    producer wins it, which is why `UNCAPPED` exists - and the cap carried the
+    same off-by-a-word as the shape gate this file is about: `UNCAPPED` names
+    `trade`, `key` falls back to the source, and the source is `trading`. So
+    20 gold level calls followed by `AutoTrading is off` gave `20 already sent
+    this hour`: the desk down, the channel full of level calls, and the one
+    message that mattered refused by the budget.
+
+    The cap is still *counted* against - a burst of alarms correctly quietens
+    everything else - and the cooldown still applies, which the test above
+    pins."""
+    built, bus, sent = actor
+    for n in range(DEFAULT_MAX_PER_HOUR + 5):
+        bus.publish(
+            topic="alerts",
+            msg={
+                "title": f"gold 1m level {n}",
+                "level": "info",
+                "fields": {"shape": "level", "instrument": "gold", "ref": str(n)},
+            },
+        )
+    assert built.tally["dropped"] >= 5, "the hourly ceiling never engaged"
+    before = len(sent)
+    bus.publish(topic="alerts", msg=alert("AutoTrading is off"))
+    assert len(sent) == before + 1

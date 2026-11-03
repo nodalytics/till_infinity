@@ -102,7 +102,7 @@ class Bocpd:
     """`changepoint.Changepoint`, alarming when its run-length mass at zero is high."""
 
     def __init__(self, dial: float) -> None:
-        from till_infinity.statespace.changepoint import Changepoint
+        from till_infinity.indicators.changepoint import Changepoint
 
         self.inner = Changepoint()
         self.dial = dial
@@ -120,9 +120,9 @@ class Cusum:
     """`accruing.OneSided`, which returns its own alarm from `update`."""
 
     def __init__(self, dial: float) -> None:
-        from till_infinity.statespace.accruing import OneSided
+        from till_infinity.indicators.changepoint import Focus
 
-        self.inner = OneSided(threshold=dial)
+        self.inner = Focus(threshold=dial)
         self.drift_detected = False
 
     def update(self, value: float) -> None:

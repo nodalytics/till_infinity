@@ -2,7 +2,7 @@
 
 Moved out of `tests/test_trading.py` on 2026-10-28 with `swing.py`:
 `approach-scalp`, `runner`, `swing-level`, `origin-swing` and `fade-to-value`.
-They import `till_infinity.trading.strategies.swing`, which lives beside this file,
+They import `till_infinity.strategies.strategies.swing`, which lives beside this file,
 so they do not run as they stand - and they lean on fixtures that stayed in
 `tests/test_trading.py` (`settings`, `signal`, `strategy`), so reviving one means
 bringing those with it.
@@ -37,8 +37,8 @@ def test_the_shared_gates_live_in_one_place():
     """A copied block is two implementations that can drift; this is one."""
     import inspect
 
-    from till_infinity.trading.strategies.scalper import LevelStrategy
-    from till_infinity.trading.strategies.swing import FadeToValue
+    from till_infinity.strategies.strategies.scalper import LevelStrategy
+    from till_infinity.strategies.strategies.swing import FadeToValue
 
     assert hasattr(LevelStrategy, "quality")
     # Both paths call it rather than repeating it.
@@ -52,13 +52,13 @@ def test_fade_to_value_is_still_exempt_from_the_chase_gate():
     premise - the gate would refuse every trade it ever wanted."""
     import inspect
 
-    from till_infinity.trading.strategies.swing import FadeToValue
+    from till_infinity.strategies.strategies.swing import FadeToValue
 
     assert "_chasing(" not in inspect.getsource(FadeToValue.consider)
 
 
 def _swing():
-    from till_infinity.trading.strategies.swing import SwingLevel
+    from till_infinity.strategies.strategies.swing import SwingLevel
 
     return SwingLevel(settings())
 
@@ -172,8 +172,8 @@ def test_the_swing_strategies_declare_the_exemption():
     """Declared per strategy rather than derived from the hold, so a new
     strategy has to say what kind of thing it is instead of inheriting an
     exemption from a number it happened to pick."""
-    from till_infinity.trading.strategies.scalper import LevelScalp, SweepAware
-    from till_infinity.trading.strategies.swing import (
+    from till_infinity.strategies.strategies.scalper import LevelScalp, SweepAware
+    from till_infinity.strategies.strategies.swing import (
         FadeToValue,
         OriginSwing,
         Runner,
@@ -191,7 +191,7 @@ def test_origin_swing_holds_for_three_days_and_the_ceiling_allows_it():
     """`hold_for` takes `min(hold_seconds, ceiling)`, so a declaration above
     `max_hold_swing` is silently clamped - which is how a strategy ends up
     configured for one thing and running as another. Both have to move."""
-    from till_infinity.trading.strategies.swing import OriginSwing
+    from till_infinity.strategies.strategies.swing import OriginSwing
 
     assert OriginSwing.hold_seconds == 72 * 3600.0
 
@@ -869,7 +869,7 @@ def test_swing_level_aims_past_the_push_and_is_given_time_to_get_there():
     this avoids - it aims past the push and then closes 16 of 26 trades on a
     four-hour clock, so the target it exists for is never reached.
     """
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     engine = td.STRATEGIES["swing-level"](settings())
     assert engine.target_multiple == 2.5
@@ -881,7 +881,7 @@ def test_swing_level_aims_past_the_push_and_is_given_time_to_get_there():
 
 def test_a_wider_target_is_useless_past_the_ceiling():
     """The hold has to survive `max_hold_swing`, or the clock undoes the aim."""
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     engine = td.STRATEGIES["swing-level"](settings(max_hold_swing=48 * 3_600.0))
     assert engine.hold_for("1h") == 24 * 3_600.0
@@ -939,7 +939,7 @@ def test_the_stale_clock_respects_a_strategy_own_horizon():
 
     A trade that has not moved after a third of its own intended hold is going
     nowhere. After 8% of it, nobody knows yet."""
-    from till_infinity.trading.service import STALE_SHARE
+    from till_infinity.strategies.service import STALE_SHARE
 
     made = settings(stale_after=1200.0)
     trader = Trader(Bus(), settings=made)
@@ -962,7 +962,7 @@ def test_a_strategy_may_set_its_own_cooldown_without_touching_the_deployment():
     900s against a scalp that holds two minutes is a seven-to-one throttle; the
     same number against a swing is nothing at all.
     """
-    from till_infinity.trading.risk import Limits
+    from till_infinity.strategies.risk import Limits
 
     guard = Guard(settings(loss_cooldown=900.0))
     guard.roll(10_000.0, now=1_000.0)
@@ -986,7 +986,7 @@ def test_the_share_reaches_the_real_sizing_path():
     styles, the same empty features so every other multiplier is off, must now
     differ - and by exactly their styles' ratio.
     """
-    from till_infinity.trading.strategies.strategy import RISK_SHARE_BY_STYLE, build
+    from till_infinity.strategies.strategies.strategy import RISK_SHARE_BY_STYLE, build
 
     made = {s.name: s for s in build(["level-scalp", "swing-level"], settings())}
     scalp, swing = made["level-scalp"], made["swing-level"]
@@ -1012,7 +1012,7 @@ def test_the_share_reaches_the_real_sizing_path():
 def test_each_strategy_reports_limits_naming_itself():
     """`Guard` is handed these per decision, so the name has to be right or a
     refusal is attributed to the wrong strategy."""
-    from till_infinity.trading.strategies.strategy import build
+    from till_infinity.strategies.strategies.strategy import build
 
     for engine in build(["level-scalp", "swing-level", "snap"], settings()):
         assert engine.limits.by == engine.name, (engine.limits.by, engine.name)
@@ -1168,7 +1168,7 @@ def test_a_magic_resolves_through_strategy_for_and_not_by_hand():
     2026-10-05: `sweep-aware`'s positions were labelled `fade-to-value`,
     `cycle-scalp`'s were labelled `cycle-turn`, and so on down the list.
     """
-    from till_infinity.trading.config import DEFAULT_MAGIC, magic_for, strategy_for
+    from till_infinity.strategies.config import DEFAULT_MAGIC, magic_for, strategy_for
 
     assert DEFAULT_MAGIC == 777_701
     # Round-trips for every named strategy, which is the only check that
@@ -1382,7 +1382,7 @@ def test_every_swing_enters_strictly_below_the_frame_that_judges_it():
     That is also why the band stops at 30m and not at 1h: swing context starts
     at 1h, so a 1h entry would tie rather than clear.
     """
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
     from till_infinity.shared.intervals import SECONDS
 
     for name, cls in td.STRATEGIES.items():
@@ -1398,7 +1398,7 @@ def test_origin_swing_analyses_on_the_same_frame_as_the_rest():
     analysis frame on 2026-09-03: the break rate flattens past 30m - 2.8% at
     30m, 1.4% at 1h, 0.0% at 2h, 4.3% at 4h - so insisting on the daily buys
     nothing over 4h and costs most of the signals."""
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     assert td.STRATEGIES["origin-swing"].context == ("1h", "2h", "4h")
 
@@ -1407,7 +1407,7 @@ def test_every_higher_timeframe_strategy_lets_momentum_lead():
     """Asked for on 2026-09-03. On a higher timeframe a bar takes hours to
     close, so a trade taken on the candle alone is taken on evidence that has
     already happened."""
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
 
     for name, cls in td.STRATEGIES.items():
         if cls.style == "swing":
@@ -1427,9 +1427,9 @@ def test_every_swing_analyses_slow_and_enters_fast():
     frame - which is what "slow says whether, fast says when" actually means,
     and which the old literal only happened to satisfy.
     """
-    import till_infinity.trading as td
+    import till_infinity.strategies as td
     from till_infinity.shared.intervals import SECONDS
-    from till_infinity.trading.config import Settings
+    from till_infinity.strategies.config import Settings
 
     made = Settings()
     #: Allowed to enter at or above the hour. Named rather than skipped, so a

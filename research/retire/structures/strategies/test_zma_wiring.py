@@ -25,8 +25,8 @@ import pytest
 
 from till_infinity.structures import zma as zm
 from till_infinity.structures.engine import _zma_context
-from till_infinity.trading.config import Settings
-from till_infinity.trading.strategies.scalper import CycleScalp, zma_gate
+from till_infinity.strategies.config import Settings
+from till_infinity.strategies.strategies.scalper import CycleScalp, zma_gate
 
 
 def wound(z: zm.Zma, *, agrees: int) -> zm.Zma:

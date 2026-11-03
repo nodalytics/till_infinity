@@ -1,0 +1,598 @@
+"""The gate sequence and the journal reasons, shared by every entry.
+
+A Nautilus `Strategy` per entry mechanism, over one shared base. The design is
+`docs/specs/2026-10-31-service-becomes-nautilus-strategies.md`. Subclasses
+differ in exactly one thing: `place`, how an accepted intent reaches
+the venue. Everything before that is identical and lives here, because the
+gates are the part the journal reads.
+
+## Why one strategy per entry, and not one `Trader`
+
+`service.Trader` runs every rule inside one object and tells them apart by a
+broker magic number. `DEFAULT_MAGIC` is `777_701`, and the desk has recorded
+what that costs: **off by one relabels every strategy as its neighbour**, which
+is why the standing instruction is to judge the desk on the broker rather than
+on the journal.
+
+Nautilus puts a `strategy_id` on every order, fill and position, assigned by
+the framework and carried through the lifecycle. One strategy per rule makes
+that bug class **impossible** rather than guarded against.
+
+It also deletes `_take_all`, `_agree` and `_also_wanted` - about 200 lines
+whose job was to let several rules consider one signal and reconcile what each
+wanted. Nautilus runs strategies side by side; each sees the data and acts or
+does not.
+
+## The order of the gates is the design
+
+`Trader.on_signal` carries a note worth repeating rather than paraphrasing:
+*the order is the design, and splitting it across helpers would hide it. Each
+return is a distinct way a signal stops being a trade, and each one is recorded
+differently.* So `consider` below is one sequence, read top to bottom, and the
+gates are not factored into helpers that would let the order drift.
+
+## Counted is not journalled, and the difference is deliberate
+
+Two tallies, because a refusal rate and a refusal record answer different
+questions.
+
+* `passed_over` counts **every** gate, including the ones that fire hundreds of
+  times a day. A strategy declining on probability or interval is the filter
+  working, and journalling all of it would bury the refusals that matter.
+* The journal records the ones a person would want to read back: an instrument
+  the desk *does* trade, refused for a reason nothing else recorded.
+
+Getting this backwards in either direction is a real cost. Journal everything
+and the record is noise; count everything and nothing is explicable.
+
+## What this does not do
+
+**It does not size, and it does not decide the day's limits.** `plans` bounds
+the loss, `risk` decides whether this account may take another trade, and
+Nautilus's `RiskEngine` is the last-line notional and rate cap. Risk is *not*
+pluggable - checked on 1.221.0, `RiskEngine`'s whole public surface is
+`set_max_notional_per_order`, `set_trading_state` and `reset` - so ours sits
+above it and not inside.
+"""
+
+from __future__ import annotations
+
+from typing import Any
+
+from nautilus_trader.config import StrategyConfig
+from nautilus_trader.model.data import Bar, BarType, QuoteTick
+from nautilus_trader.model.identifiers import InstrumentId
+from nautilus_trader.trading.strategy import Strategy as NautilusStrategy
+
+from ..domain.models import Intent, Refusal, SymbolSpec, Tick
+from ..risk import sizing
+from ..utils.topics import PROPOSALS, subscribe
+from . import sizes
+from .config import Settings
+from .counterfactual import Counterfactual, Resolved
+
+
+class DeskConfig(StrategyConfig, frozen=True):
+    """What one entry strategy trades, and under which decision rule."""
+
+    instrument_id: InstrumentId
+    bar_type: BarType
+    #: Kept for configs that name a rule. **Read by nothing**: the decision
+    #: is the class, composed from a mixin in `surprise.py`, so which rule runs
+    #: is which class `node/desks.py` built rather than a string looked up in
+    #: a registry. Left in place so an existing config still loads.
+    rule: str = "statespace-surprise"
+    #: Detectors from `till_infinity.indicators` to register, as `name` or
+    #: `name:source`. Empty by default - an indicator nothing reads still
+    #: costs a fold per bar.
+    indicators: tuple[str, ...] = ()
+    #: Follow the trades this strategy wanted and did not get.
+    #:
+    #: **On by default, and it should stay on.** The deflated Sharpe's
+    #: `Var(SR_trials)` is a variance over the whole search, so a record that
+    #: drops what was declined makes every DSR optimistic - and the failure is
+    #: silent, because the number still prints. See `counterfactual.py`.
+    follow_untaken: bool = True
+    #: How long a declined trade is followed, in hours.
+    follow_hours: float = 1.0
+    #: Widest spread worth dealing, in volatility units. Above it the round
+    #: trip is a bar range and the idea is over before it starts, which is what
+    #: costing exotics first established.
+    max_spread_vol: float = 0.5
+    #: Refuse an entry within this long of the session close, in hours.
+    closing_within_hours: float = 0.5
+
+
+class Desk(NautilusStrategy):
+    """One entry mechanism, over the shared gates.
+
+    Subclasses implement `place`. They may also override `on_bar` to add their
+    own trigger - a resting entry watches for price turning against it, an
+    arrival entry watches for a bar that confirms - but they call `consider`
+    for the decision rather than re-deriving it.
+    """
+
+    def __init__(self, config: DeskConfig) -> None:
+        super().__init__(config)
+        self._cfg = config
+        self.settings = Settings.from_env()
+        #: Every gate that has fired, by `rule:gate`. Counted, not journalled.
+        self.passed_over: dict[str, int] = {}
+        self.refused = 0
+        self.taken = 0
+        self.detectors: dict[str, Any] = {}
+        #: The highest account equity this strategy has seen, which is what
+        #: `scaling.by_drawdown` tapers against. Equity is account-wide, so
+        #: every strategy on one account converges on the same figure.
+        #:
+        #: **It is a high-water mark since start-up, not since the account's
+        #: peak**, so a restart after a drawdown forgets the peak and sizes
+        #: full. Said here rather than hidden: the alternative is persisting a
+        #: peak, and a stale persisted peak would taper a recovered account
+        #: for ever. The multiplier is off by default either way.
+        self._peak = 0.0
+        self.counterfactual = Counterfactual()
+        #: What the counterfactual has resolved, newest last. Kept rather than
+        #: only logged so a run can be asked what its declined trades were
+        #: worth - which is the number the trial count depends on.
+        self.resolved: list[Resolved] = []
+
+    # ----------------------------------------------------------- the lifecycle
+
+    def on_start(self) -> None:
+        """Build the rule, register the detectors, then subscribe.
+
+        Registration before subscription, so an indicator cannot miss the first
+        bar. The two orders are indistinguishable on a live feed and differ in
+        a backtest, which delivers the first bar immediately.
+        """
+        self._register()
+        self.subscribe_bars(self._cfg.bar_type)
+        self.subscribe_quote_ticks(self._cfg.instrument_id)
+        # **The readings this desk decides on.** Nothing subscribed to
+        # `statespace.proposals` after the port: `service.py` consumed it and
+        # `StatespaceActor` publishes it, so for weeks there was a producer
+        # with no consumer - and a producer whose own tally counts what it
+        # sent looks healthy from either side. That shape has now hidden this
+        # one topic twice, which is why the subscribe sits next to the bars
+        # rather than somewhere a reader has to go looking for it.
+        subscribe(self, PROPOSALS, self.on_data)
+        self.log.info(f"{self._cfg.rule} on {self._cfg.bar_type}, proposals on {PROPOSALS}")
+
+    def on_stop(self) -> None:
+        """Say what it did, because a strategy that stops silently leaves no
+        way to tell a quiet session from a broken one.
+
+        The counterfactual is reported alongside the trades. A run that took
+        three and declined four hundred is a different claim from one that took
+        three and declined three, and the trial count is the difference.
+        """
+        self.log.info(
+            f"taken {self.taken}, refused {self.refused}, "
+            f"gates {dict(sorted(self.passed_over.items()))}"
+        )
+        self.log.info(
+            f"counterfactual: {len(self.resolved)} resolved, "
+            f"{self.counterfactual.following} still following"
+        )
+
+    def _register(self) -> None:
+        """Hand the configured detectors to Nautilus.
+
+        An unknown name raises rather than being skipped: a detector the config
+        asked for and the strategy quietly did not build is a sweep reporting a
+        null for a question it never asked.
+        """
+        from ..indicators import FRAMEWORK, build_detector
+
+        for entry in self._cfg.indicators:
+            name, _, rest = entry.partition(":")
+            # **Ours and Nautilus's, named the same way.** `cusum:typical`
+            # picks one of our detectors and the float it reads; `rsi:7` picks
+            # one of the framework's and its period. One syntax, because a
+            # strategy using both should not have to say which is which.
+            if name in FRAMEWORK:
+                detector = build_detector(name, period=int(rest) if rest else None)
+            else:
+                detector = build_detector(name, rest or None)
+            self.register_indicator_for_bars(self._cfg.bar_type, detector)
+            self.detectors[entry] = detector
+            self.log.info(f"registered {entry} for {self._cfg.bar_type}")
+
+    # ------------------------------------------------------------- the gates
+
+    def wants(self, payload: dict[str, Any]) -> bool:  # noqa: ARG002
+        """Is this signal this strategy's to judge at all?
+
+        Default yes. A decision mixin overrides it so a signal on a shape or
+        feed it does not cover costs nothing and is not counted as a refusal -
+        it was never this strategy's to decline.
+        """
+        return True
+
+    def decide(self, payload: dict[str, Any]) -> Intent | Refusal | None:
+        """The decision. Supplied by a mixin - see `surprise.Surprise`.
+
+        **Not an abstract method on a base class, which is what this
+        replaced.** A `Strategy` ABC with an abstract `consider` made the
+        decision a hierarchy, and the mechanism that placed it a separate one;
+        a mixin with no base lets any decision compose with any entry, which
+        is what "entries and exits are asymmetric" means in code.
+        """
+        raise NotImplementedError(
+            f"{type(self).__name__} has no decision: compose it with a mixin "
+            f"that supplies `decide`, as `surprise.SurpriseEdge` does."
+        )
+
+    def consider(self, payload: dict[str, Any]) -> Intent | Refusal | None:
+        """One signal, through the gates in order, then the decision.
+
+        `None` means *not for us* - no instrument, not our shape, nothing to
+        record. A `Refusal` means *for us and declined*, and carries the gate
+        that declined it. An `Intent` means place it.
+        """
+        spec = self._spec()
+        if spec is None:
+            # Counted, not journalled: an instrument this desk does not trade
+            # is not a refusal, but a tally of nothing is a tally that cannot
+            # be read.
+            self._count("(desk):untraded")
+            return None
+
+        if not self.wants(payload):
+            self._count(f"{self.label}:unwanted")
+            return None
+
+        tick = self._tick()
+        if refusal := self._undealable(spec, tick):
+            self._count(f"(desk):{refusal.gate}")
+            self._journal(refusal, payload)
+            return refusal
+
+        if refusal := self._already_held():
+            self._count(f"(desk):{refusal.gate}")
+            self._journal(refusal, payload)
+            return refusal
+
+        verdict = self.decide(payload)
+        if isinstance(verdict, Refusal):
+            self.refused += 1
+            self._count(f"{self.label}:{verdict.gate}")
+            # Debug and not the journal: this is the normal case, hundreds a
+            # day, and recording all of it buries what matters.
+            self.log.debug(f"{self.label} declined: {verdict.detail}")
+            return verdict
+        if not isinstance(verdict, Intent):
+            return verdict
+        return self._sized(verdict, spec, payload)
+
+    def _sized(self, intent: Intent, spec: SymbolSpec, payload: dict[str, Any]) -> Intent | Refusal:
+        """The accepted intent with a volume on it, or why it cannot have one.
+
+        **Here and not in the three `place` methods.** Every entry mechanism
+        needs a size, `consider` is the one thing all three run, and `Trader`
+        is the record of what the alternative costs: the figure that has to be
+        right to the cent was computed at three call sites and `share_of_risk`
+        was folded into two of them.
+
+        Here rather than in `decide` for a different reason. A decision is
+        about the market and a size is about the account, and the producer that
+        publishes the reading cannot see the account at all - which is why
+        `Surprise.decide` reading `features["volume"]` was never going to
+        return anything. See `sizes.py`.
+        """
+        equity = self._equity()
+        self._peak = max(self._peak, equity)
+        found = sizes.size(
+            intent,
+            spec=spec,
+            settings=self.settings,
+            equity=equity,
+            profile=getattr(self, "profile", None),
+            peak=self._peak,
+            # The whole book, not this strategy's: a shared currency leg is
+            # crowded by whoever is on it. `_already_held` has already refused
+            # this instrument, so this is every *other* position.
+            book=sizes.book_of(self.cache.positions_open()),
+        )
+        if isinstance(found, Refusal):
+            return self._refuse(found, payload)
+
+        # The broker's own minimum stop distance, checked before the order
+        # rather than discovered by its retcode. This fires only where the
+        # venue stated a `stops_level` and the geometry is inside it, in which
+        # case the order would be rejected anyway - so it changes a venue
+        # rejection into a record that says which number was breached.
+        breach = sizing.respects_stops_level(spec, found.entry, found.stop, found.target)
+        if breach:
+            refusal = Refusal(gate="stops-level", detail=breach, feed=found.feed)
+            return self._refuse(refusal, payload)
+        return found
+
+    def _refuse(self, refusal: Refusal, payload: dict[str, Any]) -> Refusal:
+        """Count, record and return a desk-level refusal of a wanted trade.
+
+        Journalled rather than only counted, because these are exactly the
+        case `_journal` was written for: an instrument the desk *does* trade,
+        on a signal its rule *accepted*, refused for a reason nothing else
+        holds. A rule declining on probability is the filter working; a trade
+        the rule wanted and the account could not afford is a different fact
+        and a rarer one.
+        """
+        self.refused += 1
+        self._count(f"(desk):{refusal.gate}")
+        self._journal(refusal, payload)
+        return refusal
+
+    def _journal(self, refusal: Refusal, payload: dict[str, Any]) -> None:
+        """Record one refusal, for the half of it nothing else holds.
+
+        **Exactly the split the module docstring describes**, implemented at
+        last: these two gates refuse an instrument the desk *does* trade, for
+        a reason no other record carries - the terminal called it untradable,
+        the quote was missing, a sibling strategy already held it. Nautilus
+        persists orders, fills and positions; it does not persist why there
+        was no order - see
+        [ADR 0005](../../docs/adr/0005-the-journal-is-the-record-not-the-hot-path.md).
+
+        The per-decision refusals are deliberately **not** here. They are
+        hundreds a day - a strategy declining on probability or interval is
+        the filter working - and journalling them would bury these.
+
+        **Nothing published here before.** `JournalActor` subscribed to a
+        topic with no producer and every reason went to a debug log, which is
+        the mirror of the failure the desk has already paid for twice: a
+        subscriber with no publisher and a publisher with no subscriber look
+        identical from either side, and both look like a quiet market.
+
+        Failures are swallowed on purpose. This runs on the stack of a live
+        decision - Nautilus's bus calls handlers inline - so a journal that
+        cannot write must not stop a trade. The actor counts its own failures
+        and degrades; that is where a write problem becomes visible.
+        """
+        from ..journal.actor import publish
+        from ..journal.models import Entry, Kind
+
+        try:
+            publish(
+                self,
+                Entry(
+                    title=f"{refusal.gate} on {refusal.feed or self.label}",
+                    kind=Kind.DECISION,
+                    actor=str(self.id),
+                    rationale=refusal.detail,
+                    context={
+                        "gate": refusal.gate,
+                        "feed": refusal.feed,
+                        "rule": self.label,
+                        "interval": str(payload.get("interval") or ""),
+                    },
+                    tags=("refusal", refusal.gate),
+                ),
+            )
+        except Exception as exc:  # a record that cannot be written is not a halt
+            self.log.debug(f"journal refused {refusal.gate}: {exc}")
+
+    @property
+    def label(self) -> str:
+        """What this strategy is called in a gate tally.
+
+        The profile's name where a decision mixin supplies one, and the class
+        name otherwise - so a tally is readable either way rather than keyed on
+        `None`.
+        """
+        profile = getattr(self, "profile", None)
+        return getattr(profile, "name", "") or type(self).__name__
+
+    def _undealable(self, spec: SymbolSpec, tick: Tick | None) -> Refusal | None:
+        """Is the instrument dealable at all, right now?
+
+        Three ways it is not, and each is about the venue rather than the idea:
+        no quote, a quote too wide to pay, or a session about to close under a
+        position that would then be held through a gap.
+        """
+        if not spec.tradable:
+            return Refusal(gate="untradable", detail=f"{spec.symbol} is not tradable")
+        if tick is None:
+            return Refusal(gate="no-quote", detail=f"no quote for {spec.symbol}")
+        if tick.ask <= 0.0 or tick.bid <= 0.0:
+            return Refusal(gate="bad-quote", detail=f"{spec.symbol} quoted {tick.bid}/{tick.ask}")
+        if tick.ask < tick.bid:
+            # A crossed quote is a bad tick, not a tight spread. Folding it in
+            # would make the cost read *better* than the truth, which is the
+            # one direction of error that lets an idea through.
+            return Refusal(
+                gate="crossed", detail=f"{spec.symbol} bid {tick.bid} above ask {tick.ask}"
+            )
+        return None
+
+    def _already_held(self) -> Refusal | None:
+        """Does anything already hold this instrument?
+
+        **Across every strategy, not just this one.** `Trader` called this
+        "first taker wins - two strategies wanting the same instrument is one
+        idea found twice", and enforced it by running them in one object. The
+        cache is shared, so the same guard is a query: `positions_open` is not
+        filtered by `strategy_id` unless asked, so this sees the whole book.
+        """
+        held = self.cache.positions_open(instrument_id=self._cfg.instrument_id)
+        if held:
+            owners = sorted({str(p.strategy_id) for p in held})
+            return Refusal(
+                gate="held",
+                detail=f"{self._cfg.instrument_id} already held by {', '.join(owners)}",
+            )
+        return None
+
+    # ------------------------------------------------------------ the placing
+
+    def place(self, intent: Intent) -> None:
+        """Send an accepted intent. The one thing an entry decides."""
+        raise NotImplementedError
+
+    # ------------------------------------------------------------- the pieces
+
+    def _spec(self) -> SymbolSpec | None:
+        """This instrument's trading rules, from Nautilus's own instrument.
+
+        Built from the cache rather than carried in config, so the venue is the
+        authority on its own tick size and volume step - which is the thing
+        `Trader` kept a parallel copy of and had to refresh.
+
+        **Three fields used to be left on their dataclass defaults** - the tick
+        value at 1.0, `stops_level` at zero and `tradable` at `True` - so the
+        money conversion was a coincidence that happens to hold on the majors
+        and two of `_undealable`'s gates could not fire. See `sizes.spec_of`.
+        """
+        instrument = self.cache.instrument(self._cfg.instrument_id)
+        if instrument is None:
+            return None
+        return sizes.spec_of(instrument, rate=self._rate(instrument))
+
+    def _rate(self, instrument: Any) -> float:
+        """The instrument's quote currency in the account's, for sizing.
+
+        1.0 where they are the same, which is the common case and the only one
+        that needs no data: a dollar account trading dollar-quoted instruments.
+
+        **0.0 where a conversion is needed and none is available**, which makes
+        `lots` refuse with a reason rather than size against an invented rate.
+        A yen pair mis-converted is wrong by a factor of 150, and the direction
+        of the error depends on which way the mistake went - so there is no
+        safe guess, only a refusal or a number the venue supplied.
+
+        A multi-currency account reports no base currency. There is nothing to
+        convert *to* in that case, so this returns 1.0 and the figures stay in
+        the quote currency, which is what the balances are held in too.
+        """
+        account = self.portfolio.account(self._cfg.instrument_id.venue)
+        wanted = getattr(account, "base_currency", None) if account is not None else None
+        quote = instrument.quote_currency
+        if wanted is None or wanted == quote:
+            return 1.0
+        found = self.cache.get_xrate(self._cfg.instrument_id.venue, quote, wanted)
+        if not found:
+            self.log.warning(
+                f"no {quote}/{wanted} rate for {self._cfg.instrument_id}: "
+                f"it cannot be sized until one is cached"
+            )
+            return 0.0
+        return float(found)
+
+    def _tick(self) -> Tick | None:
+        """The last quote, in this desk's shape."""
+        quote: QuoteTick | None = self.cache.quote_tick(self._cfg.instrument_id)
+        if quote is None:
+            return None
+        return Tick(
+            symbol=self._cfg.instrument_id.symbol.value,
+            bid=float(quote.bid_price),
+            ask=float(quote.ask_price),
+            time=quote.ts_event / 1_000_000_000,
+        )
+
+    def _equity(self) -> float:
+        """Account equity, or 0.0 when there is no account yet.
+
+        Zero rather than a guess: a size computed from an invented equity is
+        the one number nobody would catch.
+        """
+        account = self.portfolio.account(self._cfg.instrument_id.venue)
+        if account is None:
+            return 0.0
+        balance = account.balance_total()
+        return float(balance.as_double()) if balance is not None else 0.0
+
+    def _feed_name(self) -> str:
+        """The feed name the rules key on, from the instrument.
+
+        One derivation, shared with the book `crowding` reads - see
+        `sizes.feed_of`. It used to be a lower-case with the slash dropped,
+        which is right for `EUR/USD` and leaves `Volatility 75 Index` with its
+        spaces, so the counterfactual never resolved a synthetic: it compares
+        this against the feed the producer published, and that one is slugged.
+        """
+        return sizes.feed_of(self._cfg.instrument_id)
+
+    def _count(self, key: str) -> None:
+        self.passed_over[key] = self.passed_over.get(key, 0) + 1
+
+    # ----------------------------------------------------------- the handlers
+
+    def on_bar(self, bar: Bar) -> None:
+        """Nautilus delivers this after every registered indicator has updated.
+
+        Deliberately empty here. A bar is not a signal on this desk - the
+        decision rules read published readings - so an entry that wants a bar
+        trigger overrides this, and one that does not pays nothing.
+        """
+
+    def on_data(self, data: Any) -> None:
+        """A published reading. The gate sequence, then place or record.
+
+        **Takes a bare dict as well as a wrapped one**, because the two ways a
+        reading arrives here deliver different things. `subscribe_data` hands
+        over a `Data` subclass with the payload on an attribute;
+        `msgbus.subscribe` hands over the message itself, and
+        `utils/topics.subscribe` says so - the bus does not pass the topic
+        either.
+
+        Unwrapping only would have made this silently return on every
+        proposal: `getattr({}, "value", None)` is `None`, so the handler would
+        run, find nothing and do nothing, for every reading statespace
+        published. A consumer that is subscribed and inert looks exactly like
+        a producer that is quiet.
+        """
+        payload = data if isinstance(data, dict) else None
+        if payload is None:
+            payload = getattr(data, "value", None) or getattr(data, "payload", None)
+        if not isinstance(payload, dict):
+            return
+        verdict = self.consider(payload)
+        if isinstance(verdict, Intent):
+            self.taken += 1
+            self.place(verdict)
+        elif isinstance(verdict, Refusal):
+            self._follow(verdict, payload)
+
+    def _follow(self, refusal: Refusal, payload: dict[str, Any]) -> None:
+        """Follow a trade a gate refused, where the rule said where it would go.
+
+        A refusal carries the gate but not the geometry, so this asks the rule
+        for the intent it would have built. Where it cannot - most gates refuse
+        before there is an intent to build - there is nothing to follow and
+        nothing is recorded: **a counterfactual invented from a refusal with no
+        entry would be following a trade nobody specified.**
+        """
+        if not self._cfg.follow_untaken:
+            return
+        intent = payload.get("intent")
+        if not isinstance(intent, Intent):
+            return
+        self.counterfactual.wanted(
+            intent,
+            by=self.label,
+            now=self.clock.timestamp(),
+            hold=self._cfg.follow_hours * 3_600.0,
+            regime=float(payload.get("regime") or 0.0),
+            market=str(payload.get("market") or ""),
+        )
+        self._count(f"(desk):following-{refusal.gate}")
+
+    def on_quote_tick(self, tick: QuoteTick) -> None:
+        """Walk the counterfactual forward. Subclasses that override this must
+        call `super().on_quote_tick(tick)`, or the record stops resolving and
+        `following` climbs forever."""
+        done = self.counterfactual.observe(
+            self._feed_name(),
+            float(tick.bid_price),
+            float(tick.ask_price),
+            # **The tick's own time, not the clock's.** They agree in a
+            # backtest, where the clock follows the data, and they do not when
+            # a handler is driven directly - and `ts_event` is unambiguous
+            # either way: it is when this quote happened.
+            tick.ts_event / 1_000_000_000,
+        )
+        for row in done:
+            self.resolved.append(row)
+            self.log.info(f"{row.shape} {row.feed} {row.how} at {row.reward:+.2f}R")

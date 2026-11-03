@@ -160,7 +160,7 @@ jobs:
         env:
           HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
         run: |
-          scp -i ~/.ssh/deploy.pem deploy.sh "$HOST:/tmp/till-deploy.sh"
+          scp -i ~/.ssh/deploy.pem scripts/deploy.sh "$HOST:/tmp/till-deploy.sh"
           ssh -i ~/.ssh/deploy.pem "$HOST" \
             "IMAGE='${{ env.IMAGE }}' TAG='${{ github.sha }}' bash /tmp/till-deploy.sh"
 

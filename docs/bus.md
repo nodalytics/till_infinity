@@ -1,8 +1,23 @@
 # The message bus
 
-`till_infinity.bus` is how services talk to each other. Collectors announce
-what they just stored, agents consume it and publish alerts, notifications
-deliver those.
+> **The `till-infinity` commands in this document no longer exist.** The
+> 2,852-line CLI retired to `research/retire/bus/` with the services it drove,
+> and `pyproject.toml` declares no console script on purpose: a second way to
+> run the desk is a second thing to go stale. The entry point is
+> `python -m till_infinity.node.live`, and
+> `python -m till_infinity.node.status` says whether it is up.
+
+`till_infinity.bus` was how the six services talked to each other: collectors
+announced what they had just stored, agents consumed it and published alerts,
+notifications delivered those. **It retired on 2026-10-31 to
+`research/retire/bus/`**, with the CLI and the services, and Nautilus's own
+message bus - in-process, Rust-native, with its own optional Redis backing -
+replaced it. Nothing under `till_infinity/` imports Redis.
+
+This document is kept for the topic design, which is the part that outlived the
+transport: `utils/topics.py` still holds the names, and `carrier.py` is the
+two-method protocol that let the bus be replaced without rewriting what
+published to it. The diagram below is the arrangement that retired.
 
 ```
 prices  ──┐                          ┌──▶ agents ───┐
@@ -163,7 +178,7 @@ interpret themselves - a dead feed needs no model and no calendar, and should
 not depend on one being reachable. See [structures.md](structures.md).
 
 `news.macro` is deliberately not consumed: reserves move monthly, so a bulk row
-count is not a reason to wake anything. See [agents.md](agents.md).
+count is not a reason to wake anything. See [agents.md](../research/retire/agents/agents.md).
 
 ## Backends
 

@@ -7,7 +7,8 @@ to be mechanical rather than remembered.
 """
 
 import pytest
-from till_platform.strata import compare
+
+from till_infinity.utils.strata import compare
 
 
 def row(bucket, value, **over):
@@ -42,6 +43,8 @@ def test_a_reversal_in_every_stratum_is_named():
 
 
 def test_an_ordering_that_holds_everywhere_raises_nothing():
+    """The negative control. A warning that fires on every cut is a warning
+    that gets read as noise, and then the pooled figure is trusted again."""
     rows = [
         *[row("low", 0.1, strategy=s) for s in ("alpha", "beta") for _ in range(200)],
         *[row("high", 0.9, strategy=s) for s in ("alpha", "beta") for _ in range(200)],
@@ -111,6 +114,9 @@ def test_the_boom_shape_reproduced_from_the_measured_numbers():
 
 
 def test_a_callable_bucket_works_as_well_as_a_key():
+    """Most interesting buckets are derived - a threshold on a continuous
+    reading - and if the check only took a column name the cuts that need it
+    most would be made by hand without it."""
     rows = [row("x", float(i % 3)) for i in range(600)]
     got = compare(
         rows,

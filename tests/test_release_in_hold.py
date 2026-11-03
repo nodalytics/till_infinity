@@ -19,12 +19,11 @@ from __future__ import annotations
 
 import datetime as dt
 
-from till_platform import effects
-
-from till_infinity.trading import Settings
-from till_infinity.trading.context import Context
-from till_infinity.trading.models import Intent, Side
-from till_infinity.trading.risk import Guard
+from till_infinity.domain.models import Intent, Side
+from till_infinity.risk.guard import Guard
+from till_infinity.strategies import Settings
+from till_infinity.strategies.context import Context
+from till_infinity.utils import effects
 
 HOUR = 3600.0
 
@@ -56,7 +55,7 @@ def desk(ctx: Context | None = None, **over) -> Guard:
     made.release_in_hold = True
     for k, v in over.items():
         setattr(made, k, v)
-    guard = Guard(made, context=ctx, currency="USD")
+    guard = Guard(made.envelope(), context=ctx, currency="USD")
     guard.roll(10_000.0, now=at(9))
     return guard
 
@@ -83,6 +82,9 @@ def gate(guard: Guard, *, hold: float, now: float):
 
 
 def test_a_release_inside_the_hold_refuses():
+    """The finding itself. Both halves of the detail are asserted because both
+    reach a human: the refusal goes in the journal, and "40m" with a title is
+    what lets somebody decide later whether the gate was right."""
     now = at()
     # 40 minutes out: past the 10-minute blackout, inside a two-hour hold.
     ctx = context(("US", now + 40 * 60, "Nonfarm Payrolls"))
@@ -93,7 +95,11 @@ def test_a_release_inside_the_hold_refuses():
     assert "Nonfarm Payrolls" in stopped.detail
 
 
-def test_a_release_just_past_the_hold_does_not():
+def test_a_release_just_past_the_hold_is_not_refused():
+    """One minute past, so the gate is being held to its own boundary and not
+    to a comfortable margin either side of it. The pair with the test above is
+    the whole assertion: a gate that refused both would look identical on the
+    one above."""
     now = at()
     ctx = context(("US", now + 2 * HOUR + 60, "Nonfarm Payrolls"))
     assert gate(desk(ctx), hold=2 * HOUR, now=now) is None
@@ -123,6 +129,10 @@ def test_a_release_already_past_is_not_this_gate():
 
 
 def test_the_earliest_release_is_the_one_reported():
+    """The first print is the one the trade cannot avoid, and the detail is
+    read by somebody deciding whether to override. Naming the FOMC Minutes
+    ninety minutes out, when CPI lands in twenty, points them at the wrong
+    calendar entry."""
     now = at()
     ctx = context(
         ("US", now + 90 * 60, "FOMC Minutes"),
@@ -146,6 +156,10 @@ def test_the_cap_bounds_how_far_ahead_it_looks():
 
 
 def test_inside_the_cap_a_long_hold_still_refuses():
+    """The cap shortens the reach, it does not switch the gate off. A five-day
+    hold with a print three hours out is refused, and the detail says "ahead"
+    because the number quoted is the cap's and not the hold's - a refusal
+    citing five days for a three-hour print reads as a bug."""
     now = at()
     ctx = context(("US", now + 3 * HOUR, "CPI"))
     stopped = gate(desk(ctx), hold=5 * 24 * HOUR, now=now)
@@ -155,7 +169,9 @@ def test_inside_the_cap_a_long_hold_still_refuses():
     assert "ahead" in stopped.detail
 
 
-def test_the_cap_is_configurable():
+def test_the_cap_can_be_widened_without_touching_the_gate():
+    """The cap is a bound on what the measurement covers, not a finding, so it
+    is the part an operator is expected to move."""
     now = at()
     ctx = context(("US", now + 8 * HOUR, "CPI"))
     guard = desk(ctx, release_hold_cap_s=12 * HOUR)
@@ -171,7 +187,12 @@ def test_a_trade_with_no_stated_hold_is_not_gated():
     assert gate(desk(ctx), hold=0.0, now=now) is None
 
 
-def test_no_context_fails_open():
+def test_a_guard_with_no_calendar_fails_open():
+    """**The direction matters more than the gate does.** A news feed that has
+    not loaded, or a backtest with no calendar at all, is the normal state for
+    most of this desk - and a gate that refused on a missing context would
+    stop every trade on every node that does not carry one, which is an outage
+    that looks like a quiet market."""
     now = at()
     assert gate(desk(None), hold=2 * HOUR, now=now) is None
 
@@ -179,12 +200,18 @@ def test_no_context_fails_open():
 # ------------------------------------------------------------------- default
 
 
-def test_the_gate_is_off_by_default():
+def test_the_gate_is_off_as_shipped():
+    """Not a default chosen here. 0.19R is a median across 32 of 36 rows, not
+    a per-trade cost, so the direction is the finding and the size is not -
+    and a gate switched on by this measurement would refuse trades it has no
+    evidence about. The `False` below is the shipped answer, asserted so a
+    change to it is a decision somebody takes.
+    """
     now = at()
     ctx = context(("US", now + 40 * 60, "CPI"))
     off = Settings()
     assert off.release_in_hold is False
-    guard = Guard(off, context=ctx, currency="USD")
+    guard = Guard(off.envelope(), context=ctx, currency="USD")
     guard.roll(10_000.0, now=at(9))
     assert guard.allows(intent(), positions=[], now=now, hold=2 * HOUR) is None
 
@@ -225,19 +252,27 @@ def test_it_declares_and_fires_its_effect():
 # ---------------------------------------------------------------- Context.ahead
 
 
-def test_ahead_returns_none_for_a_zero_horizon():
+def test_a_zero_horizon_looks_ahead_at_nothing():
+    """`hold=0` reaches `ahead` as a zero horizon, and a window of no width
+    that still matched the next print would refuse every trade that did not
+    state a hold."""
     now = at()
     ctx = context(("US", now + 60, "CPI"))
     assert ctx.ahead("gold", 0.0, now) is None
 
 
-def test_ahead_ignores_an_unknown_feed():
+def test_a_feed_with_no_currency_has_no_releases_of_its_own():
+    """Releases are matched by the instrument's currencies, so a feed that
+    resolves to none has nothing to match - and matching everything instead
+    would make one unnamed feed refuse on every country's calendar."""
     now = at()
     ctx = context(("US", now + 60, "CPI"))
     assert ctx.ahead("", 2 * HOUR, now) is None
 
 
-def test_ahead_finds_the_release():
+def test_a_release_inside_the_horizon_is_found_and_named():
+    """The power assertion for the three above: without it, an `ahead` that
+    always returned `None` would satisfy all of them."""
     now = at()
     ctx = context(("US", now + 60 * 60, "CPI"))
     found = ctx.ahead("gold", 2 * HOUR, now)

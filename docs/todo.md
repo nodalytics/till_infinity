@@ -1,8 +1,22 @@
 # Outstanding
 
+> **The `till-infinity` commands in this document no longer exist.** The
+> 2,852-line CLI retired to `research/retire/bus/` with the services it drove,
+> and `pyproject.toml` declares no console script on purpose: a second way to
+> run the desk is a second thing to go stale. The entry point is
+> `python -m till_infinity.node.live`, and
+> `python -m till_infinity.node.status` says whether it is up.
+
 Ordered by what would change the numbers most. Each entry says where the detail
 lives, because the reasoning belongs next to the code it explains rather than
 duplicated here.
+
+Entries written before 2026-11-01 name the module paths of the pre-port layout -
+`structures/`, `prices/`, `trading/`, `context/`, `learning/`. Those packages
+are in `research/retire/` and their successors are `statespace/`,
+`adapters/mt5/`, `strategies/` and `indicators/`. The measurements and the
+orders of work are unaffected by the move; only the paths are stale, and they
+have not been rewritten because a backlog is a record of what was thought when.
 
 
 ## Residual time is the hold clock, and the hold clock is where the money went
@@ -1607,7 +1621,7 @@ since the failure discards a whole judgement rather than truncating it. The
 wake gate also now reports its closest approach at INFO rather than DEBUG, so a
 gate that declines can be told from one that never ran.
 
-Full account in [agents.md](agents.md), "Why agents appeared never to wake".
+Full account in [agents.md](../research/retire/agents/agents.md), "Why agents appeared never to wake".
 Still to confirm: that a window survives end to end now, which needs half an
 hour without a deploy.
 
@@ -3687,3 +3701,59 @@ what would kill it; none of them exists in the code.
   coverage panel needs, so it is on that critical path rather than beside it. See
   [conformal.md](../research/docs/conformal.md) and
   [the viewer spec](specs/2026-09-29-analogue-viewer-design.md).
+
+## Clean the comments
+
+Asked 2026-11-01. The docstrings and comments across the tree have grown by
+accretion - each one true when written, several now describing a shape that has
+since moved. The Nautilus port in particular left prose referring to `service`,
+to the bus, to a Go service and to an ABC that no longer exist, and the
+profile's helpers carry notes written when they lived on a different class.
+
+Worth a pass that keeps the *measurements* and the reasons - those are the
+value - and drops the archaeology: a comment explaining why a thing is not
+something it was never going to be is noise once the alternative is gone.
+
+Not urgent, and not to be done by a blanket rewrite: several of these comments
+are the only record of a measurement, and a pass that trims by length would
+delete exactly those.
+
+## Statespace should track transitions, and predict the next one
+
+Asked 2026-11-01. Statespace models *states* - a dispersion, a regime, a
+changepoint posterior - and reports where it is. What it does not do is model
+the **transitions between them**: which regime follows which, which shape
+follows which shape, which rule stops working after which other one does, and
+with what probability and what expected time.
+
+The pieces are mostly present and unconnected:
+
+* `switching.py` holds three regimes - balance, imbalance, trending - with
+  per-hour hazards, so it already has a transition *rate* per state. What it
+  does not have is a transition **matrix**: P(next state | this state).
+* `indicators/changepoint.py` carries a posterior over run length, which is
+  exactly "how long has this held" - the input a duration-dependent transition
+  probability needs. A plain Markov chain assumes the hazard is flat in the
+  time already spent, and the BOCPD posterior says it is not.
+* `indicators/levels.py`'s `Pips` already labels a shape sequence HH / LH / HL
+  / LL, which is a transition alphabet with no transition model over it.
+* `indicators/trend.py`'s `VarianceRatio` names the regime from the statistic
+  that defines it, so a sequence of those readings is observable.
+
+**Two cautions, because this is the shape most likely to find something that
+is not there.**
+
+First, a transition matrix estimated on a sequence of *inferred* states
+inherits the inference's errors, and the errors are correlated in time - so the
+diagonal is inflated by the smoother rather than by persistence. The null has
+to be a transition matrix fitted to a *walk through the same inference*, not a
+uniform one.
+
+Second, `strategy-rotation-is-not-timeable` is directly on point: every pause
+rule the desk tried matched random pausing at the same duty cycle. "Predict the
+next transition" is the same question in a new costume, and the control is the
+same - a duty-cycle-matched random transition.
+
+So the useful version is probably not "when does the regime change" but "given
+it has held this long, what is the hazard" - which is the one the changepoint
+posterior can actually answer and the one a flat Markov chain gets wrong.

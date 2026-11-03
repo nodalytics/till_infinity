@@ -14,9 +14,9 @@ from __future__ import annotations
 
 import pytest
 
-from till_infinity.trading import Settings
-from till_infinity.trading.models import Side
-from till_infinity.trading.strategies.strategy import STRATEGIES
+from till_infinity.strategies import Settings
+from till_infinity.strategies.models import Side
+from till_infinity.strategies.strategies.strategy import STRATEGIES
 
 #: A 1m call the 1h and 30m already agree with, so the alignment gate is
 #: satisfied and each test exercises the one condition it is about.
@@ -74,7 +74,7 @@ class TestItRunsBesideTheOthers:
         """Without one it still trades, stamping a hash with no inverse, and
         every position closes as unattributed - which for a strategy meant to
         earn a record is circular as well as broken."""
-        from till_infinity.trading.config import DEFAULT_MAGIC, magic_for, strategy_for
+        from till_infinity.strategies.config import DEFAULT_MAGIC, magic_for, strategy_for
 
         magic = magic_for(DEFAULT_MAGIC, "cycle-turn-scalp")
         assert strategy_for(DEFAULT_MAGIC, magic) == "cycle-turn-scalp"

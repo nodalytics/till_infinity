@@ -78,7 +78,7 @@ from inside_clock import geometry, rebuild  # noqa: E402
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 from prims import pivots  # noqa: E402
 
-from till_infinity.trading.candles import Bar, engulfing  # noqa: E402
+from till_infinity.indicators.candles import Bar, engulfing  # noqa: E402
 
 FRAME = "1h"
 SEED = 20261016

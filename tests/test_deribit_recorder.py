@@ -50,6 +50,8 @@ def transport(instruments, book):
 
 
 def test_a_good_sweep_returns_rows():
+    """The control for the six refusals below, which an always-empty `sweep`
+    would satisfy on its own."""
     with httpx.Client(transport=transport(INSTRUMENTS, BOOK)) as client:
         rows = sweep(client, "BTC", at=1790233483.0)
     assert len(rows) == 1
@@ -92,6 +94,11 @@ def test_a_transport_failure_is_survived():
 
 
 def test_the_header_is_written_once(tmp_path):
+    """The recorder appends to a day's file on every sweep, so a header per
+    call puts a row of column names in the middle of the data - where
+    `csv.DictReader` reads it as an observation whose every numeric field is
+    its own name, and the analysis reports it as a parse failure somewhere
+    else entirely."""
     with httpx.Client(transport=transport(INSTRUMENTS, BOOK)) as client:
         rows = sweep(client, "BTC", at=1790233483.0)
     write = writer(tmp_path)
@@ -158,6 +165,10 @@ def test_a_result_that_is_not_a_list_does_not_crash_the_sweep():
 
 
 def test_a_result_that_is_a_string_does_not_crash_the_sweep():
+    """`result` is a list of quotes on the happy path, and Deribit returns a
+    bare string for some errors. Indexing it would succeed - a string is a
+    sequence - and yield rows built from single characters."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"result": "nope"})
 

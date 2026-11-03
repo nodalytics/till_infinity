@@ -6,8 +6,9 @@ One bot token, any number of chats:
     export TELEGRAM_CHAT_IDS="ops=-1001111|warning, feed=-1002222"
 
 Chat ids are awkward to find by hand, so they can be discovered instead -
-``till-infinity notify chats`` asks the bot what it can see. Two caveats come
-from the API itself and are worth knowing before trusting it:
+`delivery.discover_telegram_chats` asks the bot what it can see, and
+`TELEGRAM_AUTO_CHATS=1` makes the fan-out call it. Two caveats come from the
+API itself and are worth knowing before trusting it:
 
 * ``getUpdates`` only returns the last 24 hours of activity, so a chat the bot
   has been idle in will not appear. Send it any message first;
@@ -30,7 +31,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from till_platform.logging import get_logger
+from till_infinity.utils.logging import get_logger
 
 from .config import TELEGRAM_API, TELEGRAM_TEXT_LIMIT
 from .models import Channel, Delivery, Notification

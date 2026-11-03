@@ -1,0 +1,877 @@
+"""The contract a strategy implements, and the register of the ones we have.
+
+A strategy answers one question: *given this signal, this instrument's trading
+rules and this quote, is there a trade here?* It does not place orders, size
+against the account's history, or know whether the day has already hit its loss
+limit - those belong to `risk` and `service`, and keeping them out is what lets
+two strategies run side by side without either one deciding the other's limits.
+
+The split is worth stating plainly because it is easy to blur:
+
+| | decides |
+|---|---|
+| `strategy` | is this signal worth trading, and where do the stop and target go |
+| `plans` | how much may be lost, per trade and per day |
+| `risk` | may *this account, right now* take another one |
+| `service` | send it, record it, and reconcile what came back |
+
+**A strategy claims no edge of its own.** Every one registered here reads the
+same measured signal `structures` publishes; they differ in which of those
+calls they will act on and how they place the stop and target around it. None
+of them adds an indicator, and that is deliberate - the edge has been measured
+upstream, and a rule invented here would be an unmeasured one riding on a
+measured one's reputation. Adding a strategy is a claim that a *subset* of
+those calls behaves differently, which is a claim the journal can settle.
+"""
+
+from __future__ import annotations
+
+from abc import ABC, abstractmethod
+from collections.abc import Sequence
+from typing import Any, ClassVar
+
+from till_infinity.utils.logging import get_logger
+
+from ...domain.models import Side, SymbolSpec, Tick, Verdict
+from ..config import Settings
+from ..guard import Limits
+from .floors import Floors
+
+log = get_logger(__name__)
+
+#: The share of per-trade risk each style takes, where a strategy names none.
+#:
+#: A scalp is the reference. A swing holds across session breaks, and a position
+#: across nights and weekends, so the stop that bounds the loss can be gapped
+#: through - and the longer the hold, the more chances there are for that. Both
+#: also occupy capital while they wait, which is risk the account carries
+#: without any of it showing up as a stop distance.
+#:
+#: The numbers are mild on purpose. The loss on a stopped trade is the same
+#: whatever the hold, so this is pricing gap risk and occupancy, not variance,
+#: and neither justifies halving a position. Nothing here has been measured
+#: against outcomes: 904 closed trades across 13 strategies is 2.1 per cell,
+#: and sizing on that would be fitting noise - see `research/docs/choosing.md`.
+RISK_SHARE_BY_STYLE: dict[str, float] = {
+    "scalp": 1.0,
+    "swing": 0.85,
+    "position": 0.7,
+}
+
+
+def spike_scale(features: object, settings: object) -> float:
+    """The risk switch for one signal's features. One function so the three places
+    that size a trade - `risk_scale`, the consensus path and parallel mode - cannot
+    disagree about it. See `scaling.by_spike`."""
+    from ...risk import scaling
+
+    readings = features if isinstance(features, dict) else {}
+    found = readings.get("tr_percentile")
+    return scaling.by_spike(
+        float(found) if isinstance(found, int | float) else None,
+        float(getattr(settings, "spike_above", 0.0) or 0.0),
+        float(getattr(settings, "spike_floor", 0.5) or 0.5),
+    )
+
+
+class Strategy(ABC):
+    """One way of turning signals into intents."""
+
+    name: ClassVar[str]
+    description: ClassVar[str] = ""
+    #: The shape of signal this strategy reads. Everything else is skipped
+    #: before any of its logic runs.
+    shape: ClassVar[str] = "level"
+
+    #: The strategy this one is a *stricter* version of, if it is one.
+    #:
+    #: `TRADING_STRATEGIES` is a priority list, not a set - the first taker
+    #: wins - so a strategy that is another plus extra refusals can only ever
+    #: see what the permissive one declined, and it declined those for reasons
+    #: this one would decline too. Listed after what it refines, it never
+    #: trades, and nothing about that looks wrong: it loads, it is enabled, and
+    #: it books nothing forever.
+    #:
+    #: Declaring the relationship is what lets start-up say so. It cannot be
+    #: inferred - "is a subset of" is not something one gate chain can work out
+    #: about another - so the strategy that knows states it.
+    refines: ClassVar[str] = ""
+
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.seen = 0
+        self.wanted = 0
+        #: The bar each direction has to clear, kept per direction because the
+        #: two do not have the same distribution. See `floors.py`.
+        self.floors = Floors(percentile=settings.probability_percentile)
+
+    #: Seconds a trade from this strategy may stay open. Zero takes the
+    #: configured `max_hold`. A strategy whose thesis needs time to play out
+    #: says so here rather than being cut off by a default chosen for a
+    #: different kind of trade.
+    hold_seconds: ClassVar[float] = 0.0
+
+    #: Whether this is a scalp or a swing, so the two can be run together, one
+    #: at a time, or not at all - see `TRADING_STYLE`.
+    #:
+    #: Declared per strategy rather than derived, because the names lie. Both
+    #: `approach-scalp` and `fade-to-value` hold for forty-five minutes, longer
+    #: than `max_hold`, and are swings wearing a scalp's name. What decides is
+    #: how long the thesis needs and whether the trade is trying to catch a
+    #: reaction or ride a move: a swing either holds an hour or more, or lets
+    #: its target run past the modelled push.
+    style: ClassVar[str] = "scalp"
+
+    #: The same limit expressed in **bars of the entry interval**, which is the
+    #: clock everything else about the trade is measured on.
+    #:
+    #: A fixed number of seconds cannot mean one thing across eight timeframes.
+    #: Thirty minutes is thirty bars to a strategy triggering on 1m and two to
+    #: one triggering on 15m, so the same setting asks a one-minute signal to
+    #: survive a thirty-minute walk and a fifteen-minute signal to survive
+    #: almost none of one. Zero keeps the seconds-only behaviour.
+    #:
+    #: `hold_seconds` remains as the ceiling: bars are the right unit and wall
+    #: clock is the right cap, because a 4h strategy holding twenty bars is
+    #: three days and that is not a scalp whatever the arithmetic says.
+    hold_bars: ClassVar[float] = 0.0
+
+    #: How quickly this strategy protects a trade, overriding the deployment's
+    #: own settings. Zero on either means "use the configured value".
+    #:
+    #: These were global, and a global number cannot fit both a strategy that
+    #: holds thirty minutes and one that holds two. A fast trade spends most of
+    #: its life waiting for a 1R threshold it may never announce, and a trail
+    #: wide enough for a half-hour thesis is most of the move for a
+    #: twenty-second one - so the fast strategy is unprotected for exactly the
+    #: window it exists to trade.
+    break_even_at: ClassVar[float] = 0.0
+    trail_vol: ClassVar[float] = 0.0
+
+    #: Zero means take the deployment's `max_against_vol`, so the filter is a
+    #: property of the book rather than of whichever strategies remembered to
+    #: ask for it.
+    #:
+    #: How much accumulated momentum *against* this trade it will tolerate,
+    #: in volatility units. Zero is off, which is every strategy that has not
+    #: asked for it.
+    #:
+    #: A level call is a claim that price has arrived somewhere it will turn.
+    #: It says nothing about whether the move that brought price here has
+    #: finished, and taking the other side of a run that is still running is
+    #: how a correct level becomes a stopped trade - the thing 23 of the first
+    #: 32 trades did. `structures.cusum` measures that run without a window,
+    #: and this is the number that decides how much of it is too much.
+    max_against_vol: ClassVar[float] = 0.0
+
+    #: This strategy's own `require_turn_vol`. Zero means use the configured
+    #: value, so a strategy that wants the turn regardless of how the
+    #: deployment is tuned says so here.
+    min_with_vol: ClassVar[float] = 0.0
+
+    #: How far this strategy insists price come back before it will fill,
+    #: overriding the deployment's own `pullback_fraction`. Zero means use the
+    #: configured value; a strategy that always wants a resting entry says so
+    #: here rather than depending on how the deployment happens to be tuned.
+    pullback_fraction: ClassVar[float] = 0.0
+
+    #: This strategy's share of the deployment's per-trade risk. Zero means take
+    #: the share its `style` implies, in `RISK_SHARE_BY_STYLE`.
+    #:
+    #: The four existing multipliers all read the *current bar* - trend,
+    #: momentum, conviction, crowding - so nothing said "this one holds for a
+    #: day and that one for two minutes, size them differently". This is that
+    #: number, and it is structural rather than a reading.
+    #:
+    #: **Not variance by holding time.** The tempting rule is to divide by the
+    #: square root of the hold, and it is wrong here: a hard stop bounds the
+    #: loss per trade whatever the hold, so a 24-hour trade and a 2-minute one
+    #: risk the same money by construction. What actually grows with the hold is
+    #: the risk of *gapping through* that stop - a weekend, a session break, a
+    #: release - which the stop cannot bound, and the capital the position
+    #: occupies while it waits. Both are real and neither is dramatic, so the
+    #: shares below are mild.
+    risk_share: ClassVar[float] = 0.0
+
+    #: Seconds this strategy waits after a loss on a feed before taking another.
+    #: Zero means the deployment's `loss_cooldown`.
+    #:
+    #: One global number cannot fit both: 900s against a 120-second scalp is a
+    #: seven-to-one throttle, and against a day-long swing it is nothing.
+    cooldown_s: ClassVar[float] = 0.0
+
+    #: The least reward this strategy will accept for the risk it ends up with,
+    #: as a multiple. Zero is off. **It moves the target out; it refuses
+    #: nothing** - which is the whole difference between this and
+    #: `Limits.min_reward_to_risk`, and the reason the measurement against that
+    #: one does not apply here. See `risk.py` on the 47,676 touches that refuted
+    #: the gate: refusing 40,421 calls bought 0.040R of quality. Raising a
+    #: target refuses nothing, so it has none of that cost.
+    #:
+    #: **This field existed and was wired to nothing.** It was read in two
+    #: places by `getattr(self, "reward_floor", 0.0)` and declared in exactly
+    #: one - `opportunity.Shape` - so every strategy that runs standalone got
+    #: the `getattr` default and the floor never fired. The one measurement
+    #: behind it was taken on `thesis-only` and recorded in `opportunity.py`: a
+    #: 4v stop against a 1.5v target is 0.37 reward to risk, needs a 73% win
+    #: rate, won 45.9%, and lost 441 units over 159 trades while its targets
+    #: earned 639. That diagnosis was never delivered to the strategy it was
+    #: about, whose live median reward-to-risk is 0.40 over 361 decisions.
+    #:
+    #: **What the live record says about this, which is less than it should.**
+    #: 1,534 closed trades joined to the decision that sized them, 2026-10-05:
+    #: trades whose *intended* reward-to-risk was at or above 1.0 made -1.342 a
+    #: trade against -0.765 for those below it, and within strategy none of the
+    #: three with enough trades on both sides did better on the high side. In R
+    #: the picture is flat rather than reversed - every bucket from 0-0.5 to 6+
+    #: sits near zero (-0.126 to +0.101, three significantly negative, none
+    #: significantly positive) and the ordering is not monotonic. Risk per trade
+    #: is 28-35 in every bucket, so it is not a sizing artefact.
+    #:
+    #: That is `1/(1+N)` showing up in production: reward-to-risk alone has
+    #: expected value about zero, so **"higher RR earns more" is not a claim
+    #: this desk's record supports.** See `research/docs/walks-and-edge.md`.
+    #:
+    #: What survives is narrower: a trade at 0.22 needs an 82% win rate, and the
+    #: observed rates here are 40-57%. That is a losing bet under any hit rate
+    #: this desk reaches, whatever the average says. The floor is set on that
+    #: arithmetic, not on a measured improvement, and it is worth knowing which
+    #: of the two is holding it up.
+    #:
+    #: Those trades are also not this population: the floor does not turn a
+    #: sub-1.0 trade into one of the RR >= 1 trades above, which got there by
+    #: their own stop placement. It pushes a target past a stop that blew out,
+    #: which is a third thing neither bucket contains.
+    #:
+    #: Measured over all 2,563 live decisions on 2026-10-05, median
+    #: reward-to-risk and the share below 1.0: `thesis-only` 0.40/98%,
+    #: `approach-scalp` 0.51/89%, `level-scalp` 0.55/89%, `inverse` 0.60/83%,
+    #: `momentum-scalp` 0.61/88%, `snap` 0.94/53%, `fade-to-value` 1.27/42%
+    #: against `sweep-aware` 2.71/5% - which is the only strategy of size that
+    #: makes money. That is the argument for this number in one line.
+    #: **Raised 1.0 -> 1.2 on 2026-10-08, from the live record rather than from
+    #: the arithmetic that set it.** The floor fired: over 4,183 decisions taken
+    #: between 2026-09-07 and 10-08, the share at reward-to-risk >= 1.0 went from
+    #: **54.9% to 88.6%** when it landed, and the strategies that carried it now
+    #: sit at a median of exactly 1.000 - `thesis-only` 0.452 -> 1.000,
+    #: `inverse` 0.580 -> 1.000, `level-scalp` 0.516 -> 1.000, `approach-scalp`
+    #: 0.492 -> 1.000, `momentum-scalp` 0.590 -> 1.000, `snap` 0.845 -> 1.001.
+    #: `sweep-aware` is unmoved at 2.6, which is the exemption working.
+    #:
+    #: Risk per trade did not change with it - median risk_money 34.77 -> 34.62,
+    #: p90 37.85 -> 35.76 - so the floor moved the target and nothing else, which
+    #: is what it was supposed to do.
+    #:
+    #: **And 1.0 is below this desk's own breakeven.** Over 2,014 closed
+    #: positions in that window the win rate is **46.6%**, which needs
+    #: **RR 1.14** to break even. Per strategy: `fade-to-value` 40.7% needs 1.46,
+    #: `cycle-scalp` 43.9% needs 1.28, `inverse` 44.8% needs 1.23, `sweep-aware`
+    #: 48.3% needs 1.07, `thesis-only` 53.5% needs 0.87. The floor was binding on
+    #: most trades and pinning them at a number that loses.
+    #:
+    #: 1.2 clears 1.14 with a little margin and goes no further on purpose. The
+    #: table above holds the win rate fixed, and **pushing a target out lowers
+    #: it** - this file already records that live RR buckets are flat in R from
+    #: 0-0.5 to 6+, which is that elasticity cancelling the arithmetic. So this
+    #: is a bounded step justified by breakeven, not a measured improvement, and
+    #: the next reading of the record should say whether the win rate held.
+    #:
+    #: **What this number did not cause, and what the record cannot separate.**
+    #: The only improvement in that window distinguishable from zero is
+    #: `cycle-scalp`: -0.799 -> +2.781 a trade, day-block P(<=0) = 0.005. Two
+    #: things changed for it at once and the record cannot tell them apart - its
+    #: median reward-to-risk rose 1.092 -> 1.457, and its instrument mix moved
+    #: sharply away from the Deriv synthetics it had been losing in (Jump 25
+    #: Index 91 -> 6 trades, Volatility 10 (1s) 44 -> 3, BTCUSD 47 -> 4). The
+    #: second is the larger change and the one with an obvious mechanism, but
+    #: this is a confound, not an attribution.
+    #:
+    #: Every other floored strategy moved the right way and every one sits
+    #: inside its own interval: `thesis-only` P(<=0) = 0.43, `inverse` 0.14,
+    #: `fade-to-value` 0.56. So nothing here is evidence that the floor earns
+    #: money - only that it does what it says to the geometry.
+    #: **Per strategy from 2026-10-08, each from its own measured win rate.**
+    #: A floor's whole job is to keep a trade above the ratio at which its own
+    #: hit rate breaks even, and that ratio is `(1 - p) / p` - so one number for
+    #: every strategy is either too low for the weak ones or too high for the
+    #: strong ones. On this desk it was both: at 1.2, `fade-to-value` (40.7%,
+    #: needs 1.46) was still losing while `thesis-only` (53.5%, needs 0.87) was
+    #: being pushed a third further than it had to be.
+    #:
+    #: **Shrunk toward the desk, not taken raw.** The measured rates spread
+    #: 40.7% to 56.1%, but on 41 to 970 trades most of that spread is sampling
+    #: noise, and a floor built on it would be largest exactly where the evidence
+    #: is thinnest - `level-scalp` has the best rate and the second-fewest
+    #: trades. Each rate is pulled toward the desk's own 46.7% in proportion to
+    #: its sample, `(n*p + K*desk) / (n + K)` with `K = 150` trades, which is the
+    #: number of its own a strategy needs before it moves off the house figure.
+    #: That collapses the rates to 44-51% and the floors to **0.95-1.25**:
+    #:
+    #:   `fade-to-value` 1.25, `cycle-scalp` 1.25, `inverse` 1.20,
+    #:   `snap` 1.10, `confluence-scalp` 1.10, `level-scalp` 1.10,
+    #:   `thesis-only` **1.10**, `sweep-aware` 1.50, and 1.15 for the rest,
+    #:   which have no live record of their own and take the desk's shrunk
+    #:   breakeven. **Nothing is exempt any more** - `sweep-aware` was, on the
+    #:   grounds that a floor would bind on 5% of its calls, and the record
+    #:   confirms the 5% and shows those eleven trades winning 45% and losing
+    #:   0.181 R each. A hand-made exception in a table that is otherwise
+    #:   derived is how the table starts drifting. It is set at 1.50 rather than
+    #:   its breakeven of 1.09 because everything below 1.5 is cumulatively
+    #:   negative for it - and **not higher**, because above 1.5 a floor starts
+    #:   pushing profitable trades out of the 1.5-3.0 band where it earns and
+    #:   toward the 3.0+ one where its win rate falls to 45%.
+    #:
+    #: **`thesis-only` and `level-scalp` are both held at 1.10**, above the
+    #: 0.95 and 1.05 their own arithmetic asks for. Two reasons, both stated
+    #: because neither is a measurement: no floored trade should ship below 1:1,
+    #: which rules out 0.95 on its own; and both numbers rest on the thinnest
+    #: evidence in the table - `level-scalp` has 41 trades and `thesis-only`'s
+    #: 53.5% is the highest rate here, so each is the most likely to fall back
+    #: toward the desk's 46.7% on more data. 1.10 is where they land if they do.
+    #:
+    #: **A uniform 1.5 over-floors every one of them**, which is why that number
+    #: was measured and not shipped. `cycle-scalp` is the only strategy with
+    #: enough trades to move off the house rate at all, and it asks for 1.25.
+    #:
+    #: It also defuses the strongest reading against a floor. Of 120 journalled
+    #: fields tested against the win rate on 1,616 closed positions,
+    #: `reward_to_risk` separates hardest and backwards - **42.3% above the
+    #: median ratio against 50.5% below**, q = 0.00. That is cross-sectional
+    #: rather than causal, since a trade carries a high ratio when its target was
+    #: already far away - but if the elasticity is real, floors of 0.95-1.25 move
+    #: a target far less than 1.5 and there is correspondingly less to lose.
+    #:
+    #: **These are measured at the current geometry and so expire.** Changing a
+    #: floor changes the win rate that set it. Re-derive from the broker record
+    #: rather than treating the table as fixed, and `research/ideas/win_rate.py`
+    #: is what re-derives it.
+    reward_floor: ClassVar[float] = 0.0
+
+    def floored_target(
+        self,
+        spec: SymbolSpec,
+        side: Side,
+        entry: float,
+        stop: float,
+        target: float,
+    ) -> float:
+        """`target`, pushed out until it pays `reward_floor` times the **real** risk.
+
+        Called where the geometry is finished rather than where it is proposed,
+        and that is the point. A stop is proposed as a multiple of volatility
+        and then widened twice - once to clear the level's zone, once to clear
+        the fill and the broker's own `stops_level` - while a target is proposed
+        from the expected push and then pulled *back* by `target_buffer_vol`.
+        Flooring against the proposed stop therefore floors against a number
+        that is not the risk the trade carries.
+
+        The live case this was written for: on 2026-10-05 **`sweep-aware`** sold
+        EURUSD with a 44.1 pip stop and a 9.8 pip target - 0.22 reward to risk,
+        needing an 82% win rate - and closed it at -6.06 on a managed exit,
+        having touched neither end. Three days earlier `fade-to-value` took the
+        same shape on the same feed at 0.114, and the journal shows the
+        mechanism: a stop proposed at 1.69v that the level's zone widened to
+        **21.7v**, against a target at fair value that cannot move.
+
+        So the only number that describes either trade is `abs(entry - stop)`
+        after every widening, which is what this reads.
+
+        **That first attribution was wrong when it was written here**, and it is
+        worth the sentence: I read the magic against a base of 777700 when
+        `DEFAULT_MAGIC` is 777701, which shifts every strategy to its neighbour
+        in `MAGIC_ORDER` - and every neighbour is a plausible name, so the
+        mistake reads as a finding. `strategy_for` exists precisely so nobody
+        does that arithmetic by hand. The MT5 order comment carries
+        `till <strategy>` and is the free cross-check.
+
+        Never pulls a target in, so a strategy whose geometry is already sound
+        is untouched - `sweep-aware` would see this fire on 5% of its calls.
+        """
+        if self.reward_floor <= 0:
+            return target
+        risk = abs(entry - stop)
+        if risk <= 0:
+            return target
+        if abs(target - entry) >= risk * self.reward_floor:
+            return target
+        return spec.round_price(entry + side.sign * risk * self.reward_floor)
+
+    @property
+    def share_of_risk(self) -> float:
+        """The structural size multiplier, resolved. Never above 1.
+
+        Capped like its siblings in `scaling.combined`: a per-strategy knob may
+        argue for less risk and never for more, so a typo cannot enlarge a
+        position.
+        """
+        share = self.risk_share or RISK_SHARE_BY_STYLE.get(self.style, 1.0)
+        return max(0.0, min(1.0, share))
+
+    @property
+    def limits(self) -> Limits:
+        """The gate values `risk.Guard` should apply to *this* strategy.
+
+        Zero on any field means the deployment's own, so a strategy that names
+        nothing is governed exactly as it was before this existed.
+        """
+        return Limits(by=self.name, loss_cooldown=self.cooldown_s)
+
+    def horizon(self, interval: str) -> float:
+        """How far this strategy's hold stretches one bar of `interval`.
+
+        See `trading-strategies-strategy.md` in research/docs.
+        """
+        import math
+
+        from till_infinity.utils.intervals import SECONDS
+
+        bars = SECONDS.get(interval, 0.0)
+        if bars <= 0:
+            return 1.0
+        held = self.hold_for(interval)
+        if held <= 0:
+            return 1.0
+        grown = math.sqrt(max(held / bars, 1.0))
+        return max(1.0, min(grown, max(self.settings.max_stop_scale, 1.0)))
+
+    #: The most of the expected push a trail may sit behind the best price.
+    #:
+    #: A trail wider than the move it protects can never be better than the
+    #: stop already in place, so `manage.advance` never applies it and the
+    #: protection is silently absent. Half means that once price reaches the
+    #: modelled push, the trail has locked in half of it.
+    TRAIL_SHARE: ClassVar[float] = 0.5
+
+    def protection(self, interval: str, push_vol: float = 0.0) -> tuple[float, float]:
+        """Break-even and trail for this strategy on this interval.
+
+        See `trading-strategies-strategy.md` in research/docs.
+        """
+        even = self.break_even_at or self.settings.break_even_at
+        trail = (self.trail_vol or self.settings.trail_vol) * self.horizon(interval)
+        if push_vol > 0 and trail > 0:
+            trail = min(trail, abs(push_vol) * self.TRAIL_SHARE)
+        return even, trail
+
+    def against_limit(self, interval: str) -> float:
+        """How much momentum against the trade this strategy tolerates here."""
+        base = self.max_against_vol or self.settings.max_against_vol
+        return base * self.horizon(interval) if base > 0 else 0.0
+
+    def risk_scale(
+        self,
+        feed: str,
+        features: dict[str, float],
+        positions: Sequence[object] = (),
+        equity: float = 0.0,
+        peak: float = 0.0,
+        interval: str = "",
+        side: object = None,
+    ) -> float:
+        """Every sizing reduction at once, as one multiplier in [0, 1].
+
+        See `trading-strategies-strategy.md` in research/docs.
+        """
+        from ...risk import scaling
+
+        settings = self.settings
+        return scaling.combined(
+            scaling.crowding(
+                feed,
+                # `(feed, sign)` per open position. `Position` carries the
+                # broker's symbol rather than the feed, so the caller supplies
+                # what it already knows instead of this reverse-mapping it.
+                [
+                    (str(getattr(p, "feed", "")), p.side.sign)
+                    for p in positions
+                    if getattr(p, "feed", "") and hasattr(p, "side")
+                ],
+                settings.crowding_share,
+            ),
+            # **`ewma_tr_bps`, not `vol_bps`.** A decaying average of true range
+            # forecast the next bar's movement better than every figure the desk
+            # produces, at the horizon each of those was built for: against 11,797
+            # recorded calls it beat `vol_bps`, `garch_bps`, `ensemble_bps`,
+            # `forecast_bps` and `range_bps` in every cell, and beat GARCH at one
+            # bar ahead scored against return variance - GARCH's own quantity -
+            # 0.331 to 0.166. The margin widens with the interval, 1.17x at 1m to
+            # 2.04x at 15m. See `research/docs/volatility-estimators.md`.
+            #
+            # `vol_bps` remains the fallback, for a signal published before this
+            # feature existed or a series whose ranges are not warm. It is not a
+            # switch: an absent reading has to size *somehow*, and the previous
+            # answer is the right one to keep.
+            #
+            # Only the magnitude moves here. `by_regime` still reads
+            # `forecast_ratio`, which asks whether this instrument's volatility is
+            # unusual *for itself* - a different question, and not one this
+            # measurement touched.
+            scaling.by_volatility(
+                float(features.get("ewma_tr_bps") or features.get("vol_bps") or 0.0),
+                settings.volatility_target_bps,
+            ),
+            # How far this instrument's volatility sits from its own normal.
+            # Both tails are worse for a level holding, so this is a distance
+            # from one rather than a multiple of it - see `scaling.by_regime`.
+            scaling.by_regime(
+                features.get("forecast_ratio"), settings.regime_band, settings.regime_floor
+            ),
+            # How likely a large bar is inside the hold. Knows when, not which
+            # way, so it can only shrink - see `scaling.by_spike`.
+            spike_scale(features, settings),
+            scaling.by_edge(features.get("net_edge_vol"), settings.edge_full_at),
+            scaling.by_drawdown(peak, equity, settings.drawdown_halt_at),
+            scaling.by_slippage(scaling.overshoot_for(settings.stop_overshoot, feed, side)),
+            # The timeframe the trigger came from. Sub-15m is -821.75 over 129
+            # closes against +35.03 over 21 at 15m and above, monotone across
+            # every band between. See `scaling.by_interval`.
+            scaling.by_interval(interval, settings.interval_weight),
+            # This strategy's structural share, which is the only one of these
+            # that is not a reading of the current bar. Folded in here rather
+            # than at the three sizing call sites, so it cannot be added to two
+            # of them and forgotten in the third.
+            self.share_of_risk,
+        )
+
+    @property
+    def ceiling(self) -> float:
+        """The longest this strategy may hold, by its own style.
+
+        Two ceilings rather than one, because one never governed both. `hold_for`
+        read `max_hold` only when a strategy named no hold of its own, so every
+        scalp was capped by a setting and every swing was capped by a hardcoded
+        `ClassVar` that no deployment could reach. A swing running six hours was
+        not a decision anybody made in configuration; it was a number in a class
+        body.
+        """
+        settings = self.settings
+        if self.style == "position":
+            return settings.max_hold_position or settings.max_hold_swing or settings.max_hold
+        if self.style == "swing":
+            return settings.max_hold_swing or settings.max_hold
+        return settings.max_hold
+
+    def hold_for(self, interval: str) -> float:
+        """Seconds this strategy may hold a trade triggered on `interval`.
+
+        **No ceiling argument, deliberately.** It used to take one and every
+        caller passed `settings.max_hold` - the scalp ceiling - which is how a
+        swing came to be governed by a number written for a one-minute thesis
+        in three call sites and by a hardcoded `ClassVar` everywhere else. The
+        style knows which ceiling applies; a caller does not, and the ones that
+        thought they did were wrong.
+        """
+        from till_infinity.utils.intervals import SECONDS
+
+        seconds = SECONDS.get(interval, 0.0)
+        limit = self.ceiling
+        want = min(self.hold_seconds, limit) if self.hold_seconds else limit
+        if self.hold_bars <= 0 or seconds <= 0:
+            return want
+        return min(self.hold_bars * seconds, want)
+
+    def hold_bars_for(self, interval: str) -> float:
+        """How many bars of `interval` the hold above actually covers.
+
+        The number the stop has to survive, which is why it is derived from the
+        capped hold rather than from `hold_bars` directly - a hold cut short by
+        the ceiling is fewer bars of noise, and pretending otherwise would size
+        the stop for time the trade will not be given.
+        """
+        from till_infinity.utils.intervals import SECONDS
+
+        seconds = SECONDS.get(interval, 0.0)
+        if seconds <= 0:
+            return 1.0
+        return max(self.hold_for(interval) / seconds, 1.0)
+
+    #: Where a trade may be **triggered**. The lower timeframes: the entry is
+    #: what decides the stop, and a tighter stop on faster data is the whole
+    #: reason to drop down to it.
+    #:
+    #: Empty means "whatever the operator allows". A strategy whose thesis only
+    #: holds on fast data says so here rather than relying on the deployment to
+    #: be configured for it - the module accepts every timeframe a level forms
+    #: on, because restricting the service restricts every strategy at once.
+    entries: ClassVar[tuple[str, ...]] = ()
+
+    #: Where the **bias** comes from. The higher timeframes, which do not
+    #: trigger anything: they say whether a trigger is worth taking.
+    #:
+    #: The pair is the point. A scalper anchored on 1h and entering on 3m is
+    #: taking a fast trade in a slow structure's direction; the same scalper
+    #: with no anchor is taking a fast trade in no direction at all. And a
+    #: swing anchored on 1d does not have to enter on 1d - dropping to 1h, or
+    #: lower, buys a tighter stop for the same idea, which is risk reduction
+    #: rather than a different trade.
+    #:
+    #: Context reaches a strategy through the signal's `confluence`, which is
+    #: the timeframes `structures` found agreeing on that price.
+    context: ClassVar[tuple[str, ...]] = ()
+
+    #: Whether an entry is refused when no context timeframe agrees.
+    #:
+    #: **On by default.** A trigger with nothing above it agreeing is a fast
+    #: trade in no direction, which is the thing `context` exists to prevent -
+    #: making it opt-in meant most strategies opted out. A strategy that
+    #: declares no `context` at all is unaffected: `consider` requires both,
+    #: so `council`, which delegates to its members, is not gated twice.
+    needs_context: ClassVar[bool] = True
+
+    #: The timeframe whose last closed bar must show the rejection, when the
+    #: candle witness is asked for. Empty means the entry interval, which is
+    #: what a scalp wants: it is entering on that bar's evidence.
+    #:
+    #: A swing wants the opposite. It enters on 1h but the rejection that
+    #: matters is the 4h one - a pin bar there is a claim several hours of
+    #: auction failed at this price, where the same shape on 1h is one hour's
+    #: worth. Naming the timeframe separately is what lets the entry be fast
+    #: and the evidence slow.
+    candle_interval: ClassVar[str] = ""
+
+    #: A **window** of timeframes to look for the rejection on, coarsest first.
+    #: Takes precedence over `candle_interval` where set.
+    #:
+    #: One timeframe was too narrow a question. A 4h pin bar is the strongest
+    #: version of "the auction failed here", and a 1h one is the same claim
+    #: with less behind it - but a 4h bar closes six times a day, so insisting
+    #: on that one refuses every setup that formed inside the last four hours.
+    #: Asked coarsest first, so the strongest available evidence is the one
+    #: reported.
+    candle_intervals: ClassVar[tuple[str, ...]] = ()
+
+    #: Whether the trail steps up behind 15m-1h levels rather than following
+    #: price at a fixed volatility distance. Off for everything measured on the
+    #: distance trail; `SwingLevel` turns it on.
+    trail_levels: ClassVar[bool] = False
+
+    #: Whether the stale clock is switched off for this strategy entirely.
+    #:
+    #: The rule exists because **a level touch resolves in eighteen seconds at
+    #: the median and 84% inside five minutes**, so a trade still sitting at its
+    #: entry well past that is not the event it was opened for. That premise is
+    #: true of a scalp on a touch and simply false of a swing, whose thesis
+    #: *is* duration - "it has not moved yet" says nothing about a six-hour
+    #: idea at the ninety-minute mark.
+    #:
+    #: Scaling the clock to the declared hold was the first attempt and it was
+    #: a half-measure: it made a rule proportional when the rule does not apply.
+    #:
+    #: **Declared, not derived.** Deriving it from `hold_seconds` would let a
+    #: new strategy inherit an exemption from a number it happened to pick;
+    #: this way it has to say what kind of thing it is. `approach-scalp`
+    #: declares a four-hour hold and is deliberately *not* exempt - it is named
+    #: a scalp, it trades toward a nearby level, and nothing measured says its
+    #: thesis is duration.
+    stale_exempt: ClassVar[bool] = False
+
+    #: Rest the entry only when the rejection wick is at least this share of
+    #: its bar's range. Zero keeps `pullback_fraction` unconditional.
+    #:
+    #: The wick *is* the argument for waiting. A long tail means price went
+    #: well past the level and came back inside the bar, so the close is a poor
+    #: representation of where the trade can be got - and the retracement that
+    #: fills a resting order is the one the wick already demonstrated. A short
+    #: wick is a level held without drama, where waiting mostly means not
+    #: trading.
+    pullback_when_wick: ClassVar[float] = 0.0
+
+    #: Whether every witness asked for must confirm, rather than any one of
+    #: them.
+    #:
+    #: The disjunction is right for a scalp: it cannot wait four hours for a 4h
+    #: bar to close, so requiring both would refuse a clean fast turn for not
+    #: yet having a candle to show for itself. A swing has the time, and the
+    #: two witnesses answer different questions - the candle says the auction
+    #: failed here, the momentum ensemble says it is failing now.
+    needs_both_witnesses: ClassVar[bool] = False
+
+    #: Momentum leads and the candle confirms it, rather than either carrying
+    #: the trade alone.
+    #:
+    #: The disjunction has a leak that only shows on a higher timeframe. The
+    #: turn is read **only after a pullback**, because before one the same
+    #: reading means the opposite thing - so on an entry that never pulled
+    #: back, "turn" is not an unsatisfied witness, it is an absent one, and the
+    #: candle is then the only thing asked. A 4h pin bar alone carries the
+    #: trade, with nothing saying price is actually turning now.
+    #:
+    #: With this set the turn is **required**, and its absence is a refusal
+    #: rather than a pass. The candle is then evidence on top: a hammer is a
+    #: momentum reversal compressed into one bar, so asking the bar to confirm
+    #: what the accumulator already saw is a second reading of one event, which
+    #: is worth having in that order and not in the other.
+    #:
+    #: For the higher timeframes, where a bar takes hours to close and a trade
+    #: taken on it alone is taken on evidence that has already happened.
+    momentum_leads: ClassVar[bool] = False
+
+    #: How much of the sub-hour momentum ensemble must point the way the trade
+    #: does, from 0 (ask nothing) to 1 (every timeframe).
+    #:
+    #: Agreement is the reading a single filter cannot give: momentum on 1m and
+    #: nowhere else is noise, the same move on 1m, 5m and 15m at once is the
+    #: market doing one thing at several resolutions.
+    #:
+    #: **Silent when the ensemble is cold.** A gate that refuses because the
+    #: reading is missing is a gate that stops all trading on a fresh
+    #: container, which this repository has done once already.
+    min_momentum_agree: ClassVar[float] = 0.0
+
+    @property
+    def intervals(self) -> tuple[str, ...]:
+        """Timeframes this strategy will trigger on.
+
+        The intersection of what it claims and what the operator allows, so
+        configuration can narrow a strategy and never widen one past the data
+        its reasoning was built for.
+        """
+        allowed = self.settings.intervals
+        if not self.entries:
+            return allowed
+        return tuple(t for t in self.entries if t in allowed)
+
+    @property
+    def anchors(self) -> tuple[str, ...]:
+        """Timeframes whose agreement counts as context for this strategy."""
+        if not self.context:
+            return ()
+        return tuple(t for t in self.context if t in self.settings.intervals)
+
+    def anchored(self, payload: dict[str, Any]) -> tuple[str, ...]:
+        """Which of this strategy's context timeframes agree with this call.
+
+        Read from the signal rather than fetched: `structures` has already
+        grouped a price into a zone across timeframes, and asking again here
+        would be a second, differently-wrong answer to a question already
+        settled upstream.
+        """
+        raw = payload.get("confluence")
+        if not isinstance(raw, list):
+            return ()
+        wanted = set(self.anchors)
+        interval = str(payload.get("interval") or "")
+        return tuple(str(t) for t in raw if str(t) in wanted and str(t) != interval)
+
+    def resting_price(self, features: dict[str, float]) -> float:  # noqa: ARG002
+        """A price this strategy insists its entry sits at, or 0 for at market.
+
+        See `trading-strategies-strategy.md` in research/docs.
+        """
+        return 0.0
+
+    def wants(self, payload: dict[str, Any]) -> bool:
+        """A cheap pre-filter, so a firehose of signals costs almost nothing."""
+        return str(payload.get("shape") or "") == self.shape
+
+    def observe(self, payload: dict[str, Any]) -> None:
+        """Learn from a signal whatever the verdict on it turns out to be.
+
+        See `trading-strategies-strategy.md` in research/docs.
+        """
+
+    async def consider_async(
+        self,
+        payload: dict[str, Any],
+        *,
+        spec: SymbolSpec,
+        tick: Tick,
+        equity: float,
+        positions: Sequence[Any] = (),
+        peak: float = 0.0,
+    ) -> Verdict:
+        """The async door, for a strategy that genuinely blocks on the network.
+
+        Defaults to the synchronous one, so the four arithmetic strategies are
+        unchanged and `service` has a single call site. Only `council`
+        overrides it - making every strategy async would be a lie about what
+        the others cost.
+        """
+        return self.consider(
+            payload, spec=spec, tick=tick, equity=equity, positions=positions, peak=peak
+        )
+
+    @abstractmethod
+    def consider(
+        self,
+        payload: dict[str, Any],
+        *,
+        spec: SymbolSpec,
+        tick: Tick,
+        equity: float,
+        # What the book already holds, and the equity high-water mark. Both
+        # optional and both default to "nothing known", so a caller that does
+        # not track them - a test, a replay - sizes exactly as before rather
+        # than differently and silently. See `risk_scale`.
+        positions: Sequence[Any] = (),
+        peak: float = 0.0,
+    ) -> Verdict:
+        """A trade, or the reason there is not one. Never raises for a bad signal."""
+
+    def __str__(self) -> str:
+        return f"{self.name} ({self.wanted}/{self.seen} taken)"
+
+
+#: Every strategy that can be named in `TRADING_STRATEGIES`. Populated at the
+#: bottom of `scalper`, which is imported for its side effect by `__init__`.
+STRATEGIES: dict[str, type[Strategy]] = {}
+
+
+def register(cls: type[Strategy]) -> type[Strategy]:
+    """Add a strategy to the register. Used as a decorator."""
+    STRATEGIES[cls.name] = cls
+    return cls
+
+
+def build(names: Sequence[str] | None, settings: Settings) -> list[Strategy]:
+    """Instantiate the named strategies, or the configured default.
+
+    An unknown name raises rather than being skipped, for the same reason an
+    unknown instrument does: a typo that silently runs one strategy instead of
+    two is only noticed by the trades that never happened.
+    """
+    from . import dispersing as _disp  # noqa: F401 - registers `statespace-surprise`
+
+    chosen = tuple(names) if names else settings.strategies
+    unknown = [n for n in chosen if n not in STRATEGIES]
+    if unknown:
+        raise ValueError(
+            f"unknown strategy: {', '.join(unknown)} (have: {', '.join(sorted(STRATEGIES))})"
+        )
+    return [STRATEGIES[name](settings) for name in chosen]
+
+
+#: What `TRADING_STYLE` accepts. "both" is the default and preserves the
+#: behaviour that existed before the switch did.
+STYLES = ("scalp", "swing", "both", "none")
+
+
+def by_style(engines: list[Strategy], style: str) -> tuple[list[Strategy], list[Strategy]]:
+    """Split a strategy list into the ones this style runs and the rest.
+
+    Returns `(kept, dropped)` so the caller can say what it turned off. An
+    unrecognised style keeps everything: a typo in an environment variable
+    should not silently stop the service trading, which is the failure a
+    mis-set base-rate floor already caused once.
+    """
+    wanted = (style or "both").strip().lower()
+    if wanted not in STYLES:
+        log.warning(
+            "trading: TRADING_STYLE=%r is not one of %s - running everything",
+            style,
+            ", ".join(STYLES),
+        )
+        return list(engines), []
+    if wanted == "both":
+        return list(engines), []
+    if wanted == "none":
+        return [], list(engines)
+    kept = [e for e in engines if e.style == wanted]
+    dropped = [e for e in engines if e.style != wanted]
+    return kept, dropped
+
+
+def catalogue() -> dict[str, str]:
+    """name -> what it does, for `trading strategies`."""
+
+    return {name: cls.description for name, cls in sorted(STRATEGIES.items())}

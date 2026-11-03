@@ -1,17 +1,32 @@
 # News
 
-`till_infinity.news` collects headlines and the economic calendar around them -
-the event-proximity context a vol or regime model needs to know *why* a price
-moved.
+`till_infinity/adapters/news/` collects headlines and the economic calendar
+around them - the event-proximity context a vol or regime model needs to know
+*why* a price moved.
 
-```bash
-uv run till-infinity news collect          # poll forever
-uv run till-infinity news collect --once   # a single pass
-uv run till-infinity news upcoming --high  # next high-impact releases
-uv run till-infinity news latest           # most recent headlines
-uv run till-infinity news info             # what is stored
-uv run till-infinity news sources          # the configured feeds
-```
+**No node registers it.** The client, the factory, the sources and the store are
+all written and tested, and nothing in `node/` adds them, so a running desk
+collects no news and `.data/news/news.db` is whatever the retired collector last
+left there. Said here rather than left to be discovered, because a document that
+describes a working feed is how a desk ends up measuring against a calendar it
+is not reading.
+
+**It is a Nautilus data adapter and not a service, and the reason is backtest
+parity.** A `NewsDataClient` polls the sources into its own SQLite store and
+publishes `CalendarEvent` on the engine's bus; its `_request` serves that store
+back - both `CalendarEvent` and `MacroObservation` - so a backtest replays the
+calendar *as it stood* instead of calling a live API and getting today's. A calendar entry is
+published twice - `SCHEDULED` when it became known, `RELEASED` at its release
+time - because a stored row replayed at its scheduled time carries the actual,
+which is the number everybody is waiting for.
+
+    sources/   one module per provider: fetch, parse, return values
+    store.py   the SQLite the live half writes and the history half reads
+    client.py  the poll loop, the subscriptions and `_request`
+    data.py    `CalendarEvent` and `MacroObservation`, and the lookahead guard
+
+The bus service this replaced is in `research/retire/news/`, and **there is no
+CLI**: the node is the entry point, as it is for everything else here.
 
 ## Sources
 
@@ -98,7 +113,8 @@ Surprise (actual − forecast) is computed on the `Event` model rather than
 stored, since both fields are kept raw:
 
 ```python
-from till_infinity.news import SqliteStore, Settings
+from till_infinity.adapters.news import SqliteStore
+from till_infinity.adapters.news.sources import Settings
 
 async with SqliteStore(Settings.from_env().database) as store:
     for event in await store.upcoming(min_importance=2):
@@ -109,7 +125,7 @@ async with SqliteStore(Settings.from_env().database) as store:
 
 Publishers tag articles `VENUE:TICKER` - 641 distinct strings across 3,058
 articles, and none of them the feed names the rest of this project uses.
-[`news/symbols.py`](../till_infinity/news/symbols.py) maps them onto feeds,
+[`news/symbols.py`](../research/retire/strategies/venues/symbols.py) maps them onto feeds,
 building its table from the symbols `prices` already collects rather than from
 a second hand-written list: `prices.config` already knows `BTCUSD` on Bitstamp
 and `BTC-USD` on Yahoo are both `btc`, because it had to in order to collect
@@ -141,7 +157,7 @@ to `usdjpy` because both are dollar pairs would invent a relationship, and
 `EURJPY` is not `eurusd` however much of the alphabet they share.
 
 This is what lets a headline **wake an agent** rather than merely be readable
-once one is awake. See [agents.md](agents.md), "News can wake the analyst".
+once one is awake. See [agents.md](../research/retire/agents/agents.md), "News can wake the analyst".
 
 ## Environment
 

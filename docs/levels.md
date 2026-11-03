@@ -1,5 +1,18 @@
 # Key price levels
 
+> **The `till-infinity` commands below no longer exist.** The 2,852-line CLI
+> retired to `research/retire/bus/` with the services it drove, and
+> `pyproject.toml` declares no console script on purpose: a second way to run
+> the desk is a second thing to go stale. The node module is the entry
+> point - `python -m till_infinity.node.live`.
+>
+> **`structures` itself retired on 2026-10-29**, with the eight level-scalper
+> strategies that read it, and is in `research/retire/structures/`. This
+> document is kept because the model is the ancestor of `statespace/`: the
+> successor asks the same question as a predictive distribution with a
+> likelihood that can be scored against a null, rather than as a pattern
+> that either matched or did not.
+
 Where price has turned before, how sure we are it turns *there*, and what it
 did last time it arrived - from that side.
 
@@ -2047,7 +2060,7 @@ price respects more often. The outcome machinery to answer that already exists.
 
 ### Built and run, 2026-08-14 - and it did not settle it
 
-[`runs.py`](../till_infinity/structures/runs.py) segments a series into runs
+[`runs.py`](../research/retire/structures/engine/drawing/runs.py) segments a series into runs
 and emits the boundaries as ordinary `Point`s, so `form`, `as_of` and the whole
 outcome machinery cannot tell which formation produced them.
 `Engine(formation="run")` switches between them, which is what makes the
@@ -2309,6 +2322,287 @@ treats a level as the thing price is arriving at. In a range it is also a
 the floor of the range above - and the same zone therefore carries evidence for
 two different trades.
 
+## Grouping touches into levels: clustering, neighbours, and factors
+
+Deciding *which touches are one level* is a clustering problem on the price
+axis and nothing else. `indicators/grouping.py` holds the primitives;
+`indicators/levels.py` is the book that uses them.
+
+### The greedy merge chains
+
+`Levels._merge` walks levels in price order and folds a neighbour into the
+running one when they are closer than `merge_vol`, keeping whichever has more
+touches. Keeping the better-evidenced centre is right, but it **moves the
+anchor**, so the next comparison is against the new price.
+
+Nine levels 0.30 units apart at `merge_vol` 0.35, each carrying more touches
+than the last:
+
+| merge | levels out | span | centre |
+|---|---|---|---|
+| greedy | **1** | **2.40 units, 6.9x the gap** | 102.4, the end of the run |
+| bounded | 5, converging to 4 | every group <= 0.35 | the weighted mean of each |
+
+The surviving greedy centre is a price **only one of the nine touches sat at**.
+Feed the same prices with equal touch counts and the anchor holds and you get
+five levels - so whether it collapses depends on the *touch counts* rather than
+the prices, and the case where it does is the ordinary one of a later touch
+having seen more.
+
+`cluster` is **complete linkage**: a group is admitted only while its whole
+span stays inside the width. The span is bounded by construction and the result
+depends on neither the order nor the weights, which matters because order
+dependence is what made the same book collapse differently read upwards and
+downwards.
+
+**The default is still the greedy version.** Every level measured on this desk
+was read off it, and flipping it silently would move every level at once.
+`Levels(bounded=True)` opts in, and the two carry different reprs so a book
+merged one way is never mistaken for the other.
+
+The guarantee is a bounded span and **not** a minimum separation between
+survivors: a group folds into its best-evidenced member, which can sit at its
+edge, so two survivors can end up closer than the width. Demanding otherwise
+would put the answer back at the mercy of the scan order. Repeated passes
+converge - 9, 5, 4, 4 - rather than eating the book.
+
+### A cluster and a mode are different questions
+
+`cluster` answers *which touches are one level*: a partition, bounded span,
+every input in exactly one group. That is the merge question.
+
+`modes` answers *where is the agreement*: the peaks of the weighted density,
+with no bounded span. A broad shelf of touches is one mode where a width would
+cut it into three, and for watchedness the one is the right answer because the
+touches do agree, loosely. This is the quantity
+`a-magnet-is-a-shared-reference` asks for - how many **independent** turns
+agree on a price, not how tightly a group fits.
+
+`nearest` and `crowding` are the neighbour side. `crowding` is the reciprocal
+of the mean distance to the k nearest candidates, so a price with several turns
+beside it reads high and an isolated one reads low.
+
+### The confound all three inherit
+
+**A density peak is partly an occupancy artefact.** Price produces more turns
+at prices where it spent more time, and it spent more time where it ranged. So
+crowding is large where price has *been*, whether or not anybody is computing
+that price, and every one of these is a feature rather than a signal.
+
+Any claim built on them needs an occupancy-matched control: the same count of
+turns placed by time spent. [`level-shield.md`](../research/docs/level-shield.md)
+is the cautionary case - its single most impressive cell, gold at 1h reading
++0.2533 at z +3.18, was reproduced by a walk with the same bar geometry.
+
+### What a factor decomposition can and cannot do
+
+**PCA cannot find a level.** A level is a location on one axis, and a
+one-dimensional cloud has exactly one principal component, which is that axis.
+"The first component of a price distribution" is the price axis restated, so
+there is no decomposition to do and nothing to rank.
+
+What it can do is change the series the levels are found in. `common` returns
+the leading component of a panel of returns - on FX the dollar move - and
+`residual` regresses it out and rebuilds a path. **A level in the residual is
+specific to that instrument** rather than a reflection of a move its whole
+panel made, which is a different and testable object. Verified on a planted
+factor: recovered at 0.97 correlation, and the residual's own correlation with
+it is 0.000. `currency-triangles-are-the-positive-control` is the check on any
+screen over those residuals.
+
+Two cautions. The panel must be **aligned and then differenced**, never the
+other way round, or every session gap becomes a fake one-bar return. And
+`residual`'s beta is a whole-sample fit, so it is exploratory only - an
+adaptively fitted ratio once gave a null t of -29 where a training-half fit put
+it at -3.46.
+
+### The one thing deliberately not built
+
+Compressing a level's attributes - touch count, age, push, wick share - into a
+component or two. It is a weighted sum, and this desk has measured that twice:
+activation, scale and per-term offset are all rank identities within a weighted
+sum, and fitted weights beat hand-tuned ones on AUC 0.604 against 0.556 while
+**losing on edge, +0.002 against +0.019**. A principal component is a weighting
+chosen by variance rather than by edge, which is the worse of the two
+objectives. It can be added, but it should be measured against that prior
+rather than shipped on the strength of being a standard method.
+
+### Which price in a cluster is the level
+
+A floor is **where price stopped**, not the average of where it stopped. The
+lowest touch of a support cluster is the price that held; the weighted mean
+sits inside the body of touches, which is a price price has already traded
+through. Put a stop below the mean of a support cluster and it is *inside* the
+cluster - the level has to break before the stop is reached, which is the
+opposite of what the stop is for.
+
+`Group.price(anchor, side=)` takes `Anchor.CENTRE`, `FLOOR`, `CEILING` or
+`SIDED`. On four support touches at 99.80, 99.95, 100.00 and 100.02 weighted
+1, 3, 4, 2:
+
+| anchor | price |
+|---|---|
+| `CENTRE` | 99.969 - inside the cluster |
+| `FLOOR` | **99.800** - the price that held |
+| `CEILING` | 100.020 |
+| `SIDED`, side -1 | 99.800 |
+| `SIDED`, side +1 | 100.020 |
+| `SIDED`, side 0 | 99.969, because an unformed side is an absence |
+
+`SIDED` keys on `Level.side`, the pivot side that *formed* the level, rather
+than where the level sits relative to price now - the latter flips as price
+moves, which would change a level's anchor under it.
+
+**The trade-off runs the other way for robustness.** An extreme is one touch,
+so a single spike moves it and nothing averages it out, where the centre is an
+estimate over the whole group. The extreme is the better *definition* and the
+noisier *estimator*, and which to use depends on whether the number is being
+placed against (an edge) or compared (a centre).
+
+### Volatility-based levels: what exists, and what does not
+
+Three different things get called this, and the answer differs for each.
+
+**Volatility-*scaled* levels - already, throughout.** Every parameter in this
+book is in volatility units: `MERGE_VOL` 0.35, `TOUCH_NOISE_VOL` 0.40,
+`DRIFT_VOL_PER_HOUR` 0.02, and the zone is `ZONE_SIGMA` times the posterior
+sigma, so the width is the same arithmetic as the centre rather than a
+parameter. The unit itself is driven from the range (`drive-q-from-the-range`).
+Nothing is needed here.
+
+**Volatility *bands* - Nautilus already ships them, so do not write one.**
+`FRAMEWORK` in `indicators/__init__.py` registers `atr`, `bollinger` (20,
+2.0), `keltner` (20, 2.0) and `donchian` (20) by short name, reachable with
+`framework("keltner")`. The audit behind that registry found only
+`EfficiencyRatio` and `SpreadAnalyzer` wrong; the volatility family is sound.
+
+**Session or floor-trader pivots - a genuine gap.** R1/R2/S1/S2 from the prior
+period's range is range-derived, and it lived in the retired
+`structures/drawing/pivots.py`. There is no equivalent under `indicators/`.
+
+Before building on any of the second or third kind, the prior from this desk's
+own record: **`topology-restates-volatility`** - levels, ranges and shapes all
+read null once volatility is stratified. A Keltner band is `EMA ± k x ATR`, so
+its position is a function of volatility alone and "price reached the band" is
+close to "price moved k volatility units", which is tautological in the way
+`a-return-rate-is-geometry` describes. A band is sound as a **distance** - and
+a distance is the one thing levels survived as, per
+`the-origin-picks-a-distance-not-a-probability` - and refuted as a
+**probability**. Build them for placement, not for entry.
+
+## Session pivots, and the control they provide
+
+`indicators/pivots.py`. Arithmetic on the prior period's high, low and close -
+`PP`, `R1`-`R3`, `S1`-`S3`, plus the prior `PH`, `PL` and `PC` - published
+before the period opens and watched by enough people that they matter whether
+or not the formula means anything.
+
+**Their main use is as the control the swing book has never had.** A pivot has
+no parameters, no detector and nothing to fit, and today's set is fully
+determined by yesterday. If the Kalman book over `trend.pivots` does not beat
+this, the swing detection is not earning its complexity - and nothing here had
+ever checked. Two further properties: there is **no look-ahead at all**, since
+a `Session` is emitted only once a bar from the next one arrives; and they
+**exist before the first touch**, which is when a level is most useful and a
+swing level knows least.
+
+### The session boundary is a choice and not a neutral one
+
+`day_of` cuts at UTC midnight, because a set that shifts with the observer's
+clock is not the same level two people are looking at. But the FX day a broker
+rolls is 21:00-22:00 UTC, and **21:00 is where a survivorship confound lives**
+- a random walk held across it reads +0.61R, and the BOS reconciliation found
+three trades exiting at the Sunday reopen for that reason. `boundary` shifts
+the cut in seconds so the two can be compared rather than assumed.
+
+A shifted session is **named for the day it ends in**, which is the content of
+"Sunday 21:00 is Monday's session". Deriving the name from the start date
+instead put the FX week's first boundary a day late, and would have put a
+month boundary in the wrong month whenever the 1st opened the evening before.
+
+Also worth stating: the recorded store's `ts` is probably the bar's **open**
+rather than its close, so a bar near a boundary may fall in the wrong session
+by one bar. It affects the first and last bar of each period and nothing else.
+
+## Asymmetry, by level kind
+
+`Sided` is a **tilt**, not two numbers: the sides are `shared * sqrt(tilt)` and
+`shared / sqrt(tilt)`, so the geometric mean is `shared` whatever the tilt and
+switching asymmetry on cannot move the average. That is deliberate -
+`refit-the-parameter-a-lever-multiplies` is the recorded failure, where a
+multiplier whose mean was not 1 changed the average it multiplied and refitting
+reversed a +1192 result to -24. A tilt of 1 returns `shared` **exactly**,
+because a capability whose neutral setting is not neutral silently
+reparameterises every existing deployment.
+
+| kind | per-side parameter | notes |
+|---|---|---|
+| `Levels` | `reach`, `merge_vol`, `touch_noise_vol` | the book's detection, grouping and belief |
+| `BjorgumLevels` | `mult` | the zone's ATR multiple, so a resistance zone and a support zone need not be the same width |
+| `Pivots` | the `buffer` on `beyond()` | **not the price** - see below |
+| `Pips` | none | no clean seam; see below |
+| `grouping` | `Anchor.SIDED` | floor for a support, ceiling for a resistance |
+
+**A pivot's price must never be tilted.** The only property a pivot has is that
+other people are watching that exact number, so a tilted R1 is not the R1
+anybody else is looking at and the self-fulfilling part - the whole argument
+for carrying them - is gone. The set is published exactly, `SIDES` publishes
+each name's side alongside it, and a per-side *parameter* is applied by
+whatever places against it. `beyond(price, side, buffer=Sided(...))` is that:
+a stop just past the nearest level on the trade's own side, with the buffer's
+tilt read on the **level's** side so one number means the same thing whichever
+way the trade faces. `PP` and `PC` carry side 0 and take the neutral buffer,
+since a midpoint and a prior close are references rather than barriers.
+
+**`Pips` has no clean seam and none was added.** It selects perceptually
+important points by deviation rank, with no tolerance or threshold to tilt;
+`wicks` already decides whether highs come off highs or off closes, which is a
+different axis. Adding a side parameter there would mean inventing a threshold
+in order to tilt it.
+
+**For `BjorgumLevels` the tilt is applied before the cap, not after.** The
+width is `min(atr * mult, close * max_percent / 100)`, so scaling a finished
+span would scale a width the cap had already bound and the two sides would come
+out in the wrong ratio exactly where the cap bites. The buffer therefore holds
+`(atr, close)` per bar and each side's span is computed at draw time.
+
+## Open: is a level graded by how price bounced off it?
+
+**Being measured, not yet answered.** The hypothesis is the useful one: a level
+that produced a **spike or crash** - a sharp, high-body reversal - or a
+**trend run** - two or more bars moving consistently one way with one or two
+small hiccups tolerated - is a *better* level than one price merely drifted
+away from, so the bounce shape is a quality score that ranks the book. The
+payoff would be a ranking rather than an entry: of 24 levels, the five whose
+previous bounces were sharp are the ones worth placing against.
+
+The design, because the traps here are the ones this desk keeps hitting:
+
+- **The usable claim is about the *previous* bounces, not this one.** A bounce
+  shape is known only after the bounce, so grading a level by the touch in
+  progress is look-ahead. What can be claimed is that a level whose earlier
+  bounces were sharp predicts something about its next touch.
+- **A bounce rate is geometry.** `fade-to-value`'s 82% return rate was matched
+  by a distance-matched placebo on every class and a walk reads 0.825, so
+  "price bounced 60% of the time" means nothing without the matched arm.
+- **Conditioning on a sharp bounce selects on volatility.** A spike is a large
+  bar and large bars cluster, so "levels that bounced sharply" is partly
+  "levels touched in a volatile stretch". Stratified within quintiles of
+  trailing compression, with the shuffled twin carried to name the mechanical
+  part.
+- Touch windows are de-overlapped, since
+  `overlapping-windows-inflate-permutation-nulls` turned a level finding at
+  p 0.015 into anchor overlap.
+
+The shapes are measured with `Displacement`, `Candles` and `Trend` - the last
+being Kaufman's efficiency ratio, net travel over gross, which is already the
+right measure of "consistently one direction with hiccups" - rather than new
+shape code. Every kind is reported against `Pivots` as the no-parameter
+control, and the prior is poor: `topology-restates-volatility` and
+[`level-shield.md`](../research/docs/level-shield.md), where a level in the
+path did not suppress the move over 210 cells. Numbers will land in
+`research/docs/level-bounce.md`.
+
 ## Where the code is
 
 | | |
@@ -2316,9 +2610,11 @@ two different trades.
 | `structures/drawing/pips.py` | swing extraction, confirmation, `as_of` |
 | `structures/drawing/runs.py` | swings as run boundaries - the second formation |
 | `structures/vol/volatility.py` | the unit everything is measured in |
-| `structures/levels.py` | Kalman state, zones, per-side stats, decay, clustering, `agree` |
+| `indicators/levels.py` | Kalman state, zones, per-side stats, decay, the book |
+| `indicators/grouping.py` | clustering, density modes, nearest neighbours, the factor path |
+| `indicators/pivots.py` | session and floor-trader pivots, the cuts, the per-side buffer |
 | `structures/drawing/pivots.py` | sessions and the floor-trader set |
-| `structures/reactions.py` | touch tracking, kNN, inference, the guards |
+| `structures/reactions.py` | touch tracking, inference, the guards - **retired to `research/retire/`** |
 | `structures/engine.py` | bars and quotes in, calls out |
 | `structures/drawing/level_range.py` | the two zones price sits between, and the room to each |
 | `structures/learning/racing.py` | which wall gets reached first, and the geometric control |

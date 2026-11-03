@@ -1,0 +1,5032 @@
+"""The trader: signals in, orders out, outcomes written down.
+
+    structures ──▶ structures.signals ──▶ trading ──┬──▶ broker (mt5 | bridge | paper)
+    prices     ──▶ prices.quotes     ──┘            ├──▶ alerts
+                                                    └──▶ journal
+
+This is the only part of the project that can lose money, so it is written to
+fail closed. Nothing here starts without a terminal it has checked, an account
+it has read, and a symbol map it has resolved; a service that cannot do those
+does not trade, rather than trading on assumptions about them.
+
+**Paper unless armed.** `TRADING_LIVE=1` is the only thing that reaches a real
+account, and the mode is logged at start-up and again on every fill.
+
+**Quotes are consumed as well as signals.** Two reasons. The paper book holds
+its own stops and has to see the market to know when one is hit; and the live
+path prices its entry off the broker's own quote rather than the consensus,
+because the consensus is six venues' opinion and the fill is one broker's.
+
+**Positions are reconciled, not assumed.** A stop hit server-side leaves no
+message on any bus - the position is simply gone next time it is asked for. So
+the open set is compared on every heartbeat and a ticket that has vanished is
+recorded as closed at its last known price. That is a slightly stale exit for
+a real broker and an exact one on paper, and it is honest about which: the
+journal entry says where the number came from.
+
+**The exit geometry is not the lever, and three refutations say so.** The stop
+is unambiguously where the account goes - `stop` exits run -4,984.88 against
+`target` +3,299.83, `hold` +538.17 and `stale` -452.47 - and that fact invites
+a geometry fix every time somebody looks at it. Three were proposed on
+2026-10-16 and the record refused all three:
+
+* *the target sits beyond what the hold can deliver* - **wrong direction.**
+  Targets outside the forecast time budget pay better than targets inside it,
+  in every strategy with the sample to say so: -1.95 against -2.19, -0.57
+  against -3.74, -1.82 against -6.87.
+* *`floored_target` pushes the target past the origin it was aiming at* - it
+  does, and those trades pay **+1.31 against -3.72**, better in four of five
+  strategies.
+* *the stop is too tight* - a winner uses a median **0.19** of its stop and
+  p90 0.61, which reads like a stop five times wider than needed. Tightening
+  it loses at **every** width from 0.25 to 1.5 of the current distance,
+  because the few winners carrying real heat are the ones that pay.
+
+So a proposal to move a stop or a target needs to beat those three before it
+is worth harnessing, and the honest reading is that the losses are in *entry
+selection* rather than in where the barriers sit. One caveat travels with the
+third point and must not be dropped: it is measured on the 406 closes whose
+excursion record is self-consistent, a subset netting +207 where the whole
+book nets -1,185, because the rows the filter removes are the losses. The
+direction survives that; the magnitudes do not. `research/docs/stops.md` has
+the sweep and why the question stays open until `excursion_partial` has
+accumulated.
+"""
+
+from __future__ import annotations
+
+import asyncio
+import contextlib
+import dataclasses
+import math
+import re
+import time
+from collections import Counter, deque
+from dataclasses import dataclass, field, replace
+from pathlib import Path
+from statistics import median
+from typing import Any, ClassVar
+
+from till_infinity.utils import effects
+from till_infinity.utils.codec import pack, registry, unpack
+from till_infinity.utils.intervals import SECONDS
+from till_infinity.utils.logging import get_logger
+from till_infinity.utils.state import Restorable
+from till_infinity.utils.topics import (
+    ALERTS,
+    DISPERSION,
+    EVENTS,
+    PROPOSALS,
+    QUOTES,
+    RESOLUTIONS,
+    SIGNALS,
+)
+
+from ..carrier import Carrier, Message
+from ..domain.models import Intent, Order, Position, Refusal, Side, SymbolSpec, Tick
+from ..domain.models import money as money  # noqa: PLC0414
+from ..indicators.candles import confirms, rejection_wick
+from ..indicators.changepoint import Focus
+from ..indicators.levels import card_line as impulse_card
+from ..indicators.levels import features as impulse_features
+from ..indicators.momentum import Cusum, Ensemble, adaptive_threshold
+from ..indicators.trend import SPANS as TREND_SPANS
+from ..indicators.trend import Trend
+from ..indicators.trend import card_line as trend_card
+from ..indicators.trend import features_across as trend_features
+from ..journal import Journal, decide, observe, outcome
+from . import manage, plans, turning
+from .config import Settings, magic_for, strategy_for
+from .context import Context
+from .guard import Guard
+from .holds import Book as HoldBook
+from .manage import Move, Take
+from .reach import Reaches
+from .sessions import Sessions
+from .shadow import ShadowGates
+from .sizing import lots, price_distance, respects_stops_level
+from .strategies import strategy
+from .strategies.strategy import Strategy
+from .venues import replicate
+from .venues import symbols as sym
+from .venues.broker import Broker, BrokerError, build
+from .venues.paper import PaperBroker
+
+# The wire name `prices` gives its own broker connection's quotes, as opposed to
+# the six venues it scrapes through TradingView. Imported rather than repeated:
+# `trading.config` already depends on `prices.models`, so the direction is settled,
+# and a duplicated string would drift silently.
+
+#: The source name a broker-originated quote carries.
+#:
+#: Inlined when `prices/` was retired on 2026-10-31. It is a string on a
+#: message, compared in one place, and importing a retired package for it
+#: would be the tail wagging the dog.
+BROKER_SOURCE = "broker"
+
+#: The smallest edge worth an order.
+#:
+#: Inlined from `structures/reactions.py` on 2026-10-31 - one constant in
+#: 1,887 lines, which is not a dependency worth keeping a package for.
+MIN_EDGE = 0.10
+
+#: P(this level breaks | the touch is still open after this many of its own bars).
+#:
+#: **Inlined from `structures/context/registry.py` on 2026-10-31**, where it
+#: was one function in 358 lines and had one caller here. The constants are
+#: its measurements, not tuning: 14.4% at open, 22.4% at two minutes, 54.7% at
+#: five, 77.8% at ten on 1m, and the same shape on 3m, 5m, 15m and 30m once
+#: time is counted in the level's own bars.
+#:
+#: The one conditional here that costs nothing to observe: "resolution took at
+#: least t" and "still open at t" are the same event, so a table built on
+#: finished touches is one a live timer can act on.
+_CLOCK_FLOOR = 0.144
+_CLOCK_BARS = 5.0
+_CLOCK_SHARPNESS = 1.6
+
+
+def _clock_odds(age_bars: float) -> float:
+    """A logistic in log-age, lifted onto the floor so a fresh touch reads its
+    unconditional rate rather than zero, and which cannot leave [0, 1] however
+    long a touch stays open."""
+    if age_bars <= 0.0:
+        return _CLOCK_FLOOR
+    z = _CLOCK_SHARPNESS * math.log(age_bars / _CLOCK_BARS)
+    return _CLOCK_FLOOR + (1.0 - _CLOCK_FLOOR) / (1.0 + math.exp(-z))
+
+
+log = get_logger(__name__)
+
+#: The timeframes a level-based trail steps behind. Finer than 15m is noise to
+#: a trade held for a day - a stop dragged up behind a 1m level is a stop
+#: placed by the last minute of trading - and coarser than 1h moves too rarely
+#: to be a trail at all.
+TRAIL_RUNGS: frozenset[str] = frozenset({"15m", "30m", "1h"})
+
+#: How many rungs to keep per feed. A ladder is a handful of prices, not a
+#: history; the oldest go first.
+LADDER_MAX = 24
+
+#: The bar size session hours are learned at. Fifteen minutes resolves the
+#: daily break and the Friday close, which is what the gate needs, without
+#: fetching a minute of history for every instrument at start-up.
+#: How fast the per-feed push estimate follows new calls. Slow, because this
+#: is a property of the instrument rather than of the moment.
+PUSH_DECAY = 0.05
+
+#: The share of a typical push that counts as a turn, and the most one may ask
+#: for. The share matches the momentum filter's, because they are reading the
+#: same event by different means; the ceiling stops an instrument with a huge
+#: modelled push from asking for a turn no pullback ever produces.
+#: How many of a series' own expected holds a trade gets before it counts as
+#: going nowhere. Two, because one is the time it usually takes and stopping
+#: there would close every trade that is merely slower than the median.
+STALE_HOLDS = 2.0
+
+#: Share of a strategy's **own declared hold** before a trade that has not moved
+#: counts as going nowhere.
+#:
+#: `_stale_after` already adapts to the *instrument's* expected hold, which is
+#: measured from level resolutions and is therefore minutes. It did not adapt to
+#: the *strategy's*, and `origin-swing` declares four hours - so a swing was
+#: being killed at the 1,200s floor, **8% of the horizon it was opened for**.
+#: Its first live trade closed `stale` at 1,249s having peaked at 0.007R.
+#:
+#: A third, so a four-hour hold gets eighty minutes and a thirty-minute one gets
+#: ten - below the floor, which then wins, so nothing fast changes.
+#:
+#: The genuine swings are now exempt outright (`Strategy.stale_exempt`), so what
+#: this still governs is a strategy that is *not* a swing and has nonetheless
+#: asked for a long hold - `approach-scalp` at four hours is the live case.
+STALE_SHARE = 1.0 / 3.0
+
+#: How much of the sub-hour ensemble must be behind a motionless trade for it
+#: to be given more time. A majority, because half the timeframes pointing one
+#: way is what a coin flip looks like.
+STALE_AGREE = 0.5
+
+TURN_SHARE = 0.35
+TURN_CEILING = 2.0
+
+SESSION_INTERVAL = "15m"
+SESSION_INTERVAL_S = 15 * 60
+
+#: How many symbols to fetch bars for at once. Sequentially this is 0.72s each
+#: and adds 24s to start-up, during which the service is not trading and the
+#: closing gate is not yet armed. Six at a time brings it under five seconds
+#: without asking the bridge to serve thirty-three at once.
+SESSION_FETCHES = 6
+
+#: Where a re-armed signal carries its attempt count. Kept on the payload
+#: rather than in a table keyed by feed, so it survives the round trip through
+#: `_park` and back into `on_signal` without anything having to remember it,
+#: and so a signal that never comes back never leaves a counter behind.
+ATTEMPT = "_attempt"
+
+#: Everything the trader listens to, and why each one is needed.
+#:
+#: `signals` is the trade. `quotes` price the entry on the paper book and feed
+#: the venue consensus our own broker is judged against. `events` is the
+#: economic calendar, for standing aside around a release. `resolutions` is
+#: ground truth - what the levels we traded actually did - which is consumed
+#: for the record rather than for a decision, and is the seam anything that
+#: learns from outcomes will attach to.
+TOPICS: tuple[str, ...] = (SIGNALS, PROPOSALS, QUOTES, EVENTS, RESOLUTIONS, DISPERSION)
+
+#: The topics subscribed **before** the terminal attach, because a call
+#: published during the attach would otherwise go to nobody.
+#:
+#: Both producers of the signal contract are here, and proposals need it more
+#: than signals do: `listen` notes that the race does not bite structures
+#: because it warms slowly, roughly 6.5 minutes to its first call. Statespace
+#: warms by *replay* - it restores its folded state and arms on the first bars
+#: - and published its first proposal inside a minute of a restart, which is
+#: well inside the window an attach can take when the bridge is slow.
+EARLY: tuple[str, ...] = (SIGNALS, PROPOSALS)
+
+#: Bounds on `listen`'s intake. Signals, events and resolutions are rare and
+#: kept whole; quotes are a flood, kept in order, oldest shed on overflow.
+PRIORITY_BACKLOG = 10_000
+QUOTE_BACKLOG = 5_000
+
+#: How long to wait between attempts to attach to the terminal, in seconds, and
+#: the ceiling that backoff climbs to.
+#:
+#: **Trading does not give up on the bridge.** `Trader.start` raises
+#: `NotConnectedError` when the health route does not answer, and for the life
+#: of this service that exception left `listen` uncaught: the task died, the
+#: stack supervisor logged one ERROR line, and the process stayed up with the
+#: container still reporting `healthy`. On 2026-09-11 the bridge missed a single
+#: health check at 19:24:54 UTC - it was answering again within minutes - and
+#: the desk did not place an order for the next three hours. Structures went on
+#: publishing 698 journal entries and 117 level calls on traded symbols, alerts
+#: went on reaching the channel, and nothing anywhere said trading was gone.
+#:
+#: `listen` already guards its message loop for exactly this reason, and the
+#: comment there names the 2026-09-08 outage it was written after. Start-up had
+#: no such guard, so the same fault recurred one phase earlier.
+#:
+#: Retried indefinitely rather than a fixed number of times, because the failure
+#: this protects against is a *transient* outage at the wrong moment, and there
+#: is no attempt count at which the right answer becomes "stay down while the
+#: terminal is up". Loud instead: every attempt is logged and `ATTACH_SHOUT_EVERY`
+#: of them raise an alert, so a genuinely misconfigured bridge is noisy rather
+#: than silent.
+ATTACH_BACKOFF, ATTACH_BACKOFF_MAX = 5.0, 60.0
+
+#: Raise an alert on the first failed attach and every Nth after it. One per
+#: attempt would bury the channel during an overnight outage; never after the
+#: first would let a long one look like it had been handled.
+ATTACH_SHOUT_EVERY = 10
+
+#: Consecutive unanswered sweeps before the desk says it has lost its terminal.
+#: The heartbeat is 60s by default, so this is about five minutes - long enough
+#: that a redeploy or a blip does not page anyone, short enough that the two-hour
+#: silence of 2026-09-12 could not happen again.
+UNREACHABLE_AFTER = 5
+
+#: Always on - this is not behind a flag, and a desk whose reachability check
+#: never runs is the 2026-09-12 outage repeating.
+effects.declare("trading.reachable_check", enabled=True)
+
+
+@dataclass(slots=True)
+class Live:
+    """One position we opened, and the journal entry that predicted it."""
+
+    position: Position
+    intent: Intent
+    ref: str = ""
+    seen: float = field(default_factory=time.time)
+    #: The strategy that asked for it. Empty when the position was adopted and
+    #: its magic names no strategy we know - an older trade, or one opened by a
+    #: plugin whose hashed offset has no inverse. Read from the position rather
+    #: than remembered, so it survives a restart.
+    by: str = ""
+    #: True once part of this position has been banked, so the scale-out
+    #: happens once rather than on every pass of the manage loop.
+    scaled: bool = False
+    #: What `_quotes_seen` read for this feed when the position was noticed.
+    #:
+    #: Only the diagnostic uses it, and it exists because the diagnostic was
+    #: misleading without it: `_quotes_seen` is a lifetime counter that is never
+    #: reset, so a feed that quoted busily this morning and has since gone silent
+    #: reported thousands of quotes beside two identical symbols - which reads as
+    #: "quotes arrived and the symbol did not match" and is false.
+    quotes_at_open: int = 0
+    #: The signal that produced this trade, kept so a stopped-out setup can be
+    #: put back through the strategies rather than resurrected as a stale
+    #: intent. Empty for adopted positions, which therefore never re-arm -
+    #: correctly, since nothing here knows what they were.
+    signal: dict[str, Any] = field(default_factory=dict)
+    #: How many times this setup has already been taken. Zero on a first
+    #: entry, and the guard that stops `reentry_max` compounding.
+    attempt: int = 0
+    #: Which of our own rules closed this, when one of them did. The price
+    #: cannot say: a stale close and a hold-clock close both land wherever the
+    #: market happens to be, and both used to read as "hold".
+    closed_by: str = ""
+
+
+@dataclass(slots=True)
+class Waiting:
+    """A signal parked until price comes back to where the trade is worth taking.
+
+    See `trading-service.md` in research/docs.
+    """
+
+    payload: dict[str, Any]
+    feed: str
+    #: The price that wakes it, and which side of it counts.
+    trigger: float
+    side: Side
+    #: After this it is dropped. A resting order with no deadline is a trade
+    #: taken on information that has gone stale.
+    until: float
+    #: The broker's order, when the price was also left there as a limit - see
+    #: `Settings.entry_pending`. Held so it can be withdrawn: this system keeps
+    #: the judgement and the broker keeps the reflexes, and the half that can
+    #: change its mind has to be able to reach the half that cannot.
+    ticket: int = 0
+    #: What was left there, kept only so the withdrawal can describe it. The
+    #: **decision** is still re-made from `payload` on arrival - this is not a
+    #: stale intent waiting to be resurrected, it is a label.
+    resting: Intent | None = None
+    by: str = ""
+
+
+@dataclass(slots=True)
+class Untaken(Restorable):
+    """A trade a strategy wanted and did not get, followed to its own barriers.
+
+    See `trading-service.md` in research/docs.
+    """
+
+    feed: str
+    by: str
+    side: Side
+    entry: float
+    stop: float
+    target: float
+    interval: str
+    #: When to give up waiting for the fill.
+    fill_by: float
+    #: How long the trade may run once filled.
+    hold: float
+    placed_at: float = 0.0
+    #: Zero until it fills, then the time it did.
+    filled_at: float = 0.0
+    #: When the barrier race ends. Set at fill.
+    until: float = 0.0
+    #: Last price seen since the fill, for a timeout's mark to market.
+    last: float = 0.0
+    #: What the market was doing when the signal was found.
+    #:
+    #: **Carried so the counterfactual can be split by it.** `research/choosing.md`
+    #: measured 536 of these and found the three strategies with real samples
+    #: land at -0.172, -0.179 and -0.190R - indistinguishable - so a selector
+    #: has nothing to select on. The interesting version of that question is
+    #: conditional: strategies could be alike pooled and separate cleanly
+    #: within a state. It could not be asked, because `regime` is on every
+    #: level call and was dropped here.
+    regime: float = 0.0
+    market: str = ""
+
+
+@dataclass(slots=True)
+class Shadow:
+    """A trade that was stopped, watched to see whether it was right anyway.
+
+    See `trading-service.md` in research/docs.
+    """
+
+    feed: str
+    side: Side
+    entry: float
+    stop: float
+    target: float
+    ref: str
+    by: str
+    #: When the watch gives up, which is the hold the trade would have had.
+    until: float
+    #: Furthest price reached in the trade's favour since it was stopped.
+    best: float = 0.0
+    stopped_at: float = 0.0
+
+
+def _regime_of(payload: dict[str, Any]) -> float:
+    """The regime label off a signal, or 0.0 when the classifier is not warm.
+
+    Zero rather than absent because a missing key and an unwarmed classifier
+    are the same thing to a reader splitting a table by it, and a float column
+    with holes is worse than one with a documented "unknown".
+    """
+    found = payload.get("features")
+    if not isinstance(found, dict):
+        return 0.0
+    state = found.get("regime")
+    return float(state) if isinstance(state, int | float) else 0.0
+
+
+def _money_price(value: float) -> str:
+    """A price for a title, grouped and without an exponent."""
+    size = abs(value)
+    places = 1 if size >= 10_000 else 2 if size >= 100 else 4 if size >= 1 else 6
+    out = f"{value:,.{places}f}"
+    return out.rstrip("0").rstrip(".") if "." in out else out
+
+
+def _moved_body(live: Live, move: Move, locked: str, gained: float) -> str:
+    """A stop move, laid out like the fill and the close it sits between.
+
+    **"locked in" only when something is.** The old line printed
+    `locked in -$9.57` for a stop still below the entry, which is the opposite
+    of what those words mean - the trade could still lose that, and calling it
+    locked in reads as a floor under a profit. A stop that has not passed the
+    entry has *reduced* the loss, and that is what it now says.
+    """
+    rule = "━" * 22
+    lines = [
+        rule,
+        f"🛡️ {live.intent.feed.upper().replace('_', ' ')} · STOP MOVED",
+        rule,
+        f"📊 {live.by or 'trading'} · #{live.position.ticket}",
+        "",
+        f"📍 {live.position.side} {live.position.volume:g} @ "
+        f"{_money_price(live.position.price_open)} · stop now {_money_price(move.stop)}",
+        f"📝 {move.reason}",
+    ]
+    if locked:
+        lines.append(f"{'💚 locked in' if gained > 0 else '🛟 worst case now'} {locked}")
+    lines.append(rule)
+    return "\n".join(lines)
+
+
+def _closed_body(
+    live: Live, price: float, profit: float, why: str, money: str, standing: str
+) -> str:
+    """A close, laid out like the fill it answers.
+
+    The R multiple leads, because it is the only figure that compares one trade
+    against another - the money says what this one did and the R says whether
+    the rule is working.
+    """
+    rule = "━" * 22
+    won = profit >= 0
+    risk = abs(live.intent.entry - live.intent.stop)
+    got = ((price - live.position.price_open) * live.position.side.sign / risk) if risk else 0.0
+    lines = [
+        rule,
+        # `closed` and `gone` say how the position left, not why, so they add
+        # nothing to the word CLOSED. `target`, `stop` and `stale` do.
+        f"{'✅' if won else '❌'} {live.intent.feed.upper().replace('_', ' ')} · CLOSED"
+        + (f" · {why.upper()}" if why in ("target", "stop", "stale", "hold") else ""),
+        rule,
+        f"📊 {live.by or 'trading'} · #{live.position.ticket}",
+        "",
+        f"📍 {live.position.side} {live.position.volume:g} @ "
+        f"{live.position.price_open:.5g} → {price:.5g}",
+        f"{'💚' if won else '💔'} {money} · {got:+.2f}R",
+    ]
+    if standing:
+        lines.append(f"📅 {standing}")
+    lines.append(rule)
+    return "\n".join(lines)
+
+
+class Trader:
+    """Watches the bus, trades what it likes, records everything."""
+
+    #: Open positions by ticket, and the journal decision each came from. The
+    #: two are declared here rather than in `__init__` because that method is
+    #: at its statement limit, and assigned together there for the same reason.
+    open: dict[int, Live]
+    _refs: dict[int, str]
+    #: Ticket -> the timeframe its intent was triggered on.
+    #:
+    #: **The ref map fixed the parent and not the intent.** A position adopted
+    #: after a restart is rebuilt by `_intent_from`, which knows a symbol and a
+    #: side and no timeframe - so 343 of 551 closes over 45 days carried no
+    #: interval at all, 62% of the record and -1,044 of the -1,365. Every
+    #: interval conclusion was drawn from the other 38%, which is also the half
+    #: that over-represents short trades.
+    #:
+    #: That is not a small gap: it is why the sub-15m finding in
+    #: `scaling.by_interval` could not be re-checked, and why neither
+    #: `TRADING_INTERVALS` nor `TRADING_INTERVAL_WEIGHT` can be set responsibly.
+    _intervals: dict[int, str]
+
+    def __init__(  # noqa: PLR0915 - one assignment per piece of state; a trader has that much
+        self,
+        bus: Carrier,
+        *,
+        settings: Settings | None = None,
+        journal: Journal | None = None,
+        broker: Broker | None = None,
+    ) -> None:
+        self.bus = bus
+        self.settings = settings or Settings.from_env()
+        # The flag is read here, so the switch is declared here: on and never
+        # reducing a trade is then reported rather than assumed to be working.
+        effects.declare("trading.spike_switch", enabled=self.settings.spike_above > 0)
+        effects.declare("trading.release_in_hold", enabled=self.settings.release_in_hold)
+        self.journal = journal
+        #: The confirmation gates `confirm.md` left standing, shadowed: recorded against every
+        #: matching level signal and never acted on. See `shadow.py`.
+        self.gates = ShadowGates(
+            fetch=lambda symbol, interval, count: self.execution.bars(
+                symbol, interval, count=count
+            ),
+            record=self._record_gate,
+            enabled=self.settings.shadow_gates,
+        )
+        self._gates_task: asyncio.Task[int] | None = None
+        self._gates_checked = 0.0
+        self.plan = plans.apply(self.settings)
+        self.broker = broker or build(self.settings)
+        #: Where orders go. **Not** the same object as `self.broker` unless
+        #: armed: see `execution`.
+        self.paper: PaperBroker | None = None
+        #: What this style is running, and what it stood down. Both are set
+        #: here and nowhere else - an initialiser placed after this line once
+        #: quietly emptied the second of them.
+        self.strategies, self.stood_down = strategy.by_style(
+            strategy.build(self.settings.strategies, self.settings), self.settings.style
+        )
+        self.context = Context(
+            before=self.settings.news_before,
+            after=self.settings.news_after,
+            max_dislocation_bps=self.settings.max_dislocation_bps,
+            max_spread_ratio=self.settings.max_spread_ratio,
+            drift_pause=self.settings.drift_pause,
+        )
+        self.guard = Guard(self.settings, context=self.context)
+        self.specs: dict[str, SymbolSpec] = {}
+        # Grouped because `__init__` is at its statement limit, which is the
+        # same reason `_focus_up` and its neighbours are grouped below.
+        self.open, self._refs, self._intervals = {}, {}, {}
+        #: `_refs` is ticket -> the journal decision that opened it.
+        #:
+        #: **`Live` lives in memory and `self.open` is rebuilt from the broker
+        #: on every start**, so the link between a position and the decision
+        #: that asked for it did not survive a restart. Every trade that
+        #: outlived a deploy closed as "unattributed": measured on 2026-09-09,
+        #: **227 of 548 closes**, 41% of the book, with no strategy, no R
+        #: multiple and no geometry - and invisible to every performance query
+        #: that reads `kind='outcome'`.
+        #:
+        #: The bias is the worst part and `_ref_for` already names it: what went
+        #: missing was exactly the trades that lived long enough to span a
+        #: deploy, so every figure taken from the journal was computed on a set
+        #: that over-represented short ones.
+        #:
+        #: This is small, exact and survives a restart, which `_ref_for`'s
+        #: search cannot be - it reads 400 decisions back and this book writes
+        #: about that many every two days.
+        self.equity = 0.0
+        #: The highest equity this process has seen. Drawdown is measured from
+        #: it, so a book that has given back a third of its month trades
+        #: smaller *before* the daily halt fires rather than at full size until
+        #: it does. Not persisted: a restart starts the peak at the current
+        #: equity, which under-reports an existing drawdown rather than
+        #: inventing one, and understating is the safe direction for a number
+        #: that only ever reduces size.
+        self.peak_equity = 0.0
+        #: The account's currency, for anything that prints an amount. A bare
+        #: "+12.56" does not say what it is 12.56 of, and the answer is not
+        #: guessable from the instrument - a gold trade on a euro-denominated
+        #: account pays euros.
+        self.currency = ""
+        self.venue = ""
+        self.taken = 0
+        self.refused = 0
+        #: Signals `handle` has been given since this process started, and when
+        #: the last one arrived. **Never persisted, never restored** - which is
+        #: the point. `taken`, `refused` and `passed_over` come back from the
+        #: saved day, so a desk that receives nothing and a desk whose counters
+        #: were put back print the same line. This one cannot be put back.
+        self.received = 0
+        self.received_at = 0.0
+        #: Statespace proposals, counted apart from structures' signals: two
+        #: producers on one tally is how a dead one hides behind a live one.
+        self.proposals = 0
+        self._symbol_of: dict[str, str] = {}
+        self._feed_of: dict[str, str] = {}
+        #: The order just sent, waiting to be matched to the position it
+        #: became. Held for exactly one reconcile - see `_reconcile`.
+        self._pending: tuple[int, Intent, str] | None = None
+        #: The signal behind each feed's most recent trade, so a stopped-out
+        #: setup can be put back through the strategies rather than rebuilt
+        #: from an intent that has already been proved wrong once.
+        self._last_signal: dict[str, dict[str, Any]] = {}
+        #: Signals waiting to be re-armed after a stop. Drained by the loop
+        #: rather than re-entered from inside `_settle`, which runs during
+        #: reconciliation - taking a trade there would mutate the position set
+        #: being reconciled, from inside the walk over it.
+        self._rearm: list[dict[str, Any]] = []
+        #: Accumulated directional pressure per feed, fed from the quote
+        #: stream. One per feed rather than one shared, because the
+        #: accumulation is the state and mixing instruments into it would
+        #: measure nothing.
+        self._push: dict[str, Cusum] = {}
+        #: The same stream through the exact likelihood-ratio test, one instance
+        #: per direction. `Cusum` accumulates until it trips and says *that* a
+        #: run happened; `Focus` maximises over every possible start and says
+        #: **where** it began and how strong the evidence is. Published beside
+        #: the CUSUM reading and read by nothing - see `research/detecting.md`,
+        #: which measures that it is the only one of the three detectors added
+        #: on 2026-09-08 quiet enough on a stationary stream to be an alarm.
+        #: One instance per direction, and the last mid so they see steps
+        #: rather than levels. Grouped because `__init__` is at its statement
+        #: ceiling and all three are the same per-feed working state.
+        self._focus_up, self._focus_down, self._focus_last = {}, {}, {}
+        #: The same momentum question asked at several sub-hour resolutions -
+        #: the single filter above answers "is there momentum" at whatever
+        #: speed quotes arrive, this one can say whether the timeframes agree,
+        #: which is what a swing entry at an origin turns on - and beside it a
+        #: slow read on how far each instrument pushes, which is what the
+        #: momentum threshold is sized against. See `_note_push`.
+        self._ensemble, self._push_vol = {}, {}
+        #: Trend context per feed and interval. Keyed on both because the
+        #: efficiency of 1m levels and of 15m levels on one instrument are
+        #: different markets, and pooling them measures neither.
+        self._trend: dict[tuple[str, str], Trend] = {}
+        #: How long a touch on each feed and interval takes to resolve. Fed
+        #: from the resolution stream, which the trader already subscribes to.
+        self._holds = HoldBook()
+        #: How far price reaches into a level, and against a trade once in it.
+        #: The two distances behind an entry and a stop. See
+        #: `strategies/reach.py`.
+        self._reaches = Reaches()
+        #: When each feed last quoted. A market in its daily break keeps its
+        #: last quote and refuses every order, which is a different thing from
+        #: an order being wrong and wants the opposite handling: wait, rather
+        #: than retry and shout. `spec.tradable` reports whether an instrument
+        #: is enabled, not whether it is trading, so it says True throughout.
+        self._quoted_at: dict[str, float] = {}
+        self._sessions = Sessions()
+        self.replicator = replicate.from_settings(self.settings)
+        #: symbol -> (when we looked, the broker's own tick time). Two numbers
+        #: because a cached tick time goes on ageing whether or not we are
+        #: still asking, and a stale observation must not be read as a shut
+        #: market. See `_shut_for`.
+        self._broker_quoted_at: dict[str, tuple[float, float]] = {}
+        #: Best price each open trade has seen, for the trailing stop. Tracked
+        #: from the quote stream rather than read from the broker, because
+        #: `price_current` is a snapshot and a trail anchored to snapshots
+        #: follows whatever the last poll happened to catch.
+        #: Where the extremes are kept between restarts.
+        #:
+        #: **They were kept nowhere, and that is a measured leak.** `_best` and
+        #: `_worst` are the only things this service needs across a restart,
+        #: and it persisted nothing at all - so every deploy reset the
+        #: high-water mark of every open position. A trade that had run to 2R
+        #: came back looking like a trade at its entry, break-even never fired
+        #: on a move it had already earned, and it gave the lot back. There
+        #: were ten deploys on 2026-09-04 alone.
+        #:
+        #: When the best and the worst price each happened, so a later question
+        #: about *order* - did the retracement come before the peak or after -
+        #: has an answer. Without it, `best_r` and `adverse_r` describe a trade
+        #: whose shape cannot be reconstructed, which is what left the
+        #: break-even experiment in `manage.py` undecidable.
+        #: It also understated the damage: `best_r` on the close is read from
+        #: this dict, so a give-back measured after a restart records the peak
+        #: it reached *since* the restart, not the one that mattered.
+        self._marks = Path(self.settings.state_dir) / "day.json"
+        #: Whether the day has been read back, and feed -> {level price: when
+        #: last seen} - the rungs a level trail steps up behind. Paired on one
+        #: line because `__init__` is at its statement ceiling and these two
+        #: are both "state that survives, or is rebuilt from, a restart".
+        #: Whether the day has been read back; feed -> the rungs a level trail
+        #: steps behind; and feed -> how much of the confirming bar was the
+        #: rejection wick, written by `_candle_at` and read by `_park`, which
+        #: runs after it. Grouped because `__init__` is at its statement
+        #: ceiling and all three are per-feed working state.
+        #: `_autotrading` joins this line because `__init__` is at its statement
+        #: ceiling, which is the same reason the three beside it are grouped. It
+        #: is whether the terminal was last seen accepting orders, so the alarm
+        #: is edge-triggered - and it starts `True` rather than `None` so a desk
+        #: that comes up with AutoTrading already off says so on its first sweep.
+        self._recalled, self._ladder, self._rejection, self._autotrading, self._unreachable = (
+            False,
+            {},
+            {},
+            True,
+            0,
+        )
+        #: The best price each open trade has seen, and the tickets any quote
+        #: has seen at or beyond the scale-out trigger - so the bank fires on
+        #: the move rather than on whichever poll follows it. Grouped because
+        #: `__init__` is at its statement ceiling and both are per-ticket
+        #: working state written by `_mark_best`. 19.6% of closes reached 1.0R
+        #: and not one scale-out ever did.
+        #: `_turns` is the turn model's exit against the real one, accumulated
+        #: across closes. Its headline is `gained_r_per_trade`, which is the
+        #: whole question and stays `nan` until something has been scored.
+        self._best, self._bank_due, self._turns = {}, set(), turning.TurnTally()
+        #: feed -> how many of **our broker's own** quotes `_quote` has resolved a
+        #: symbol for. Only read by the `_manage` skip diagnostic, which cannot
+        #: otherwise distinguish "no quote ever arrived for this feed" from "quotes
+        #: arrived and `_mark_best` did not match them to the position".
+        #:
+        #: Broker-only since 2026-09-26, and the narrowing is the point: it used to
+        #: count all six TradingView venues, so it read in the thousands for an
+        #: instrument our broker was not quoting at all, which is what made the
+        #: diagnostic misleading. See `_ours`.
+        self._quotes_seen: Counter[str] = Counter()
+        #: The worst price each open trade has seen. The mirror of `_best`, and
+        #: it was missing: the trailing rules need the favourable extreme so
+        #: that one was tracked, and nothing needed the adverse one so nobody
+        #: wrote it down. That made "how much heat does a winner take" - the
+        #: number that sizes a stop - unanswerable from our own record.
+        self._worst, self._best_at, self._worst_at = {}, {}, {}
+        #: Tickets whose excursion record starts mid-trade, so `best_r` and
+        #: `adverse_r` are **floors rather than measurements**.
+        #:
+        #: `_best` and the three beside it are process memory and nothing
+        #: restores them, so a position open across a restart is first seen by
+        #: `_mark_best` long after it opened, seeded at whatever price was
+        #: quoted then, and everything before that is gone. `_reach` cannot
+        #: tell that from a trade that never went in front: both read 0.0.
+        #:
+        #: **Measured 2026-10-08**: `best_r` reads exactly zero on 45% of
+        #: closes in the journal and 85-94% of them since 2026-10-05, and 34.6%
+        #: of those closed *positive*, which no trade can do without having
+        #: been in front. The damage is correlated with the outcome, which is
+        #: what makes it poison rather than noise - a winner's lost peak is
+        #: visible as an impossible row, a loser's is not, so every filter
+        #: written against it selects on winning.
+        #:
+        #: This does not recover the lost path. It records that it is lost, at
+        #: **adopt time**, which is before the trade's result exists - so a
+        #: reader can drop these without selecting on the outcome, which is the
+        #: one thing no filter on `best_r` itself can do.
+        self._partial: set[int] = set()
+        #: When this process began marking. A position older than this was
+        #: already running when it started.
+        self._marking_since = time.time()
+        #: feed -> a signal parked until price comes back. One per instrument,
+        #: because the per-instrument position limit would refuse the second
+        #: anyway and holding several would only decide which to drop later.
+        self._waiting: dict[str, Waiting] = {}
+        #: Stopped trades still being watched. See `Shadow`.
+        self._shadows: dict[int, Shadow] = {}
+        #: Intents other strategies wanted, keyed by feed, followed to their
+        #: own barriers. See `Untaken`. Bounded per feed because this grows
+        #: with strategies times signals and nothing else evicts it.
+        self._untaken: dict[str, list[Untaken]] = {}
+        #: Unresolved intents dropped for want of room. Counted because a
+        #: silent eviction is a silent bias - see `MAX_UNTAKEN`.
+        self._spilled: int = 0
+        #: feed -> the spread when it was last quoted, for the record.
+        self._spread_of: dict[str, float] = {}
+        #: feed -> this fill was waited for. Consumed when the trade is taken.
+        self._was_parked: dict[str, bool] = {}
+        #: Why signals did not become trades, counted per gate. Strategy-level
+        #: refusals are far too many to journal - hundreds a day, and mostly
+        #: the filter working - but counting them is what separates "the market
+        #: is quiet" from "the trader has been discarding everything".
+        self.passed_over: dict[str, int] = {}
+        self._last_summary = time.monotonic()
+        #: When the symbol specs were last re-read for their overnight swap terms, which the
+        #: broker revises as rates move. Once a day is often enough; see `_refresh_swaps`.
+        self._swaps_read = time.monotonic()
+        #: The volatility unit last published per instrument, so a trail can be
+        #: measured in the same units the stop was placed in.
+        self._vol_bps: dict[str, float] = {}
+        self.resolutions = 0
+
+    @property
+    def execution(self) -> Broker:
+        """The venue orders are sent to.
+
+        See `trading-service.md` in research/docs.
+        """
+        return self.paper or self.broker
+
+    # ------------------------------------------------------------- lifecycle
+
+    async def start(self) -> None:
+        """Attach, resolve what can be traded, and open the day."""
+        self._warm_trend()
+        self._warm_reach()
+        account = await self.broker.connect()
+        self.equity = account.equity or account.balance
+        self.peak_equity = max(self.peak_equity, self.equity)
+        self.currency = account.currency or ""
+        # The venue by the name a person uses, taken from the terminal rather
+        # than configured. `broker.name` is the transport - `mt5-http` says
+        # how we reach it, not where the money is.
+        self.venue = account.venue or self.broker.name
+        self.guard.currency = self.currency
+        log.info(
+            "trading: %s via %s - %s",
+            self.settings.mode.upper(),
+            self.broker.name,
+            account,
+        )
+        if not self.settings.live:
+            # One paper book, not two. When there is no terminal at all
+            # `build` has already returned a PaperBroker, and making a second
+            # one here would split the state: bus quotes would drive the stops
+            # on one book while the positions lived on the other, so nothing
+            # would ever resolve.
+            if isinstance(self.broker, PaperBroker):
+                self.paper = self.broker
+            else:
+                self.paper = PaperBroker(self.settings)
+                await self.paper.connect()
+            log.info(
+                "trading: TRADING_LIVE is not set - orders go to the paper book, "
+                "priced against %s's quotes",
+                self.broker.name,
+            )
+
+        resolution = await sym.resolve(self.broker, self.settings.symbols, self.settings)
+        self.specs = dict(resolution.found)
+        self._symbol_of = resolution.symbols
+        self._feed_of = {symbol: feed for feed, symbol in self._symbol_of.items()}
+        if not self.specs:
+            raise BrokerError(
+                f"none of {', '.join(self.settings.symbols)} can be traded on this account"
+            )
+
+        await self.replicator.start(sorted(self.specs))
+        await self._warm_sessions()
+        self._announce_style()
+        self._check_gates()
+        self._check_order()
+        self._check_magics()
+        self.guard.roll(self.equity)
+        log.info(
+            "trading: %s on %s",
+            " + ".join(s.name for s in self.strategies),
+            ", ".join(sorted(self.specs)),
+        )
+
+    def _announce_style(self) -> None:
+        """Say which kind of trading is running, and what that turned off.
+
+        Loud because it is the difference between a quiet service and a broken
+        one. `TRADING_STYLE=none` produces a process that connects, warms every
+        estimator, publishes signals and takes nothing, which looks identical
+        to a fault unless it says so.
+        """
+        if self.stood_down:
+            log.info(
+                "trading: style=%s - %s stood down (%s)",
+                self.settings.style,
+                len(self.stood_down),
+                ", ".join(sorted(e.name for e in self.stood_down)),
+            )
+        if not self.strategies:
+            log.warning(
+                "trading: style=%s leaves no strategies - the service will run and take nothing",
+                self.settings.style,
+            )
+
+    def _check_order(self) -> None:
+        """Warn when a strategy is listed where it can never trade.
+
+        See `trading-service.md` in research/docs.
+        """
+        order = [engine.name for engine in self.strategies]
+        for position, engine in enumerate(self.strategies):
+            parent = engine.refines
+            if not parent or parent not in order:
+                continue
+            if order.index(parent) < position:
+                log.warning(
+                    "trading: %s is %s plus extra refusals and is listed after "
+                    "it, so it can only see calls %s already declined and will "
+                    "never trade - put it first",
+                    engine.name,
+                    parent,
+                    parent,
+                )
+
+    def _check_magics(self) -> None:
+        """Print the strategy-to-magic map, and refuse a silent collision.
+
+        Two strategies sharing a magic is not a cosmetic problem: their trades
+        become one indistinguishable book, a report merges their results, and
+        the merged number is the one somebody decides on. Only the hashed tail
+        can collide - names in `MAGIC_ORDER` have fixed slots - so this is rare
+        and worth saying out loud when it happens rather than discovering it in
+        a scorecard that looks fine.
+        """
+        seen: dict[int, str] = {}
+        for engine in self.strategies:
+            magic = magic_for(self.settings.magic, engine.name)
+            if magic in seen:
+                log.warning(
+                    "trading: %s and %s both stamp magic %d, so their trades "
+                    "cannot be told apart - rename one",
+                    seen[magic],
+                    engine.name,
+                    magic,
+                )
+                continue
+            seen[magic] = engine.name
+        log.info(
+            "trading: magics %s",
+            ", ".join(f"{name}={magic}" for magic, name in sorted(seen.items())),
+        )
+
+    def _check_gates(self) -> None:
+        """Warn about a gate that cannot fire.
+
+        See `trading-service.md` in research/docs.
+        """
+
+        if 0 < self.settings.min_edge <= MIN_EDGE:
+            log.warning(
+                "trading: min_edge %.3f is at or below the %.3f structures already "
+                "requires, so it can never refuse anything",
+                self.settings.min_edge,
+                MIN_EDGE,
+            )
+
+    async def close(self) -> None:
+        await self.broker.close()
+
+    # ---------------------------------------------------------------- inputs
+
+    async def handle(self, message: Message) -> Intent | Refusal | None:
+        """One bus message in. Returns what it did, for the tests and the log."""
+        self._gates_due()
+        if message.topic == QUOTES:
+            self._quote(message.payload)
+            feed = str(message.payload.get("feed") or "")
+            symbol = self._symbol_of.get(feed)
+            # **Per feed, like everything else in this condition.** It read
+            # `or self._shadows`, which is true for *every* feed as soon as one
+            # shadow exists anywhere - and `_watch_shadows` below discards every
+            # shadow not on this feed anyway. So one stopped trade made each
+            # quote on all ~42 traded feeds cost a broker round trip, serially,
+            # in the loop that also has to hand trading its signals. Signals
+            # queued behind quotes that never drained, and a shadow on a feed
+            # that stops quoting never retires, so it outlived every restart.
+            # From the last stops on 2026-09-17 nothing was traded again.
+            shadowed = any(shade.feed == feed for shade in self._shadows.values())
+            if symbol and (feed in self._waiting or shadowed or self._untaken.get(feed)):
+                got = await self._tick(symbol)
+                if got is not None:
+                    await self._watch_shadows(feed, got)
+                    await self._resolve_untaken(feed, got)
+                    if feed in self._waiting:
+                        return await self._arrived(feed, got)
+            return None
+        if message.topic == EVENTS:
+            self.context.observe_event(message.payload)
+            return None
+        if message.topic == DISPERSION:
+            # **Recorded, never consulted.** See `context.py`'s docstring: the
+            # numeric layer's expected width goes onto the decision card so it
+            # can be joined to the outcome later, and nothing in `risk.Guard`
+            # reads it. `anomalies.md` is why - a second volatility-based size
+            # cut on top of stops that already scale with volatility was sized
+            # on reversion rather than on risk.
+            self.context.observe_width(message.payload)
+            return None
+        if message.topic == RESOLUTIONS:
+            self._resolution(message.payload)
+            return None
+        if message.topic == SIGNALS:
+            self.received += 1
+            self.received_at = time.time()
+            # Recorded only: nothing below reads what the shadowed gates plan. See `shadow.py`.
+            feed = str(message.payload.get("feed") or "")
+            self.gates.consider(message.payload, self._symbol_of.get(feed))
+            return await self.on_signal(message.payload)
+        if message.topic == PROPOSALS:
+            # **The second producer of the signal contract**, and it reaches
+            # the same `on_signal`: a proposal is the same shape of thing and
+            # `Strategy.wants` is what sorts them, by `shape`.
+            #
+            # It does **not** go through `gates.consider`, which shadows the
+            # level gates against a level payload. A statespace proposal has no
+            # `level`, no `break_probability` and no `origin_*` - that absence
+            # is the whole reason `dispersing.py` had to be written.
+            self.proposals += 1
+            self.received_at = time.time()
+            return await self.on_signal(message.payload)
+        return None
+
+    def _gates_due(self) -> None:
+        """Evaluate shadowed gates whose window has closed, in the background and at most every
+        fifteen seconds, so a bar fetch never holds up a message. Never raises."""
+        try:
+            now = time.time()
+            running = self._gates_task
+            if now - self._gates_checked < 15 or (running is not None and not running.done()):
+                return
+            self._gates_checked = now
+            if any(plan.due <= now for plan in self.gates.pending):
+                self._gates_task = asyncio.get_running_loop().create_task(self.gates.due())
+        except Exception as exc:
+            log.debug("trading: shadow gates not checked: %s", exc)
+
+    async def _record_gate(
+        self, title: str, context: dict[str, Any], tags: tuple[str, ...]
+    ) -> None:
+        await observe(
+            self.journal,
+            title,
+            rationale=(
+                "A confirmation gate from research/docs/confirm.md, shadowed: recorded against "
+                "this level signal and not acted on. research/harness/shadowreport.py settles it."
+            ),
+            actor="trading",
+            context=context,
+            tags=tags,
+        )
+
+    def _resolution(self, payload: dict[str, Any]) -> None:
+        """Note what a level actually did.
+
+        Counted and logged, not acted on. This is the ground truth the bus
+        gained so that something *can* act on it - an accuracy-targeting gate,
+        a back-check strategy, a Kelly fraction - and none of those exist yet.
+        Consuming it now means the topic has a subscriber from the day it
+        shipped, so the first thing built on it is not also debugging whether
+        the messages arrive.
+        """
+        self.resolutions += 1
+        feed = str(payload.get("feed") or "")
+        # The one thing acted on: how long this took. See
+        # `structures.holds` - hold time varies 163x and persists at +0.269,
+        # which is the pair of properties that justifies an estimator, and it
+        # is multiplied into every stop `stop_hold_scaling` widens.
+        interval = str(payload.get("interval") or "")
+        seconds = payload.get("seconds")
+        if isinstance(seconds, int | float) and seconds > 0:
+            self._holds.observe(feed, interval, float(seconds))
+        # How far price went into the level, and how far against the trade.
+        # The pullback and the stop are questions about these two distances,
+        # and both were being answered by constants.
+        # Passed only when present. A zero is a real observation - price
+        # reached the level and did not go through it, or never went against
+        # the trade - and substituting zero for a *missing* field would put
+        # those two things in the same sample.
+        depth = payload.get("depth_vol")
+        excursion = payload.get("excursion_vol")
+        if isinstance(depth, int | float) or isinstance(excursion, int | float):
+            self._reaches.observe(
+                feed,
+                interval,
+                float(depth) if isinstance(depth, int | float) else None,
+                float(excursion) if isinstance(excursion, int | float) else None,
+            )
+        if feed in self.specs:
+            log.debug(
+                "trading: %s %s at %s after %ss",
+                feed,
+                payload.get("outcome"),
+                payload.get("level"),
+                payload.get("seconds"),
+            )
+
+    def _quote(self, payload: dict[str, Any]) -> None:
+        """Feed the consensus, the paper book, and the trailing high-water mark.
+
+        Every venue's quote goes to the consensus - that is the whole point of
+        having six of them - but only our own broker's fills anything else.
+        """
+        self.context.observe_quote(payload)
+        feed = str(payload.get("feed") or "")
+        symbol = self._symbol_of.get(feed)
+        bid, ask = payload.get("bid"), payload.get("ask")
+        if not symbol or not isinstance(bid, int | float) or not isinstance(ask, int | float):
+            return
+        if not bid or not ask:
+            return
+        when = message_time(payload)
+        tick = Tick(symbol=symbol, bid=float(bid), ask=float(ask), time=when)
+        self._spread_of[feed] = tick.spread
+        self._quoted_at[feed] = time.time()
+        # Accumulate directional pressure. Fed from the quote stream rather
+        # than from signals, because signals arrive when a level is touched
+        # See `trading-service.md` in research/docs.
+        unit = price_distance(tick.mid, self._vol_bps.get(feed, 0.0), 1.0)
+        if unit > 0:
+            self._push.setdefault(feed, Cusum()).push(tick.mid, unit, when=when)
+            # Augmenting rather than replacing: the CUSUM decides, this
+            # measures. Fed the *change* rather than the level, because a
+            # likelihood ratio on a random walk's position is a statement
+            # about where it started.
+            previous = self._focus_last.get(feed)
+            self._focus_last[feed] = tick.mid
+            if previous:
+                step = tick.mid - previous
+                self._focus_up.setdefault(feed, Focus()).update(step, scale=unit)
+                self._focus_down.setdefault(feed, Focus(up=False)).update(step, scale=unit)
+            self._ensemble.setdefault(feed, Ensemble()).push(tick.mid, unit, when=when)
+        # The paper book holds its own stops, so it has to see the market. When
+        # the execution venue *is* the broker they are the same object and this
+        # runs once.
+        for venue in {id(self.broker): self.broker, id(self.paper): self.paper}.values():
+            observed = getattr(venue, "observe", None)
+            if observed is not None:
+                observed(tick)
+        # **Only our own broker's price may move the high-water mark.** This is
+        # what the docstring above has always claimed and what the code did not do:
+        # `symbol` is resolved from the feed alone, so every venue's quote reached
+        # `_mark_best` and a Deriv position's trailing mark was set by whichever
+        # exchange ticked last.
+        #
+        # Measured on the live desk, btc over thirty minutes: 1,525 quotes from
+        # TradingView's view of DERIV, 620 COINBASE, 533 BINANCE, 506 KRAKEN, 479
+        # BYBIT, 299 BITSTAMP - and **none** from the broker. So a break-even or
+        # trailing decision was being taken against a price the account cannot
+        # deal on, and by a basis that is not small on crypto.
+        #
+        # A payload naming **no** source is accepted. Every payload `prices`
+        # publishes carries one, so absence means a caller that predates this
+        # predicate rather than a foreign venue - and refusing it would turn a
+        # compatibility question into a silent loss of stop management.
+        if not _ours(payload):
+            return
+        self._quotes_seen[feed] += 1
+        self._mark_best(symbol, float(bid), float(ask))
+
+    def _undealable(self, feed: str, spec: SymbolSpec, tick: Tick | None) -> Refusal | None:
+        """Whether we can actually deal in this instrument right now.
+
+        See `trading-service.md` in research/docs.
+        """
+        if tick is None:
+            return Refusal("quote", f"no quote for {spec.symbol}", feed)
+        quiet = self._shut_for(feed, tick)
+        if quiet is not None:
+            return Refusal(
+                "shut",
+                f"{spec.symbol} last traded {quiet:.0f}s ago - the market is closed, "
+                "and a position opened here could not be closed",
+                feed,
+            )
+        return None
+
+    async def on_signal(  # noqa: PLR0911, PLR0912, PLR0915 - one gate per branch, in the
+        # order they are applied, for the reason `risk.allows` gives: the order
+        # is the design, and splitting it across helpers would hide it. Each
+        # return is a distinct way a signal stops being a trade, and each one
+        # is recorded differently.
+        self,
+        payload: dict[str, Any],
+        *,
+        observe: bool = True,
+        park: bool = True,
+    ) -> Intent | Refusal | None:
+        """Consider one signal against every strategy. The first taker wins.
+
+        First rather than best: two strategies wanting the same instrument is
+        one idea found twice, and the per-instrument limit would refuse the
+        second anyway. Ordering is the order they were configured in, which
+        makes it something the operator chose rather than an accident of a
+        dictionary.
+        """
+        self.context.observe_signal(payload)
+        vol_bps = _vol_of(payload)
+        feed_name = str(payload.get("feed") or "")
+        if vol_bps > 0:
+            self._vol_bps[feed_name] = vol_bps
+        self._note_push(feed_name, payload)
+        if observe:
+            # Skipped when a parked signal is re-considered: the level is
+            # already in each strategy's book, and folding it in twice would
+            # count one publication as two observations.
+            for engine in self.strategies:
+                engine.observe(payload)
+
+        feed = str(payload.get("feed") or "")
+        spec = self.specs.get(feed)
+        if spec is None:
+            # **Counted, though not journalled.** "Not worth a refusal record"
+            # was right about the journal and wrong about the tally: this is
+            # See `trading-service.md` in research/docs.
+            self.passed_over["(desk):untraded"] = self.passed_over.get("(desk):untraded", 0) + 1
+            return None
+        # Kept whether or not this becomes a trade, because what re-arms after
+        # a stop is the signal put back through every gate - not the intent,
+        # which has already been proved wrong once at this price.
+        self._last_signal[feed] = payload
+        self._remember_rung(feed, payload)
+        # Hand the strategies the accumulated run. Injected here rather than
+        # computed in a strategy because it is an accumulation over the whole
+        # quote stream and a strategy sees one signal at a time.
+        self._hand_over_pressure(feed, payload)
+        self._hand_over_trend(feed, payload)
+        self._hand_over_hold(feed, payload)
+        self._hand_over_reach(feed, payload)
+
+        tick = await self._tick(spec.symbol)
+        if refusal := self._undealable(feed, spec, tick):
+            # The other silent one, and the more misleading of the two: an
+            # instrument we *do* trade, refused for a reason nothing recorded.
+            key = f"(desk):{refusal.gate}"
+            self.passed_over[key] = self.passed_over.get(key, 0) + 1
+            return refusal
+
+        positions = await self._positions()
+        asked = 0
+        for engine in self.strategies:
+            if not engine.wants(payload):
+                continue
+            asked += 1
+            verdict = await engine.consider_async(
+                payload,
+                spec=spec,
+                tick=tick,
+                equity=self.equity,
+                # What the book already holds, so a trade sharing a currency
+                # leg with three open ones is sized for that rather than
+                # merely refused at the cap. See `scaling.crowding`.
+                positions=positions,
+                peak=self.peak_equity,
+            )
+            if isinstance(verdict, Refusal):
+                self.refused += 1
+                key = f"{engine.name}:{verdict.gate}"
+                self.passed_over[key] = self.passed_over.get(key, 0) + 1
+                # Deliberately not journalled. A strategy refusing on
+                # probability or interval is the normal case - hundreds a day -
+                # and writing all of it down would bury the refusals that
+                # matter under the ones that are simply the filter working.
+                log.debug("trading: %s declined %s: %s", engine.name, feed, verdict.detail)
+                continue
+
+            stopped = self.guard.allows(
+                verdict,
+                positions=positions,
+                tick=tick,
+                risk_of={t: live.intent.risk_money for t, live in self.open.items()},
+                feed_of=self._feed_of,
+                limits=engine.limits,
+                # The strategy's own planned hold, for `release_in_hold`. Asked
+                # of the engine rather than the settings because the ceiling
+                # depends on its style - see `Strategy.hold_for`, which dropped
+                # its ceiling argument precisely because callers passed the
+                # wrong one.
+                hold=engine.hold_for(verdict.interval),
+                spec=self.specs.get(verdict.feed),
+            )
+            if stopped is not None:
+                self.refused += 1
+                # These *are* journalled: the strategy wanted this trade and
+                # the account said no. That is the half of the record that says
+                # what the limits actually cost.
+                await self._record_refusal(verdict, stopped, engine.name)
+                await self._announce_decline(verdict, stopped)
+                return stopped
+
+            if park:
+                unconfirmed = await self._rejected_at(verdict, engine)
+                if unconfirmed is not None:
+                    await self._record_refusal(verdict, unconfirmed, engine.name)
+                    return unconfirmed
+                parked = await self._park(payload, verdict, engine.name, tick, engine)
+                if parked is not None:
+                    # Journalled like every other refusal. It was not, so a
+                    # resting entry left no record at all: the log said it
+                    # happened and the journal showed zero, which makes the one
+                    # number that matters - how often a rested entry is
+                    # actually filled - impossible to compute.
+                    await self._record_refusal(verdict, parked, engine.name)
+                    await self._also_wanted(payload, spec, tick, engine.name)
+                    return parked
+            if self.settings.parallel:
+                # **Every strategy that wants this takes it.** The running
+                # order stops deciding who trades and decides only who goes
+                # See `trading-service.md` in research/docs.
+                return await self._take_all(payload, spec, tick, engine, verdict)
+            others = await self._also_wanted(payload, spec, tick, engine.name)
+            verdict, agreed = self._agree(verdict, others)
+            if agreed:
+                sized = lots(
+                    spec,
+                    equity=self.equity,
+                    # Re-sized flat, as before - except for the risk switch, which
+                    # is about the instrument's state rather than the strategy's
+                    # view and so must not vanish because two strategies agreed.
+                    risk_fraction=self.settings.risk_fraction
+                    * strategy.spike_scale(payload.get("features"), self.settings),
+                    stop_distance=abs(verdict.entry - verdict.stop),
+                    max_risk_money=self.settings.max_risk_money,
+                )
+                if not sized.ok:
+                    return Refusal("size", sized.reason, feed)
+                verdict = replace(verdict, volume=sized.volume, risk_money=sized.risk_money)
+                log.info(
+                    "trading: %s %s agreed by %s - stop %.5g target %.5g, %g lots",
+                    verdict.side,
+                    verdict.feed,
+                    " + ".join([engine.name, *agreed]),
+                    verdict.stop,
+                    verdict.target,
+                    verdict.volume,
+                )
+            return await self.take(verdict, engine.name)
+        if not asked:
+            # **The third silent return, and the likeliest.** `wants` is a
+            # shape check, so a signal no strategy recognises falls through
+            # every one of them and out of the loop without a refusal, a trade
+            # or a desk counter - which is exactly what the desk showed: calls
+            # published on traded instruments and no trace of any of them.
+            # Keyed by the shape actually received, so a mismatch names itself.
+            shape = re.sub(r"[^a-z0-9]+", "_", str(payload.get("shape") or "none").lower())
+            key = f"(desk):unwanted_{shape}"
+            self.passed_over[key] = self.passed_over.get(key, 0) + 1
+        return None
+
+    def _shadow_unfilled(
+        self, payload: dict[str, Any], tick: Tick, engine: Any, intent: Intent
+    ) -> None:
+        """Follow an intent a strategy formed in parallel mode but did not get.
+
+        **Parallel mode was collecting no counterfactual at all.** Shadows come
+        only from `_also_wanted`, and `on_signal` returns `_take_all` before
+        reaching it whenever `parallel` is on - so every intent refused there for
+        a slot, a guard or a size simply vanished. The policy was left learning
+        from parked signals alone: 2,349 observations over weeks. Turning
+        parallel on to gather comparative data switched the comparison off.
+        """
+        found = payload.get("features")
+        readings = found if isinstance(found, dict) else {}
+        state = readings.get("regime")
+        interval = str(payload.get("interval") or "")
+        self._remember_untaken(
+            str(payload.get("feed") or ""),
+            engine.name,
+            intent,
+            interval,
+            engine.hold_for(interval),
+            tick.time,
+            float(state) if isinstance(state, int | float) else 0.0,
+            str(payload.get("market") or ""),
+        )
+
+    async def _take_all(
+        self,
+        payload: dict[str, Any],
+        spec: SymbolSpec,
+        tick: Tick,
+        first: Any,
+        verdict: Intent,
+    ) -> Intent | Refusal | None:
+        """Take this signal for every strategy that wants it, not just the first.
+
+        See `trading-service.md` in research/docs.
+        """
+        taken: list[tuple[str, Intent]] = []
+        outcome: Intent | Refusal | None = None
+
+        for engine in [first, *[e for e in self.strategies if e is not first]]:
+            if engine is first:
+                wanted: Intent | Refusal | None = verdict
+            else:
+                if not engine.wants(payload):
+                    continue
+                try:
+                    wanted = await engine.consider_async(
+                        payload,
+                        spec=spec,
+                        tick=tick,
+                        equity=self.equity,
+                        positions=await self._positions(),
+                        peak=self.peak_equity,
+                    )
+                except Exception as exc:
+                    # One strategy failing must not cost the others their fill.
+                    log.debug("trading: %s could not be considered: %s", engine.name, exc)
+                    continue
+            if not isinstance(wanted, Intent):
+                if isinstance(wanted, Refusal):
+                    self.refused += 1
+                    key = f"{engine.name}:{wanted.gate}"
+                    self.passed_over[key] = self.passed_over.get(key, 0) + 1
+                continue
+
+            # **One slot per strategy per instrument.** `max_per_symbol` counts
+            # positions on a symbol without asking who opened them, so setting
+            # See `trading-service.md` in research/docs.
+            if any(
+                live.by == engine.name and live.intent.feed == wanted.feed
+                for live in self.open.values()
+            ):
+                self.refused += 1
+                key = f"{engine.name}:already_open"
+                self.passed_over[key] = self.passed_over.get(key, 0) + 1
+                self._shadow_unfilled(payload, tick, engine, wanted)
+                continue
+
+            # Re-read, per intent. See the docstring.
+            positions = await self._positions(fresh=True)
+            stopped = self.guard.allows(
+                wanted,
+                positions=positions,
+                tick=tick,
+                risk_of={t: live.intent.risk_money for t, live in self.open.items()},
+                feed_of=self._feed_of,
+                limits=engine.limits,
+                hold=engine.hold_for(wanted.interval),
+                spec=self.specs.get(wanted.feed),
+            )
+            if stopped is not None:
+                self.refused += 1
+                await self._record_refusal(wanted, stopped, engine.name)
+                self._shadow_unfilled(payload, tick, engine, wanted)
+                outcome = outcome or stopped
+                continue
+
+            sized = lots(
+                spec,
+                equity=self.equity,
+                # Flat by design in parallel mode, bar the risk switch - see `_agree`'s
+                # sizing above for why that one survives.
+                risk_fraction=self.settings.risk_fraction
+                * strategy.spike_scale(payload.get("features"), self.settings),
+                stop_distance=abs(wanted.entry - wanted.stop),
+                max_risk_money=self.settings.max_risk_money,
+            )
+            if not sized.ok:
+                outcome = outcome or Refusal("size", sized.reason, wanted.feed)
+                self._shadow_unfilled(payload, tick, engine, wanted)
+                continue
+            wanted = replace(wanted, volume=sized.volume, risk_money=sized.risk_money)
+            got = await self.take(wanted, engine.name)
+            if isinstance(got, Intent):
+                taken.append((engine.name, got))
+            outcome = outcome if isinstance(outcome, Intent) else got
+
+        if taken:
+            log.info(
+                "trading: %s %s taken in parallel by %s",
+                taken[0][1].side,
+                taken[0][1].feed,
+                " + ".join(name for name, _ in taken),
+            )
+        return outcome
+
+    def _agree(self, taken: Intent, others: list[tuple[str, Intent]]) -> tuple[Intent, list[str]]:
+        """Rebuild a trade from what the strategies that agreed with it wanted.
+
+        See `trading-service.md` in research/docs.
+        """
+        least = self.settings.consensus_min
+        # `< 2` and not `<= 0`: a consensus of one is the trade itself, and a
+        # threshold of zero read as "off" in the setting's own description
+        # while the arithmetic made it "always on" - `len(agreed) + 1 < 0` is
+        # never true. It shipped that way and fired in production within
+        # minutes of being deployed disabled.
+        if least < 2:
+            return taken, []
+        agreed = [(n, i) for n, i in others if i.side is taken.side]
+        if len(agreed) + 1 < least:
+            return taken, []
+
+        sign = taken.side.sign
+        stop = min((i.stop for _, i in agreed), default=taken.stop, key=lambda p: p * sign)
+        stop = taken.stop if (taken.stop - stop) * sign < 0 else stop
+        target = min((i.target for _, i in agreed), default=taken.target, key=lambda p: p * sign)
+        target = taken.target if (target - taken.target) * sign > 0 else target
+        return replace(taken, stop=stop, target=target), [n for n, _ in agreed]
+
+    async def _also_wanted(
+        self, payload: dict[str, Any], spec: SymbolSpec, tick: Tick, taken_by: str
+    ) -> list[tuple[str, Intent]]:
+        """Ask every other strategy what it would have done with this signal.
+
+        See `trading-service.md` in research/docs.
+        """
+        wanted_by: list[tuple[str, Intent]] = []
+        if not self.settings.evaluate_all:
+            return wanted_by
+        for engine in self.strategies:
+            if engine.name == taken_by or not engine.wants(payload):
+                continue
+            try:
+                # No `positions` here, deliberately. This is the shadow
+                # evaluation - what each *other* strategy would have done with
+                # the same signal - and crowding is a fact about the book
+                # rather than about the strategy. Applying it would make the
+                # comparison depend on what happened to be open, which is the
+                # opposite of what a comparison is for.
+                verdict = await engine.consider_async(
+                    payload, spec=spec, tick=tick, equity=self.equity, peak=self.peak_equity
+                )
+            except Exception as exc:
+                # A shadow evaluation must never break a real trade.
+                log.debug("trading: %s could not be evaluated: %s", engine.name, exc)
+                continue
+            wanted = isinstance(verdict, Intent)
+            if wanted:
+                wanted_by.append((engine.name, verdict))
+                # Followed forward from here, so the record says what this
+                # strategy would have *got* and not only what it wanted. See
+                # `Untaken`: without this the ranking has to be recomputed by
+                # hand off stored bars, which is how it was done the first time.
+                found = payload.get("features")
+                readings = found if isinstance(found, dict) else {}
+                state = readings.get("regime")
+                self._remember_untaken(
+                    str(payload.get("feed") or ""),
+                    engine.name,
+                    verdict,
+                    str(payload.get("interval") or ""),
+                    engine.hold_for(str(payload.get("interval") or "")),
+                    tick.time,
+                    float(state) if isinstance(state, int | float) else 0.0,
+                    str(payload.get("market") or ""),
+                )
+            await observe(
+                self.journal,
+                f"{engine.name} would have {'taken' if wanted else 'passed'} {payload.get('feed')}",
+                rationale=(verdict.reason if wanted else f"{verdict.gate}: {verdict.detail}"),
+                actor="trading",
+                context={
+                    "shape": "considered",
+                    "strategy": engine.name,
+                    "taken_by": taken_by,
+                    "wanted": wanted,
+                    "gate": "" if wanted else verdict.gate,
+                    # The prices it would have used, so the same scoring that
+                    # runs over real trades can run over these.
+                    "entry": round(verdict.entry, 8) if wanted else 0.0,
+                    "stop": round(verdict.stop, 8) if wanted else 0.0,
+                    "target": round(verdict.target, 8) if wanted else 0.0,
+                    "feed": str(payload.get("feed") or ""),
+                    "interval": str(payload.get("interval") or ""),
+                    # The state the market was in, so this table can be split
+                    # by it. Without it the ranking is pooled, and pooled it
+                    # says the strategies are indistinguishable.
+                    "regime": _regime_of(payload),
+                    "market": str(payload.get("market") or ""),
+                },
+                tags=(str(payload.get("feed") or ""), engine.name, "considered"),
+            )
+        return wanted_by
+
+    # --------------------------------------------------------------- trading
+
+    def _restore_refs(self, stored: Any) -> None:
+        """Put the ticket-to-decision map back after a restart.
+
+        **Keys come back as strings through msgpack.** Left as strings they
+        would never match a ticket again, so the map would restore, log a
+        healthy count, and do nothing - which is the shape `research/inert.md`
+        catalogues and exactly what this fix exists to stop.
+        """
+        if not isinstance(stored, dict):
+            return
+        for ticket, ref in stored.items():
+            try:
+                self._refs[int(ticket)] = str(ref)
+            except (TypeError, ValueError):
+                continue
+        if self._refs:
+            log.info("trading: recovered %d position-to-decision link(s)", len(self._refs))
+
+    def _recover(
+        self, ticket: int, position: Position, intent: Intent, ref: str
+    ) -> tuple[Intent, str]:
+        """Put back what a restart took off an adopted position.
+
+        See `trading-service.md` in research/docs.
+        """
+        if not ref:
+            ref = self._refs.get(ticket) or self._ref_for(position)
+        if not getattr(intent, "interval", ""):
+            found = self._intervals.get(ticket) or self._interval_for(ref)
+            if found:
+                intent = replace(intent, interval=found)
+        return intent, ref
+
+    def _interval_for(self, ref: str) -> str:
+        """The timeframe named by the decision this position was opened from.
+
+        The fallback for a position that predates the map. It is exact rather
+        than a guess: `ref` is the journal entry the trade was opened from, so
+        its context is that trade's own reasoning, and `interval` is written
+        there by `Intent.to_context`.
+        """
+        if not ref:
+            return ""
+        path = getattr(self.journal, "path", None)
+        if path is None:
+            return ""
+        try:
+            from ..journal import read as read_journal
+
+            for entry in read_journal(path, kind="decision", actor="trading", limit=400):
+                if str(entry.id) == str(ref):
+                    return str((entry.context or {}).get("interval") or "")
+        except Exception as exc:
+            log.debug("trading: could not recover an interval for %s: %s", ref, exc)
+        return ""
+
+    #: Attributes a strategy may accumulate across calls, which have to survive
+    #: a restart or the strategy never warms. Named rather than discovered, so
+    #: adding one is a deliberate act and a reader can see the whole list.
+    LEARNED: ClassVar[tuple[str, ...]] = ("speeds", "book")
+
+    def _learned_of(self, engine: Any) -> Any:
+        """Whatever this strategy has accumulated, or None if it accumulates nothing."""
+        for name in self.LEARNED:
+            got = getattr(engine, name, None)
+            if got is not None:
+                return got
+        return None
+
+    def _restore_learned(self, stored: Any) -> None:
+        """Give each strategy back what it had learned before the restart.
+
+        Type-checked against what the strategy currently holds, for the reason
+        the `push`/`ensemble` restore gives: a key the registry could not
+        resolve comes back as a plain mapping, and a dict landing where a
+        `Speeds` is expected is an `AttributeError` on the next call, on every
+        feed, for the life of the process.
+        """
+        if not isinstance(stored, dict):
+            return
+        back = 0
+        for engine in self.strategies:
+            saved = stored.get(engine.name)
+            if saved is None:
+                continue
+            for name in self.LEARNED:
+                held = getattr(engine, name, None)
+                if held is not None and type(saved) is type(held):
+                    setattr(engine, name, saved)
+                    # Saved state carries `Seen` objects whose numbers are
+                    # strings, and one is enough: `Book.observe` subtracts
+                    # See `trading-service.md` in research/docs.
+                    fix = getattr(saved, "repair", None)
+                    if callable(fix):
+                        mended = fix()
+                        if mended:
+                            log.warning(
+                                "trading: repaired %d level(s) on %s whose numbers "
+                                "were stored as text",
+                                mended,
+                                engine.name,
+                            )
+                    back += 1
+                    break
+        if back:
+            log.info("trading: restored what %d strategy(s) had accumulated", back)
+
+    def _restore_intervals(self, stored: Any) -> None:
+        """Put the ticket-to-timeframe map back, with the same key coercion.
+
+        msgpack returns the keys as strings; left that way the map restores,
+        looks healthy and never matches a ticket - which is what
+        `_restore_refs` exists to say, one map along.
+        """
+        if not isinstance(stored, dict):
+            return
+        for ticket, interval in stored.items():
+            try:
+                if interval:
+                    self._intervals[int(ticket)] = str(interval)
+            except (TypeError, ValueError):
+                continue
+
+    def _ref_for(self, position: Position) -> str:
+        """The journal entry for the decision that opened this position.
+
+        See `trading-service.md` in research/docs.
+        """
+        path = getattr(self.journal, "path", None)
+        if path is None:
+            return ""
+        try:
+            from ..journal import read as read_journal
+
+            decisions = read_journal(path, kind="decision", actor="trading", limit=400)
+            outcomes = read_journal(path, kind="outcome", actor="trading", limit=400)
+        except Exception as exc:
+            log.debug("trading: could not look up a ref for #%d: %s", position.ticket, exc)
+            return ""
+
+        settled = {entry.parent for entry in outcomes if entry.parent}
+        want = str(position.side)
+        for entry in decisions:  # newest first
+            context = entry.context or {}
+            if context.get("symbol") != position.symbol:
+                continue
+            if str(context.get("side") or "") != want:
+                continue
+            if entry.id in settled:
+                continue
+            log.info(
+                "trading: adopted #%d and recovered its decision from the journal",
+                position.ticket,
+            )
+            return entry.id
+        return ""
+
+    async def _warm_sessions(self) -> None:
+        """Learn each instrument's trading week from where its bars are.
+
+        See `trading-service.md` in research/docs.
+        """
+        want = self.settings.session_bars
+        if want <= 0:
+            return
+        span = float(SESSION_INTERVAL_S)
+        gate = asyncio.Semaphore(SESSION_FETCHES)
+
+        async def learn(symbol: str) -> None:
+            async with gate:
+                try:
+                    bars = await self.broker.bars(symbol, SESSION_INTERVAL, want)
+                except BrokerError as exc:
+                    log.debug("trading: no session bars for %s: %s", symbol, exc)
+                    return
+            times = [bar.time for bar in bars if bar.time > 0]
+            if not times:
+                log.debug("trading: no bar times for %s", symbol)
+                return
+            self._sessions.learn(symbol, times, span)
+
+        started = time.time()
+        await asyncio.gather(
+            *(learn(spec.symbol) for spec in self.specs.values()), return_exceptions=True
+        )
+        took = time.time() - started
+        known = self._sessions.learned
+        if known:
+            always = sum(1 for sch in self._sessions.by_symbol.values() if sch.always)
+            log.info(
+                "trading: session hours learned for %d of %d instruments in %.1fs - %d never close",
+                known,
+                len(self.specs),
+                took,
+                always,
+            )
+        else:
+            log.info("trading: no session hours learned - the closing gate stands aside")
+
+    def _warm_reach(self) -> None:
+        """Rebuild the hold and reach estimates from the journal before trading.
+
+        See `trading-service.md` in research/docs.
+        """
+        path = getattr(self.journal, "path", None)
+        if path is None:
+            return
+        try:
+            from ..journal import read as read_journal
+
+            rows = read_journal(path, kind="outcome", actor="structures", limit=8000)
+        except Exception as exc:
+            log.debug("trading: could not warm the reach estimates: %s", exc)
+            return
+
+        warmed = 0
+        # Oldest first, so a bounded window keeps what is recent rather than
+        # the stalest rows of the batch - the trap `_warm_trend` documents.
+        for entry in reversed(rows):
+            context = getattr(entry, "context", None) or {}
+            feed, interval = context.get("feed"), context.get("interval")
+            if not feed or not interval:
+                continue
+            seconds = context.get("seconds")
+            if isinstance(seconds, int | float) and seconds > 0:
+                self._holds.observe(str(feed), str(interval), float(seconds))
+            depth, excursion = context.get("depth_vol"), context.get("excursion_vol")
+            if isinstance(depth, int | float) or isinstance(excursion, int | float):
+                self._reaches.observe(
+                    str(feed),
+                    str(interval),
+                    float(depth) if isinstance(depth, int | float) else None,
+                    float(excursion) if isinstance(excursion, int | float) else None,
+                )
+                warmed += 1
+        if warmed:
+            log.info(
+                "trading: reach warmed from %d resolutions - %d series ready, %d hold estimates",
+                warmed,
+                self._reaches.ready(),
+                sum(1 for h in self._holds.by_key.values() if h.expected is not None),
+            )
+
+    def _warm_trend(self) -> None:
+        """Rebuild the trend windows from the journal before trading starts.
+
+        See `trading-service.md` in research/docs.
+        """
+        path = getattr(self.journal, "path", None)
+        if path is None:
+            return
+        try:
+            from ..journal import read as read_journal
+
+            rows = read_journal(path, kind="outcome", actor="structures", limit=6000)
+        except Exception as exc:
+            log.debug("trading: could not warm the trend context: %s", exc)
+            return
+
+        warmed = 0
+        # Oldest first, because the window is a bounded deque and keeps what
+        # was appended *last*. Fed newest-first it would retain the twelve
+        # See `trading-service.md` in research/docs.
+        for entry in reversed(rows):
+            context = getattr(entry, "context", None) or {}
+            feed, interval = context.get("feed"), context.get("interval")
+            level = context.get("level")
+            if not feed or not interval or not isinstance(level, int | float):
+                continue
+            self._trend.setdefault((str(feed), str(interval)), Trend()).observe(float(level))
+            warmed += 1
+        if warmed:
+            ready = sum(1 for t in self._trend.values() if t.efficiency is not None)
+            log.info(
+                "trading: trend context warmed from %d levels - %d of %d pairs ready",
+                warmed,
+                ready,
+                len(self._trend),
+            )
+
+    def _hand_over_reach(self, feed: str, payload: dict[str, Any]) -> None:
+        """Attach how far price reaches here, into the level and against a trade.
+
+        Recorded rather than acted on, like the hold estimate beside it.
+        `pullback_fraction` and `min_stop_vol` still decide; these say what the
+        instrument has actually done, so the journal can show whether the
+        constants were in the right place before anything is moved.
+        """
+        interval = str(payload.get("interval") or "")
+        entry = self._reaches.entry_at(feed, interval)
+        features = payload.get("features")
+        if not isinstance(features, dict):
+            return
+        if entry is not None:
+            features["reach_depth_vol"] = entry
+        risk = features.get("risk_vol")
+        stop = self._reaches.stop_at(
+            feed, interval, risk_vol=float(risk) if isinstance(risk, int | float) else 0.0
+        )
+        if stop is not None:
+            features["reach_stop_vol"] = stop
+
+    def _hand_over_hold(self, feed: str, payload: dict[str, Any]) -> None:
+        """Attach how long a touch here usually takes, when that is known.
+
+        Recorded on the decision rather than acted on. The estimator is worth
+        having - hold time varies 163x and persists - but it has never sized a
+        stop, and a quantity that moves money should be visible in the journal
+        for a while before it does. `stop_hold_scaling` still scales by the
+        strategy's configured hold.
+        """
+        expected = self._holds.expected(feed, str(payload.get("interval") or ""))
+        if expected is None:
+            return
+        features = payload.get("features")
+        if isinstance(features, dict):
+            features["expected_hold_s"] = expected
+
+    def _hand_over_trend(self, feed: str, payload: dict[str, Any]) -> None:
+        """Attach the trend context, then fold this level into it.
+
+        **Read before observe, and the order is the whole correctness of it.**
+        The level being decided must not be inside the window it is judged
+        against, or the measure describes the decision instead of predicting
+        it - which is the trap `push_vol` fell into, where a quantity signed by
+        the outcome was scored against the outcome.
+        """
+        # Out of `features`, which is where every strategy reads it from and
+        # therefore where it actually is. Read from the top of the payload
+        # See `trading-service.md` in research/docs.
+        features = payload.get("features")
+        level = features.get("level") if isinstance(features, dict) else None
+        if not isinstance(level, int | float):
+            return
+        interval = str(payload.get("interval") or "")
+        context = self._trend.setdefault((feed, interval), Trend())
+
+        ratio = context.efficiency
+        if ratio is not None:
+            features["efficiency"] = ratio
+        context.observe(float(level))
+
+    def _note_push(self, feed: str, payload: dict[str, Any]) -> None:
+        """Keep a running estimate of how far this instrument moves, and size
+        the momentum filter to it.
+
+        See `trading-service.md` in research/docs.
+        """
+        if not feed:
+            return
+        push = abs(float(payload.get("features", {}).get("expected_push_vol") or 0.0))
+        if push <= 0 or push > self.settings.max_push_vol:
+            return
+        seen = self._push_vol.get(feed)
+        self._push_vol[feed] = push if seen is None else seen * (1 - PUSH_DECAY) + push * PUSH_DECAY
+        group = self._ensemble.get(feed)
+        if group is not None:
+            group.threshold = adaptive_threshold(self._push_vol[feed])
+
+    def _hand_over_pressure(self, feed: str, payload: dict[str, Any]) -> None:
+        """Put the accumulated run where the strategies will actually see it.
+
+        Into `features`, not the top level. `_features` reads
+        `payload["features"]` and nothing else, so a top-level key is invisible
+        to every strategy - the gate reads zero and refuses nothing while
+        looking configured. That is what the first version of this did, and
+        the test written to catch exactly that asserted the wrong dictionary
+        and passed alongside it.
+        """
+        running = self._push.get(feed)
+        if running is None:
+            return
+        features = payload.setdefault("features", {})
+        if not isinstance(features, dict):
+            return
+        features["pressure_vol"] = running.pressure
+        # The ensemble's own reading, alongside rather than instead of the
+        # single filter: `require_turn_vol` is calibrated against that one, and
+        # swapping the number underneath a threshold silently recalibrates it.
+        group = self._ensemble.get(feed)
+        if group is not None and group.ready:
+            features["momentum_vol"] = group.pressure
+            features["momentum_agree"] = group.agreement
+            features["momentum_ready"] = float(group.ready)
+
+    async def _rejected_at(self, intent: Intent, engine: Strategy | None = None) -> Refusal | None:
+        """Refuse a trade nothing has confirmed yet. Either witness will do.
+
+        See `trading-service.md` in research/docs.
+        """
+        wants_turn = self.settings.require_turn_vol > 0
+        wants_candle = self.settings.require_candle
+        if not (wants_turn or wants_candle):
+            return None
+
+        # A swing may insist on both. The disjunction is right for a scalp,
+        # which cannot wait four hours for a bar to close and would otherwise
+        # refuse a clean fast turn for having no candle yet. A swing has the
+        # time, and an origin price merely touched is not one that rejected it.
+        both = bool(engine and engine.needs_both_witnesses)
+        # Momentum leads, and its absence is a refusal rather than a pass. See
+        # `Strategy.momentum_leads` for the leak this closes: the turn is read
+        # only after a pullback, so on any other entry the candle was the only
+        # witness asked and carried the trade alone.
+        leads = bool(engine and engine.momentum_leads and wants_turn)
+        both = both or leads
+
+        asked: list[str] = []
+        held: list[str] = []
+        # The turn. Skipped entirely before a pullback, where the reading means
+        # the opposite thing - so on a straight-to-market entry this witness is
+        # not merely unsatisfied, it is not applicable.
+        if wants_turn and (intent.features.get("after_pullback") or leads):
+            asked.append("turn")
+            pressure = float(intent.features.get("pressure_vol") or 0.0)
+            turned = pressure if intent.side is Side.BUY else -pressure
+            wanted = self._turn_wanted(intent.feed)
+            if turned >= wanted:
+                log.info(
+                    "trading: %s %s confirmed - turned %.2fv after the pullback",
+                    intent.side,
+                    intent.feed,
+                    turned,
+                )
+                if not both:
+                    return None
+                held.append("turn")
+            elif leads:
+                # Refused here rather than folded into the "wants both" message
+                # below, because the reason is different and the operator
+                # should be able to tell them apart: this is not "one of two
+                # witnesses is missing", it is "the thing that has to come
+                # first did not happen".
+                return Refusal(
+                    "momentum",
+                    f"momentum leads here and has not turned: {turned:+.2f}v "
+                    f"against the {wanted:.2f}v it needs",
+                    intent.feed,
+                )
+
+        if wants_candle:
+            asked.append("candle")
+            found = await self._candle_at(intent, engine)
+            if found:
+                log.info("trading: %s %s confirmed by a %s", intent.side, intent.feed, found)
+                if not both:
+                    return None
+                held.append("candle")
+
+        if not asked:
+            return None
+        if both:
+            missing = [w for w in asked if w not in held]
+            if not missing:
+                return None
+            return Refusal(
+                "unconfirmed",
+                f"{'/'.join(held) or 'nothing'} confirmed the level but "
+                f"{'/'.join(missing)} did not, and this strategy wants both",
+                intent.feed,
+            )
+        witnesses = "/".join(asked)
+        return Refusal("unconfirmed", f"nothing confirmed the level ({witnesses})", intent.feed)
+
+    async def _candle_at(self, intent: Intent, engine: Strategy | None = None) -> str:
+        """The pattern rejecting this level on the last closed bar, or "".
+
+        An unavailable answer is an empty one, not an exception: if the broker
+        serves no bars the trade is unconfirmed, which is exactly what the gate
+        is for. Treating missing data as a pass would make this silently
+        inactive on every instrument whose bars fail, which is the failure mode
+        that looks like working code.
+        """
+        # A swing enters on 1h and wants the rejection on something slower: the
+        # entry can be fast while the evidence is slow. A scalp names nothing
+        # See `trading-service.md` in research/docs.
+        window = (engine.candle_intervals if engine else ()) or ()
+        if not window:
+            window = ((engine.candle_interval if engine else "") or intent.interval,)
+        level = float(intent.features.get("level") or intent.entry)
+        vol_bps = self._vol_bps.get(intent.feed, 0.0)
+        tolerance = price_distance(level, vol_bps, self.settings.candle_tolerance_vol)
+        want_up = intent.side is Side.BUY
+        # Empties dropped only when something else is on offer: a caller with
+        # no timeframe at all still asks, which is what a scalp judged on its
+        # own entry bar does.
+        window = tuple(w for w in window if w) or window
+        for interval in window:
+            bars = await self.execution.bars(intent.symbol, interval, count=3)
+            if len(bars) < 2:
+                continue
+            found = confirms(bars, level, want_up, tolerance)
+            if found:
+                # The wick that did the rejecting, kept for the entry rule. A
+                # long tail is not what makes a hammer a hammer - it is what
+                # makes waiting for a pullback worth doing, and `_park` reads
+                # it rather than fetching the same bars again.
+                self._rejection[intent.feed] = rejection_wick(bars, want_up)
+                return f"{found} on {interval}"
+        return ""
+
+    async def _park(
+        self,
+        payload: dict[str, Any],
+        intent: Intent,
+        by: str,
+        tick: Tick,
+        engine: Strategy | None = None,
+    ) -> Refusal | None:
+        """Hold this signal back if a better fill is worth waiting for.
+
+        See `trading-service.md` in research/docs.
+        """
+        # **And only behind a long wick, when the strategy asks for that.**
+        #
+        # See `trading-service.md` in research/docs.
+        wants = engine.pullback_when_wick if engine else 0.0
+        if wants > 0 and self._rejection.get(intent.feed, 0.0) < wants:
+            return None
+
+        # A strategy that insists on a resting entry says so itself. Depending
+        # on the deployment's setting would make "does this wait for its price"
+        # a property of how the box is tuned rather than of the strategy, and a
+        # swing entry that quietly became a market order because a global was
+        # zeroed is not the same trade.
+        own = getattr(engine, "pullback_fraction", 0.0) if engine is not None else 0.0
+        fraction = own or self.settings.pullback_fraction
+
+        # **A strategy that trades one particular price is asked first.** The
+        # wick and fraction rules below improve a fill that was going to happen
+        # See `trading-service.md` in research/docs.
+        for attempt in (
+            lambda: self._rest_at_named_price(payload, intent, tick, by, engine),
+            lambda: self._edge_entry(payload, intent, tick, by),
+        ):
+            rested = await attempt()
+            if rested is not None:
+                return rested
+
+        features = intent.features or {}
+        edge = features.get("sweep_low" if intent.side is Side.BUY else "sweep_high") or 0.0
+        if fraction <= 0 or not edge:
+            return None
+
+        # How far to wait is the **level's** business, not a constant.
+        #
+        # See `trading-service.md` in research/docs.
+        level = float(features.get("level") or 0.0)
+        wick = features.get("wick_below_vol" if intent.side is Side.BUY else "wick_above_vol")
+        spread = (
+            features.get("wick_below_sd" if intent.side is Side.BUY else "wick_above_sd") or 0.0
+        )
+        seen = features.get("wick_n") or 0.0
+
+        # Nothing to wait for on a level nobody has pushed.
+        #
+        # Parking asks price to come back somewhere it has been before. A level
+        # with no wick history has no such place, so waiting is a bet with
+        # nothing behind it - and the trade that expires unfilled is not a
+        # trade avoided, it is a trade the strategy wanted and did not get.
+        if seen < self.settings.pullback_min_wicks:
+            return None
+
+        unit = abs(intent.entry - intent.stop) / intent.stop_vol if intent.stop_vol else 0.0
+        deep = float(edge)
+        if wick and unit > 0 and level > 0:
+            # From the level, not from the fill: the wick is measured from the
+            # level and adding it to a fill that has already drifted would ask
+            # See `trading-service.md` in research/docs.
+            depth = float(wick) + float(spread) * self.settings.pullback_sigmas
+            # Bounded in volatility units rather than at the sweep edge.
+            #
+            # See `trading-service.md` in research/docs.
+            depth = min(depth, self.settings.pullback_max_vol)
+            deep = level - intent.side.sign * depth * unit
+
+        ceiling = intent.entry + (float(edge) - intent.entry) * fraction
+        # Whichever asks for more depth, now that neither is clamped at the
+        # edge. The fraction is still a floor on the wait for a level with no
+        # wick history, where `deep` is the edge itself.
+        want = min(deep, ceiling) if intent.side is Side.BUY else max(deep, ceiling)
+
+        # Already there, or better: nothing to wait for.
+        if (intent.entry - want) * intent.side.sign <= 0:
+            return None
+
+        # Is the better price worth the risk of not getting it?
+        #
+        # Parking trades a fill in hand for a fill that may not arrive, and the
+        # trade that expires unfilled is a trade the strategy wanted. When the
+        # fill on offer is already close to the level there is little left to
+        # win and the whole spread of outcomes is downside - so the improvement
+        # has to be worth something before the trade is put at risk for it.
+        unit_now = price_distance(intent.entry, _vol_of(payload), 1.0)
+        if unit_now > 0:
+            better_by = abs(intent.entry - want) / unit_now
+            if better_by < self.settings.pullback_min_gain:
+                return None
+
+        # Will price come back at all?
+        #
+        # `sweep_rate` is how often this level has been run through and
+        # recovered - the level's own record of doing the thing being waited
+        # for. A level that has never been swept is not one to wait for a sweep
+        # on, and waiting anyway is how a signal becomes an expiry. Absent or
+        # unmeasured passes, because an unknown rate is not a low one.
+        swept = features.get("sweep_rate")
+        seen_sweeps = features.get("sweep_n") or 0.0
+        if (
+            swept is not None
+            and seen_sweeps >= self.settings.pullback_min_wicks
+            and float(swept) < self.settings.pullback_min_sweep_rate
+        ):
+            return None
+
+        # How long to wait, in bars of the timeframe that produced the call.
+        #
+        # See `trading-service.md` in research/docs.
+        bars = SECONDS.get(intent.interval, 0.0)
+        window = (
+            bars * self.settings.pullback_bars if bars else (intent.hold or self.settings.max_hold)
+        )
+        self._waiting[intent.feed] = Waiting(
+            payload=payload,
+            feed=intent.feed,
+            trigger=want,
+            side=intent.side,
+            until=tick.time + window,
+        )
+        self._was_parked[intent.feed] = True
+        log.info(
+            "trading: %s %s parked - waiting for %.5g rather than filling at %.5g [%s]",
+            intent.side,
+            intent.feed,
+            want,
+            intent.entry,
+            by,
+        )
+        return Refusal("waiting", f"holding out for {want:.5g}", intent.feed)
+
+    async def _arrived(self, feed: str, tick: Tick) -> Intent | Refusal | None:
+        """Wake a parked signal if price has come to it, or drop it if stale."""
+        held = self._waiting.get(feed)
+        if held is None:
+            return None
+        if tick.time >= held.until:
+            self._waiting.pop(feed, None)
+            await self._withdraw(held, "the window expired")
+            log.info("trading: %s expired waiting for %.5g", feed, held.trigger)
+            return None
+        # The judgement half, exercised while the reflex half waits. A broker
+        # order cannot change its mind, so anything that would refuse the trade
+        # now has to reach in and take it back - otherwise the one arrangement
+        # this was meant to avoid is the one it creates: a fill on a setup that
+        # had already stopped being worth taking.
+        turned = self._turned_against(held, tick)
+        if turned:
+            self._waiting.pop(feed, None)
+            await self._withdraw(held, turned)
+            log.info("trading: %s dropped while waiting - %s", feed, turned)
+            return None
+
+        price = tick.entry(held.side)
+        if (price - held.trigger) * held.side.sign > 0:
+            return None  # not there yet
+        self._waiting.pop(feed, None)
+        # Taken back before the signal is re-asked: if the gates still pass we
+        # fill at market here, and if they do not the order must already be
+        # gone. Leaving it would fill a setup this system just refused.
+        await self._withdraw(held, "price arrived, deciding here")
+        log.info("trading: %s reached %.5g - reconsidering", feed, held.trigger)
+        # Asked again rather than resurrected: a setup that stopped being worth
+        # taking while it waited is refused on arrival like any other.
+        #
+        # Marked as post-pullback, which is what lets `require_turn_vol` apply
+        # here and only here. The same momentum reading means "arriving at the
+        # level" before the wait and "the fall has not finished" after it.
+        woken = held.payload.setdefault("features", {})
+        if isinstance(woken, dict):
+            woken["after_pullback"] = 1.0
+            if self.settings.age_break_risk:
+                self._age_break_risk(held.payload, woken, tick.time)
+        return await self.on_signal(held.payload, observe=False, park=False)
+
+    @staticmethod
+    def _age_break_risk(payload: dict[str, Any], features: dict[str, Any], now: float) -> None:
+        """Bring `break_probability` up to date before the gate reads it.
+
+        **The defect this closes.** `structures/breaking.py` scores a touch from `Features`, which
+        is built once when the touch *opens* and never mutated - deliberately, because a feature
+        that changes under a model is how look-ahead gets in. So `break_probability` is a number
+        about the moment the level was first touched. `max_break_risk` then gates orders on it, and
+        on the live instance that gate is set at **0.35**.
+
+        For a signal taken immediately that is the right number. For a **parked** one it is not:
+        the trade is decided when price comes back, which can be many bars later, and the chance
+        the level gives way has moved by then. Measured over 312,420 journal resolutions,
+        `P(break | the touch is still open at t)` runs from 14.4% to 77.8% and crosses even money
+        at four to seven bars of the level's own timeframe - so the older the wait, the more the
+        frozen number understates the risk, and it understates it worst exactly where it matters.
+
+        This is the same argument the line above it makes for `after_pullback`: *"the same momentum
+        reading means 'arriving at the level' before the wait and 'the fall has not finished'
+        after it."* A stale probability is that, with money on it.
+
+        **A floor, not a compounded estimate, and that choice is the careful part.** The first
+        version of this added the clock to the model in log-odds, which assumes the two are
+        conditionally independent - and they are not, because both describe the same touch. It took
+        a 20% prior to 87% after ten bars and would have refused essentially every parked signal,
+        since `pullback_bars` is 10.0. So the clock is applied as a **lower bound** instead: the
+        gate may not see a break risk below what elapsed time alone implies, and nothing is
+        multiplied by anything.
+
+        **One extrapolation is stated rather than hidden.** The hazard was measured over *all*
+        touches by elapsed time. A parked signal is a selected subpopulation - price came back to a
+        trigger - and that conditioning is not what the table measured. The floor is the
+        conservative reading of an estimate that does not strictly apply, which is why the original
+        is kept as `break_probability_at_open`: the journal carries both, and whether the
+        correction was right becomes a query rather than an argument. See
+        research/docs/break-features.md.
+        """
+        current = features.get("break_probability")
+        if not isinstance(current, (int, float)):
+            return
+        interval = str(payload.get("interval") or "")
+        span = SECONDS.get(interval, 0.0)
+        started = payload.get("time")
+        if span <= 0.0 or not isinstance(started, (int, float)) or now <= started:
+            return
+        bars = (float(now) - float(started)) / span
+        moved = _clock_odds(bars)
+        if moved <= current:
+            # Never *lower* the risk on a wake. The clock is monotone in age, so a fall here
+            # would mean the inputs are wrong, and a gate that loosens while a setup ages is
+            # the failure this exists to prevent.
+            return
+        features["break_probability_at_open"] = round(float(current), 5)
+        features["break_probability"] = round(moved, 5)
+        features["break_age_bars"] = round(bars, 3)
+        log.info(
+            "trading: %s waited %.1f bars - break risk %.0f%% to %.0f%%",
+            payload.get("feed") or "?",
+            bars,
+            100.0 * float(current),
+            100.0 * moved,
+        )
+
+    async def _copy_to_followers(self, intent: Intent, by: str) -> None:
+        """Replicate a filled decision onto every other terminal.
+
+        See `trading-service.md` in research/docs.
+        """
+        if not self.replicator.live:
+            return
+        made = await self.replicator.copy(
+            intent,
+            # Followers mirror the leader's risk switch: a copied account at full
+            # size into a likely large bar is the risk the leader just declined.
+            risk_fraction=self.settings.risk_fraction
+            * strategy.spike_scale(intent.features, self.settings),
+            magic=magic_for(self.settings.magic, by),
+            by=by,
+            max_risk_money=self.settings.max_risk_money,
+            slippage=self.settings.stop_slippage,
+        )
+        for copied in made.results:
+            await self.journal.write(
+                observe(
+                    "trading",
+                    f"copied {intent.title} to {copied.account}",
+                    context={
+                        "account": copied.account,
+                        "ok": copied.ok,
+                        "detail": copied.detail,
+                        "volume": copied.volume,
+                        "ticket": copied.ticket,
+                        "feed": intent.feed,
+                        "by": by,
+                    },
+                )
+            )
+
+    async def _rest_at_named_price(
+        self,
+        payload: dict[str, Any],
+        intent: Intent,
+        tick: Tick,
+        by: str,
+        engine: Strategy | None,
+    ) -> Refusal | None:
+        """Wait at the price the strategy says the trade is about.
+
+        See `trading-service.md` in research/docs.
+        """
+        wanted = engine.resting_price(intent.features or {}) if engine is not None else 0.0
+        sign = intent.side.sign
+        # Better for this side means lower to buy, higher to sell - and price
+        # having already traded through the line leaves nothing to wait for.
+        reached = (intent.entry - wanted) * sign <= 0 or (
+            tick.entry(intent.side) - wanted
+        ) * sign <= 0
+        if wanted <= 0 or reached:
+            return None
+        bars = SECONDS.get(intent.interval, 0.0)
+        window = (
+            bars * self.settings.pullback_bars if bars else (intent.hold or self.settings.max_hold)
+        )
+        self._waiting[intent.feed] = Waiting(
+            payload=payload,
+            feed=intent.feed,
+            trigger=wanted,
+            side=intent.side,
+            until=tick.time + window,
+        )
+        self._was_parked[intent.feed] = True
+        log.info(
+            "trading: %s %s resting at %.5g - the line %s broke, against the %.5g on offer",
+            intent.side,
+            intent.feed,
+            wanted,
+            by or "a structure",
+            intent.entry,
+        )
+        await self._leave_with_broker(intent, by, wanted, tick.time + window)
+        return Refusal("waiting", f"holding out for the broken line at {wanted:.5g}", intent.feed)
+
+    async def _edge_entry(
+        self, payload: dict[str, Any], intent: Intent, tick: Tick, by: str = ""
+    ) -> Refusal | None:
+        """Hold the order a fraction of a unit better than the quote.
+
+        See `trading-service.md` in research/docs.
+        """
+        want = self.settings.entry_edge_vol
+        if want <= 0:
+            return None
+        unit = price_distance(intent.entry, _vol_of(payload), 1.0)
+        if unit <= 0:
+            return None
+        better = intent.entry - intent.side.sign * want * unit
+        # Already there or better: nothing to wait for.
+        if (intent.entry - better) * intent.side.sign <= 0:
+            return None
+        if (tick.entry(intent.side) - better) * intent.side.sign <= 0:
+            return None
+        bars = SECONDS.get(intent.interval, 0.0)
+        window = (
+            bars * self.settings.pullback_bars if bars else (intent.hold or self.settings.max_hold)
+        )
+        self._waiting[intent.feed] = Waiting(
+            payload=payload,
+            feed=intent.feed,
+            trigger=better,
+            side=intent.side,
+            until=tick.time + window,
+        )
+        self._was_parked[intent.feed] = True
+        log.info(
+            "trading: %s %s resting at %.5g - %.2fv better than the %.5g on offer",
+            intent.side,
+            intent.feed,
+            better,
+            want,
+            intent.entry,
+        )
+        await self._leave_with_broker(intent, by, better, tick.time + window)
+        return Refusal("waiting", f"holding out for {better:.5g}", intent.feed)
+
+    def _turned_against(self, held: Waiting, tick: Tick) -> str:
+        """Why this wait should be abandoned now, or "" to keep waiting.
+
+        Only conditions that would refuse the trade outright. A signal that has
+        merely aged is handled by `until`, and one whose numbers moved is
+        handled by asking the strategy again on arrival - this is for the cases
+        where there is no point arriving at all.
+        """
+        shut = self._shut_for(held.feed, symbol=self._symbol_of.get(held.feed, ""))
+        if shut is not None:
+            return f"the market shut {shut:.0f}s ago"
+        if self.context.drifting(held.feed):
+            return "the regime changed under it"
+        # `widened` is already zero below its own threshold, so this reads
+        # "several venues at once" rather than "any venue".
+        if self.context.widened(held.feed):
+            return "the venues went wide together"
+        # Against the **target**, which is what `risk.py` measures it against
+        # when the same setting refuses an entry. This used to divide by the
+        # See `trading-service.md` in research/docs.
+        spread = tick.spread
+        resting = held.resting
+        if spread > 0 and self.settings.max_spread_fraction > 0 and resting is not None:
+            reward = resting.reward
+            if reward > 0 and spread > reward * self.settings.max_spread_fraction:
+                return (
+                    f"the spread reached {spread / reward:.0%} of the target, "
+                    f"limit is {self.settings.max_spread_fraction:.0%}"
+                )
+        return ""
+
+    def _restable(self, intent: Intent, at: float) -> float | None:
+        """`at` moved out to a price the broker will take, or None if there is none.
+
+        A pending order has to sit at least `stops_level` from the market, the same
+        distance a stop or a target does - and the resting price is chosen from
+        `entry_edge_vol` alone, which on an instrument with a wide minimum is inside
+        it. Measured on the live desk on 2026-10-02: Volatility 100 Index reports 138
+        points at a point of 0.01, so the broker wants 1.38 and a 0.50v edge asked for
+        0.23. Four of six rests in an hour came back `Invalid price`, and the desk
+        went on waiting in process for a price it had no order to catch.
+
+        Pushing the price out costs nothing if it fills and makes filling less likely,
+        which is the trade the edge was already making. What it must not do is walk the
+        entry through its own **stop**: the stop does not move with it, and a limit on
+        the far side of its stop opens a trade that is already beaten. So the pushed
+        price is checked the way the entry itself was, and when there is no room the
+        broker-side order is given up rather than sent to be refused. The in-process
+        wait is untouched either way - that is the fallback, and it was the whole
+        mechanism before resting existed.
+        """
+        spec = self.specs.get(intent.feed)
+        if spec is None:
+            return at
+        room = spec.min_stop_distance
+        if room <= 0 or abs(at - intent.entry) >= room:
+            return at
+        pushed = intent.entry - intent.side.sign * room
+        crowded = respects_stops_level(spec, pushed, intent.stop, intent.target)
+        if (pushed - intent.stop) * intent.side.sign <= 0:
+            crowded = f"{pushed:.5g} is through the stop at {intent.stop:.5g}"
+        if crowded:
+            log.info(
+                "trading: not resting %s with the broker - it needs %.5g from %.5g and %s",
+                intent.feed,
+                room,
+                intent.entry,
+                crowded,
+            )
+            return None
+        log.info(
+            "trading: %s rest moved out from %.5g to %.5g - the broker needs %.5g from %.5g",
+            intent.feed,
+            at,
+            pushed,
+            room,
+            intent.entry,
+        )
+        return pushed
+
+    async def _leave_with_broker(self, intent: Intent, by: str, at: float, until: float) -> None:
+        """Also leave the price with the broker, as a limit order.
+
+        See `trading-service.md` in research/docs.
+        """
+        if not self.settings.entry_pending or not self.settings.live:
+            return
+        held = self._waiting.get(intent.feed)
+        if held is None:
+            return
+        where = self._restable(intent, at)
+        if where is None:
+            return
+        at = where
+        order = Order(
+            symbol=intent.symbol,
+            side=intent.side,
+            volume=intent.volume,
+            stop=intent.stop,
+            target=intent.target,
+            comment=f"till {by or 'scalp'}"[:31],
+            magic=magic_for(self.settings.magic, by),
+            deviation=self.settings.deviation,
+        )
+        try:
+            result = await self.execution.rest(order, at, until)
+        except BrokerError as exc:
+            log.warning("trading: could not rest %s with the broker: %s", intent.feed, exc)
+            return
+        if not result.ok or not result.ticket:
+            log.warning("trading: broker refused the resting %s: %s", intent.feed, result)
+            return
+        held.ticket = result.ticket
+        held.resting = intent
+        held.by = by
+        log.info(
+            "trading: %s also left with the broker at %.5g as #%d",
+            intent.feed,
+            at,
+            result.ticket,
+        )
+        await self._announce_rest(intent, at, by, result.ticket)
+
+    async def _withdraw(self, held: Waiting, why: str) -> None:
+        """Take a resting order back off the broker.
+
+        Every path that drops a wait comes through here, because an order left
+        behind is one that fills on a setup this system has already refused -
+        the exact failure a broker-side limit invites and the reason it is only
+        half of the arrangement.
+        """
+        if not held.ticket:
+            return
+        ticket = held.ticket
+        try:
+            await self.execution.withdraw(ticket)
+            log.info("trading: withdrew #%d on %s - %s", ticket, held.feed, why)
+        except BrokerError as exc:
+            log.warning("trading: could not withdraw #%d on %s: %s", ticket, held.feed, exc)
+        held.ticket = 0
+        if held.resting is not None:
+            await self._announce_rest(held.resting, held.trigger, held.by, ticket, gone=why)
+
+    def _still_building(self, live: Live) -> bool:
+        """Whether momentum is gathering behind this trade despite the silence.
+
+        See `trading-service.md` in research/docs.
+        """
+        group = self._ensemble.get(live.intent.feed)
+        if group is None or not group.ready:
+            return False
+        facing = group.agreement * live.intent.side.sign
+        if facing < STALE_AGREE:
+            return False
+        log.info(
+            "trading: #%d has not moved but %.0f%% of the fast timeframes are behind it",
+            live.position.ticket,
+            facing * 100,
+        )
+        return True
+
+    def _stale_after(self, live: Live) -> float:
+        """How long this instrument gets before a trade counts as going nowhere.
+
+        See `trading-service.md` in research/docs.
+        """
+        # **Off entirely for a strategy whose thesis is duration.** The rule
+        # exists because a level touch resolves in eighteen seconds at the
+        # median and 84% inside five minutes; that premise is true of a scalp
+        # and false of a swing, at any length of clock. Scaling it to the
+        # declared hold was the first attempt and it was a half-measure - it
+        # made a rule proportional when the rule does not apply.
+        if getattr(live.intent, "stale_exempt", False):
+            return 0.0
+        floor = self.settings.stale_after
+        if floor <= 0:
+            return 0.0
+        expected = self._holds.expected(live.intent.feed, live.intent.interval)
+        adaptive = STALE_HOLDS * float(expected) if expected and expected > 0 else 0.0
+        # **And a share of what this strategy said it wanted.** A four-hour
+        # swing judged against a floor built for scalps is judged against
+        # somebody else's horizon - see `STALE_SHARE`.
+        declared = STALE_SHARE * float(live.intent.hold or 0.0)
+        return max(floor, adaptive, declared)
+
+    def _turn_wanted(self, feed: str) -> float:
+        """How much of a turn this instrument has to show, in volatility units.
+
+        See `trading-service.md` in research/docs.
+        """
+        floor = self.settings.require_turn_vol
+        push = self._push_vol.get(feed, 0.0)
+        if push <= 0:
+            return floor
+        return adaptive_threshold(push, share=TURN_SHARE, floor=floor, ceiling=TURN_CEILING)
+
+    def _closing_soon(self, intent: Intent) -> Refusal | None:
+        """Refuse a trade whose hold does not fit before its market closes.
+
+        See `trading-service.md` in research/docs.
+        """
+        margin = self.settings.session_margin
+        if margin <= 0:
+            return None
+        left = self._sessions.closes_in(intent.symbol)
+        if left is None:
+            return None
+        hold = intent.hold or self.settings.max_hold
+        if left >= hold + margin:
+            return None
+        return Refusal(
+            "closing",
+            f"{intent.symbol} closes in {left:.0f}s and this trade wants "
+            f"{hold:.0f}s - it could not be closed before the session ends",
+            intent.feed,
+        )
+
+    async def take(self, intent: Intent, by: str = "") -> Intent | Refusal:
+        """Send an order, or say why it was not sent."""
+        if refusal := self._closing_soon(intent):
+            log.info("trading: %s - %s", intent.title, refusal.detail)
+            return refusal
+        # **One slot per strategy per instrument, checked here because this is the
+        # chokepoint.**
+        #
+        # The rule lived only in `_take_all`, and three other paths reach this
+        # method: the non-parallel branch through `_agree`, a parked entry released
+        # when price comes back to it, and a re-armed setup. A parked entry is the
+        # one that bit - the rule is applied when it is parked and nothing checks
+        # again when it fills, so two entries resting on one feed both became
+        # positions. Found on 09-15: `cycle-scalp` held step_index twice,
+        # volatility_50_1s twice and jump_10 twice, each pair the same interval with
+        # different geometry, so two separate signals each opened a position.
+        #
+        # Checked against `by` and the feed rather than the symbol, because
+        # `max_per_symbol` already counts positions per symbol without asking who
+        # opened them - this is the per-strategy half, and the account experiences
+        # a doubled position as doubled risk whichever rule was meant to stop it.
+        if by and any(
+            live.by == by and live.intent.feed == intent.feed for live in self.open.values()
+        ):
+            key = f"{by}:already_open"
+            self.passed_over[key] = self.passed_over.get(key, 0) + 1
+            return Refusal("already_open", f"{by} already holds {intent.feed}", intent.feed)
+        # **Published, not consulted.** The fit gates nothing; it is written
+        # onto the decision so the thresholds can be scored against outcomes
+        # instead of argued about. See `trading/regression.py`.
+        await self._read_the_trend(intent)
+        ref = await self._record_intent(intent, by)
+
+        if not self.settings.live:
+            log.info("trading: [paper] %s - %s", intent.title, intent.reason)
+
+        order = Order(
+            symbol=intent.symbol,
+            side=intent.side,
+            volume=intent.volume,
+            stop=intent.stop,
+            target=intent.target,
+            comment=f"till {by or 'scalp'}"[:31],
+            # The comment says the same thing, but comments are advisory: MT5
+            # caps them at 31 characters and brokers rewrite them. This is the
+            # field that still names the strategy after a restart, and the one
+            # a report can group by.
+            magic=magic_for(self.settings.magic, by),
+            deviation=self.settings.deviation,
+        )
+        try:
+            result = await self.execution.send(order)
+        except BrokerError as exc:
+            log.warning("trading: %s rejected: %s", intent.title, exc)
+            return Refusal("rejected", str(exc), intent.feed)
+
+        if not result.ok:
+            log.warning("trading: %s not filled: %s", intent.title, result)
+            return Refusal("rejected", str(result), intent.feed)
+
+        self.taken += 1
+        log.info(
+            "trading: %s %s [%s] - %s",
+            self.settings.mode,
+            result,
+            by or "scalp",
+            intent.reason,
+        )
+        await self._announce_fill(intent, result.price, result.ticket, by)
+        # Only after the primary has actually filled. Copying a decision the
+        # account it was made for refused would put the position everywhere
+        # except where it was decided.
+        await self._copy_to_followers(intent, by)
+        # Tracked from the broker's own position list rather than from the
+        # result, because the ticket a fill reports is the order's and the one
+        # that has to be closed is the position's. Reconciling picks it up.
+        await self._reconcile(ref_for=(result.ticket, intent, ref))
+        return intent
+
+    def _say_what_it_is_doing(self) -> None:
+        """Report the shape of the silence, periodically.
+
+        See `trading-service.md` in research/docs.
+        """
+        every = max(300.0, self.settings.heartbeat * 5)
+        if time.monotonic() - self._last_summary < every:
+            return
+        self._last_summary = time.monotonic()
+        # On a line of its own, and first. The summary below runs past the
+        # console's 200 columns and wraps, and this is the one number that
+        # says whether any signal has reached trading at all this process.
+        ago = f"{time.time() - self.received_at:.0f}s ago" if self.received_at else "never"
+        log.info(
+            "trading: %d signal(s) and %d proposal(s) received this process, last %s",
+            self.received,
+            self.proposals,
+            ago,
+        )
+        if not self.passed_over and not self.taken:
+            log.info(
+                "trading: nothing seen yet - %s on %s, %s",
+                " + ".join(s.name for s in self.strategies),
+                ", ".join(sorted(self.specs)),
+                ", ".join(self.settings.intervals),
+            )
+            return
+        # **Twelve, not four.** Four was enough to show that `interval`
+        # dominates - which every strategy refusing signals outside its own
+        # See `trading-service.md` in research/docs.
+        ranked = sorted(self.passed_over.items(), key=lambda kv: -kv[1])
+        # **The `(desk):` counters are always shown, whatever they rank.**
+        # `passed_over` is restored with the day, so a fresh count of five
+        # competes with four thousand carried over from before the restart and
+        # never reaches a top-N list. Those counters exist to answer why a
+        # quiet desk is quiet, which is exactly the moment their numbers are
+        # smallest - ranking them away hides them when they are wanted most.
+        desk = [kv for kv in ranked if kv[0].startswith("(desk):")]
+        top = [kv for kv in ranked if not kv[0].startswith("(desk):")][:12] + desk
+        log.info(
+            "trading: %d taken, %d passed over (%s) · %s",
+            self.taken,
+            self.refused,
+            ", ".join(f"{gate} x{count}" for gate, count in top) or "none",
+            self.guard.summary(),
+        )
+
+    @staticmethod
+    def _known() -> dict[str, type]:
+        """Classes this file can hold, from **both** packages.
+
+        See `trading-service.md` in research/docs.
+        """
+        from .. import strategies, structures
+
+        return {**registry(structures), **registry(strategies)}
+
+    def _remember_rung(self, feed: str, payload: dict[str, Any]) -> None:
+        """Keep the level this signal was about, if it is one a swing trails on.
+
+        See `trading-service.md` in research/docs.
+        """
+        interval = str(payload.get("interval") or "")
+        if interval not in TRAIL_RUNGS:
+            return
+        features = payload.get("features")
+        price = features.get("level") if isinstance(features, dict) else None
+        if not isinstance(price, int | float) or price <= 0:
+            return
+        rungs = self._ladder.setdefault(feed, {})
+        # Keyed by price so the same level seen repeatedly is one rung, and
+        # bounded so a busy feed cannot grow this without limit.
+        rungs[round(float(price), 8)] = time.time()
+        if len(rungs) > LADDER_MAX:
+            for stale in sorted(rungs, key=lambda k: rungs[k])[: len(rungs) - LADDER_MAX]:
+                del rungs[stale]
+
+    def _rungs_for(self, feed: str) -> list[float]:
+        """The ladder for this feed, oldest entries already dropped."""
+        return sorted(self._ladder.get(feed, {}))
+
+    def _remember_marks(self) -> None:
+        """Write the extremes for whatever is still open.
+
+        See `trading-service.md` in research/docs.
+        """
+        try:
+            self._marks.parent.mkdir(parents=True, exist_ok=True)
+            live = set(self.open)
+            payload = {
+                "best": {str(k): v for k, v in self._best.items() if k in live},
+                "worst": {str(k): v for k, v in self._worst.items() if k in live},
+                # The day's running total travels with them. One file, one
+                # write, and the things that must not be forgotten across a
+                # deploy are forgotten or kept together.
+                "guard": self.guard.state(),
+                # The shadow record. Pressure and trend rebuild from the market in
+                # minutes; this does not.
+                "untaken": self._untaken,
+                "shadows": self._shadows,
+                # A stop that re-arms and is then lost to a deploy is a
+                # decision taken and silently dropped.
+                "rearm": self._rearm,
+                "push": self._push,
+                "ensemble": self._ensemble,
+                # Resting orders live at the broker and `_orphans` reconciles
+                # them; this is what *we* meant by each one.
+                "waiting": self._waiting,
+                # Which decision opened which position. Without this a deploy
+                # severs every open trade from its own reasoning - see `_refs`.
+                "refs": {str(k): v for k, v in self._refs.items()},
+                "intervals": {str(k): v for k, v in self._intervals.items()},
+                # **What each strategy has accumulated across calls.**
+                #
+                # See `trading-service.md` in research/docs.
+                "learned": {
+                    engine.name: state
+                    for engine in self.strategies
+                    for state in (self._learned_of(engine),)
+                    if state is not None
+                },
+                "counters": {
+                    "taken": self.taken,
+                    "refused": self.refused,
+                    "passed_over": dict(self.passed_over),
+                },
+            }
+            import msgpack
+
+            # msgpack is only the container. `codec.pack` is what makes the
+            # file independent of where a class lives, which is the guarantee
+            # that matters after `structures` moved into folders.
+            self._marks.write_bytes(msgpack.packb(pack(payload), use_bin_type=True))
+        except Exception as exc:  # pragma: no cover - a full disk, a bad path
+            log.debug("trading: could not write %s: %s", self._marks, exc)
+
+    def _recall_marks(self) -> None:
+        """Read them back, keeping only tickets the broker still reports.
+
+        A ticket that has closed since the file was written is dropped rather
+        than carried: `_settle` reads these to record `best_r`, and a stale
+        entry would attach one trade's excursion to another's ticket if the
+        broker ever reused a number.
+        """
+        try:
+            import msgpack
+
+            payload = unpack(
+                msgpack.unpackb(self._marks.read_bytes(), raw=False, strict_map_key=False),
+                self._known(),
+            )
+        except Exception as exc:
+            log.debug("trading: could not read %s: %s", self._marks, exc)
+            return
+        if not isinstance(payload, dict):
+            return
+        # **Before the extremes, because it can refuse itself.** `restore`
+        # takes the day back only if the saved day is today; a stale one is
+        # dropped so a halt cannot be resurrected after the date has changed.
+        self.guard.restore(payload.get("guard"))
+        live = set(self.open)
+        kept = 0
+        for name, into in (("best", self._best), ("worst", self._worst)):
+            for raw, value in (payload.get(name) or {}).items():
+                try:
+                    ticket = int(raw)
+                except (TypeError, ValueError):
+                    continue
+                if ticket in live and isinstance(value, int | float):
+                    into.setdefault(ticket, float(value))
+                    kept += 1
+        # Each of these is taken only when it is the right shape. A file written
+        # by an older build is missing keys rather than wrong, and a desk that
+        # refuses to start because one is absent is worse than one that starts
+        # without it.
+        self._restore_refs(payload.get("refs"))
+        self._restore_learned(payload.get("learned"))
+        self._restore_intervals(payload.get("intervals"))
+        # **Only values that came back as the right class.** A key the registry
+        # could not resolve unpacks to a plain mapping of its fields, and
+        # `_quote` does `self._push.setdefault(feed, Cusum()).push(...)` - so a
+        # dict landing there is an `AttributeError` on the next quote, on every
+        # feed, for the life of the process. Type-checked rather than trusted.
+        for name, into, want in (
+            ("untaken", self._untaken, list),
+            ("push", self._push, Cusum),
+            ("ensemble", self._ensemble, Ensemble),
+            ("waiting", self._waiting, Waiting),
+        ):
+            stored = payload.get(name)
+            if not isinstance(stored, dict):
+                continue
+            usable = {k: v for k, v in stored.items() if isinstance(v, want)}
+            if len(usable) != len(stored):
+                log.warning(
+                    "trading: dropped %d unreadable %s entry(s) from %s",
+                    len(stored) - len(usable),
+                    name,
+                    self._marks.name,
+                )
+            into.update(usable)
+        shadows = payload.get("shadows")
+        if isinstance(shadows, dict):
+            with contextlib.suppress(TypeError, ValueError):
+                self._shadows.update({int(k): v for k, v in shadows.items()})
+        queued = payload.get("rearm")
+        if isinstance(queued, list):
+            self._rearm.extend(queued)
+        counters = payload.get("counters")
+        if isinstance(counters, dict):
+            self.taken = int(counters.get("taken") or 0)
+            self.refused = int(counters.get("refused") or 0)
+            self.passed_over.update(counters.get("passed_over") or {})
+        if kept:
+            log.info("trading: recovered %d high-water mark(s) across the restart", kept)
+        log.info(
+            "trading: recovered the day - %d shadow(s), %d untaken feed(s), %d queued re-entry(s)",
+            len(self._shadows),
+            len(self._untaken),
+            len(self._rearm),
+        )
+
+    async def sweep(self) -> None:
+        """The heartbeat: roll the day, reconcile, and time out stale scalps."""
+        if not await self.broker.healthy():
+            log.warning("trading: the terminal is not answering; nothing will be sent")
+            await self._watch_reachable(False)
+            return
+        await self._watch_reachable(True)
+        await self._check_autotrading()
+
+        account = await self.broker.account()
+        self.equity = account.equity or self.equity
+        # **Recalled before the roll, or the roll undoes it.** A fresh `Guard`
+        # has `day = ""`, so `roll` sees a new day and clears the running
+        # See `trading-service.md` in research/docs.
+        if not self._recalled:
+            self._recalled = True
+            self._recall_marks()
+        self.guard.roll(self.equity)
+        await self._reconcile()
+        await self._orphans()
+        await self._manage()
+        # After `_manage`, so a stop it just moved is in force before the book is
+        # judged, and before `_expire`, so a basket close is attributed to the
+        # basket rather than to whichever trade happened to time out first.
+        await self._basket()
+        self._remember_marks()
+        await self._expire()
+        await self._rearm_stopped()
+        await self._refresh_swaps()
+        self._say_what_it_is_doing()
+
+    async def _refresh_swaps(self) -> None:
+        """Re-read each instrument's spec once a day, for the swap terms the swap gate prices.
+
+        Only the swap fields are taken from the fresh spec, so nothing sizing depends on changes
+        mid-session. A failed read keeps what was known.
+        """
+        if time.monotonic() - self._swaps_read < 86_400.0:
+            return
+        self._swaps_read = time.monotonic()
+        for feed, old in list(self.specs.items()):
+            try:
+                fresh = await self.broker.spec(old.symbol)
+            except Exception as exc:  # the old terms stand
+                log.debug("trading: no fresh spec for %s: %s", old.symbol, exc)
+                continue
+            if fresh is not None and fresh.swap_mode >= 0:
+                self.specs[feed] = dataclasses.replace(
+                    old,
+                    swap_long=fresh.swap_long,
+                    swap_short=fresh.swap_short,
+                    swap_mode=fresh.swap_mode,
+                    swap_triple_day=fresh.swap_triple_day,
+                )
+
+    async def _orphans(self) -> None:
+        """Withdraw resting orders this process is not tracking.
+
+        See `trading-service.md` in research/docs.
+        """
+        if not self.settings.entry_pending or not self.settings.live:
+            return
+        try:
+            resting = await self.execution.resting()
+        except BrokerError as exc:
+            log.debug("trading: could not list resting orders: %s", exc)
+            return
+        mine = {held.ticket for held in self._waiting.values() if held.ticket}
+        for ticket in resting:
+            if ticket in mine:
+                continue
+            try:
+                await self.execution.withdraw(ticket)
+            except BrokerError as exc:
+                log.warning("trading: could not withdraw orphan #%d: %s", ticket, exc)
+                continue
+            log.info(
+                "trading: withdrew orphan #%d - resting at the broker with "
+                "nothing here tracking it",
+                ticket,
+            )
+
+    def _mark_best(self, symbol: str, bid: float, ask: float) -> None:
+        """Track the extremes each open trade has seen, both ways.
+
+        The favourable one is what the trailing rules read. The adverse one is
+        what sizes a stop, and it was not tracked at all: 38 stopped trades cost
+        -897.84 and how far price went against the ones that *won* - the number
+        that says whether a 4v stop is protecting anything - could not be got
+        out of our own record. See research/stops.md.
+        """
+        tick_time = time.time()
+        for ticket, live in self.open.items():
+            if live.position.symbol != symbol:
+                continue
+            # The exit side, because that is the price a stop is measured
+            # against: a long is closed on the bid.
+            price = bid if live.position.side is Side.BUY else ask
+            buying = live.position.side is Side.BUY
+            seen = self._best.get(ticket)
+            if (
+                seen is None
+                and live.position.opened
+                and (live.position.opened < self._marking_since)
+            ):
+                # Open before this process was: whatever it did before now is
+                # not recoverable, and the record has to say so.
+                self._partial.add(ticket)
+            if seen is None or (max(seen, price) if buying else min(seen, price)) != seen:
+                self._best[ticket] = price
+                # **When the high came, not only how high.** A break-even stop
+                # can only cut a winner that retraced *after* its peak, and a
+                # See `trading-service.md` in research/docs.
+                self._best_at[ticket] = tick_time
+            # **Armed here because here is where the market is seen.** The
+            # trigger is a moment, not a state: a trade touches 1.0R and is
+            # back at 0.4R before the manage loop next runs, so a check that
+            # only runs on the poll misses it every time. This runs on every
+            # quote, records that the level was reached, and leaves the
+            # decision - and the price it deals at - to `manage.partial`.
+            at = self.settings.scale_out_at
+            if at > 0 and ticket not in self._bank_due:
+                risk = abs(live.intent.entry - live.intent.stop)
+                if risk > 0 and (price - live.position.price_open) * live.intent.side.sign >= (
+                    risk * at
+                ):
+                    self._bank_due.add(ticket)
+            hurt = self._worst.get(ticket)
+            if hurt is None or (min(hurt, price) if buying else max(hurt, price)) != hurt:
+                self._worst[ticket] = price
+                self._worst_at[ticket] = tick_time
+
+    def _book_progress(self) -> float | None:
+        """How far the open book has travelled toward its targets, in the median.
+
+        Zero is at entry and one is at target; past one is a position the target has
+        not yet closed. The **median** rather than the mean, because one position
+        with a malformed target - `best_r` reaching 1,771 on the record - would
+        otherwise decide the whole book.
+
+        None when nothing can be measured, so the caller leaves the rule alone
+        rather than treating an unknown as "not close".
+        """
+        seen: list[float] = []
+        for live in self.open.values():
+            intent, price = live.intent, float(live.position.price_current or 0.0)
+            span = (intent.target - intent.entry) * intent.side.sign
+            if price <= 0 or span <= 0:
+                continue
+            seen.append(((price - intent.entry) * intent.side.sign) / span)
+        if not seen:
+            return None
+        return float(median(seen))
+
+    def _book_against(self) -> float:
+        """Accumulated momentum running against the open book, in volatility units.
+
+        `structures.cusum` reports net directional progress without a window and
+        signs it upward, so a short position is helped by negative pressure and hurt
+        by positive. Averaged across the positions and signed against what each
+        holds, so a hedged book reads near zero rather than alarming - which is the
+        case a per-position reading would get wrong.
+        """
+        seen: list[float] = []
+        for live in self.open.values():
+            running = self._push.get(live.intent.feed)
+            if running is None:
+                continue
+            # Positive pressure is upward, so a long is hurt by negative pressure.
+            seen.append(-running.pressure * live.intent.side.sign)
+        if not seen:
+            return 0.0
+        return float(sum(seen) / len(seen))
+
+    async def _basket(self) -> int:
+        """Close every open position when the book as a whole says so.
+
+        The account does not hold seventeen opinions, it holds one balance, and
+        nothing here read that. `Guard.allows` decides whether to *open*, the
+        per-trade stops decide each leg, and `daily_loss_fraction` halts opening on
+        realised loss - none of them can act on the floating total across positions,
+        which with `parallel` on is the same direction on the same instrument up to
+        seventeen times over.
+
+        `Guard.basket` holds the policy, this holds the action: the split every
+        other limit here already follows.
+        """
+        if not self.open:
+            return 0
+        net = sum(float(live.position.profit or 0.0) for live in self.open.values())
+        why = self.guard.basket(net, self.equity, self._book_progress(), self._book_against())
+        if not why:
+            return 0
+        # Named before anything is closed, because a close that fails part way
+        # through leaves a book that no longer matches the reason it was judged on,
+        # and the log is the only record of what the whole book looked like.
+        log.warning("trading: closing all %d position(s) - %s", len(self.open), why)
+        closed = 0
+        for ticket in list(self.open):
+            try:
+                await self.execution.close_position(ticket)
+            except BrokerError as exc:
+                # One leg refusing must not strand the rest: an index in its daily
+                # break cannot be closed and the others still can, and leaving them
+                # open because of it is the opposite of what was asked for.
+                log.warning("trading: could not close #%d for the basket: %s", ticket, exc)
+                continue
+            closed += 1
+        await observe(
+            self.journal,
+            f"closed the book: {len(self.open)} position(s), net {self.money(net)}",
+            rationale=why,
+            actor="trading",
+            context={
+                "shape": "basket",
+                "net": round(net, 2),
+                "peak": round(self.guard.basket_peak, 2),
+                "opening_equity": round(self.guard.opening_equity, 2),
+                "wanted": len(self.open),
+                "closed": closed,
+                "progress": (round(p, 4) if (p := self._book_progress()) is not None else None),
+                "against_vol": round(self._book_against(), 4),
+                "give_back": self.settings.basket_give_back,
+                "stop_fraction": self.settings.basket_stop_fraction,
+                "take_fraction": self.settings.basket_take_fraction,
+            },
+            tags=("basket", "close"),
+        )
+        # The peak is the *open book's*, so it means nothing once the book is flat.
+        # Leaving it would have the next position judged against a peak it never
+        # contributed to.
+        if closed and not any(t in self.open for t in list(self.open)):
+            self.guard.basket_peak = 0.0
+        return closed
+
+    async def _manage(self) -> int:
+        """Move stops on open trades, and bank part of the ones in front."""
+        rules = (
+            self.settings.break_even_at > 0
+            or self.settings.trail_vol > 0
+            or self.settings.scale_out_at > 0
+        )
+        if not rules:
+            return 0
+        moved = 0
+        looked = 0
+        skipped: Counter[str] = Counter()
+        for ticket, live in list(self.open.items()):
+            looked += 1
+            spec = self.specs.get(live.intent.feed)
+            best = self._best.get(ticket)
+            # Said out loud rather than skipped in silence.
+            #
+            # See `trading-service.md` in research/docs.
+            if spec is None:
+                skipped[f"no spec for {live.intent.feed!r}"] += 1
+                continue
+            if best is None:
+                # Not just *that* it is untracked, but **which** of three causes,
+                # because they need different fixes and the first version of this
+                # conflated them. See `trading-service.md` in research/docs.
+                feed = live.intent.feed
+                mapped = self._symbol_of.get(feed)
+                total = self._quotes_seen.get(feed, 0)
+                since = total - live.quotes_at_open
+                if mapped is None:
+                    why = "the feed maps to no symbol, so no quote could ever match"
+                elif mapped != live.position.symbol:
+                    why = f"position {live.position.symbol!r} did not match mapped {mapped!r}"
+                else:
+                    # The symbols agree, so the quotes are the missing half. The
+                    # count that matters is since this position opened, not the
+                    # feed's lifetime - a busy morning proves nothing about now.
+                    why = (
+                        f"{mapped!r} has quoted {since} times since this position "
+                        f"opened ({total} in this process)"
+                    )
+                skipped[f"no best for {feed}: {why}"] += 1
+                continue
+            banked = False
+            if not live.scaled:
+                banked = await self._bank(live, spec, best)
+                if not banked:
+                    # Said out loud for the same reason the guards above are.
+                    # `scale_out_at` has been 1.0 for the life of this desk and
+                    # not one scale-out has fired, and `partial` declined from
+                    # five places without saying which.
+                    why = manage.why_no_bank()
+                    if why:
+                        skipped[f"no bank: {why}"] += 1
+            if banked:
+                moved += 1
+                # The position is a different size now, and the stop rules
+                # below read `live.position.volume`. Left to the next pass
+                # rather than moving a stop against a stale volume.
+                continue
+            move = manage.advance(
+                live.position,
+                live.intent,
+                spec,
+                self.settings,
+                best=best,
+                vol_bps=self._vol_bps.get(live.intent.feed, 0.0),
+                # The 15m-1h ladder for this feed. Ignored unless the intent
+                # asked to trail behind levels, so every other strategy keeps
+                # the volatility trail it was measured on.
+                rungs=self._rungs_for(live.intent.feed),
+            )
+            if move is None:
+                continue
+            try:
+                result = await self.execution.modify(ticket, move.stop, live.position.target)
+            except BrokerError as exc:
+                log.warning("trading: could not move #%d: %s", ticket, exc)
+                continue
+            if result.ok:
+                moved += 1
+                log.info("trading: %s", move)
+                await self._announce_move(live, move)
+        if looked and not moved:
+            # Only when nothing moved, and only with open positions to move -
+            # a quiet book is not a fault and should not be logged as one.
+            log.info(
+                "trading: managed nothing across %d open position(s)%s%s",
+                looked,
+                f" - {dict(skipped)}" if skipped else "",
+                "" if skipped else " - every one reached `advance` and it proposed no better stop",
+            )
+        return moved
+
+    async def _watch_reachable(self, reachable: bool) -> None:
+        """Say - once, loudly - when the desk has lost its terminal entirely.
+
+        See `trading-service.md` in research/docs.
+        """
+        effects.fired("trading.reachable_check")
+        if reachable:
+            if self._unreachable >= UNREACHABLE_AFTER:
+                log.info("trading: the terminal is answering again")
+                await self._shout_state("the terminal is reachable again", "", "info")
+            self._unreachable = 0
+            return
+
+        self._unreachable += 1
+        if self._unreachable != UNREACHABLE_AFTER:
+            return
+        log.error("trading: the terminal has not answered %d sweeps", self._unreachable)
+        await self._shout_state(
+            "the desk cannot reach its terminal",
+            "Every quote and every order is failing with a connection error. "
+            "Nothing in this container is wrong and it will keep reporting "
+            "healthy: the terminal runs on another host, and that host is not "
+            "answering. Open positions are untouched and unmanaged until it "
+            "returns.",
+            # `critical`, not `error`. See `_check_autotrading` - `Level` knows
+            # info, warning and critical and *raises* on anything else, which is
+            # how an alarm once took the alarm system down.
+            "critical",
+        )
+
+    async def _check_autotrading(self) -> None:
+        """Say - once, loudly - when the terminal has stopped accepting orders.
+
+        See `trading-service.md` in research/docs.
+        """
+        allowed = getattr(self.broker, "trading_allowed", None)
+        if allowed is None:
+            return
+        state = await allowed()
+        if state is None or state == self._autotrading:
+            return
+        self._autotrading = state
+        if state:
+            log.info("trading: the terminal is accepting orders again")
+            await self._shout_state("trading is accepting orders again", "", "info")
+            return
+        log.error("trading: AutoTrading is OFF - every order will be rejected")
+        await self._shout_state(
+            "AutoTrading is off",
+            "The terminal is connected and answering, and will reject every "
+            "order until AutoTrading is switched back on in its own interface. "
+            "The bridge has no route to set it.",
+            # `critical`, not `error`. `notifications.Level` knows info, warning
+            # and critical, and parsing anything else **raises** - which took the
+            # notifications service down the first time this alarm fired, so the
+            # alarm written to make a fault loud silenced the thing that makes
+            # faults loud. `stack.health` caught it, which is the one part of
+            # that sequence that went right.
+            "critical",
+        )
+
+    async def _shout_state(self, title: str, body: str, level: str) -> None:
+        """Put a line on the alerts channel. Never raises - it is the alarm."""
+        try:
+            await self.bus.publish(
+                ALERTS,
+                {"title": f"{self.settings.mode}: {title}", "body": body, "level": level},
+                source="trading",
+            )
+        except Exception:  # pragma: no cover - best effort by design
+            log.debug("trading: could not publish the autotrading alert", exc_info=True)
+
+    async def _bank(self, live: Live, spec: SymbolSpec, best: float) -> bool:
+        """Take part of a winner off, once. True if any came off.
+
+        The failure this guards against is not the broker refusing - it is the
+        broker *partially* succeeding and this not noticing, leaving `scaled`
+        false and the loop taking another slice off on the next pass until the
+        position is gone. So the flag is set on a confirmed close and the
+        position is re-read from the broker rather than adjusted by arithmetic
+        here, because what came off is the broker's answer, not ours.
+        """
+        # The exit price a market order would get right now: a long leaves on
+        # the bid. Passed alongside `best` because banking wants the price that
+        # exists and the trailing rules want the one that did.
+        tick = await self._tick(live.position.symbol)
+        now = tick.exit(live.position.side) if tick is not None else 0.0
+        take = manage.partial(
+            live.position,
+            live.intent,
+            spec,
+            self.settings,
+            best=best,
+            current=now,
+            armed=live.position.ticket in self._bank_due,
+        )
+        if take is None:
+            return False
+        try:
+            result = await self.execution.close_position(take.ticket, take.volume)
+        except BrokerError as exc:
+            log.warning("trading: could not bank part of #%d: %s", take.ticket, exc)
+            return False
+        if not result.ok:
+            log.warning("trading: banking part of #%d refused: %s", take.ticket, result.comment)
+            return False
+        live.scaled = True
+        log.info("trading: %s", take)
+        for position in await self._positions(fresh=True):
+            if position.ticket == take.ticket:
+                live.position = position
+                break
+        await self._announce_bank(live, take)
+        return True
+
+    async def _announce_bank(self, live: Live, take: Take) -> None:
+        """Say when part of a position is banked - it changes size and risk."""
+        if not (self.settings.notify and self.settings.notify_fills):
+            return
+        await self.bus.publish(
+            ALERTS,
+            {
+                "title": (
+                    f"{self.settings.mode}: {live.intent.feed} part banked"
+                    + (f" · {live.by}" if live.by else "")
+                ),
+                "body": (
+                    f"{take.reason}\n\n"
+                    f"took {take.volume:g} off, {live.position.volume:g} still running"
+                ),
+                "level": "info",
+                "fields": {
+                    "instrument": live.intent.feed,
+                    "shape": "trade",
+                    # Its own event for the same reason `protect` is: it sits
+                    # between the fill and the close without replacing either.
+                    "event": "bank",
+                    "strategy": live.by,
+                    "venue": self.broker.name,
+                },
+                "source": "trading",
+            },
+            source="trading",
+        )
+
+    async def _announce_move(self, live: Live, move: Move) -> None:
+        """Say when a stop moves, because it changes what the trade can lose.
+
+        Fills and closes were announced and this was not, so the channel showed
+        a trade opening at one risk and closing at another with nothing in
+        between to explain it - and the moment a trade stops being able to lose
+        is the most reassuring thing that happens to it.
+        """
+        if not (self.settings.notify and self.settings.notify_fills):
+            return
+        risk = abs(live.intent.entry - live.intent.stop)
+        gained = (move.stop - live.position.price_open) * live.intent.side.sign
+        await self.bus.publish(
+            ALERTS,
+            {
+                "title": (
+                    f"{live.intent.feed.upper().replace('_', ' ')} · STOP MOVED · "
+                    f"{_money_price(move.stop)}"
+                ),
+                "body": _moved_body(
+                    live,
+                    move,
+                    self.money(gained / risk * live.intent.risk_money) if risk else "",
+                    gained,
+                ),
+                "level": "info",
+                "fields": {
+                    "instrument": live.intent.feed,
+                    "shape": "trade",
+                    # Its own event, so it neither suppresses nor is suppressed
+                    # by the fill and the close it sits between.
+                    "event": "protect",
+                    "strategy": live.by,
+                    "venue": self.broker.name,
+                },
+                "source": "trading",
+            },
+            source="trading",
+        )
+
+    async def _expire(self) -> None:
+        """Close anything that has outstayed the hold its strategy asked for.
+
+        See `trading-service.md` in research/docs.
+        """
+        now = time.time()
+        closed = False
+        for ticket, live in list(self.open.items()):
+            limit = live.intent.hold or self.settings.max_hold
+            # Floored, because the ceiling was never the problem. The measured
+            # edge lives at 300-1,800s and the desk was holding for a median of
+            # 99 seconds - closing trades before the horizon their edge was
+            # measured over had elapsed. `snap` asks for 120s outright. See
+            # research/horizon.md and `Settings.min_hold`.
+            floor = self.settings.min_hold
+            if floor > 0:
+                limit = max(limit, floor)
+            if limit <= 0:
+                continue
+            age = now - live.seen
+            if age < limit:
+                if await self._stale(live, age):
+                    closed = True
+                continue
+            if await self._worth_keeping(live, age, limit):
+                continue
+            # Refreshes the broker's clock for this symbol. Without it the
+            # cached tick time ages past its own freshness guard and the shut
+            # test silently falls back to the consensus feed, which carries on
+            # quoting an instrument the broker has closed - #5759753523 retried
+            # its close every minute for eight hours of a shut US Tech 100.
+            # Only positions already past their hold pay for the call.
+            await self._tick(live.position.symbol)
+            if self._too_wide_to_leave(live, age, limit):
+                continue
+            log.info("trading: closing #%d after %.0fs, past its %.0fs hold", ticket, age, limit)
+            try:
+                await self.execution.close_position(ticket)
+            except BrokerError as exc:
+                if _market_closed(exc):
+                    log.info(
+                        "trading: holding #%d past its %.0fs hold - the broker says "
+                        "%s is closed, so this is a shut market rather than a fault",
+                        ticket,
+                        limit,
+                        live.position.symbol,
+                    )
+                else:
+                    log.warning("trading: could not close #%d on its clock: %s", ticket, exc)
+                continue
+            live.closed_by = "hold"
+            closed = True
+        if closed:
+            await self._reconcile()
+
+    def _shut_for(self, feed: str, tick: Tick | None = None, *, symbol: str = "") -> float | None:
+        """How long this market has been shut, or None if it is trading.
+
+        See `trading-service.md` in research/docs.
+        """
+        limit = self.settings.stale_quote_after
+        now = time.time()
+        if tick is not None and tick.time > 0.0:
+            quiet = now - tick.time
+            return quiet if quiet > limit else None
+        # A caller holding the position knows its symbol outright. Worth taking
+        # over the feed mapping, because a position adopted after a restart is
+        # given `feed = position.symbol.lower()` - "us tech 100", which is not
+        # a feed key, so both lookups miss and a shut market reads as trading.
+        symbol = symbol or self._symbol_of.get(feed) or ""
+        seen = self._broker_quoted_at.get(symbol)
+        if seen and now - seen[0] <= limit:
+            quiet = now - seen[1]
+            return quiet if quiet > limit else None
+        last = self._quoted_at.get(feed)
+        if not last:
+            return None
+        quiet = now - last
+        return quiet if quiet > limit else None
+
+    def _quote_is_stale(self, feed: str) -> bool:
+        """Whether this feed has stopped quoting, which means the market is shut.
+
+        See `trading-service.md` in research/docs.
+        """
+        if self.settings.stale_quote_after <= 0:
+            return False
+        return self._shut_for(feed) is not None
+
+    def _too_wide_to_leave(self, live: Live, age: float, limit: float) -> bool:
+        """Whether the spread makes closing on the clock worse than waiting.
+
+        See `trading-service.md` in research/docs.
+        """
+        shut = self._shut_for(live.intent.feed, symbol=live.position.symbol)
+        if shut is not None:
+            log.info(
+                "trading: holding #%d past its %.0fs hold - %s has not quoted in "
+                "%.0fs, so the market is shut rather than the order refused",
+                live.position.ticket,
+                limit,
+                live.position.symbol,
+                shut,
+            )
+            return True
+        want = self.settings.hold_max_spread
+        if want <= 0:
+            return False
+        if age >= limit * max(1.0, self.settings.max_hold_multiple):
+            return False
+        risk = abs(live.intent.entry - live.intent.stop)
+        spread = self._spread_of.get(live.intent.feed, 0.0)
+        if risk <= 0 or spread <= 0 or spread < risk * want:
+            return False
+        log.info(
+            "trading: holding #%d past its %.0fs hold - spread %.5g is %.1fx its "
+            "%.5g risk, closing now would pay that to leave",
+            live.position.ticket,
+            limit,
+            spread,
+            spread / risk,
+            risk,
+        )
+        return True
+
+    async def _stale(self, live: Live, age: float) -> bool:
+        """Close a trade that has gone nowhere long past when it should have.
+
+        See `trading-service.md` in research/docs.
+        """
+        after = self._stale_after(live)
+        # The floor applies here too, or it is defeated: `_expire` would keep a
+        # young trade and this would close it anyway. Stale is the other early
+        # closure and both have to respect the band the edge was measured in.
+        floor = self.settings.min_hold
+        if floor > 0:
+            after = max(after, floor)
+        if after <= 0 or age < after or live.scaled:
+            return False
+        if self._still_building(live):
+            return False
+        risk = abs(live.intent.entry - live.intent.stop)
+        if risk <= 0:
+            return False
+        best = self._best.get(live.position.ticket)
+        if best is None:
+            return False
+        gained = (best - live.position.price_open) * live.intent.side.sign
+        if gained >= risk * self.settings.stale_move:
+            return False
+        log.info(
+            "trading: closing #%d flat - %.0fs old and never left the entry (%.2fR)",
+            live.position.ticket,
+            age,
+            gained / risk,
+        )
+        try:
+            await self.execution.close_position(live.position.ticket)
+        except BrokerError as exc:
+            log.warning("trading: could not close stale #%d: %s", live.position.ticket, exc)
+            return False
+        # Only once the broker has taken it. Naming the exit before the close
+        # succeeds means a refused close still stamps the reason, and whatever
+        # ends the trade later - a stop, a target - is then recorded as this.
+        # A us30 position found it: its close was refused through the index's
+        # daily break and the label was already on.
+        live.closed_by = "stale"
+        return True
+
+    def _maybe_rearm(self, live: Live, price: float) -> None:
+        """Queue a stopped-out setup for one more attempt, if it has one left.
+
+        See `trading-service.md` in research/docs.
+        """
+        if self.settings.reentry_max <= 0 or not live.signal:
+            return
+        if live.attempt >= self.settings.reentry_max:
+            return
+        if _exit_kind(live, price) != "stop":
+            return
+        again = dict(live.signal)
+        again[ATTEMPT] = live.attempt + 1
+        self._rearm.append(again)
+
+    async def _rearm_stopped(self) -> None:
+        """Put stopped-out setups back through the strategies, once each.
+
+        See `trading-service.md` in research/docs.
+        """
+        queued, self._rearm = self._rearm, []
+        if not queued or self.settings.pullback_fraction <= 0:
+            return
+        for payload in queued:
+            feed = str(payload.get("feed") or "")
+            log.info("trading: re-arming %s after a stop (attempt %d)", feed, payload.get(ATTEMPT))
+            with contextlib.suppress(Exception):
+                await self.on_signal(payload, observe=False)
+
+    def _turn_exit(self, live: Live, price: float) -> dict:
+        """The turn model's exit, scored against the one this trade took.
+
+        See `trading-service.md` in research/docs.
+        """
+        try:
+            suggested = turning.suggestion_from(live.intent.features, live.intent.side)
+            if not suggested:
+                return {}
+            risk = abs(live.intent.entry - live.intent.stop)
+            ride = turning.TurnExit(
+                feed=live.intent.feed,
+                side=live.intent.side,
+                # The fill, and the risk the trade was *sized* for - the same
+                # denominator `_reach` divides by. See `TurnExit`.
+                entry=live.position.price_open,
+                risk=risk,
+                suggested=suggested,
+                ticket=live.position.ticket,
+                by=live.by,
+                # `_reach` reads `_best`, which no restart restores, so a
+                # position adopted mid-flight hands `score` a floor. Scored
+                # anyway it reads as "never reached", which sets the
+                # suggestion equal to what the trade took and contributes
+                # zero to the numerator and one to the denominator of
+                # `gained_r_per_trade` - diluting the headline by the partial
+                # share, which ran at 85-94% of closes in October.
+                partial=live.position.ticket in self._partial,
+            )
+            outcome = turning.score(
+                ride,
+                best_r=self._reach(live),
+                took_r=_r_multiple(live.intent, price),
+            )
+            self._turns.add(outcome)
+            # **Every key prefixed.** `TurnOutcome` has its own `reason` - why
+            # a row was not scorable - and the close record already has one,
+            # meaning why the trade ended. Merged unprefixed, the shadow would
+            # have silently overwritten the exit reason on every close where
+            # the model spoke: a corrupted record rather than a missing one.
+            return {
+                f"turn_{k}": v
+                for k, v in outcome.to_dict().items()
+                if k not in ("shape", "feed", "ticket")
+            }
+        except Exception as exc:
+            # **Warning, not debug.** This shadow has never once run in production -
+            # `trading.turn_exit` reports inert and not one of 1,202 closed trades
+            # carries a `turn_*` field - while the data is plainly there: 206 of 800
+            # trading decisions sampled from the journal carry a real `turn_price`,
+            # and the end-to-end path passes its own test. So if it is raising, this
+            # line is the only witness, and at `debug` in a container that runs at
+            # INFO it was no witness at all. That exact mistake already cost this
+            # desk every alert it had ever raised.
+            log.warning("trading: no turn-exit comparison for %s: %s", live.intent.feed, exc)
+            return {}
+
+    def _reach(self, live: Live) -> float:
+        """Furthest this trade got in front, in units of its own risk."""
+        best = self._best.get(live.position.ticket)
+        risk = abs(live.intent.entry - live.intent.stop)
+        if best is None or risk <= 0:
+            return 0.0
+        gained = (best - live.position.price_open) * live.intent.side.sign
+        return max(gained / risk, 0.0)
+
+    def _heat(self, live: Live) -> float:
+        """Furthest this trade ever went **against** itself, in units of risk.
+
+        See `trading-service.md` in research/docs.
+        """
+        hurt = self._worst.get(live.position.ticket)
+        risk = abs(live.intent.entry - live.intent.stop)
+        if hurt is None or risk <= 0:
+            return 0.0
+        lost = (live.position.price_open - hurt) * live.intent.side.sign
+        return max(lost / risk, 0.0)
+
+    def _heat_vol(self, live: Live) -> float:
+        """The same excursion in volatility units, so it compares across the book.
+
+        `adverse_r` is in units of *this trade's* risk, which is the right
+        denominator for "was the stop used" and the wrong one for comparing
+        instruments - a 4v stop and a 1v stop both read 1.0 when fully used.
+        """
+        stop_vol = live.intent.stop_vol
+        return round(self._heat(live) * stop_vol, 4) if stop_vol > 0 else 0.0
+
+    def money(self, amount: float, *, signed: bool = True) -> str:
+        """An amount with the account's currency attached. See `models.money`."""
+        return money(amount, self.currency, signed=signed)
+
+    #: Intents kept per feed.
+    #:
+    #: Sized against what actually accumulates rather than guessed. Measured on
+    #: the live box within half an hour of shipping: twelve wanted intents in
+    #: thirty minutes across two feeds, and `opportunity` holds for the 24h
+    #: ceiling. At roughly sixteen an hour a single feed can carry several
+    #: hundred open at once, so the first cap of 60 would have evicted most of
+    #: them - and evicted the *slow* ones, biasing every mean towards intents
+    #: that resolved quickly. An `Untaken` is a slotted dataclass; four hundred
+    #: of them across forty feeds is nothing.
+    MAX_UNTAKEN: ClassVar[int] = 400
+
+    def _remember_untaken(
+        self,
+        feed: str,
+        by: str,
+        intent: Intent,
+        interval: str,
+        hold: float,
+        now: float,
+        regime: float = 0.0,
+        market: str = "",
+    ) -> None:
+        """Keep an intent a strategy wanted but did not get, to score later.
+
+        `regime` and `market` come along because the comparison this exists for
+        is only interesting conditionally - see `Untaken.regime`.
+        """
+        if intent.entry <= 0 or intent.stop <= 0 or intent.target <= 0:
+            return
+        kept = self._untaken.setdefault(feed, [])
+        kept.append(
+            Untaken(
+                feed=feed,
+                by=by,
+                side=intent.side,
+                entry=intent.entry,
+                stop=intent.stop,
+                target=intent.target,
+                interval=interval,
+                fill_by=now + self._fill_window(interval, hold),
+                hold=hold,
+                placed_at=now,
+                regime=regime,
+                market=market,
+            )
+        )
+        if len(kept) > self.MAX_UNTAKEN:
+            spilled, kept[:] = (
+                kept[: len(kept) - self.MAX_UNTAKEN],
+                kept[len(kept) - self.MAX_UNTAKEN :],
+            )
+            # Said out loud rather than dropped silently. An evicted intent is
+            # a missing observation, and missing observations that correlate
+            # with *how long a trade takes* are the ones that quietly rewrite a
+            # mean - which is the whole reason this record exists.
+            for lost in spilled:
+                self._spilled += 1
+                log.debug(
+                    "trading: dropped an unresolved %s intent on %s after %.0fs",
+                    lost.by,
+                    lost.feed,
+                    now - lost.placed_at,
+                )
+
+    def _fill_window(self, interval: str, hold: float) -> float:
+        """How long an unfilled intent may wait, matching what `_park` allows.
+
+        See `trading-service.md` in research/docs.
+        """
+        bars = SECONDS.get(interval, 0.0)
+        return bars * self.settings.pullback_bars if bars else (hold or self.settings.max_hold)
+
+    async def _resolve_untaken(self, feed: str, tick: Tick) -> None:
+        """Walk every unresolved intent on this feed one quote forward.
+
+        Fill first, then the barrier race. See `Untaken` for why the fill is
+        not assumed: crediting a rested entry with a price it never traded at
+        would rank it above strategies that paid the spread to be certain.
+        """
+        kept = self._untaken.get(feed)
+        if not kept:
+            return
+        alive: list[Untaken] = []
+        for shade in kept:
+            done = await self._step_untaken(shade, tick)
+            if not done:
+                alive.append(shade)
+        if alive:
+            self._untaken[feed] = alive
+        else:
+            self._untaken.pop(feed, None)
+
+    async def _step_untaken(self, shade: Untaken, tick: Tick) -> bool:
+        """One quote against one intent. True when it is finished with."""
+        sign = shade.side.sign
+        # Entry and exit sides, as a real trade would pay them.
+        coming = tick.entry(shade.side)
+        going = tick.bid if shade.side is Side.BUY else tick.ask
+
+        if not shade.filled_at:
+            reached = (coming - shade.entry) * sign <= 0
+            if reached:
+                shade.filled_at = tick.time
+                shade.until = tick.time + shade.hold
+                shade.last = going
+                return False
+            if tick.time >= shade.fill_by:
+                await self._record_untaken(shade, "never filled", 0.0, tick.time)
+                return True
+            return False
+
+        shade.last = going
+        risk = abs(shade.entry - shade.stop)
+        if risk <= 0:
+            return True
+        if (going - shade.target) * sign >= 0:
+            await self._record_untaken(
+                shade, "target", abs(shade.target - shade.entry) / risk, tick.time
+            )
+            return True
+        if (going - shade.stop) * sign <= 0:
+            await self._record_untaken(shade, "stop", -1.0, tick.time)
+            return True
+        if tick.time >= shade.until:
+            await self._record_untaken(
+                shade, "timeout", ((going - shade.entry) * sign) / risk, tick.time
+            )
+            return True
+        return False
+
+    async def _record_untaken(self, shade: Untaken, how: str, reward: float, when: float) -> None:
+        """Journal what an intent nobody took would have been worth.
+
+        `reward` is in units of the intent's own risk, which is the only
+        denominator that compares a strategy trading gold against one trading a
+        synthetic. A fill that never happened scores nothing and says so - it
+        is not a zero-reward trade, it is an absent one, and averaging it in
+        would flatter strategies that rest their entry out of reach.
+        """
+        await observe(
+            self.journal,
+            f"{shade.by} would have {how} on {shade.feed}",
+            rationale=(
+                f"entry {shade.entry:.5g} stop {shade.stop:.5g} target {shade.target:.5g}"
+                f" - {how} at {reward:+.2f}R"
+                if how != "never filled"
+                else f"price never traded {shade.entry:.5g} within the hold"
+            ),
+            actor="trading",
+            context={
+                "shape": "untaken",
+                "strategy": shade.by,
+                "feed": shade.feed,
+                "interval": shade.interval,
+                "side": shade.side.value if hasattr(shade.side, "value") else str(shade.side),
+                "resolved": how,
+                "filled": bool(shade.filled_at),
+                # Absent rather than zero when there was no fill, so a mean over
+                # this field is a mean over trades that happened.
+                "reward_r": round(reward, 4) if how != "never filled" else None,
+                "entry": round(shade.entry, 8),
+                "stop": round(shade.stop, 8),
+                "target": round(shade.target, 8),
+                "seconds": round(when - shade.placed_at, 1),
+                # Carried from the signal so `reward_r` can be split by it.
+                "regime": shade.regime,
+                "market": shade.market,
+            },
+            tags=(shade.feed, shade.by, "untaken"),
+        )
+
+    async def _watch_shadows(self, feed: str, tick: Tick) -> None:
+        """Follow stopped trades to see whether the target arrived anyway.
+
+        Recorded, never traded. The point is to answer the one question the
+        account cannot: a stop hit at full size looks the same whether the
+        level failed or the stop sat inside the noise, and until this existed
+        the argument about stop width had nothing but reasoning to settle it.
+        """
+        for ticket, shade in list(self._shadows.items()):
+            if shade.feed != feed:
+                continue
+            price = tick.bid if shade.side is Side.BUY else tick.ask
+            sign = shade.side.sign
+            if (price - shade.best) * sign > 0:
+                shade.best = price
+
+            hit = (price - shade.target) * sign >= 0
+            done = hit or tick.time >= shade.until
+            if not done:
+                continue
+            self._shadows.pop(ticket, None)
+
+            risk = abs(shade.entry - shade.stop)
+            reach = abs(shade.best - shade.entry) / risk if risk else 0.0
+            went = (shade.best - shade.entry) * sign
+            log.info(
+                "trading: stopped #%d [%s] would have %s - best %.5g against a "
+                "target of %.5g (%.2fR of the way)",
+                ticket,
+                shade.by or "unattributed",
+                "WON" if hit else "still lost",
+                shade.best,
+                shade.target,
+                reach if went > 0 else 0.0,
+            )
+            await observe(
+                self.journal,
+                f"stopped {shade.feed} {'reached' if hit else 'never reached'} its target",
+                rationale=(
+                    f"best {shade.best:.5g} against target {shade.target:.5g} "
+                    f"in the {self.settings.shadow_window:.1f}x hold after the stop"
+                ),
+                actor="trading",
+                context={
+                    "shape": "shadow",
+                    "feed": shade.feed,
+                    "strategy": shade.by,
+                    "ticket": ticket,
+                    "reached_target": hit,
+                    # How far the trade got, in units of the risk it was
+                    # stopped for. Above 1 means the stop cost a winner.
+                    "best_r": round(reach if went > 0 else 0.0, 3),
+                    "stopped_at": round(shade.stopped_at, 8),
+                    "best": round(shade.best, 8),
+                    "target": round(shade.target, 8),
+                },
+                tags=(shade.feed, "shadow", shade.by or "unattributed"),
+            )
+
+    async def _worth_keeping(self, live: Live, age: float, limit: float) -> bool:
+        """Whether a trade past its hold is working well enough to keep.
+
+        See `trading-service.md` in research/docs.
+        """
+        at = self.settings.hold_extends_at
+        if at <= 0:
+            return False
+        if age >= limit * max(1.0, self.settings.max_hold_multiple):
+            return False
+
+        position, intent = live.position, live.intent
+        risk = abs(intent.entry - intent.stop)
+        if risk <= 0:
+            return False
+        tick = await self._tick(position.symbol)
+        if tick is None:
+            return False
+        # The price this position would be closed at, not the mid: a long exits
+        # on the bid, and crediting it the mid would extend trades that are not
+        # actually in front once the spread is paid.
+        out = tick.bid if position.side is Side.BUY else tick.ask
+        gained = (out - position.price_open) * position.side.sign
+        if gained < risk * at:
+            return False
+
+        spec = self.specs.get(intent.feed)
+        if spec is None:
+            return False
+        cushion = spec.tick_size * max(0, self.settings.break_even_ticks)
+        safe = spec.round_price(position.price_open + position.side.sign * cushion)
+        # Never backwards: if the stop is already better than break even - the
+        # trailing rules are on and have moved it - leave it where it is.
+        if not manage.better(safe, position.stop, position.side):
+            safe = position.stop
+        elif not await self._protect(position.ticket, safe, position.target):
+            return False
+
+        log.info(
+            "trading: keeping #%d past its %.0fs hold - %.1fR in front, stop at %.5g",
+            position.ticket,
+            limit,
+            gained / risk,
+            safe,
+        )
+        return True
+
+    async def _protect(self, ticket: int, stop: float, target: float) -> bool:
+        """Move a stop, saying whether it actually moved."""
+        try:
+            result = await self.execution.modify(ticket, stop, target)
+        except BrokerError as exc:
+            log.warning("trading: could not protect #%d: %s", ticket, exc)
+            return False
+        return bool(result.ok)
+
+    async def _reconcile(
+        self, ref_for: tuple[int, Intent, str] | None = None
+    ) -> list[tuple[Live, float, str]]:
+        """Match the broker's open set against ours, and settle the difference."""
+        if ref_for is not None:
+            ticket, intent, ref = ref_for
+            self._pending = (ticket, intent, ref)
+
+        current = {p.ticket: p for p in await self._positions(fresh=True)}
+
+        # Anything the broker has that we do not is ours as of this moment -
+        # it is filtered to our magic - so adopt it with whatever intent is
+        # waiting. An unadopted position would never be journalled on close.
+        pending = self._pending
+        for ticket, position in current.items():
+            if ticket in self.open:
+                self.open[ticket].position = position
+                continue
+            intent, ref = (pending[1], pending[2]) if pending else (None, "")
+            if intent is None or intent.symbol != position.symbol:
+                intent = _intent_from(position, self._feed_of)
+                ref = ""
+            signal = self._last_signal.get(intent.feed, {})
+            # From the fill, not from now. `seen` is stamped at adoption, so a
+            # restart handed every open position a fresh clock - and max_hold,
+            # hold_seconds and stale_after all measure from it. On a day with
+            # fifteen deploys a position can outlive its hold indefinitely, and
+            # `seconds` on its outcome measures from the last adoption rather
+            # than the fill, so hold statistics read shorter than they were.
+            # The broker already reports when it opened; nothing had asked.
+            opened = getattr(position, "opened", 0.0) or 0.0
+            # A position adopted after a restart arrives with no ref, and
+            # `_settle` will not journal a close without one - so the trade
+            # would be logged, announced, and never written down. Recover it
+            # from the decision that opened it.
+            intent, ref = self._recover(ticket, position, intent, ref)
+            self.open[ticket] = Live(
+                position=position,
+                intent=intent,
+                ref=ref,
+                by=strategy_for(self.settings.magic, position.magic),
+                signal=signal,
+                attempt=int(signal.get(ATTEMPT, 0) or 0),
+                seen=float(opened) if opened > 0 else time.time(),
+                quotes_at_open=self._quotes_seen.get(str(signal.get("feed") or intent.feed), 0),
+            )
+            if ref:
+                self._refs[ticket] = ref
+            if getattr(intent, "interval", ""):
+                self._intervals[ticket] = str(intent.interval)
+            pending = None
+        self._pending = None
+
+        exact = {p.ticket: (price, why) for p, price, why in self.execution.drain_closed()}
+        settled: list[tuple[Live, float, str]] = []
+        # A ticket the broker no longer has is finished, so its link is spent.
+        # Kept bounded here rather than left to grow: a map that only ever gains
+        # entries is a leak with a long fuse, and this one is persisted.
+        for book in (self._refs, self._intervals):
+            for ticket in list(book):
+                if ticket not in current and ticket not in self.open:
+                    book.pop(ticket, None)
+        for ticket, live in list(self.open.items()):
+            if ticket in current:
+                continue
+            price, why = exact.get(ticket, (live.position.price_current, "gone"))
+            profit = live.position.profit
+            # **Ask the terminal what it actually paid, on every close.**
+            #
+            # `position.profit` is the price move and nothing else: MT5 reports
+            # swap on its own field, so a profit read from the position omits it.
+            # `closed_deal` sums profit, swap, commission and fee over the
+            # closing deals, which is the money the account actually saw.
+            #
+            # This used to be asked only when `why == "gone"`, so every ordinary
+            # exit - stop, target, hold, stale - recorded a figure with no swap
+            # in it: 955 of 971 outcomes. That was under 1% of the loss *because*
+            # holds are minutes, and it grows directly with holding period, so it
+            # was a latent misreport rather than a harmless one. Measured
+            # 2026-09-20: 24.03 of swap against 2,760.57 of loss over 30 days,
+            # charged on 9 of 3,331 deals, and 7.12 on a single Crash 1000 deal.
+            # See `research/docs/carrying-cost.md`.
+            #
+            # The price is still the observed one wherever the desk knows why the
+            # trade ended. Only a position that vanished has no exit price worth
+            # trusting, and that case alone takes the deal's.
+            try:
+                told = await self.execution.closed_deal(ticket)
+            except BrokerError as exc:
+                log.debug("trading: could not confirm #%d: %s", ticket, exc)
+                told = None
+            if told is not None:
+                profit = told[1]
+                if why == "gone" and told[0]:
+                    price, why = told[0], "closed"
+            del self.open[ticket]
+            settled.append((live, price, why))
+            # Discarded *after* the outcome is written, not before.
+            #
+            # See `trading-service.md` in research/docs.
+            try:
+                await self._settle(live, price, why, profit)
+            finally:
+                self._forget_path(ticket)
+        return settled
+
+    def _forget_path(self, ticket: int) -> None:
+        """Drop everything this ticket's excursion tracking held.
+
+        Called after the outcome is written, never before - `_settle` reads all four
+        of these and they return zero for a ticket they cannot find, which is how
+        every close in the book's history once recorded `best_r` of exactly 0.000.
+
+        The two timestamps used to be left behind. They were written on every marked
+        tick and popped nowhere, so they grew by one entry per trade for the life of
+        the process, on a box with 2.6 GiB for seven services.
+        """
+        self._best.pop(ticket, None)
+        self._worst.pop(ticket, None)
+        self._best_at.pop(ticket, None)
+        self._worst_at.pop(ticket, None)
+        self._bank_due.discard(ticket)
+        self._partial.discard(ticket)
+
+    def _unattributed_context(self, live: Live, price: float, why: str) -> dict[str, Any]:
+        """What a close knows about itself when no decision is on record.
+
+        See `trading-service.md` in research/docs.
+        """
+        position = live.position
+        profit = position.profit
+        return {
+            "feed": live.intent.feed,
+            "symbol": position.symbol,
+            "ticket": position.ticket,
+            "magic": position.magic,
+            "exit": price,
+            "profit": round(profit, 2),
+            "seconds": round(position.age),
+            "reason": why,
+            "exit_source": "last seen" if why == "gone" else "broker",
+            "exit_kind": _exit_kind(live, price),
+            "strategy": live.by,
+            "side": str(getattr(live.intent.side, "value", live.intent.side)),
+            "entry": round(live.intent.entry, 8),
+            "stop": round(live.intent.stop, 8),
+            "target": round(live.intent.target, 8) if live.intent.target else 0.0,
+            "r_multiple": _r_multiple(live.intent, price),
+            "best_r": round(self._reach(live), 3),
+            # **Whether the number above is a measurement or a floor.**
+            # Set when the trade was adopted, not when it closed, so
+            # a reader can drop these without selecting on the
+            # outcome. See `_partial`.
+            "excursion_partial": live.position.ticket in self._partial,
+            # What the turn model's exit would have made on this same path,
+            # beside what the trade actually made. Acts on nothing - see
+            # `trading/turning.py` for why this counterfactual is honest where
+            # most are not: the level is fixed on the signal before the
+            # position opens, and whether it was reached comes from the path
+            # already tracked for `best_r`.
+            **self._turn_exit(live, price),
+            "adverse_r": round(self._heat(live), 3),
+            # **Seconds from the open to each extreme, so the shape is
+            # recoverable.** `best_r` and `adverse_r` say how far each way and
+            # not in what order, and the order is the whole question for a
+            # break-even rule: a dip before the peak is harmless, a dip after
+            # it is the winner being cut. Zero when the extreme was never
+            # marked - an absence, not an event at the open.
+            "best_after": round(max(0.0, self._best_at.get(position.ticket, 0.0) - live.seen), 1)
+            if self._best_at.get(position.ticket)
+            else 0.0,
+            "worst_after": round(max(0.0, self._worst_at.get(position.ticket, 0.0) - live.seen), 1)
+            if self._worst_at.get(position.ticket)
+            else 0.0,
+            "entry_wanted": round(live.intent.entry, 8),
+            "entry_filled": round(position.price_open, 8),
+            "unattributed": 1.0,
+        }
+
+    async def _settle(
+        self, live: Live, price: float, why: str, profit: float | None = None
+    ) -> None:
+        """Record a closed position, and tell the day about it."""
+        position = live.position
+        profit = position.profit if profit is None else profit
+        self.guard.record(live.intent.feed, profit, self.equity)
+        # **A real close teaches the policy too, and until now none of them did.**
+        #
+        # `_credit` had exactly one caller, inside `_record_untaken`, so the
+        # ledgers learned only from intents that were *never traded* - and
+        # `_also_wanted`, the only thing that produces those, is bypassed
+        # whenever `parallel` is on, because the main path returns `_take_all`
+        # before reaching it. So on a desk running parallel the learner saw only
+        # parked signals: 2,349 observations over weeks, while 971 trades closed
+        # with real fills and real slippage that it never heard about.
+        #
+        # Real outcomes are the better evidence of the two. A shadow is followed
+        # on the quote stream and assumes its stop fills at the level; a real one
+        # paid the spread, the slippage and whatever the broker actually gave.
+        # Same unit either way - `r_multiple` against the intent, which `Score`
+        # clips - so the two are directly comparable in one ledger.
+        self._maybe_rearm(live, price)
+        log.info(
+            "trading: closed #%d %s [%s] @ %.5g for %+.2f (%s) · %s",
+            position.ticket,
+            position.symbol,
+            live.by or "unattributed",
+            price,
+            profit,
+            why,
+            self.guard.summary(),
+        )
+        if profit < 0 and self.settings.shadow_window > 0 and live.intent.target:
+            hold = live.intent.hold or self.settings.max_hold
+            self._shadows[position.ticket] = Shadow(
+                feed=live.intent.feed,
+                side=live.intent.side,
+                entry=live.intent.entry,
+                stop=live.intent.stop,
+                target=live.intent.target,
+                ref=live.ref,
+                by=live.by,
+                until=time.time() + hold * self.settings.shadow_window,
+                best=price,
+                stopped_at=price,
+            )
+        await self._announce_close(live, price, profit, why)
+        if not live.ref:
+            # A close with no decision behind it, which after a restart is most
+            # of them: `self.open` is rebuilt from the broker by `_reconcile`
+            # See `trading-service.md` in research/docs.
+            await observe(
+                self.journal,
+                f"{position.symbol} closed {profit:+.2f} at {price:.5g}, unattributed",
+                rationale=(
+                    f"{why} after {position.age:.0f}s. No decision is on record for this "
+                    "position - it was adopted from the broker rather than opened here, "
+                    "which is what happens to anything that outlives a restart."
+                ),
+                actor="trading",
+                context=self._unattributed_context(live, price, why),
+                tags=(live.intent.feed, "close", "unattributed"),
+            )
+        if live.ref:
+            await outcome(
+                self.journal,
+                live.ref,
+                f"{position.symbol} closed {profit:+.2f} at {price:.5g}",
+                rationale=(
+                    f"{why} after {position.age:.0f}s, "
+                    f"{'target' if profit > 0 else 'stop'} side of the trade"
+                ),
+                actor="trading",
+                context={
+                    "exit": price,
+                    "profit": round(profit, 2),
+                    # What it made in the unit everything else here is judged
+                    # in. Money is not comparable across instruments or across
+                    # See `trading-service.md` in research/docs.
+                    "r_multiple": _r_multiple(live.intent, price),
+                    "reason": why,
+                    # Said plainly because it is not always a fill price: a
+                    # position that vanished between polls is settled at the
+                    # last quote we saw for it.
+                    # "closed" is the terminal's own deal record, "gone" the
+                    # last snapshot we held because it could not be read.
+                    "exit_source": "last seen" if why == "gone" else "broker",
+                    "seconds": round(position.age),
+                    "strategy": live.by,
+                    "magic": position.magic,
+                    # The broker's own name for this trade. Absent until now,
+                    # which meant a ticket from the terminal or an alert could
+                    # not be traced to its record at all - the one identifier
+                    # tying our books to theirs was the one thing not written
+                    # down.
+                    "ticket": position.ticket,
+                    # Which of the three ways it ended. `reason` says how the
+                    # position left the book - closed, or gone between polls -
+                    # and not what took it, so stop and target were
+                    # indistinguishable except by the sign of the profit, which
+                    # is a guess dressed as a fact.
+                    "exit_kind": _exit_kind(live, price),
+                    # How far in front the trade ever got, in units of the risk
+                    # it was sized for. The service has tracked the best price
+                    # all along - the trailing rules need it - and never wrote
+                    # it down, so "we were up and gave it back" was something
+                    # you could watch happen and not something you could
+                    # measure afterwards. Above 1 means a trade that was a
+                    # winner by its own risk and did not end as one.
+                    "best_r": round(self._reach(live), 3),
+                    # **Whether the number above is a measurement or a floor.**
+                    # Set when the trade was adopted, not when it closed, so
+                    # a reader can drop these without selecting on the
+                    # outcome. See `_partial`.
+                    "excursion_partial": live.position.ticket in self._partial,
+                    # And the other side of the same question, which was never
+                    # recorded: how far it went against itself before it got
+                    # there. On a winner this is how much of the stop was
+                    # actually used, and a book whose winners never spend more
+                    # than a third of their risk is a book sized at a quarter
+                    # of what it could be. See research/stops.md.
+                    "adverse_r": round(self._heat(live), 3),
+                    "adverse_vol": self._heat_vol(live),
+                    # **Seconds from the open to each extreme, so the shape is
+                    # recoverable.** The two numbers above say how far the trade
+                    # went each way and not in what order, and the order is the
+                    # whole question for a break-even rule: a dip before the peak
+                    # is harmless, a dip after it is the winner being cut.
+                    #
+                    # `_unattributed_context` has carried these for that reason
+                    # and this path did not, so across 1,202 closed trades in the
+                    # live journal not one record carried either - and a study of
+                    # break-even triggers could only produce a bound spanning
+                    # zero. See research/docs/breakeven.md.
+                    #
+                    # Zero when the extreme was never marked: an absence, not an
+                    # event at the open.
+                    "best_after": round(
+                        max(0.0, self._best_at.get(position.ticket, 0.0) - live.seen), 1
+                    )
+                    if self._best_at.get(position.ticket)
+                    else 0.0,
+                    "worst_after": round(
+                        max(0.0, self._worst_at.get(position.ticket, 0.0) - live.seen), 1
+                    )
+                    if self._worst_at.get(position.ticket)
+                    else 0.0,
+                    # What was asked for against what the terminal actually
+                    # filled at. `position.price_open` is the broker's own
+                    # See `trading-service.md` in research/docs.
+                    "entry_wanted": round(live.intent.entry, 8),
+                    "entry_filled": round(position.price_open, 8),
+                    "slippage": round(
+                        (position.price_open - live.intent.entry) * live.intent.side.sign, 8
+                    ),
+                    **live.intent.to_context(),
+                    # **The turn model's exit, beside the one this trade took.**
+                    # `_unattributed_context` has carried this since it was
+                    # written and this path - the one every attributed close
+                    # takes - did not, so the comparison was wired exclusively
+                    # to the records that can never satisfy it: an unattributed
+                    # close has no decision, so no `turn_price` in its
+                    # features, so `_turn_exit` returns `{}` every time. Across
+                    # 1,825 outcomes in the live journal not one carried a
+                    # `turn_*` field while 1,163 of the decisions behind them
+                    # published a real `turn_price` and 404 of those cleared
+                    # `scorable`. `trading.turn_exit` reported inert for the
+                    # whole period and the cause was read as the depth head
+                    # being cold.
+                    #
+                    # Last, like the spread in `Intent.to_context`, so a
+                    # feature named `turn_*` cannot shadow the scored row.
+                    **self._turn_exit(live, price),
+                },
+                tags=(live.intent.feed, str(live.intent.side), why, live.by or "unattributed"),
+            )
+
+    # ---------------------------------------------------------------- record
+
+    async def _read_the_trend(self, intent: Intent) -> None:
+        """Read this intent's own timeframe and write what it says onto the
+        features, where the journal will pick them up: the regression channel,
+        and the displacement and imbalances in `trading/impulse.py`.
+
+        One bars fetch for both. They answer different questions - the channel
+        is "is price on a line", the impulse is "did price just lurch, and what
+        did it skip" - and neither is worth a second round trip to the broker.
+
+        **This is the desk's own trend reading and not `structures`'.** The
+        three movement numbers already on a decision - `speeds`, `efficiency`,
+        `momentum_agree` - all answer "is something happening". None of them
+        answers "is price on a line, and which way does the line point", and
+        strategies have been reading them as though they did.
+
+        It decides nothing. `regression.py` says why: the thresholds have never
+        been scored against outcomes, and the way to settle that is to publish
+        `regression_slope_vol` and `regression_r2` on every decision and read
+        the record later. Until these are in the journal there is nothing to
+        score, which is the state this fixes - the feature function has existed
+        since PR #60 and no caller ever ran it, so `trend_card` in
+        `_announce_fill` has rendered nothing for its whole life.
+
+        A broker that cannot serve the bars leaves the features absent rather
+        than zeroed, for the reason `features` returns `{}` rather than NaNs: a
+        dict of zeros written on every decision reads, later, as a measurement.
+        """
+        if not intent.interval:
+            return
+        # The longest reference window plus the acceleration's own lookback,
+        # which `features` takes as a quarter of the span when it is not told.
+        want = max(TREND_SPANS) + max(TREND_SPANS) // 4
+        try:
+            bars = await self.execution.bars(intent.symbol, intent.interval, count=want)
+        except Exception as exc:
+            log.debug("trading: no bars for a trend on %s: %s", intent.feed, exc)
+            return
+        if not bars:
+            return
+        # The same volatility unit every distance on this decision is quoted
+        # in, so a slope is comparable with a stop.
+        #
+        # **And nothing when that unit is unknown.** `features` falls back to
+        # its own ATR when it is given no scale, which is a perfectly good
+        # number and a *different* one - so a feed whose volatility has not
+        # been seen yet would publish ATR-scaled slopes under the same keys as
+        # everything else, and the journal would hold one column in two units.
+        # That is the failure this desk has found in its own record more than
+        # once, and it is invisible precisely because both numbers look fine.
+        unit = price_distance(intent.entry, self._vol_bps.get(intent.feed, 0.0), 1.0)
+        if not unit > 0:
+            log.debug("trading: no volatility unit for a trend on %s", intent.feed)
+            return
+        got = trend_features(bars, unit=unit)
+        if got:
+            intent.features.update(got)
+        # **On the same bars, so this costs nothing.** Displacement and the gaps
+        # it leaves are a local reading where the channel is a slow one, and both
+        # were asked for together; fetching twice for two readings of one series
+        # would be the only expensive part of either. See `trading/impulse.py`,
+        # and note it gates nothing, for the same reason the channel does not.
+        marks = impulse_features(bars, unit=unit)
+        if marks:
+            intent.features.update(marks)
+
+    async def _record_intent(self, intent: Intent, by: str) -> str:
+        return await decide(
+            self.journal,
+            f"{self.settings.mode}: {intent.title}",
+            rationale=intent.reason or f"{by} took a level call",
+            actor="trading",
+            context={
+                "strategy": by,
+                # What the spread actually was when this was sent. Three gates
+                # judge spread and none of them wrote down the number they
+                # judged, so "what did execution cost" could be argued about
+                # but not answered.
+                "spread_at_entry": round(self._spread_of.get(intent.feed, 0.0), 8),
+                # Whether this fill was waited for rather than taken. Without
+                # it the pullback cannot be evaluated at all: parked and
+                # unparked trades are indistinguishable once filled.
+                "waited": bool(self._was_parked.pop(intent.feed, False)),
+                # The stop in the units the rules are written in, and the
+                # multiplier the hold scaling applied. Both were recoverable
+                # from entry, stop and vol_bps by arithmetic - which is another
+                # way of saying every future question about them started with
+                # a derivation that could be got wrong.
+                "stop_vol": round(intent.stop_vol, 4),
+                "stop_scale": round(intent.stop_scale, 4),
+                "hold_seconds": round(intent.hold or self.settings.max_hold, 1),
+                # Recorded so a position found at the broker can be matched
+                # back to this entry by number alone, with nothing in memory.
+                "magic": magic_for(self.settings.magic, by),
+                "mode": self.settings.mode,
+                # What statespace expected the next bars to be worth at the
+                # moment this was sent, and nothing was done with it. Empty
+                # when the service is off, warming or stale, which is the
+                # honest reading rather than a default.
+                **self.context.width_context(intent.feed),
+                **intent.to_context(),
+            },
+            tags=(intent.feed, str(intent.side), by or "scalp", self.settings.mode),
+            confidence=intent.features.get("probability"),
+        )
+
+    async def _record_refusal(self, intent: Intent, refusal: Refusal, by: str) -> None:
+        await observe(
+            self.journal,
+            f"declined {intent.title}",
+            rationale=f"{refusal.gate}: {refusal.detail}",
+            actor="trading",
+            context={"strategy": by, "gate": refusal.gate, **intent.to_context()},
+            tags=(intent.feed, "declined", refusal.gate),
+        )
+
+    async def _announce_fill(self, intent: Intent, price: float, ticket: int, by: str = "") -> None:
+        if not (self.settings.notify and self.settings.notify_fills):
+            return
+        # Same layout as a level alert, so a phone full of both can be read
+        # without switching gear - one rule per line, each opening with the
+        # thing it answers.
+        rule = "━" * 22
+        up = intent.side.sign > 0
+        body = [
+            rule,
+            f"{'🟢' if up else '🔴'} {intent.feed.upper().replace('_', ' ')} · "
+            f"FILLED · {str(intent.side).upper()}",
+            rule,
+            f"📊 {self.venue or self.broker.name} · {by or 'trading'} · #{ticket}",
+            "",
+            f"📍 {intent.volume:g} lots @ {price:.5g}",
+            # Stop and target with the ratio between them - and this one **is**
+            # a reward-to-risk, unlike the level alert's push line, because
+            # both ends are prices this trade will actually exit at.
+            f"🛑 stop {intent.stop:.5g} · 🎯 target {intent.target:.5g} "
+            f"· {intent.reward_to_risk:.1f} to 1",
+            f"💰 risking {self.money(intent.risk_money, signed=False)} "
+            f"({intent.risk_money / self.equity:.2%} of the book)"
+            if self.equity
+            else f"💰 risking {self.money(intent.risk_money, signed=False)}",
+            f"📝 {intent.reason}" if intent.reason else "",
+            # **Three card lines left with `structures/` on 2026-10-31.** They
+            # printed an envelope, a shock probability and an expansion state
+            # from the signal's features - 1,477 lines of model loading for
+            # text that this file's own comment described as "read, never
+            # acted on". The models they read are retired to
+            # `research/retire/models/artefacts/` with the scripts that
+            # trained them.
+            # Which way the line price is on points, and how well it fits.
+            # Renders nothing until something publishes the fit, which is
+            # deliberate: see `trading/regression.py` on why it gates nothing yet.
+            *trend_card(intent.features),
+            # How far price lurched to get here, and which holes it left open.
+            # Renders nothing until `_read_the_trend` has published them.
+            *impulse_card(intent.features),
+            rule,
+        ]
+        await self.bus.publish(
+            ALERTS,
+            {
+                # The body opens with the instrument, side and ticket. This
+                # said all three again on the line above it.
+                "title": (
+                    f"{intent.feed.upper().replace('_', ' ')} · FILLED · "
+                    f"{str(intent.side).upper()} @ {_money_price(price)}"
+                ),
+                "body": "\n".join(line for line in body if line),
+                "level": "info",
+                "fields": {
+                    "instrument": intent.feed,
+                    "shape": "trade",
+                    # Part of the repeat key. Without it a fill and its own
+                    # close read as the same finding, and a trade that closed
+                    # inside the cooldown lost its close alert entirely.
+                    "event": "open",
+                    "strategy": by,
+                    "direction": "up" if intent.side.sign > 0 else "down",
+                    "venue": self.broker.name,
+                },
+                "source": "trading",
+            },
+            source="trading",
+        )
+
+    async def _announce_rest(
+        self, intent: Intent, at: float, by: str, ticket: int, gone: str = ""
+    ) -> None:
+        """Say that an order is resting with the broker, or no longer is.
+
+        An order left there is money committed while nobody is looking - it can
+        fill on the terminal's own tick with this process asleep - so the two
+        things worth telling a person are that it is out there and that it is
+        not any more. `gone` carries why it was taken back, and is empty when
+        it has just been placed.
+        """
+        if not (self.settings.notify and self.settings.notify_rests):
+            return
+        # **Coerced, and it says so when it has to.** A resting `Intent`
+        # restored from saved state has been seen with `entry` as a *string*,
+        # and this subtraction is where it surfaced - as a `TypeError` that
+        # killed the whole trading service. Coercing here keeps the announcement
+        # working; the warning keeps the underlying restore fault visible rather
+        # than papering over it, because a price arriving as text is a real
+        # problem somewhere upstream and silence would lose it.
+        entry, price = intent.entry, at
+        if not isinstance(entry, int | float) or not isinstance(price, int | float):
+            log.warning(
+                "trading: resting intent on %s has entry=%r and trigger=%r - "
+                "expected numbers, coercing",
+                getattr(intent, "feed", "?"),
+                entry,
+                price,
+            )
+            try:
+                entry, price = float(entry), float(price)
+            except (TypeError, ValueError):
+                return
+        away = abs(entry - price)
+        body = [
+            f"{intent.side} {intent.volume:g} lots resting @ {at:.5g}"
+            if not gone
+            else f"withdrawn - {gone}",
+            "",
+            f"{away:.5g} better than the {intent.entry:.5g} on offer" if not gone else "",
+            f"stop {intent.stop:.5g} · target {intent.target:.5g}" if not gone else "",
+            intent.reason if not gone else "",
+        ]
+        await self.bus.publish(
+            ALERTS,
+            {
+                "title": (
+                    f"{intent.feed.upper().replace('_', ' ')} · "
+                    f"{'WITHDRAWN' if gone else 'RESTING'} · {str(intent.side).upper()}"
+                    + (f" · #{ticket}" if ticket else "")
+                ),
+                "body": "\n".join(line for line in body if line),
+                "level": "info",
+                "fields": {
+                    "instrument": intent.feed,
+                    "shape": "trade",
+                    # Its own event, or a placement and its withdrawal would
+                    # collapse into one finding under the repeat key - and the
+                    # withdrawal is the half that says the money came back.
+                    "event": "withdrawn" if gone else "resting",
+                    "strategy": by,
+                    "direction": "up" if intent.side.sign > 0 else "down",
+                    "venue": self.broker.name,
+                },
+                "source": "trading",
+            },
+            source="trading",
+        )
+
+    async def _announce_close(self, live: Live, price: float, profit: float, why: str) -> None:
+        if not (self.settings.notify and self.settings.notify_closes):
+            return
+        await self.bus.publish(
+            ALERTS,
+            {
+                # The body opens with the instrument and the strategy and
+                # prints the money on its own line. This repeated all three,
+                # with `(closed)` - an exit kind meaning "we closed it", which
+                # is not information.
+                "title": (
+                    f"{live.intent.feed.upper().replace('_', ' ')} · CLOSED · {self.money(profit)}"
+                ),
+                "body": _closed_body(
+                    live, price, profit, why, self.money(profit), self.guard.summary()
+                ),
+                "level": "info" if profit >= 0 else "warning",
+                "fields": {
+                    "instrument": live.intent.feed,
+                    "shape": "trade",
+                    "event": "close",
+                    "strategy": live.by,
+                    "venue": self.broker.name,
+                },
+                "source": "trading",
+            },
+            source="trading",
+        )
+
+    async def _announce_decline(self, intent: Intent, refusal: Refusal) -> None:
+        """A trade the strategy wanted and the account refused.
+
+        Off unless asked for. It is the most interesting message here and the
+        easiest to drown in - every gate that does its job produces one, and a
+        halted day produces one per signal until the clock rolls over.
+        """
+        if not (self.settings.notify and self.settings.notify_declines):
+            return
+        await self.bus.publish(
+            ALERTS,
+            {
+                "title": f"declined {intent.side} {intent.feed} - {refusal.gate}",
+                "body": f"{refusal.detail}\n\n{intent.title}\n{self.guard.summary()}",
+                "level": "info",
+                "fields": {
+                    "instrument": intent.feed,
+                    "shape": "trade",
+                    "event": "declined",
+                    "venue": self.broker.name,
+                },
+                "source": "trading",
+            },
+            source="trading",
+        )
+
+    # ---------------------------------------------------------------- inside
+
+    async def _tick(self, symbol: str) -> Tick | None:
+        """The live quote, and the one the paper book fills against.
+
+        Feeding it here rather than only from the bus is what makes an unarmed
+        run against a real bridge honest: the simulated fill pays the broker's
+        actual spread at that instant, not a consensus of other venues.
+        """
+        try:
+            tick = await self.broker.quote(symbol)
+        except BrokerError as exc:
+            log.warning("trading: could not quote %s: %s", symbol, exc)
+            return None
+        if tick is not None and tick.time > 0.0:
+            self._broker_quoted_at[tick.symbol] = (time.time(), tick.time)
+        if tick is not None and self.paper is not None:
+            self.paper.observe(tick)
+        return tick
+
+    async def _positions(self, fresh: bool = False) -> list[Position]:
+        if not fresh and self.open:
+            return [live.position for live in self.open.values()]
+        try:
+            return await self.execution.positions()
+        except BrokerError as exc:
+            log.warning("trading: could not read positions: %s", exc)
+            return [live.position for live in self.open.values()]
+
+    def summary(self) -> str:
+        gates = ", ".join(
+            f"{gate} x{count}"
+            for gate, count in sorted(self.passed_over.items(), key=lambda kv: -kv[1])[:4]
+        )
+        return (
+            f"{self.settings.mode} via {self.broker.name}: {self.taken} taken, "
+            f"{self.refused} declined, {len(self.open)} open, "
+            f"{self.resolutions} resolutions seen · {self.guard.summary()}"
+            + (f" · passed over: {gates}" if gates else "")
+        )
+
+
+def _vol_of(payload: dict[str, Any]) -> float:
+    """The volatility unit a signal was measured in, or 0."""
+    features = payload.get("features")
+    if not isinstance(features, dict):
+        return 0.0
+    value = features.get("vol_bps")
+    return float(value) if isinstance(value, int | float) and value > 0 else 0.0
+
+
+def _exit_kind(live: Live, price: float) -> str:
+    """How a trade ended: what closed it, or where it ended if nothing did.
+
+    See `trading-service.md` in research/docs.
+    """
+    if live.closed_by:
+        return live.closed_by
+    intent = live.intent
+    sign = intent.side.sign
+    if intent.stop and (price - intent.stop) * sign <= 0:
+        return "stop"
+    if intent.target and (price - intent.target) * sign >= 0:
+        return "target"
+    if not intent.stop and not intent.target:
+        return "unknown"
+    return "hold"
+
+
+def _market_closed(exc: BrokerError) -> bool:
+    """Whether the broker refused because its market is shut.
+
+    See `trading-service.md` in research/docs.
+    """
+    return "market closed" in str(exc).lower()
+
+
+def message_time(payload: dict[str, Any]) -> float:
+    when = payload.get("time")
+    return float(when) if isinstance(when, int | float) and when else time.time()
+
+
+def _r_multiple(intent: Intent, exit_price: float) -> float:
+    """What the trade made, in multiples of what it risked.
+
+    `None` when there is no risk to divide by, rather than zero: a trade that
+    made nothing and a trade whose risk is unknown are different facts, and
+    zero would pool them.
+    """
+    risk = abs(intent.entry - intent.stop)
+    if risk <= 0 or not exit_price or not intent.entry:
+        return 0.0
+    return round((exit_price - intent.entry) * intent.side.sign / risk, 4)
+
+
+def _intent_from(position: Position, feed_of: dict[str, str] | None = None) -> Intent:
+    """A placeholder intent for a position we did not open in this run.
+
+    See `trading-service.md` in research/docs.
+    """
+    return Intent(
+        feed=(feed_of or {}).get(position.symbol) or position.symbol.lower(),
+        symbol=position.symbol,
+        side=position.side,
+        volume=position.volume,
+        entry=position.price_open,
+        stop=position.stop,
+        target=position.target,
+        reason="adopted on start-up; opened before this process was running",
+    )
+
+
+def _ours(payload: dict[str, Any]) -> bool:
+    """Did this quote come from the account we trade on?
+
+    `prices` labels the broker connection's own quotes `source="broker"` and
+    everything it scrapes through TradingView `source="tradingview"`, whatever
+    venue those describe. Only the first is a price we can deal at.
+
+    `None` and `""` are treated as ours - see the caller on why absence is not
+    evidence of a foreign venue.
+    """
+    source = payload.get("source")
+    if source is None or source == "":
+        return True
+    return str(source) == BROKER_SOURCE
+
+
+class _Intake:
+    """`listen`'s intake: two bounded queues, signals always ahead of quotes.
+
+    It was one unbounded queue shared by every topic. Quotes flood and signals
+    are rare, so a slow quote path starved signals for two days and the queue
+    grew without limit. Quotes keep their order - the Cusum, Focus and venue
+    consensus integrate every step, so they cannot be conflated - and shed the
+    oldest only on overflow, counted, rather than growing until the container
+    is killed.
+    """
+
+    def __init__(self) -> None:
+        self.priority: asyncio.Queue[Message | None] = asyncio.Queue(maxsize=PRIORITY_BACKLOG)
+        self.quotes: deque[Message] = deque(maxlen=QUOTE_BACKLOG)
+        self.wake = asyncio.Event()
+        self.shed = 0
+
+    async def pump(self, topic: str, stream: Any) -> None:
+        try:
+            async for message in stream:
+                if topic == QUOTES:
+                    if len(self.quotes) == self.quotes.maxlen:
+                        self.shed += 1
+                        if self.shed in (1, 10, 100) or self.shed % 1000 == 0:
+                            log.warning(
+                                "trading: quote backlog full at %d - shed %d oldest so far",
+                                QUOTE_BACKLOG,
+                                self.shed,
+                            )
+                    self.quotes.append(message)
+                else:
+                    await self.priority.put(message)
+                self.wake.set()
+        finally:
+            # A sentinel per topic, so the loop knows "closed" from "quiet".
+            await self.priority.put(None)
+            self.wake.set()
+
+    async def next(self) -> Message | None:
+        """The next message, signals first. `None` marks a topic closing."""
+        while self.priority.empty() and not self.quotes:
+            # No await between the check and the wait, so no pump can slip a
+            # message in unseen.
+            self.wake.clear()
+            await self.wake.wait()
+        if not self.priority.empty():
+            return self.priority.get_nowait()
+        return self.quotes.popleft()
+
+
+async def listen(
+    bus: Carrier,
+    *,
+    settings: Settings | None = None,
+    journal: Journal | None = None,
+    broker: Broker | None = None,
+    limit: int | None = None,
+) -> Trader:
+    """Run the trader until the bus closes. Returns it, for its counters.
+
+    See `trading-service.md` in research/docs.
+    """
+    trader = Trader(bus, settings=settings, journal=journal, broker=broker)
+    # **Signals before the broker, everything else after.** `_attach` connects
+    # to the terminal and scans its symbols - about two minutes on the
+    # instance - and `Bus.publish` only reaches groups that already exist, so
+    # a level call published in that window went to nobody. It does not bite
+    # today only because structures warms slower (~6.5 min to its first call),
+    # which is an accident of timing rather than a guarantee; the end-to-end
+    # test lost its call exactly this way. Quotes are left until after: they
+    # are continuous and supersede each other, and subscribing them early
+    # would queue a thousand stale ones on every restart and drop the rest.
+    early = {topic: bus.subscribe(topic, group="trading") for topic in EARLY}
+    await _attach(trader)
+
+    streams = {
+        **early,
+        **{topic: bus.subscribe(topic, group="trading") for topic in TOPICS if topic not in early},
+    }
+    intake = _Intake()
+    tasks = [
+        asyncio.create_task(intake.pump(topic, streams[topic]), name=f"trading:{topic}")
+        for topic in TOPICS
+    ]
+    tasks.append(asyncio.create_task(_heartbeat(trader), name="trading:heartbeat"))
+
+    handled, closed, skipped = 0, 0, 0
+    try:
+        while closed < len(TOPICS):
+            message = await intake.next()
+            if message is None:
+                closed += 1
+                continue
+            try:
+                await trader.handle(message)
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                skipped += 1
+                log.error(
+                    "trading: %s on %s - skipping this message (%d so far)",
+                    exc,
+                    message.topic,
+                    skipped,
+                    exc_info=skipped <= 3,
+                )
+            handled += 1
+            if limit is not None and handled >= limit:
+                break
+    finally:
+        for task in tasks:
+            task.cancel()
+        await asyncio.gather(*tasks, return_exceptions=True)
+        await trader.close()
+    return trader
+
+
+async def _attach(trader: Trader) -> None:
+    """Bring the trader up, waiting for the terminal rather than dying without it.
+
+    See `ATTACH_BACKOFF`. The one thing this must never do is return while the
+    trader is not started, because the caller goes straight on to subscribe and
+    would then consume signals with no broker behind them.
+    """
+    attempt = 0
+    while True:
+        try:
+            await trader.start()
+            if attempt:
+                log.info("trading: attached after %d failed attempt(s)", attempt)
+                await _shout(
+                    trader,
+                    "trading is back",
+                    f"attached to the terminal after {attempt} failed attempt(s)",
+                    "info",
+                )
+            return
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            attempt += 1
+            wait = min(ATTACH_BACKOFF * attempt, ATTACH_BACKOFF_MAX)
+            log.error(
+                "trading: cannot attach (%s) - attempt %d, retrying in %.0fs",
+                exc,
+                attempt,
+                wait,
+                exc_info=attempt == 1,
+            )
+            if attempt == 1 or attempt % ATTACH_SHOUT_EVERY == 0:
+                await _shout(
+                    trader,
+                    "trading is not attached",
+                    f"{exc}\n\nattempt {attempt}; retrying every {wait:.0f}s. "
+                    "No orders can be placed until this clears.",
+                    # See `_check_autotrading` - `error` is not a level.
+                    "critical",
+                )
+            await asyncio.sleep(wait)
+
+
+async def _shout(trader: Trader, title: str, body: str, level: str) -> None:
+    """Put a line on the alerts channel. Never raises - this is the alarm, and
+    an alarm that can fail during the fault it reports is not one."""
+    try:
+        await trader.bus.publish(
+            ALERTS,
+            {
+                "title": f"{trader.settings.mode}: {title}",
+                "body": body,
+                "level": level,
+            },
+            source="trading",
+        )
+    except Exception:  # pragma: no cover - the alarm is best effort by design
+        log.debug("trading: could not publish the attach alert", exc_info=True)
+
+
+async def _heartbeat(trader: Trader) -> None:
+    every = max(5.0, trader.settings.heartbeat)
+    while True:
+        await asyncio.sleep(every)
+        try:
+            await trader.sweep()
+        except Exception as exc:  # a failed sweep must not end the service
+            log.warning("trading: heartbeat failed: %s", exc)

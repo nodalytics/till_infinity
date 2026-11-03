@@ -1,0 +1,303 @@
+"""What gets sent, independent of where it goes.
+
+A notification is written once and rendered per destination - Telegram wants
+escaped HTML in a single string, Discord wants an embed object. Keeping the
+message provider-agnostic means an alert can be added without touching either
+transport.
+"""
+
+from __future__ import annotations
+
+import html
+import time
+from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from enum import IntEnum
+from typing import Any
+
+
+class Level(IntEnum):
+    """How loud a notification is. Drives colour and prefix, nothing else."""
+
+    INFO = 0
+    WARNING = 1
+    CRITICAL = 2
+
+    @classmethod
+    def parse(cls, value: str | int | None) -> Level:
+        if value is None:
+            return cls.INFO
+        if isinstance(value, int) and not isinstance(value, bool):
+            return cls(min(max(int(value), 0), 2))
+        try:
+            return cls[str(value).strip().upper()]
+        except KeyError as exc:
+            raise ValueError(f"unknown level {value!r} (use info, warning or critical)") from exc
+
+
+#: Brand colours, reused for Discord embeds.
+COLOURS: dict[Level, int] = {
+    Level.INFO: 0x2AA79B,
+    Level.WARNING: 0xE0A63C,
+    Level.CRITICAL: 0xD9534F,
+}
+
+MARKS: dict[Level, str] = {Level.INFO: "•", Level.WARNING: "▲", Level.CRITICAL: "■"}
+
+#: A glance-level icon per kind of finding. Severity is the wrong axis for the
+#: leading character - a stale feed and a level call can both be `warning`, and
+#: the reader wants to know *which* before reading a word of it.
+SHAPES: dict[str, str] = {
+    "level": "📊",
+    "drift": "🌊",
+    "stale": "💤",
+    "spread": "↔️",
+    "dislocation": "⚡",
+    "score": "🧭",
+    "agent": "🤖",
+    #: Money actually moved. Deliberately the loudest glyph here: every other
+    #: shape is something noticed, and this is the only one that changed the
+    #: account. A reader scanning a phone should be able to tell a trade from
+    #: an observation without reading a word.
+    "trade": "💰",
+    #: A chart pattern - an observation, never an order. **No producer since
+    #: `mcfl` was retired on 2026-10-11**; kept because the vocabulary is the
+    #: notifications layer's, not that service's.
+    "pattern": "🧩",
+    #: The end of a paper trade. Also without a producer since `mcfl` went.
+    "exit": "🏁",
+}
+
+#: The direction wins over the shape when there is one, because it is the whole
+#: point of the message.
+DIRECTIONS: dict[str, str] = {"up": "📈", "down": "📉"}
+
+#: The instrument's own symbol, shown next to the shape icon rather than
+#: instead of it. The two answer different questions - *what happened* and *to
+#: what* - and a phone notification is read at a glance, where "📈 ₿" separates
+#: from "📈 €" before a single word has been read.
+#:
+#: Currency signs where one exists, because that is what the instrument is
+#: actually called in print, and the crypto marks are equally canonical. The
+#: dollar pairs are prefixed rather than left as a bare `$`: `A$` and `C$` are
+#: how those currencies are written when the distinction matters, which here it
+#: always does. `元` for offshore yuan rather than `¥`, which would collide
+#: with the yen at exactly the glance this exists for.
+#:
+#: The indices get their tickers instead. There is no symbol for an index, and
+#: `NDX` and `SPX` are what they are called - a flag would say only "American"
+#: and would say it twice.
+INSTRUMENTS: dict[str, str] = {
+    "gold": "🥇",
+    "silver": "🥈",
+    "btc": "₿",
+    "eth": "Ξ",
+    "sol": "◎",
+    "eurusd": "€",
+    "gbpusd": "£",
+    "usdjpy": "¥",
+    "audusd": "A$",
+    "usdcad": "C$",
+    "usdchf": "₣",
+    "nzdusd": "NZ$",
+    "usdcnh": "元",
+    "us100": "NDX",
+    "spx500": "SPX",
+    "ger40": "DAX",
+    "uk100": "FTSE",
+    "us30": "DOW",
+    "us2000": "RUT",
+    "jp225": "N225",
+    "fra40": "CAC",
+    "eu50": "SX5E",
+    "aus200": "ASX",
+    "hk50": "HSI",
+    "wti": "WTI",
+    "brent": "BRENT",
+    "eurgbp": "EURGBP",
+    "eurjpy": "EURJPY",
+    "gbpjpy": "GBPJPY",
+    "eurchf": "EURCHF",
+    "audjpy": "AUDJPY",
+    "chfjpy": "CHFJPY",
+    "euraud": "EURAUD",
+}
+
+#: Keys the notification filter routes on. Rendered nowhere: every publisher
+#: that sets them already names them in the title, so printing `instrument:
+#: gold` under a headline containing "gold" is the machine talking to itself.
+#: Fields the filter routes on, which are therefore **not** printed in the
+#: body. `interval` joined them when the alert layout started carrying the
+#: timeframe itself: it was arriving twice, once inside the message and once
+#: as a bare `interval: 15m` line underneath the closing rule.
+#: `ref` is an alert's own identity for the repeat check, for a publisher whose
+#: alerts share a shape and instrument but are different findings (the retired
+#: `mcfl`: two
+#: alts each sending "BTC long" inside the cooldown). Routing only, never shown.
+ROUTING: frozenset[str] = frozenset(
+    {"shape", "instrument", "venue", "direction", "interval", "ref"}
+)
+
+
+@dataclass(frozen=True, slots=True)
+class Channel:
+    """One destination within a provider - a chat, or a webhook.
+
+    A provider is not a destination: one bot posts to many chats, and a server
+    has a webhook per channel. `min_level` lets a noisy feed and an on-call
+    channel share the same bot without sharing the same traffic.
+    """
+
+    target: str
+    address: str
+    label: str = ""
+    min_level: Level = Level.INFO
+
+    @property
+    def name(self) -> str:
+        return f"{self.target}[{self.label}]" if self.label else self.target
+
+    def accepts(self, notification: Notification) -> bool:
+        return notification.level >= self.min_level
+
+    @property
+    def masked(self) -> str:
+        """Something recognisable that is safe to print.
+
+        A webhook URL is a credential - anyone holding it can post - so only
+        its host and a short tail are shown. A chat id identifies a room but
+        grants nothing, so it is shown whole.
+        """
+        if "://" not in self.address:
+            return self.address
+        host = self.address.split("://", 1)[1].split("/", 1)[0]
+        tail = self.address[-4:] if len(self.address) > 4 else ""
+        return f"{host}/…{tail}"
+
+
+@dataclass(frozen=True, slots=True)
+class Notification:
+    """One message, plus the structured bits a destination may render."""
+
+    title: str
+    body: str = ""
+    level: Level = Level.INFO
+    url: str = ""
+    fields: dict[str, str] = field(default_factory=dict)
+    source: str = ""
+    #: When this is about, in epoch seconds. Defaults to the moment the
+    #: notification is built, which for a live alert is within a second of the
+    #: event; a caller that knows the event's own time should pass it, because
+    #: a delivery delayed by a retry would otherwise be stamped with the retry.
+    at: float = field(default_factory=time.time)
+    #: An optional picture - PNG or JPEG bytes - and the file name it is sent
+    #: under. Absent, every destination sends exactly what it always did; a
+    #: destination that fails to send it retries once without it, because an
+    #: alert must never be lost for its picture.
+    image: bytes | None = field(default=None, repr=False)
+    image_name: str = ""
+
+    @property
+    def colour(self) -> int:
+        return COLOURS[self.level]
+
+    @property
+    def mark(self) -> str:
+        """The leading icons: what happened, and what it happened to.
+
+        Direction if claimed, else shape, else severity - then the instrument's
+        own symbol where there is one. An instrument nobody has a symbol for
+        simply gets the first icon, rather than a placeholder standing in for
+        an answer.
+        """
+        icon = (
+            DIRECTIONS.get(self.fields.get("direction", ""))
+            or SHAPES.get(self.fields.get("shape", ""))
+            or MARKS[self.level]
+        )
+        symbol = INSTRUMENTS.get(str(self.fields.get("instrument", "")).lower(), "")
+        return f"{icon} {symbol}" if symbol else icon
+
+    @property
+    def when(self) -> str:
+        """The timestamp as it is shown, or empty if there is none.
+
+        **UTC, and it says so.** Every other time in this project is UTC -
+        bars, touches, the journal - and an alert that quietly rendered local
+        time would be the one place they disagreed, read by someone comparing
+        it against a chart.
+        """
+        if not self.at:
+            return ""
+        return datetime.fromtimestamp(self.at, UTC).strftime("%Y-%m-%d %H:%M UTC")
+
+    def as_text(self, *, escape: bool = False, limit: int | None = None) -> str:
+        """Flatten to plain text - the shape Telegram and logs both want."""
+        esc = html.escape if escape else (lambda text: text)
+        lines = [f"{self.mark} <b>{esc(self.title)}</b>" if escape else f"{self.mark} {self.title}"]
+        if self.body:
+            lines.append(esc(self.body))
+        for key, value in self.fields.items():
+            if key in ROUTING:
+                continue
+            lines.append(f"{esc(key)}: {esc(str(value))}")
+        if self.url:
+            lines.append(esc(self.url))
+        # Last, because it is context rather than content: an alert is read
+        # top-down and the reader wants the instrument before the clock.
+        if self.when:
+            lines.append(esc(self.when))
+        text = "\n".join(lines)
+        return truncate(text, limit) if limit else text
+
+    def to_dict(self) -> dict[str, Any]:
+        out = {
+            "title": self.title,
+            "body": self.body,
+            "level": self.level.name,
+            "url": self.url,
+            "fields": dict(self.fields),
+            "source": self.source,
+            "at": self.at,
+        }
+        if self.image:
+            # The name and size only: bytes are for the transport, not a log.
+            out["image"] = {"name": self.image_name, "bytes": len(self.image)}
+        return out
+
+    def without_image(self) -> Notification:
+        """The same message with no picture - the fallback when one will not send."""
+        return Notification(
+            title=self.title,
+            body=self.body,
+            level=self.level,
+            url=self.url,
+            fields=dict(self.fields),
+            source=self.source,
+            at=self.at,
+        )
+
+
+def truncate(text: str, limit: int) -> str:
+    """Cut to `limit` characters, leaving a visible marker.
+
+    Both providers reject an over-long message outright rather than trimming
+    it, so a 5000-character alert would simply never arrive.
+    """
+    if limit <= 0 or len(text) <= limit:
+        return text
+    marker = " […]"
+    return text[: max(0, limit - len(marker))].rstrip() + marker
+
+
+@dataclass(frozen=True, slots=True)
+class Delivery:
+    """The outcome of sending one notification to one destination."""
+
+    target: str
+    ok: bool
+    detail: str = ""
+
+    def __str__(self) -> str:
+        state = "sent" if self.ok else "failed"
+        return f"{self.target}: {state}" + (f" ({self.detail})" if self.detail else "")

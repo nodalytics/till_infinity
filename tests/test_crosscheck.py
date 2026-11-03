@@ -6,7 +6,7 @@ on the hold timeout - and the mean R figures agreed, +0.032 replayed against
 +0.134 live. The number everyone looks at matched while the mechanics did not.
 """
 
-from till_platform.crosscheck import MIN_LIVE, agree, fingerprint
+from till_infinity.utils.crosscheck import MIN_LIVE, agree, fingerprint
 
 
 def closes(mix: dict[str, int], *, seconds: float = 300.0, best: float = 0.4):
@@ -32,6 +32,8 @@ def test_the_observed_case_does_not_reproduce():
 
 
 def test_a_matching_mix_reproduces():
+    """The positive control. A check that never says yes cannot be used to
+    clear a replay, and a harness nobody can clear gets switched off."""
     replayed = fingerprint(closes({"hold": 60, "stop": 25, "target": 15}))
     live = fingerprint(closes({"hold": 55, "stop": 28, "target": 17}))
 
@@ -82,7 +84,7 @@ def test_an_exit_kind_the_replay_cannot_produce_is_structural():
 
 
 def test_a_missing_exit_kind_is_counted_not_folded_in():
-    """`exit_kind` is simply absent on 8% of `sweep-aware` closes and 20% of
+    """`exit_kind` is absent outright on 8% of `sweep-aware` closes and 20% of
     `fade-to-value`. That is a liveness problem in the field this check depends
     on, and treating unknown as a fourth category would hide it."""
     got = fingerprint(
@@ -116,7 +118,7 @@ def test_an_empty_side_is_not_a_verdict():
 def test_the_threshold_is_the_one_the_observed_case_justifies():
     """25 points on any kind, against an observed 86. Pinned so that loosening it
     has to be a decision somebody makes and defends."""
-    from till_platform import crosscheck
+    from till_infinity.utils import crosscheck
 
     assert crosscheck.MIX_POINTS == 0.25
     assert crosscheck.HOLD_RATIO == 2.0

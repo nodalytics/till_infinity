@@ -1,4 +1,15 @@
-"""The journal: append-only, point-in-time, and paired with what happened next."""
+"""The journal's store and its entries: append-only, point-in-time, pairable.
+
+What the Actor does with them is `test_journal_actor.py`. What `service.py`'s
+helpers and the `Carrier` transport did is
+`research/retire/journal/tests/test_journal_service.py`, with the code.
+
+These used to be written through `jr.decide`, `jr.note` and `jr.observe`, which
+retired on 2026-11-01. They construct an `Entry` and call `Journal.write`
+instead - which is what the store's own tests should always have done: a test
+of a tag filter that went through three modules to reach the filter was
+measuring the helpers too.
+"""
 
 from __future__ import annotations
 
@@ -17,25 +28,31 @@ async def book(tmp_path):
         yield journal
 
 
+def decision(title: str = "d", **fields) -> Entry:
+    base = {"title": title, "kind": Kind.DECISION, "rationale": "r"}
+    return Entry(**(base | fields))
+
+
 # --------------------------------------------------------------- appending
 
 
 async def test_a_decision_keeps_its_reasoning(book):
-    ref = await jr.decide(
-        book,
+    entry = decision(
         "Alerted on OANDA gold spread",
         rationale="30bps against a 0.3bps 24h average, nothing on the calendar",
-        actor="agents/risk",
+        actor="EdgeEntry-GOLD",
         context={"venue": "OANDA", "spread_bps": 30.0, "avg_bps": 0.3},
         tags=("gold", "OANDA"),
         confidence=0.9,
     )
-    entry = jr.get(book.path, ref)
-    assert entry.rationale.startswith("30bps against")
-    assert entry.context["spread_bps"] == 30.0
-    assert entry.tags == ("gold", "OANDA")
-    assert entry.confidence == 0.9
-    assert entry.kind is Kind.DECISION
+    await book.write(entry)
+
+    stored = jr.get(book.path, entry.id)
+    assert stored.rationale.startswith("30bps against")
+    assert stored.context["spread_bps"] == 30.0
+    assert stored.tags == ("gold", "OANDA")
+    assert stored.confidence == 0.9
+    assert stored.kind is Kind.DECISION
 
 
 async def test_recording_the_same_decision_twice_is_one_entry(book):
@@ -49,55 +66,96 @@ async def test_recording_the_same_decision_twice_is_one_entry(book):
 async def test_there_is_no_update_path(book):
     """Append-only is enforced, not promised - a journal you can edit is not one."""
     assert not [name for name in dir(book) if "update" in name or "delete" in name]
-    await jr.note(book, "original")
+    await book.write(Entry(title="original"))
     with jr.read_only(book.path) as conn, pytest.raises(sqlite3.OperationalError):
         conn.execute("UPDATE entries SET title = 'rewritten'")
 
 
 async def test_context_is_copied_in_not_referenced(book):
-    """The stores move on; an entry must still describe the world it decided in."""
+    """The stores move on; an entry must still describe the world it decided in.
+
+    The copy lived in `service.decide` until 2026-11-01 and is now in
+    `Entry.__post_init__`, which matters more than it did: an entry waits on the
+    Actor's buffer for up to `flush_seconds` before the JSON is written, where
+    `record` wrote it on the next line.
+    """
     state = {"spread_bps": 30.0}
-    ref = await jr.decide(book, "d", rationale="r", context=state)
+    entry = decision(context=state)
     state["spread_bps"] = 0.3  # the market moved, and the caller's dict with it
-    assert jr.get(book.path, ref).context["spread_bps"] == 30.0
+
+    await book.write(entry)
+    assert jr.get(book.path, entry.id).context["spread_bps"] == 30.0
 
 
-async def test_an_unserialisable_context_does_not_lose_the_entry(book):
-    ref = await jr.decide(book, "d", rationale="r", context={"when": object()})
-    assert jr.get(book.path, ref) is not None
+async def test_an_unserialisable_context_value_costs_that_value_and_nothing_else(book):
+    """A record is written by whatever decided, and callers put live objects in
+    a context dict without meaning to - a `Decimal`, a Nautilus `Price`, a
+    bound method. **The entry is the thing that must survive**, because the
+    reason it was written is the one thing that cannot be reconstructed later.
+
+    The old assertion here was `jr.get(...) is not None`, which held equally if
+    the whole context had been thrown away.
+    """
+    entry = decision(context={"when": object(), "spread_bps": 30.0})
+    await book.write(entry)
+
+    stored = jr.get(book.path, entry.id)
+    assert stored.context["spread_bps"] == 30.0, "a sibling key is not collateral"
+    assert str(stored.context["when"]).startswith("<object object"), (
+        "coerced to its repr rather than dropped, so a reader can see what was there"
+    )
+    assert stored.rationale == "r"
 
 
 # ---------------------------------------------------------------- outcomes
 
 
 async def test_an_outcome_pairs_with_its_decision(book):
-    ref = await jr.decide(book, "Alerted on gold", rationale="wide", tags=("gold",))
-    await jr.outcome(book, ref, "Spread normalised in 4 minutes", context={"spread_bps": 0.31})
+    """The pairing is the whole value of the record: a decision with no outcome
+    cannot be scored, and an outcome with no decision cannot be attributed."""
+    made = decision("Alerted on gold", tags=("gold",))
+    await book.write(made)
+    await book.write(
+        Entry(
+            title="Spread normalised in 4 minutes",
+            kind=Kind.OUTCOME,
+            parent=made.id,
+            context={"spread_bps": 0.31},
+        )
+    )
 
-    followed = jr.read(book.path, parent=ref)
+    followed = jr.read(book.path, parent=made.id)
     assert len(followed) == 1
     assert followed[0].kind is Kind.OUTCOME
     assert followed[0].context["spread_bps"] == 0.31
 
 
-async def test_an_outcome_with_no_parent_is_refused(book):
-    """It could never be paired, so it is not a training example - just noise."""
-    assert await jr.outcome(book, "", "something happened") == ""
-    assert jr.read(book.path) == []
-
-
 async def test_an_observation_is_kept_as_a_negative_example(book):
-    await jr.observe(book, "Looked at a wide spread and did not alert", rationale="stale feed")
+    """A model trained only on the times we acted learns nothing about when not to."""
+    await book.write(
+        Entry(
+            title="Looked at a wide spread and did not alert",
+            kind=Kind.OBSERVATION,
+            rationale="stale feed",
+        )
+    )
     assert jr.read(book.path, kind=Kind.OBSERVATION)[0].kind is Kind.OBSERVATION
 
 
 # ----------------------------------------------------------------- reading
 
 
-async def test_filters_compose(book):
-    await jr.decide(book, "gold thing", rationale="r", actor="agents/risk", tags=("gold",))
-    await jr.decide(book, "btc thing", rationale="r", actor="agents/risk", tags=("btc",))
-    await jr.note(book, "human thing", actor="human")
+async def test_two_filters_narrow_rather_than_either_one_winning(book):
+    """`read(actor=..., tag=...)` is how a review of one agent's gold calls is
+    pulled, and an `OR` there returns the other agent's work as though it
+    were the same agent's."""
+    await book.write(
+        [
+            decision("gold thing", actor="agents/risk", tags=("gold",)),
+            decision("btc thing", actor="agents/risk", tags=("btc",)),
+            Entry(title="human thing", kind=Kind.NOTE, actor="human"),
+        ]
+    )
 
     assert len(jr.read(book.path)) == 3
     assert len(jr.read(book.path, actor="agents/risk")) == 2
@@ -107,11 +165,14 @@ async def test_filters_compose(book):
 
 
 async def test_a_tag_filter_does_not_match_a_longer_tag(book):
-    await jr.decide(book, "a", rationale="r", tags=("golden-cross",))
+    """Tags are stored as one JSON blob, so a substring match is the easy
+    mistake: `tag="gold"` would pull every `golden-cross` with it."""
+    await book.write(decision("a", tags=("golden-cross",)))
     assert jr.read(book.path, tag="gold") == []
 
 
 async def test_reads_are_newest_first(book):
+    """What an operator asking "what just happened" means by a limit."""
     await book.write([Entry(title=f"e{n}", time=float(n)) for n in range(10)])
     entries = jr.read(book.path, limit=3)
     assert [e.title for e in entries] == ["e9", "e8", "e7"]
@@ -136,7 +197,10 @@ async def test_an_explicit_limit_is_honoured_past_the_display_ceiling(book):
     assert jr.read(book.path, limit=total)[-1].title == "e0"
 
 
-async def test_hours_filters_by_age(book):
+async def test_hours_filters_by_age_and_not_by_row_order(book):
+    """Entries carry the time the decision was made, not the time they were
+    written - the Actor buffers for up to `flush_seconds` - so an age filter
+    reading insertion order would answer a different question."""
     import time as clock
 
     await book.write(
@@ -149,6 +213,8 @@ async def test_hours_filters_by_age(book):
 
 
 def test_reading_a_journal_that_does_not_exist_says_so(tmp_path):
+    """An empty list would read as "nothing was recorded", which is the same
+    answer a working journal gives on a quiet day."""
     with pytest.raises(FileNotFoundError, match="nothing has been recorded"):
         jr.read(tmp_path / "missing.db")
 
@@ -157,6 +223,9 @@ def test_reading_a_journal_that_does_not_exist_says_so(tmp_path):
 
 
 async def test_export_is_oldest_first_for_a_sequence_model(book, tmp_path):
+    """The opposite order to a read, deliberately. A read answers "what just
+    happened"; an export is training input, and a sequence model fed newest
+    first learns the reverse of the process."""
     await book.write([Entry(title=f"e{n}", time=float(n)) for n in range(3)])
     out = tmp_path / "journal.jsonl"
     assert jr.export(book.path, target=out) == 3
@@ -167,8 +236,9 @@ async def test_export_is_oldest_first_for_a_sequence_model(book, tmp_path):
 
 
 async def test_export_round_trips_a_full_entry(book, tmp_path):
-    ref = await jr.decide(
-        book,
+    """Asserted as one whole dict rather than field by field, so a field added
+    to `Entry` and forgotten in `export` fails here."""
+    entry = decision(
         "Alerted",
         rationale="why",
         actor="agents/risk",
@@ -176,11 +246,13 @@ async def test_export_round_trips_a_full_entry(book, tmp_path):
         tags=("gold",),
         confidence=0.8,
     )
+    await book.write(entry)
+
     out = tmp_path / "j.jsonl"
     jr.export(book.path, target=out)
     row = json.loads(out.read_text().splitlines()[0])
     assert row == {
-        "id": ref,
+        "id": entry.id,
         "time": row["time"],
         "kind": "decision",
         "actor": "agents/risk",
@@ -196,27 +268,26 @@ async def test_export_round_trips_a_full_entry(book, tmp_path):
 # ------------------------------------------------------------- resilience
 
 
-async def test_journalling_off_is_a_no_op_not_a_crash():
-    """Every helper takes None, so a caller never branches on whether it is on."""
-    assert await jr.decide(None, "d", rationale="r") == ""
-    assert await jr.observe(None, "o") == ""
-    assert await jr.outcome(None, "parent", "o") == ""
-    assert await jr.note(None, "n") == ""
+async def test_writing_to_a_journal_that_was_never_opened_raises_here(tmp_path):
+    """The store is blunt about it; **the Actor is what must not be.**
 
-
-async def test_a_broken_journal_costs_the_record_not_the_caller(tmp_path):
-    """A full disk should lose you the entry, not the collector writing it."""
+    `service.record` swallowed this so a full disk cost the record and not the
+    collector. That guarantee moved to `JournalActor`, which is now the only
+    thing on a path that decides trades - see
+    `test_a_write_failure_does_not_take_the_desk_down`. A script calling the
+    store directly wants the exception.
+    """
     broken = Journal(tmp_path / "j.db")  # never opened
-
-    assert await jr.decide(broken, "d", rationale="r") == ""
-
-
-def test_open_journal_off_is_none():
-    assert jr.open_journal(None) is None
-    assert jr.open_journal("").path.name == "journal.db"
+    with pytest.raises(RuntimeError, match="not open"):
+        await broken.write(Entry(title="d"))
 
 
 def test_a_junk_row_does_not_break_a_read(tmp_path):
+    """One bad row must not cost the rest of the journal.
+
+    The row below is what a half-written entry or an older schema leaves: a
+    kind nothing recognises and a context that is not JSON. A read that raised
+    would make the whole record unreachable from the one place that reads it."""
     path = tmp_path / "j.db"
     conn = sqlite3.connect(path)
     conn.executescript(jr.store.SCHEMA)
@@ -234,81 +305,24 @@ def test_a_junk_row_does_not_break_a_read(tmp_path):
 
 
 def test_the_id_ignores_incidental_whitespace():
+    """The id is a hash of the content, and it is what makes a re-judged window
+    one entry rather than two. A title retyped with a double space would
+    otherwise be a new decision."""
     a = Entry(title="Gold  dislocated ", actor="x", time=1.0)
     b = Entry(title="gold dislocated", actor="x", time=1.0)
     assert a.id == b.id
 
 
-async def test_an_outcome_inherits_its_decision_tags(book):
-    """Otherwise a tag filter hides the entry saying the thing resolved itself."""
-    ref = await jr.decide(book, "Alerted on gold", rationale="wide", tags=("gold", "OANDA"))
-    await jr.outcome(book, ref, "Normalised in 4 minutes")
-
-    tagged = jr.read(book.path, tag="gold")
-    assert [str(e.kind) for e in tagged] == ["outcome", "decision"]
+# ------------------------------------------------------- off the wire
 
 
-async def test_explicit_outcome_tags_win(book):
-    ref = await jr.decide(book, "Alerted on gold", rationale="wide", tags=("gold",))
-    await jr.outcome(book, ref, "Normalised", tags=("btc",))
-    assert jr.read(book.path, tag="gold")[0].kind is Kind.DECISION
-    assert jr.read(book.path, tag="btc")[0].kind is Kind.OUTCOME
-
-
-# ------------------------------------------------------- journal as a service
-
-
-async def test_an_entry_survives_the_bus_round_trip(book):
-    from till_infinity.bus import JOURNAL, Bus
-
-    bus = Bus()
-    sub = bus.subscribe(JOURNAL, group="journal")
-    entry = Entry(
-        title="Alerted on gold",
-        kind=Kind.DECISION,
-        actor="agents/risk",
-        rationale="30bps against a 0.3bps average",
-        context={"spread_bps": 30.0},
-        tags=("gold",),
-        confidence=0.9,
-    )
-
-    assert await jr.publish(bus, entry)
-    rebuilt = jr.from_message((await sub.next()).payload)
-    assert rebuilt == entry
-    assert rebuilt.id == entry.id
-
-
-async def test_listen_writes_what_is_published(book):
-    from till_infinity.bus import JOURNAL, Bus
-
-    bus = Bus()
-    bus.subscribe(JOURNAL, group="journal")
-    await jr.publish(bus, Entry(title="one", actor="structures"))
-    await jr.publish(bus, Entry(title="two", actor="agents"))
-
-    assert await jr.listen(bus, book, limit=2) == 2
-    assert {entry.title for entry in jr.read(book.path)} == {"one", "two"}
-
-
-async def test_two_services_publishing_one_decision_is_one_row(book):
-    """Ids are recomputed from content, so a duplicate collapses."""
-    from till_infinity.bus import JOURNAL, Bus
-
-    bus = Bus()
-    bus.subscribe(JOURNAL, group="journal")
-    entry = Entry(title="same call", actor="agents/risk", time=1_000.0)
-    await jr.publish(bus, entry)
-    await jr.publish(bus, entry)
-
-    await jr.listen(bus, book, limit=1)
-    assert len(jr.read(book.path)) == 1
-
-
-async def test_a_sender_cannot_claim_an_id_that_is_not_its_content():
+def test_a_sender_cannot_claim_an_id_that_is_not_its_content():
+    """**The id is recomputed on arrival, never read off the wire.** Taking the
+    sender's word for it would let one publisher overwrite another's entry by
+    naming its id - or, through the deduplication above, suppress it."""
     payload = Entry(title="real", actor="a", time=1.0).to_dict()
     payload["id"] = "deadbeefdeadbeef"
-    assert jr.from_message(payload).id != "deadbeefdeadbeef"
+    assert Entry.from_message(payload).id != "deadbeefdeadbeef"
 
 
 @pytest.mark.parametrize(
@@ -316,11 +330,16 @@ async def test_a_sender_cannot_claim_an_id_that_is_not_its_content():
     [None, "text", 42, {}, {"title": "  "}, {"kind": "decision"}],
 )
 def test_junk_on_the_wire_is_dropped_not_written(payload):
-    assert jr.from_message(payload) is None
+    """A titleless or blank entry in the record is worse than a missing one: it
+    is a decision nobody can read, counted among the ones they can."""
+    assert Entry.from_message(payload) is None
 
 
 def test_hostile_fields_are_coerced_rather_than_trusted():
-    rebuilt = jr.from_message(
+    """The bus is in-process, so this is not about an attacker - it is about a
+    publisher with the wrong type, which is the same thing to a reader
+    expecting a dict and getting a list."""
+    rebuilt = Entry.from_message(
         {"title": "x", "context": ["not", "a", "dict"], "tags": "gold", "confidence": "high"}
     )
     assert rebuilt.context == {}
@@ -328,20 +347,21 @@ def test_hostile_fields_are_coerced_rather_than_trusted():
     assert rebuilt.confidence is None
 
 
-async def test_recording_prefers_the_bus_when_there_is_one(book):
-    """One writer is the point; a caller passing both should not write twice."""
-    from till_infinity.bus import JOURNAL, Bus
-
-    bus = Bus()
-    sub = bus.subscribe(JOURNAL, group="journal")
-    ref = await jr.decide(book, "over the bus", rationale="r", bus=bus)
-
-    assert ref
-    assert (await sub.next()).payload["title"] == "over the bus"
-    assert jr.read(book.path) == []  # published, not written here
-
-
-async def test_recording_falls_back_to_writing_when_there_is_no_bus(book):
-    """A bus is a dependency; recording a decision must not require one."""
-    ref = await jr.decide(book, "written directly", rationale="r", bus=None)
-    assert jr.get(book.path, ref) is not None
+def test_a_full_entry_survives_the_round_trip_through_a_dict():
+    """`to_dict` is what a publisher puts on the bus and `from_message` is what
+    the Actor reads off it, so the pair has to be lossless or the record is a
+    subset of what was decided.
+    """
+    entry = Entry(
+        title="Alerted on gold",
+        kind=Kind.DECISION,
+        actor="EdgeEntry-GOLD",
+        rationale="30bps against a 0.3bps average",
+        context={"spread_bps": 30.0},
+        tags=("gold",),
+        confidence=0.9,
+        time=1_000.0,
+    )
+    rebuilt = Entry.from_message(entry.to_dict())
+    assert rebuilt == entry
+    assert rebuilt.id == entry.id

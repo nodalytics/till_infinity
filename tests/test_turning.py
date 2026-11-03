@@ -13,8 +13,8 @@ import math
 
 import pytest
 
-from till_infinity.trading import turning as tn
-from till_infinity.trading.models import Side
+from till_infinity.domain.models import Side
+from till_infinity.strategies import turning as tn
 
 
 def ride(*, side=Side.BUY, entry=100.0, risk=2.0, suggested=103.0, **kw):
@@ -114,7 +114,14 @@ class TestScoring:
         assert not got.reached
 
     def test_every_row_admits_it_is_an_upper_bound(self):
-        assert tn.score(ride(), best_r=2.0, took_r=1.0).optimistic
+        """Asserted on the serialised row, which is the half that can break.
+
+        `optimistic` is a field with a default, so reading it back off the
+        object restates the default. What matters is that it survives into the
+        dict the journal stores: a reader comparing this model against the
+        exits actually taken has no way to know the comparison ignores the
+        fill unless the row says so, and the row is all they get.
+        """
         assert tn.score(ride(), best_r=2.0, took_r=1.0).to_dict()["optimistic"] is True
 
 
@@ -203,7 +210,7 @@ class TestReportAggregation:
     """
 
     def trade(self, *, suggested, took, scored=True):
-        from till_infinity.trading.report import Trade
+        from till_infinity.strategies.report import Trade
 
         return Trade(
             strategy="cycle-scalp",
@@ -223,7 +230,7 @@ class TestReportAggregation:
         )
 
     def test_it_averages_only_the_scored_rows(self):
-        from till_infinity.trading.report import compare_turn_exits
+        from till_infinity.strategies.report import compare_turn_exits
 
         got = compare_turn_exits(
             [
@@ -236,27 +243,27 @@ class TestReportAggregation:
         assert got.gained_r == pytest.approx(1.75)
 
     def test_a_worse_suggestion_shows_negative(self):
-        from till_infinity.trading.report import compare_turn_exits
+        from till_infinity.strategies.report import compare_turn_exits
 
         got = compare_turn_exits([self.trade(suggested=0.5, took=2.5)])
         assert got.gained_r == pytest.approx(-2.0)
 
     def test_nothing_scored_is_nan_rather_than_zero(self):
-        from till_infinity.trading.report import compare_turn_exits
+        from till_infinity.strategies.report import compare_turn_exits
 
         got = compare_turn_exits([self.trade(suggested=0.0, took=0.0, scored=False)])
         assert got.scored == 0
         assert math.isnan(got.gained_r)
 
     def test_the_summary_refuses_to_read_a_thin_sample(self):
-        from till_infinity.trading.report import ENOUGH, compare_turn_exits
+        from till_infinity.strategies.report import ENOUGH, compare_turn_exits
 
         got = compare_turn_exits([self.trade(suggested=1.5, took=0.5)])
         assert "too few" in got.summary()
         assert str(ENOUGH) in got.summary()
 
     def test_the_summary_says_it_is_an_upper_bound(self):
-        from till_infinity.trading.report import ENOUGH, compare_turn_exits
+        from till_infinity.strategies.report import ENOUGH, compare_turn_exits
 
         got = compare_turn_exits([self.trade(suggested=1.5, took=0.5) for _ in range(ENOUGH)])
         assert "upper bound" in got.summary()

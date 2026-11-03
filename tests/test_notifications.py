@@ -1,3 +1,27 @@
+"""The alert transports: one message, two wire formats, and no shared fate.
+
+An alert is how a person finds out the desk is broken, so this path is read on
+the worst day and on no other. **Measured on one of those: `notify` opened
+every channel in a single `AsyncExitStack`, which enters its contexts in
+sequence - so a notifier that raised on `__aenter__` meant nothing after it was
+even attempted.** The order is `DEFAULT_TARGETS`, Telegram first, so a sick
+Telegram session took Discord down with it, on the day both the broker and the
+terminal were already unreachable. Each channel opens its own session now.
+
+The rest of the file is the two translations and the ways a provider says no.
+Telegram wants escaped HTML in one string and answers `{"ok": false}` with HTTP
+200; Discord wants an embed and answers 204 with no body at all, so neither
+status code nor emptiness can decide success. Both rate-limit with a number
+worth keeping and both report a dead credential as something a retry cannot
+fix - and a retry loop that cannot tell transient from permanent either gives
+up on a working channel or hammers a revoked one.
+
+The credential itself is the quiet constraint: a Telegram token lives in the
+URL and a Discord webhook *is* the URL, so anything that logs or renders a
+channel has to mask it. `truncate` and the field caps exist because a provider
+rejects an oversized payload outright, which turns a long alert into no alert.
+"""
+
 import httpx
 import pytest
 
@@ -49,7 +73,10 @@ def alert(**kw) -> Notification:
 # ---------------------------------------------------------------- the message
 
 
-def test_level_parsing():
+def test_a_level_arrives_as_a_word_or_an_ordinal_and_nonsense_raises():
+    """`shared/contracts/bus/alerts.json` allows either encoding, and a
+    publisher sending `2` where `"critical"` was expected is how the critical
+    bypass was once filtered like a topic preference."""
     assert Level.parse("warning") is Level.WARNING
     assert Level.parse("CRITICAL") is Level.CRITICAL
     assert Level.parse(None) is Level.INFO
@@ -95,12 +122,13 @@ def test_an_instrument_without_a_symbol_keeps_the_plain_icon():
     assert odd.mark == "📊"
 
 
-def test_every_tracked_instrument_has_a_symbol():
-    """The map has to keep up with the feeds, or new instruments go unmarked."""
-    from till_infinity.notifications.models import INSTRUMENTS
-    from till_infinity.prices import DEFAULT_SYMBOLS
-
-    assert not set(DEFAULT_SYMBOLS) - set(INSTRUMENTS)
+# **`test_every_tracked_instrument_has_a_symbol` left with its subject.**
+# It checked `notifications.models.INSTRUMENTS` against
+# `prices.DEFAULT_SYMBOLS`, and `prices/` is retired to `research/retire/`.
+# The instrument list now comes from the terminal itself through
+# `adapters/mt5/providers.py`, which builds each one from its own `digits` and
+# `volume_step` - so the assertion worth having is that the provider and the
+# map agree, and it belongs beside the provider once the alert path is ported.
 
 
 def test_symbols_tell_the_instruments_apart():
@@ -110,7 +138,7 @@ def test_symbols_tell_the_instruments_apart():
     assert len(set(INSTRUMENTS.values())) == len(INSTRUMENTS)
 
 
-def test_text_rendering_escapes_html():
+def test_a_headline_containing_markup_does_not_break_the_parse():
     """A symbol like EUR<USD or an & in a headline must not break the parse."""
     text = alert(title="EUR<USD & gold", body="a > b").as_text(escape=True)
     assert "EUR&lt;USD &amp; gold" in text
@@ -118,20 +146,24 @@ def test_text_rendering_escapes_html():
     assert "<b>" in text  # our own markup survives
 
 
-def test_text_rendering_includes_fields_and_url():
+def test_the_fields_and_the_link_reach_the_reader():
+    """The link is what a reader opens to see the chart, and dropping it leaves
+    an alert that can only be acted on from memory."""
     text = alert(fields={"spread_bps": "4.2"}, url="https://example.com").as_text()
     assert "spread_bps: 4.2" in text
     assert "https://example.com" in text
 
 
-def test_text_rendering_omits_the_fields_the_filter_routes_on():
+def test_the_fields_the_filter_routes_on_are_not_also_printed():
     """`instrument: gold` under a headline containing "gold" is noise."""
     text = alert(fields={"instrument": "gold", "shape": "level"}).as_text()
     assert "instrument: gold" not in text
     assert "shape: level" not in text
 
 
-def test_truncate_marks_the_cut():
+def test_a_cut_message_says_it_was_cut():
+    """Silent truncation reads as a complete sentence, which is the same trap
+    `utils/logging` hit with rich's 80-column fallback eating a scoreboard."""
     assert truncate("abc", 10) == "abc"
     cut = truncate("x" * 100, 20)
     assert len(cut) == 20
@@ -142,7 +174,9 @@ def test_truncate_marks_the_cut():
 # --------------------------------------------------------------------- payload
 
 
-def test_telegram_payload_is_escaped_html_within_the_limit():
+def test_an_oversized_telegram_message_is_cut_rather_than_rejected():
+    """Telegram refuses the whole request past its limit, so an alert long
+    enough to matter would be the one that never arrives."""
     notifier = TelegramNotifier(FULL, OPS)
     payload = notifier.payload(alert(body="y" * 9000))
     assert payload["chat_id"] == "-100999"
@@ -156,7 +190,9 @@ def test_the_telegram_token_lives_in_the_url_not_the_payload():
     assert "secret" not in str(notifier.payload(alert()))
 
 
-def test_discord_payload_is_an_embed_coloured_by_level():
+def test_a_discord_embed_carries_the_level_as_its_colour():
+    """Colour is read before any word of the title, which is the whole reason
+    level exists on a message that already says what happened."""
     notifier = DiscordNotifier(FULL, HOOK)
     payload = notifier.payload(alert(level=Level.CRITICAL, fields={"instrument": "gold"}))
     (embed,) = payload["embeds"]
@@ -164,13 +200,15 @@ def test_discord_payload_is_an_embed_coloured_by_level():
     assert embed["fields"][0] == {"name": "instrument", "value": "gold", "inline": True}
 
 
-def test_discord_embed_respects_the_description_limit():
+def test_an_oversized_discord_description_is_cut_rather_than_rejected():
     notifier = DiscordNotifier(FULL, HOOK)
     (embed,) = notifier.payload(alert(body="z" * 9000))["embeds"]
     assert len(embed["description"]) <= DISCORD_DESCRIPTION_LIMIT
 
 
-def test_discord_caps_the_field_count():
+def test_discord_sends_no_more_fields_than_it_accepts():
+    """25 is Discord's own limit on an embed; a 26th field fails the request
+    and loses the alert rather than the field."""
     notifier = DiscordNotifier(FULL, HOOK)
     many = {f"k{i}": str(i) for i in range(40)}
     (embed,) = notifier.payload(alert(fields=many))["embeds"]
@@ -181,7 +219,7 @@ def test_discord_caps_the_field_count():
 
 
 @pytest.mark.asyncio
-async def test_telegram_send_posts_to_send_message():
+async def test_the_telegram_token_is_in_the_path_and_not_the_body():
     seen: dict[str, object] = {}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -195,7 +233,10 @@ async def test_telegram_send_posts_to_send_message():
 
 
 @pytest.mark.asyncio
-async def test_telegram_ok_false_is_a_failure_despite_http_200():
+async def test_an_ok_false_body_is_a_failure_despite_the_200():
+    """Telegram reports a bad chat id this way, so a status check alone counts
+    an undelivered alert as sent."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(200, json={"ok": False, "description": "chat not found"})
 
@@ -205,7 +246,7 @@ async def test_telegram_ok_false_is_a_failure_despite_http_200():
 
 
 @pytest.mark.asyncio
-async def test_discord_accepts_the_empty_204():
+async def test_an_empty_204_is_a_success_and_not_an_empty_answer():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(204)
 
@@ -213,7 +254,7 @@ async def test_discord_accepts_the_empty_204():
 
 
 @pytest.mark.asyncio
-async def test_a_bad_token_is_permanent():
+async def test_a_revoked_credential_is_permanent_rather_than_retried():
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(401, json={"description": "Unauthorized"})
 
@@ -234,7 +275,10 @@ async def test_a_rate_limit_is_transient_and_carries_the_wait():
 
 
 @pytest.mark.asyncio
-async def test_telegram_rate_limit_is_read_from_parameters():
+async def test_the_telegram_wait_is_read_from_its_own_nesting():
+    """The same number as Discord's, one level deeper. Read off the top level
+    it is absent, and an absent wait becomes a default nobody measured."""
+
     def handler(request: httpx.Request) -> httpx.Response:
         return httpx.Response(429, json={"parameters": {"retry_after": 3}})
 
@@ -244,7 +288,9 @@ async def test_telegram_rate_limit_is_read_from_parameters():
 
 
 @pytest.mark.asyncio
-async def test_retry_after_is_capped():
+async def test_a_providers_wait_is_capped_at_something_survivable():
+    """Telegram answers with hours during a ban. Honouring it would park the
+    alerting path for the rest of the outage it is meant to report."""
     settings = Settings(discord_webhooks=(HOOK,), max_retry_after=30.0)
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -256,7 +302,7 @@ async def test_retry_after_is_capped():
 
 
 @pytest.mark.asyncio
-async def test_a_5xx_is_retried_then_reported():
+async def test_a_channel_that_never_recovers_is_reported_not_retried_forever():
     calls = {"n": 0}
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -298,7 +344,9 @@ async def test_sending_without_credentials_reports_rather_than_raises():
 # ------------------------------------------------------------------ selection
 
 
-def test_only_configured_channels_are_built():
+def test_a_channel_with_no_credential_is_not_built_at_all():
+    """A notifier that exists and cannot send is a delivery that fails on the
+    worst day rather than a destination nobody configured."""
     assert [n.name for n in build_notifiers(None, FULL)] == ["telegram[ops]", "discord[alerts]"]
     telegram_only = Settings(telegram_token="t", telegram_chats=(OPS,))
     assert [n.name for n in build_notifiers(None, telegram_only)] == ["telegram[ops]"]
@@ -327,19 +375,23 @@ def test_a_telegram_chat_without_a_token_is_not_ready():
     assert build_notifiers(("telegram",), Settings(telegram_chats=(OPS,))) == []
 
 
-def test_unknown_target_is_rejected():
+def test_an_unknown_target_is_refused_rather_than_ignored():
+    """Ignoring it would be an alerting path with no destinations that reports
+    itself as configured."""
     with pytest.raises(ValueError, match="unknown target"):
         build_notifiers(("carrier-pigeon",), FULL)
 
 
-def test_configured_lists_what_is_ready():
+def test_a_token_with_no_chats_is_not_a_configured_destination():
     assert Settings().configured() == ()
     assert FULL.configured() == ("telegram", "discord")
     assert Settings(telegram_token="t").configured() == ()  # no chats
 
 
 @pytest.mark.asyncio
-async def test_notify_returns_nothing_when_no_target_is_set():
+async def test_an_unconfigured_desk_is_quiet_rather_than_broken():
+    """Most nodes have no alerting set up, and raising here would make the
+    absence of a Telegram token a reason a desk cannot run."""
     assert await notify(alert(), settings=Settings()) == []
 
 
@@ -367,7 +419,7 @@ async def test_one_dead_destination_does_not_block_the_other(monkeypatch):
 # ---------------------------------------------------------------- many channels
 
 
-def test_channel_parsing_handles_labels_levels_and_urls():
+def test_a_channel_carries_its_own_label_and_its_own_floor():
     (ops, feed) = parse_channels("ops=-1001111|warning, -1002222", "telegram")
     assert (ops.label, ops.address, ops.min_level) == ("ops", "-1001111", Level.WARNING)
     # Unlabelled entries are numbered so a log line can still identify them.
@@ -382,7 +434,9 @@ def test_a_url_is_never_mistaken_for_a_label():
     assert hook.label == "1"
 
 
-def test_channel_parsing_ignores_blanks():
+def test_a_trailing_comma_does_not_become_an_empty_channel():
+    """Hand-edited env files end in separators, and an empty address would be
+    a notifier that fails every send."""
     assert parse_channels("", "telegram") == ()
     assert parse_channels(" , ,", "telegram") == ()
     assert len(parse_channels("a=-1, , b=-2", "telegram")) == 2
@@ -493,7 +547,7 @@ def test_auto_chats_makes_telegram_ready_without_a_chat_list():
 # ------------------------------------------------------- when it happened
 
 
-def test_an_alert_says_when():
+def test_an_alert_read_an_hour_later_still_says_when_it_fired():
     """An alert read an hour later should say what it was about, and when."""
     note = Notification(title="btc level", at=1787059920.0)
     said = note.as_text()
@@ -511,7 +565,7 @@ def test_the_time_is_utc_and_says_so():
     assert Notification(title="x", at=1787059920.0).when.endswith("UTC")
 
 
-def test_the_time_comes_last():
+def test_the_clock_comes_after_the_instrument():
     """Context, not content: the reader wants the instrument before the clock."""
     note = Notification(
         title="btc level", body="down from below", fields={"probability": "89%"}, at=1787059920.0
@@ -530,20 +584,42 @@ def test_a_notification_stamps_itself():
     assert before <= note.at <= _time.time()
 
 
-def test_an_event_time_beats_the_delivery_time():
-    """A delivery delayed by a retry must not be stamped with the retry."""
-    note = Notification(title="x", at=1787059920.0)
-    assert note.at == 1787059920.0
-    assert "2026-08-18" in note.when
+@pytest.mark.asyncio
+async def test_a_delivery_delayed_by_a_retry_is_not_stamped_with_the_retry():
+    """The stamp is when it happened, not when it got through.
+
+    A 429 with a long wait can put minutes between the event and the message,
+    and an alert that dates itself to its own delivery is one a reader
+    correlates against the wrong bars. So the assertion is made on the request
+    that actually succeeded, after a failure, rather than on the object - where
+    `at` is a plain field and nothing could move it.
+    """
+    bodies: list[bytes] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        bodies.append(request.content)
+        return httpx.Response(503) if len(bodies) == 1 else httpx.Response(204)
+
+    notifier = mock(DiscordNotifier(FULL, HOOK), handler)
+    result = await send_one(notifier, Notification(title="x", at=1787059920.0), FULL)
+    assert result.ok
+    assert len(bodies) == 2, "the first attempt was meant to fail"
+
+    import json
+
+    delivered = json.loads(bodies[1])["embeds"][0]
+    assert delivered["timestamp"].startswith("2026-08-18T13:32")
 
 
-def test_no_timestamp_renders_nothing():
+def test_an_unstamped_alert_renders_no_time_rather_than_the_epoch():
+    """A rendered `1970-01-01` is a reader working out whether the alert is
+    stale or the stamp is missing."""
     note = Notification(title="x", at=0.0)
     assert note.when == ""
     assert note.as_text().splitlines() == [note.mark + " x"]
 
 
-def test_discord_gets_a_machine_readable_stamp():
+def test_discord_is_given_the_instant_rather_than_our_rendering_of_it():
     """Discord renders the time itself, in the reader's own timezone.
 
     So the embed carries ISO-8601 rather than the string `as_text` builds for
@@ -552,3 +628,36 @@ def test_discord_gets_a_machine_readable_stamp():
     payload = DiscordNotifier(FULL, HOOK).payload(Notification(title="x", at=1787059920.0))
     stamp = payload["embeds"][0]["timestamp"]
     assert stamp.startswith("2026-08-18T13:32")
+
+
+@pytest.mark.asyncio
+async def test_a_channel_that_cannot_open_does_not_suppress_the_others(monkeypatch):
+    """**Measured: the first channel's session failure cost every later one.**
+
+    `notify` opened all the channels in one `AsyncExitStack`, and a stack
+    enters its contexts in sequence - so a notifier that raised on
+    `__aenter__` meant nothing after it was even attempted. The order is
+    `DEFAULT_TARGETS`, telegram first, which makes the suppressed one Discord;
+    reverse the fault and it suppressed Telegram. Each channel opens its own
+    session now.
+
+    This is the worst day: the broker is down, the terminal is unreachable,
+    and one of the two transports is sick as well. The other one has to carry
+    the message.
+    """
+
+    async def refuse(self):
+        raise RuntimeError("no socket")
+
+    async def ok_send(self):
+        from till_infinity.notifications import Delivery
+
+        return Delivery(self.name, ok=True)
+
+    monkeypatch.setattr(TelegramNotifier, "__aenter__", refuse)
+    monkeypatch.setattr(DiscordNotifier, "send", lambda self, note: ok_send(self))
+
+    results = {d.target: d for d in await notify(alert(), settings=FULL)}
+    assert results["discord[alerts]"].ok, "a Telegram session failure took Discord with it"
+    assert not results["telegram[ops]"].ok
+    assert "no socket" in results["telegram[ops]"].detail

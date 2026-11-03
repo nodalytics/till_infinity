@@ -1,8 +1,22 @@
 # Structures
 
-The numeric layer. It watches quotes and fast bars, learns continuously what is
-normal, and says when something is not - **arithmetic, not judgement, and it
-does not stop when a model provider does.**
+> **The `till-infinity` commands in this document no longer exist.** The
+> 2,852-line CLI retired to `research/retire/bus/` with the services it drove,
+> and `pyproject.toml` declares no console script on purpose: a second way to
+> run the desk is a second thing to go stale. The entry point is
+> `python -m till_infinity.node.live`, and
+> `python -m till_infinity.node.status` says whether it is up.
+
+**Retired on 2026-10-29 to `research/retire/structures/`**, with the eight
+level-scalper strategies that read it. `statespace/` is the successor: it asks
+the same question as a predictive distribution with a likelihood that can be
+scored against a null, rather than as a pattern that either matched or did not.
+This document is kept because the measurements in it are still the
+measurements.
+
+The numeric layer. It watched quotes and fast bars, learned continuously what
+was normal, and said when something was not - **arithmetic, not judgement, and
+it did not stop when a model provider did.**
 
 ```bash
 uv run till-infinity structures watch --redis redis://localhost:6379

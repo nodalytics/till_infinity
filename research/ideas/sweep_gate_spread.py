@@ -92,10 +92,10 @@ from collections import Counter, defaultdict
 from pathlib import Path
 from typing import Any
 
-from till_infinity.trading.config import Settings
-from till_infinity.trading.strategies import scalper, swing  # noqa: F401  (registers)
-from till_infinity.trading.strategies.scalper import sweep_gate
-from till_infinity.trading.strategies.strategy import STRATEGIES
+from till_infinity.strategies.config import Settings
+from till_infinity.strategies.strategies import scalper, swing  # noqa: F401  (registers)
+from till_infinity.strategies.strategies.scalper import sweep_gate
+from till_infinity.strategies.strategies.strategy import STRATEGIES
 
 #: The extracted decision and outcome entries, one JSON object a line, gzip or
 #: plain. Produced from the journal on the instance rather than read here:

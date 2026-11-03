@@ -3,52 +3,53 @@ name = "till-infinity"
 version = "0.1.0"
 description = "Prices the market against a fair-value estimate from where volatility turns, and takes a stance on the distance"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 authors = [
     { name = "Samuel Ojietohamen", email = "seekersoftec@gmail.com" }
 ]
 dependencies = [
-    "anthropic>=0.121.0",
     "click>=8.4.2",
     "httpx>=0.28.1",
     "httpx-ws>=0.9.0",
     "orjson>=3.11.9",
-    "pydantic-ai-slim[anthropic,groq]>=2.28.0",
     "python-dotenv>=1.2.2",
     "rich>=15.0.0",
     "ccxt>=4.4.0",
+    # **The engine.** Rust core with Python bindings: the message bus, the
+    # cache, order and position management, the risk engine, and backtest/live
+    # parity on one code path - which is the reason for the move rather than
+    # the feature list. Pinned to a minor, because the current docs describe a
+    # rename this version has not shipped: 1.221 has `LiveMarketDataClient`,
+    # `LiveExecutionClient` and `TradingNode`, where the docs call those v1
+    # names for `MarketDataClient`, `ExecutionClient` and `LiveNode`.
+    "nautilus_trader>=1.231,<1.240",
     "msgpack>=1.1.0",
+    # **Both of these were transitive until 2026-10-31**, and removing an
+    # unrelated package is what exposed them. `pydantic` arrived with
+    # `pydantic-ai-slim` and is imported directly by `trading/valuation.py`;
+    # `numpy` arrived with `river[pandas]` and is imported by
+    # `structures/cycles.py`. Dropping the agent clients broke the suite on
+    # `ModuleNotFoundError: No module named 'pydantic'` in a module that has
+    # nothing to do with agents, which is what an undeclared dependency buys.
+    "pydantic>=2.0",
+    "numpy>=1.26",
     "river[pandas]>=0.25.0",
     "tenacity>=9.1.4",
     "yfinance>=1.5.2",
-    # The logger, environment parsing, `Restorable`, the persistence codec and
-    # the bus-contract reader. A workspace member rather than a `shared/`
-    # directory inside this package, because a service cannot carry its own
-    # dependency manifest while importing the desk - see
-    # `packages/till-platform/README.md`.
-    "till-platform",
-    # The transport `bus.py` is built on. Its own package rather than part of
-    # till-platform because it carries a dependency the platform does not:
-    # `redis`, which would otherwise land in the manifest of every service
-    # that only ever logs. See `packages/till-channels/README.md`.
-    "till-channels",
-    # **A dependency, not an inlined package.** `services/statespace` has its
-    # own manifest and installs without the desk - that is what makes it
-    # separable. The desk depends on it so `stack.py` can still run it in the
-    # one process, which ADR 0002 keeps as the default until a service earns
-    # its own: the layout is a source-tree decision, not a deployment one.
-    "statespace",
 ]
 
 [project.optional-dependencies]
 speed = ["uvloop>=0.21.0; sys_platform != 'win32'"]
-# Agents run on Claude out of the box. These add the clients for other
-# providers - `openai` also covers xAI's Grok, DeepSeek and OpenRouter, which
-# all speak the OpenAI wire format.
-openai = ["pydantic-ai-slim[openai]>=2.28.0"]
-google = ["pydantic-ai-slim[google]>=2.28.0"]
-groq = ["pydantic-ai-slim[groq]>=2.28.0"]
-redis = ["redis>=5.0.0"]
+# **The agent providers and the Redis backend left on 2026-10-31**, with the
+# move to Nautilus. The agents were retired to `research/retire/agents/`,
+# which is the only place `pydantic_ai` and `anthropic` are still named, and
+# Nautilus brings its own message bus - with its own optional Redis backing -
+# so `till-channels` stops being the transport. `research/baseline/` holds the
+# implementations these belonged to.
+#
+# `river` stays. Its ten imports are all inside the retired `structures/`,
+# but online learning is the direction and it is the library for it: the whole
+# reason `statespace` folds one observation at a time rather than a matrix.
 # The native MT5 binding. Marked win32 because it is not a package that has
 # merely been neglected on other platforms - it is an in-process call into a
 # running Windows terminal, with no Linux wheel to build against. The marker
@@ -58,6 +59,11 @@ mt5 = ["MetaTrader5>=5.0.45; sys_platform == 'win32'"]
 # Talking to a Windows terminal from anywhere, by proxying the module itself
 # out of a Wine prefix. No platform marker: this half runs on the Linux side.
 rpyc = ["rpyc>=6.0.0"]
+# Starting the terminal container from the node, the way the Interactive
+# Brokers adapter starts TWS. Optional because the usual arrangement is a
+# terminal somebody else's deploy already runs - on the lab box, in
+# production - and a node that only points at one needs nothing here.
+docker = ["docker>=7.1.0"]
 # Chart images on alert cards. Optional: without it the cards go out as
 # text, and the service says so once.
 chart = ["matplotlib>=3.8"]
@@ -73,10 +79,17 @@ train = ["scikit-learn>=1.5.0"]
 # this repository produced: a dependency that happens to be present is not one
 # the project has.
 contracts = ["jsonschema>=4.20.0"]
-corpus = ["pyarrow>=16.0.0"]
 
-[project.scripts]
-till-infinity = "till_infinity.cli:main"
+
+# **No console script.** The CLI is retired to `research/retire/bus/`: the
+# 2,852-line original grew around services that no longer exist - `prices
+# collect`, `structures watch`, `journal listen` - and the replacement was a
+# second way to run the desk. `till.env needs a container recreate` is the
+# lesson about two ways to change one thing: one of them goes silently stale.
+#
+# The node is the entry point:
+#
+#     python -m till_infinity.node.live
 
 [build-system]
 requires = ["uv_build>=0.9.24,<0.10.0"]
@@ -96,14 +109,12 @@ build-backend = "uv_build"
 # is a line in a config file against a boundary that is otherwise invisible.
 # `test_the_go_service_is_excluded_rather_than_broken` is what makes a missing
 # line fail here rather than at the next `uv sync`.
-[tool.uv.workspace]
-members = ["packages/*", "services/*"]
-exclude = ["services/ticks", "services/redis"]
-
-[tool.uv.sources]
-till-platform = { workspace = true }
-till-channels = { workspace = true }
-statespace = { workspace = true }
+# **No workspace.** `packages/` is retired to `research/retire/`: `till-platform`
+# held the logger, environment parsing, `Restorable` and the persistence codec,
+# and Nautilus supplies the logger, the cache and the serialisation. What was
+# still used moved to `till_infinity/utils/`, which is small enough not to need
+# a distribution of its own - and `contracts` and `frozen` stayed behind with
+# the bus schemas and the retired models they read.
 
 [tool.uv.build-backend]
 module-root = ""
@@ -163,40 +174,37 @@ max-returns = 8
 
 [tool.ruff.lint.per-file-ignores]
 "tests/*" = ["ARG"]  # fakes accept arguments they have no reason to use
-# channels/ is a general-purpose transport library with its own naming. These
-# exemptions are for deliberate API choices, not defects: renaming ChannelFull
-# to ChannelFullError would break every caller to satisfy a convention, and the
-# `timed` decorator is lowercase because decorators read as verbs.
-"packages/till-channels/till_channels/*" = [
-    "N818",    # ChannelClosed / ChannelFull / ChannelEmpty are the public names
-    "N801",    # `timed` is a decorator, not a class you instantiate
-    "ARG002",  # backoff strategies share a signature; some ignore `attempt`
-    "PLW0603", # a module-level metrics default is set once, on purpose
-]
-"tests/channels/*" = ["PT011", "RUF012", "PERF401"]
+# The gate chain in `Guard.allows` is one return per refusal, which is the
+# design: each gate names itself and stops. Collapsing eighteen reasons into
+# fewer exits would trade a readable refusal for a lint score.
+# Repointed on 2026-11-01 when `guard.py` moved to `risk/`, which is the
+# failure `test_every_lint_exemption_points_at_files_that_exist` exists for:
+# a path-scoped ignore stops applying when the path moves, and reads like a
+# rule while enforcing nothing.
+"till_infinity/risk/guard.py" = ["PLR0911"]
+# A Nautilus adapter implements signatures the framework defines, and some of
+# their arguments do not apply to this venue: `filters` on
+# `InstrumentProvider` (the bridge lists what the terminal lists, and there is
+# nothing to filter on) and `command` on the reconciliation hooks, which here
+# always report everything carrying the desk's magic. Dropping either would
+# change the signature and break the override.
+"till_infinity/adapters/*/*.py" = ["ARG002"]
 # trading/ is a set of ports with several implementations behind each, so the
 # exemptions here are about interfaces rather than about code that got away.
 # See docs/deployment.md.
-"till_infinity/trading/venues/broker.py" = ["ARG002", "B027"]
-"till_infinity/trading/strategies/strategy.py" = ["B027"]
-"till_infinity/trading/venues/paper.py" = ["ARG002"]
 # `codec.unpack` is one return per wire type. Collapsing eight tagged
 # shapes into a table would put the mapping somewhere other than beside
 # the code that reads it, for no gain but a lint score.
-"till_infinity/structures/codec.py" = ["PLR0911"]
 # `Parse.kind` is a dispatch table written as code: one return per event kind,
 # beside the cached parse step it reads.
 # `Guard.allows` is the same shape: one return per gate, each naming itself.
-"till_infinity/trading/risk.py" = ["PLR0911"]
 # `Tracker.update` advances one touch through its states - first contact, wick,
 # origin, break, trap window, resolution - and the branch count is one per
 # transition. Splitting it would put half a state machine in another method and
 # make the order the transitions happen in harder to read, not easier.
-"till_infinity/structures/reactions.py" = ["PLR0912"]
 # `import MetaTrader5 as mt5` is the name every MT5 example and the terminal's
 # own documentation uses; renaming it would make this file harder to check
 # against them.
-"till_infinity/trading/venues/mt5_native.py" = ["N813"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

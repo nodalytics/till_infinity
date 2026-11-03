@@ -1,0 +1,793 @@
+"""The exit as a composable mechanism, and the asymmetries it has to allow.
+
+`surprise.py` claimed that "a mixin with no base lets any decision compose with
+any entry, which is what entries and exits are asymmetric means in code", and
+the claim held for exactly half of it. The decision composed; the exit did not
+exist as a thing to compose. `EdgeEntry` and `ArrivalEntry` submitted a bracket
+inside `place`, `RestingEntry` submitted nothing at all, and `Exits`,
+`manage.advance`, `manage.partial` and `Profile.protection` had **no caller in
+`till_infinity/`** - so every decision got the same exit whatever its thesis,
+and no decision had any way to state one.
+
+Three failures are measured here rather than reasoned about, because each one
+looked like somebody else's problem from inside a unit test of the part that
+contained it:
+
+* a resting entry that filled was an **unprotected position** - its `place`
+  leaves a bare limit and its `on_order_filled` only forgets the wait;
+* `BasketExit` logged "closing all N position(s)", counted them closed and
+  **closed nothing**, because it publishes on `alerts` and the only subscriber
+  was the Telegram notifier;
+* nothing differed by **side**, on a desk whose own `DEFAULT_STOP_OVERSHOOT`
+  records that a boom's sell and a crash's buy are not the same trade as their
+  opposites.
+
+The composition tests build every pairing and put a signal through it, because
+reading an `issubclass` tells you a class exists and not that a proposal
+reaches a venue through it - which is how nine working leaves came to be built
+by nothing at all.
+"""
+
+from __future__ import annotations
+
+import itertools
+from dataclasses import replace
+
+import pytest
+from nautilus_trader.backtest.engine import BacktestEngine
+from nautilus_trader.common.actor import Actor
+from nautilus_trader.config import ActorConfig, BacktestEngineConfig, LoggingConfig
+from nautilus_trader.model.currencies import USD
+from nautilus_trader.model.data import BarType, QuoteTick
+from nautilus_trader.model.enums import AccountType, OmsType, OrderSide
+from nautilus_trader.model.identifiers import InstrumentId, Venue
+from nautilus_trader.model.objects import Money, Price, Quantity
+from nautilus_trader.test_kit.providers import TestInstrumentProvider
+
+from till_infinity.domain.models import Intent, Side
+from till_infinity.strategies import leaves
+from till_infinity.strategies.entries import (
+    ArrivalEntry,
+    ArrivalEntryConfig,
+    EdgeEntry,
+    EdgeEntryConfig,
+    RestingEntry,
+    RestingEntryConfig,
+)
+from till_infinity.strategies.exits import (
+    ExitMechanism,
+    ManagedExit,
+    Protection,
+    VenueExit,
+    protection_for,
+)
+from till_infinity.strategies.surprise import Surprise, SurpriseEdge, SurpriseResting
+from till_infinity.utils.topics import ALERTS, PROPOSALS
+
+VENUE = Venue("SIM")
+EURUSD = TestInstrumentProvider.default_fx_ccy("EUR/USD", VENUE)
+BAR_TYPE = BarType.from_str(f"{EURUSD.id}-1-HOUR-LAST-EXTERNAL")
+SECOND = 1_000_000_000
+
+#: Quotes before the proposal, so the feed is warm and the proposal is not
+#: racing the first tick into the cache - `_undealable` refuses on a missing
+#: quote, and a test that published first would assert that gate instead.
+WARM = 3
+
+ENTRIES = {
+    "edge": (EdgeEntry, EdgeEntryConfig),
+    "resting": (RestingEntry, RestingEntryConfig),
+    "arrival": (ArrivalEntry, ArrivalEntryConfig),
+}
+#: `StatespaceLong`/`StatespaceShort` and not `deciding.LongSide` itself: the
+#: bare mixin's profile is a `SideProfile`, which has no `multipliers`, so a
+#: leaf built on it decides correctly and then raises on the way to a size.
+DECISIONS = {
+    "surprise": Surprise,
+    "long": leaves.StatespaceLong,
+    "short": leaves.StatespaceShort,
+}
+EXITS = {"managed": ManagedExit, "venue": VenueExit}
+
+
+# ------------------------------------------------------------------ the harness
+
+
+class PitchConfig(ActorConfig, frozen=True):
+    instrument_id: InstrumentId
+    surprise: float = 4.2
+    direction: int = 1
+    after: int = WARM
+
+
+class Pitcher(Actor):
+    """One statespace proposal on the real topic, through the real bus.
+
+    `StatespaceActor` is not used on purpose: it would bring its own folds and
+    thresholds, and a failure in those would arrive looking like a failure of
+    this chain. Copied from `test_first_trade.py`, where the argument is made
+    at length.
+    """
+
+    def __init__(self, config: PitchConfig) -> None:
+        super().__init__(config)
+        self._seen = 0
+        self.sent = 0
+
+    def on_start(self) -> None:
+        self.subscribe_quote_ticks(self.config.instrument_id)
+
+    def on_quote_tick(self, tick: QuoteTick) -> None:
+        self._seen += 1
+        if self._seen != self.config.after:
+            return
+        self.sent += 1
+        self.msgbus.publish(
+            PROPOSALS,
+            {
+                "feed": "eurusd",
+                "shape": "statespace",
+                "interval": "5m",
+                "direction": self.config.direction,
+                "features": {
+                    "surprise": self.config.surprise,
+                    "vol_bps": 10.0,
+                    "stop_vol": 2.0,
+                    "target_r": 2.0,
+                },
+            },
+        )
+
+
+class CloserConfig(ActorConfig, frozen=True):
+    instrument_id: InstrumentId
+    #: Which strategy the close is addressed to. A wrong one is how the
+    #: `strategy_id` filter is tested.
+    strategy_id: str = ""
+    after: int = WARM + 4
+
+
+class Closer(Actor):
+    """`BasketExit`'s close request, published the way `BasketExit` publishes it.
+
+    Not `BasketExit` itself: its own gate is `Guard.basket` over an account's
+    floating total, which is tested in `test_exits.py`. What is under test here
+    is whether the *request* reaches the position's owner, which is the half
+    that reached nobody.
+    """
+
+    def __init__(self, config: CloserConfig) -> None:
+        super().__init__(config)
+        self._seen = 0
+        self.sent = 0
+
+    def on_start(self) -> None:
+        self.subscribe_quote_ticks(self.config.instrument_id)
+
+    def on_quote_tick(self, tick: QuoteTick) -> None:
+        self._seen += 1
+        if self._seen != self.config.after:
+            return
+        held = self.cache.positions_open()
+        if not held:
+            return
+        position = held[0]
+        self.sent += 1
+        self.msgbus.publish(
+            ALERTS,
+            {
+                "shape": "basket.close",
+                "position_id": str(position.id),
+                "strategy_id": self.config.strategy_id or str(position.strategy_id),
+                "instrument_id": str(position.instrument_id),
+            },
+        )
+
+
+def quotes(
+    count: int = 14,
+    step: float = 1e-05,
+    jump_after: int = 10**9,
+    jump: float = 5e-04,
+) -> list[QuoteTick]:
+    """A quiet feed that may be made to run, at half a point of spread.
+
+    `jump_after` switches to the larger step, which is what gets a trade past a
+    break-even threshold inside a short feed: the risk here is 22 points, so a
+    one-point drift would need a hundred and ten ticks to reach 1R.
+
+    The callers that want a stop *moved* also want the position still open at
+    the end, so they pick a `jump` whose total rise clears 1R - 22 points - and
+    stays under the 44-point target. A feed that reaches the target instead
+    tests the bracket, which `test_first_trade.py` already does.
+    """
+    rows = []
+    mid = 1.10000
+    for i in range(count):
+        mid += step if i < jump_after else jump
+        rows.append(
+            QuoteTick(
+                instrument_id=EURUSD.id,
+                bid_price=Price(mid - 2.5e-05, 5),
+                ask_price=Price(mid + 2.5e-05, 5),
+                bid_size=Quantity(1_000_000, 0),
+                ask_size=Quantity(1_000_000, 0),
+                ts_event=i * SECOND,
+                ts_init=i * SECOND,
+            )
+        )
+    return rows
+
+
+def engine_for(instruments=(EURUSD,), equity: float = 100_000.0) -> BacktestEngine:
+    engine = BacktestEngine(
+        config=BacktestEngineConfig(
+            trader_id="TESTER-001",
+            logging=LoggingConfig(bypass_logging=True),
+        )
+    )
+    engine.add_venue(
+        venue=VENUE,
+        oms_type=OmsType.HEDGING,
+        account_type=AccountType.MARGIN,
+        base_currency=USD,
+        starting_balances=[Money(equity, USD)],
+    )
+    for instrument in instruments:
+        engine.add_instrument(instrument)
+    return engine
+
+
+def run(
+    build=SurpriseEdge,
+    config=EdgeEntryConfig,
+    *,
+    feed=None,
+    actors=(),
+    tune=None,
+    **pitch,
+):
+    """One backtest from the quote feed to the venue's fills, for one leaf."""
+    engine = engine_for()
+    engine.add_data(feed if feed is not None else quotes())
+    strategy = build(config(instrument_id=EURUSD.id, bar_type=BAR_TYPE))
+    if tune is not None:
+        # Before the run, so the exit book is built from the tuned settings -
+        # `ExitMechanism.exits` builds it on first use and keeps it.
+        tune(strategy.settings)
+    engine.add_strategy(strategy)
+    pitcher = Pitcher(PitchConfig(instrument_id=EURUSD.id, **pitch))  # type: ignore[arg-type]
+    engine.add_actor(pitcher)
+    for actor in actors:
+        engine.add_actor(actor)
+    engine.run()
+    return strategy, pitcher
+
+
+def guards(strategy) -> list:
+    """The stop orders this strategy has live at the venue."""
+    return [
+        order
+        for order in strategy.cache.orders(strategy_id=strategy.id)
+        if getattr(order, "trigger_price", None) is not None
+    ]
+
+
+# -------------------------------------------------------------- the composition
+
+
+def test_every_decision_exit_and_entry_pairing_places_a_trade():
+    """**Eighteen pairings, built and driven, not read.**
+
+    The property is that the three pieces are independent: any decision, with
+    any exit, on any entry. The existing test for it asserted `issubclass` and
+    nothing else, and `issubclass` is exactly what was true while `node/desks.py`
+    built the bare entry classes and every production desk raised
+    `NotImplementedError` on its first proposal.
+
+    So each pairing gets a real engine, a real proposal and a real venue, and
+    is asked for the one thing a composed leaf exists to do - take the trade or
+    park it, under its own `strategy_id`.
+    """
+    seen = set()
+    for (dname, decision), (xname, exit_), (ename, (entry, config)) in itertools.product(
+        DECISIONS.items(), EXITS.items(), ENTRIES.items()
+    ):
+        leaf = type(f"{dname}{xname}{ename}".title(), (decision, exit_, entry), {})
+        strategy, pitcher = run(
+            leaf,
+            config,
+            direction=-1 if dname == "short" else 1,
+        )
+        where = f"{dname}+{xname}+{ename}"
+        assert pitcher.sent == 1, where
+        assert strategy.taken == 1, f"{where} judged nothing: {strategy.passed_over}"
+        assert strategy.refused == 0, where
+        if ename == "arrival":
+            # An arrival parks the signal rather than placing it, and the feed
+            # here only rises - so what is proven is that the decision reached
+            # the mechanism, which is the composition under test.
+            assert strategy._payload is None or strategy._trigger > 0.0, where
+        else:
+            assert strategy.cache.orders(strategy_id=strategy.id), f"{where} placed nothing"
+        seen.add(str(strategy.id).rsplit("-", 1)[0])
+    assert len(seen) == 18, "each pairing is its own strategy_id, not a flag inside one"
+
+
+def test_what_the_node_builds_puts_a_proposal_through_to_the_venue(monkeypatch):
+    """**The registry, and not a class named in a test.**
+
+    `test_first_trade.py` instantiates `SurpriseEdge` directly, so it proves
+    the chain and not the thing that builds the chain - and the thing that
+    builds the chain was building `EdgeEntry`, which has no decision at all.
+    Two independent faults, one in each half, and neither visible from the
+    other's test: the leaf worked and nothing built it, while the builder ran
+    and built something that could not judge a signal.
+
+    So this points the end-to-end harness at `desks.build_all()`. It is the
+    assertion that would have caught both in one run.
+    """
+    from till_infinity.node import desks
+
+    monkeypatch.setenv("TRADING_VENUES", "SIM")
+    monkeypatch.setenv("TRADING_SYMBOLS", "EUR/USD,")
+    monkeypatch.setenv("TRADING_ENTRIES", "edge")
+    monkeypatch.setenv("TRADING_STRATEGIES", "statespace-surprise")
+
+    built, dropped = desks.build_all()
+    assert len(built) == 1, f"the node built {len(built)} desks, dropped {dropped}"
+    strategy = built[0]
+
+    engine = engine_for()
+    engine.add_data(quotes())
+    engine.add_strategy(strategy)
+    pitcher = Pitcher(PitchConfig(instrument_id=EURUSD.id))
+    engine.add_actor(pitcher)
+    engine.run()
+
+    assert pitcher.sent == 1
+    assert strategy.taken == 1, f"the built desk judged nothing: {strategy.passed_over}"
+    assert strategy.cache.orders(strategy_id=strategy.id), "the built desk placed nothing"
+    assert isinstance(strategy, ExitMechanism), "the built desk has no exit"
+    assert strategy.cache.positions_open(strategy_id=strategy.id)
+
+
+def test_the_exit_sits_in_front_of_the_entry_in_the_bases():
+    """Put it behind the entry and it never sees a fill.
+
+    `RestingEntry.on_order_filled` and `EdgeEntry.on_order_filled` do not call
+    `super()`, so an exit resolved after them in the MRO is simply skipped - no
+    tracking, no stop, no stale clock, and nothing to say so. In front of them
+    the exit runs first and hands the event on, which is also what lets it read
+    the entry's own `_waiting` before the entry clears it.
+    """
+    for leaf in leaves.LEAVES.values():
+        order = [base.__name__ for base in leaf.__mro__]
+        exits = next(i for i, base in enumerate(leaf.__mro__) if issubclass(base, ExitMechanism))
+        entry = next(i for i, base in enumerate(leaf.__mro__) if base in ENTRIES_BY_CLASS)
+        assert exits < entry, f"{leaf.__name__} resolves its exit after its entry: {order}"
+
+
+ENTRIES_BY_CLASS = {cls for cls, _ in ENTRIES.values()}
+
+
+def test_a_decision_does_not_know_which_exit_it_got():
+    """The mirror of `Surprise.__mro__ == (Surprise, object)`.
+
+    An exit mixin that subclassed `Strategy`, or that named a decision, would
+    fix the pairing in one direction again - and the whole point of three
+    independent pieces is that none of them can.
+    """
+    assert ExitMechanism.__mro__ == (ExitMechanism, object)
+    assert not hasattr(ExitMechanism, "decide")
+    assert not hasattr(ExitMechanism, "place"), "an exit that placed would shadow the entry's"
+
+
+# -------------------------------------------------- the exit differs per rule
+
+
+def test_one_decision_can_hold_its_stop_two_different_ways():
+    """**The asymmetry, measured.** One decision, one entry, two exits.
+
+    `ManagedExit` moves the stop to break even once the trade is 1R in front;
+    `VenueExit` leaves whatever the venue is holding. Before this there was no
+    way to express either choice: `manage.advance` had no caller at all, so
+    every trade got the bracket its entry happened to submit and the four
+    combinations of break-even and trailing the module docstring asks to be
+    compared could not be run even once.
+    """
+
+    def on(settings):
+        settings.break_even_at = 1.0
+
+    feed = quotes(count=16, jump_after=WARM + 2, jump=3e-04)
+    managed, _ = run(SurpriseEdge, feed=feed, tune=on)
+    standing, _ = run(leaves.leaf("statespace-surprise", "edge", "venue"), feed=feed, tune=on)
+
+    assert managed.taken == standing.taken == 1
+    assert managed.passed_over.get("(exit):advanced") == 1, "the managed stop never moved"
+    assert "(exit):advanced" not in standing.passed_over, "the venue's stop was moved anyway"
+
+    moved = guards(managed)[0]
+    left = guards(standing)[0]
+    assert float(moved.trigger_price) > float(left.trigger_price), (
+        "the two exits put the stop in the same place, so the choice was nominal"
+    )
+
+
+def test_the_stop_moves_once_per_improvement_and_not_once_per_quote():
+    """`Held.stop` is why. Without it the comparison is against `intent.stop`,
+    which never changes - so every quote after the threshold re-proposes the
+    same stop and sends the same modify, and a venue answering a modify per
+    tick is noise that hides a real rejection."""
+
+    def on(settings):
+        settings.break_even_at = 1.0
+
+    # Twelve quotes past the threshold, so a per-quote modify would be obvious.
+    managed, _ = run(
+        SurpriseEdge, feed=quotes(count=24, jump_after=WARM + 2, jump=1.5e-04), tune=on
+    )
+    assert managed.passed_over.get("(exit):advanced") == 1
+    assert managed.cache.positions_open(strategy_id=managed.id), (
+        "the position closed, so the twenty quotes after the move were not seen"
+    )
+
+
+def test_a_rule_whose_thesis_is_duration_is_exempt_from_the_stale_clock():
+    """Per rule, not per deployment. The stale rule exists because a level
+    touch resolves in eighteen seconds at the median and 84% inside five
+    minutes - a premise true of a scalp and false of a swing, at any length of
+    clock - so a swing must be able to switch it off rather than scale it."""
+
+    def on(settings):
+        settings.stale_after = 2.0
+
+    patient = type("SurprisePatient", (Surprise, ManagedExit, EdgeEntry), {"stale": False})
+    quick, _ = run(SurpriseEdge, tune=on)
+    slow, _ = run(patient, tune=on)
+
+    assert quick.passed_over.get("(exit):closed") == 1, "the scalp was not closed for going nowhere"
+    assert "(exit):closed" not in slow.passed_over, "the swing was closed by a scalp's clock"
+
+
+def test_a_position_is_only_asked_to_close_once():
+    """A close is an order, and the event that clears the book arrives later.
+
+    Without a latch the next quote asks the same question, gets the same answer
+    and sends a second closing order - and the bug is **invisible in a
+    backtest**, where the fill lands before the next quote. On a live feed it
+    is one order per quote until the venue answers. So the close is stubbed
+    here, which is the only way to hold the position open across the second
+    ask.
+    """
+
+    strategy, _ = run(SurpriseEdge)
+    position = strategy.cache.positions_open(strategy_id=strategy.id)[0]
+
+    # The stale clock is switched on *after* the run, so the position is still
+    # open to be asked about. `Exits` holds this same `Settings` object.
+    strategy.settings.stale_after = 2.0
+    strategy.exits._held.clear()
+    strategy.exits.opened(position.id, strategy._intended, when=0.0)
+    sent: list[object] = []
+    strategy.close_position = sent.append
+
+    for tick in quotes(count=3):
+        strategy.on_quote_tick(tick)
+
+    assert len(sent) == 1, f"asked to close {len(sent)} times"
+    assert strategy.passed_over.get("(exit):closed") == 1
+    assert strategy.exits.held(position.id).closing, "the latch was never set"
+
+
+def test_a_rule_s_own_hold_is_enforced_and_the_configured_default_is_not():
+    """`Intent.hold` is the strategy's and is applied; `Settings.max_hold` is
+    1800s by default and is deliberately left out of the exit.
+
+    Folding the global in would put a thirty-minute timeout on every trade this
+    desk takes on the quiet authority of a default, and `research/spending.md`
+    measured the holds already running short - 50 of 133 closes exited at 5% of
+    their planned target because the clock ran out before the geometry could
+    resolve.
+    """
+    from till_infinity.strategies.config import Settings
+    from till_infinity.strategies.exits import Exits, Held
+
+    assert Settings().max_hold == 1800.0, "the default this must not apply"
+    book = Exits(settings=Settings())
+    patient = Held(
+        intent=Intent(
+            feed="f", symbol="S", side=Side.BUY, volume=1.0, entry=1.0, stop=0.9, target=1.2
+        ),
+        best=1.0,
+        opened=0.0,
+    )
+    assert book._expired(patient, now=10_000.0) == "", "a global hold was applied"
+    asked = replace(patient.intent, hold=60.0)
+    assert book._expired(Held(intent=asked, best=1.0, opened=0.0), now=59.0) == ""
+    assert book._expired(Held(intent=asked, best=1.0, opened=0.0), now=61.0)
+
+
+def test_closing_wins_over_banking_and_banking_over_moving_a_stop():
+    """The order inside one answer is the design, the way the gate sequence is.
+
+    A position that should come off whole is not also partially banked, and a
+    stop moved on a position about to be closed is a modify nobody needed - and
+    before `apply` existed each of the three was a separate question with no
+    stated order, so a caller had to know one. There was no caller, so nothing
+    knew it.
+    """
+    from till_infinity.strategies.config import Settings
+    from till_infinity.strategies.exits import Exits
+
+    plan_for = Intent(
+        feed="eurusd",
+        symbol="EUR/USD",
+        side=Side.BUY,
+        volume=1.0,
+        entry=1.1000,
+        stop=1.0950,
+        target=1.1100,
+        hold=60.0,
+    )
+    settings = Settings()
+    settings.scale_out_at = 0.5
+    settings.break_even_at = 0.5
+    book = Exits(settings=settings)
+    book.opened("p1", plan_for, when=0.0)
+
+    position = type(
+        "P",
+        (),
+        {"ticket": 1, "side": Side.BUY, "volume": 1.0, "price_open": 1.1000, "stop": 1.0950},
+    )()
+    spec = type("S", (), {"volume_step": 0.01, "volume_min": 0.01})()
+
+    inside = book.apply("p1", position, spec, now=10.0, vol_bps=10.0)
+    assert inside.close == "", "closed a trade that still had time"
+    expired = book.apply("p1", position, spec, now=61.0, vol_bps=10.0)
+    assert expired.close, "the rule's own hold was not enforced"
+    assert expired.take is None, "banked a position being closed"
+    assert expired.move is None, "moved the stop on a position being closed"
+
+
+# --------------------------------------------------------- the exit by side
+
+
+def test_the_exit_geometry_can_differ_by_side_on_one_feed():
+    """**Long and short are not the same trade**, and the exit path has to be
+    able to say so.
+
+    The shape is `risk.scaling.overshoot_for`'s, deliberately: a key of
+    `boom_500_index.sell` beats `boom_500_index`, because on a jump instrument
+    a stop on the spike side can only be gapped over. Nothing in `exits.py` or
+    `manage.py` read a per-side policy at all before this - the only
+    side-dependence was mechanical (which quote side is the best price, which
+    direction is a tighter stop), and a mechanical asymmetry is not a policy.
+    """
+    sided = (
+        ("eurusd.sell", Protection(break_even_at=0.5, stale_exempt=True)),
+        ("eurusd", Protection(trail_vol=9.0)),
+    )
+    assert protection_for(sided, "eurusd", Side.SELL).break_even_at == 0.5
+    assert protection_for(sided, "eurusd", Side.BUY).trail_vol == 9.0, "the unqualified row"
+    assert protection_for(sided, "gbpusd", Side.SELL) is None, "nothing names this feed"
+
+    # And it reaches the intent, which is where every exit rule reads it.
+    leaf = type("SurpriseSided", (Surprise, ManagedExit, EdgeEntry), {"sided": sided})
+    strategy = leaf(EdgeEntryConfig(instrument_id=EURUSD.id, bar_type=BAR_TYPE))
+    base = Intent(
+        feed="eurusd",
+        symbol="EUR/USD",
+        side=Side.SELL,
+        volume=1.0,
+        entry=1.1,
+        stop=1.11,
+        target=1.08,
+    )
+    short = strategy._sided(base)
+    long_ = strategy._sided(replace(base, side=Side.BUY, stop=1.09, target=1.12))
+    assert short.break_even_at == 0.5
+    assert short.stale_exempt is True
+    assert long_.break_even_at == 0.0, "the long took the short's protection"
+    assert long_.trail_vol == 9.0
+
+
+def test_no_shipped_leaf_asserts_a_long_short_difference():
+    """**The null, and it is the honest answer.**
+
+    No long/short asymmetry in *exit* behaviour has been measured on this desk.
+    The machinery above exists so the first measured one is a single row; until
+    there is one, every leaf must resolve both sides identically, or the
+    capability has quietly become a claim.
+
+    The measured asymmetry next door is in the *gapping* - `boom_*.sell` and
+    `crash_*.buy` at 2.0 in `DEFAULT_STOP_OVERSHOOT` - and turning an overshoot
+    multiple into a trail distance is arithmetic nobody has done.
+    """
+    assert ExitMechanism.sided == (), "the base ships a table"
+    base = Intent(
+        feed="eurusd",
+        symbol="EUR/USD",
+        side=Side.BUY,
+        volume=1.0,
+        entry=1.1,
+        stop=1.09,
+        target=1.12,
+    )
+    for name, leaf in leaves.LEAVES.items():
+        assert leaf.sided == (), f"{name} ships a per-side table"
+        strategy = leaf.__new__(leaf)
+        long_ = strategy._sided(base)
+        short = strategy._sided(replace(base, side=Side.SELL))
+        for field in ("break_even_at", "trail_vol", "trail_levels", "hold", "stale_exempt"):
+            assert getattr(long_, field) == getattr(short, field), f"{name} differs on {field}"
+
+    # And the two side profiles the statespace leaves run on agree, which is
+    # the same claim one level up - `deciding.py` writes them out separately so
+    # that the difference today is visibly zero.
+    from till_infinity.statespace.deciding import LongProfile, ShortProfile
+
+    for field in ("break_even_at", "trail_vol", "trail_levels", "hold", "stale_exempt"):
+        assert getattr(LongProfile, field) == getattr(ShortProfile, field), field
+
+
+# ------------------------------------------------------------- the protection
+
+
+def test_a_resting_fill_is_protected_rather_than_left_naked():
+    """**The live bug.** `RestingEntry.place` leaves a bare limit with no stop
+    and no target, and its `on_order_filled` only pops the wait - so a rest
+    that filled was an unprotected position for as long as resting entries have
+    existed, and the two bracketing entries being correct is exactly why nobody
+    looked.
+
+    Whether a position is protected is a question about the venue and not about
+    which entry ran, so the rule is one rule and no entry has to remember it.
+    """
+    strategy, _ = run(SurpriseResting, RestingEntryConfig)
+    assert strategy.taken == 1
+    held = strategy.cache.positions_open(strategy_id=strategy.id)
+    assert held, f"the rest never filled: {strategy.passed_over}"
+    stops = guards(strategy)
+    assert len(stops) == 1, f"a filled rest has no stop at the venue: {strategy.passed_over}"
+    assert strategy.passed_over.get("(exit):protected") == 1
+    assert stops[0].side is OrderSide.SELL, "the stop closes, so it is the other side"
+    assert stops[0].is_reduce_only
+
+
+def test_a_bracketed_entry_is_not_given_a_second_stop():
+    """Two stops on one position is not two policies, it is one position that
+    closes twice. The question asked is the cache's - *is anything holding a
+    stop* - so the entry that already bracketed is left alone."""
+    strategy, _ = run(SurpriseEdge)
+    assert len(guards(strategy)) == 1
+    assert "(exit):protected" not in strategy.passed_over
+
+
+def test_the_stop_covers_what_is_open_and_not_what_was_intended():
+    """The quantity is the position's, and that is the only answer that cannot
+    be wrong.
+
+    A partial fill, a venue that rounds, or a second fill into one position all
+    leave `intent.volume` and `position.quantity` disagreeing - and a stop
+    sized from the intent would then leave part of a live position uncovered,
+    which is the exact failure a bracket exists to make impossible.
+    """
+
+    strategy, _ = run(SurpriseResting, RestingEntryConfig)
+    position = strategy.cache.positions_open(strategy_id=strategy.id)[0]
+    held = strategy.exits.held(position.id)
+
+    # The disagreement a partial fill produces, made directly: the plan asked
+    # for four times what is open. A venue that rounds, or a second fill into
+    # one position, produces the same gap in the other direction.
+    held.intent = replace(held.intent, volume=float(position.quantity) * 4)
+    sent: list[object] = []
+    strategy.submit_order = sent.append
+    strategy._guards = list  # as though nothing were holding a stop yet
+    strategy._attach(position.id)
+
+    assert len(sent) == 1
+    assert sent[0].quantity == position.quantity, "the stop does not cover the whole position"
+    assert float(sent[0].trigger_price) == pytest.approx(held.intent.stop, abs=1e-05), (
+        "the price is the plan's, and only ever the plan's"
+    )
+
+
+def test_a_position_with_no_remembered_intent_is_closed_rather_than_left_naked():
+    """**The price is the one number that must never be invented.**
+
+    A quantity has a correct answer whatever this process remembers; a stop does
+    not. A distance, a volatility multiple or the configured default all put a
+    price nobody chose at the venue, and that price then reads as protection in
+    every report - which is worse than no stop, because an unprotected position
+    at least looks like one.
+
+    So a position whose plan cannot be reconstructed is an orphan: said out
+    loud, journalled, and flattened.
+    """
+    strategy, _ = run(SurpriseEdge)
+    position = strategy.cache.positions_open(strategy_id=strategy.id)[0]
+
+    # Stubbed because the engine has stopped and `close_position` routes to a
+    # disconnected client. What is under test is the decision to flatten.
+    flattened: list[object] = []
+    strategy.close_position = flattened.append
+
+    strategy._intended = None
+    strategy._filled = None
+    strategy.on_position_opened(type("Opened", (), {"position_id": position.id})())
+
+    assert strategy.passed_over.get("(exit):orphan") == 1
+    assert flattened == [position], "an unnameable stop was left standing"
+    assert strategy.exits.held(position.id) is not None, "the real plan was forgotten too"
+
+
+# ------------------------------------------------------------ the basket close
+
+
+def test_the_basket_close_reaches_the_position_s_own_strategy():
+    """**The exit that reported itself and did nothing.**
+
+    `BasketExit` has no order factory and must not have one - submitting under
+    its own identity would stop the position's `strategy_id` naming what opened
+    *and* closed it, which is the whole property the carve-up was for. So it
+    publishes, and for as long as it has existed the only subscriber on `alerts`
+    was the Telegram notifier: the log said "closing all N position(s)", the
+    counter agreed, and the book stayed open.
+    """
+    closer = Closer(CloserConfig(instrument_id=EURUSD.id))
+    strategy, _ = run(SurpriseEdge, feed=quotes(count=20), actors=(closer,))
+    assert closer.sent == 1, "the request was never published"
+    assert strategy.passed_over.get("(exit):basket") == 1
+    assert not strategy.cache.positions_open(strategy_id=strategy.id), "the book stayed open"
+
+
+def test_another_strategy_s_basket_close_is_ignored():
+    """An exit rule that could close another strategy's position is the magic
+    number bug wearing a new hat, and the request names its owner precisely so
+    this does not have to guess."""
+    closer = Closer(CloserConfig(instrument_id=EURUSD.id, strategy_id="SurpriseEdge-SOMEONE-ELSE"))
+    strategy, _ = run(SurpriseEdge, feed=quotes(count=20), actors=(closer,))
+    assert closer.sent == 1
+    assert "(exit):basket" not in strategy.passed_over
+    assert strategy.cache.positions_open(strategy_id=strategy.id), "it closed someone else's trade"
+
+
+# --------------------------------------------------------------- the conflict
+
+
+def test_a_trailing_order_at_the_venue_makes_advance_stand_down():
+    """`manage.py` says three things can move a stop on this desk - the MT5
+    bridge's twenty-second handler, Nautilus's native trailing order, and
+    `advance` - and exactly one may, because two on different clocks give
+    whichever wrote last and that is not a policy.
+
+    `Exits.conflicts` was the assertion of that and had no caller, so the
+    assertion was a docstring. `advance` is the one that stands down: the
+    trailing order is already live, and cancelling it from the loop would be a
+    second policy racing the first rather than replacing it.
+    """
+    from till_infinity.strategies.exits import Exits
+
+    def order(name: str, kind: str):
+        kinds = type("T", (), {"name": kind})()
+        return type("O", (), {"client_order_id": name, "order_type": kinds})()
+
+    trailing = order("O-1", "TRAILING_STOP_MARKET")
+    plain = order("O-2", "STOP_MARKET")
+    assert Exits.conflicts([trailing, plain]) == ["O-1"]
+
+    def on(settings):
+        settings.break_even_at = 1.0
+
+    strategy, _ = run(SurpriseEdge, feed=quotes(count=16, jump_after=WARM + 2, jump=3e-04), tune=on)
+    assert strategy.passed_over.get("(exit):advanced") == 1, "the control: advance normally runs"
+    assert strategy.cache.positions_open(strategy_id=strategy.id), "nothing left to manage"
+
+    strategy._guards = lambda: [trailing]
+    strategy.on_quote_tick(quotes(count=1)[0])
+    assert strategy.passed_over.get("(exit):trailing-conflict") == 1
+    assert strategy.passed_over.get("(exit):advanced") == 1, "advance moved a stop anyway"

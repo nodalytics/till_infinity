@@ -13,7 +13,8 @@ import math
 from dataclasses import dataclass, field
 
 import pytest
-from statespace import proposing
+
+from till_infinity.statespace import proposing
 
 
 @dataclass
@@ -188,14 +189,13 @@ class TestTheTopicAgrees:
     """
 
     def test_the_bus_the_service_and_the_producer_agree(self) -> None:
-        from statespace.service import PROPOSES
-
-        from till_infinity.bus import PROPOSALS
+        from till_infinity.statespace.service import PROPOSES
+        from till_infinity.utils.topics import PROPOSALS
 
         assert proposing.TOPIC == PROPOSALS == PROPOSES
 
     def test_it_is_not_the_signals_topic(self) -> None:
-        from till_infinity.bus import PROPOSALS, SIGNALS
+        from till_infinity.utils.topics import PROPOSALS, SIGNALS
 
         assert PROPOSALS != SIGNALS
 
@@ -204,15 +204,15 @@ class TestTheServicePublishes:
     """A producer shipped switched off is no witness that it works."""
 
     def test_the_flag_is_on_by_default(self) -> None:
-        from statespace.config import Settings
+        from till_infinity.statespace.config import Settings
 
         assert Settings().proposals is True
 
     def test_the_counter_is_reported(self) -> None:
         """`report` is the only witness in a container that runs at INFO."""
-        from statespace.config import Settings
-        from statespace.engine import Engine
-        from statespace.service import Watcher
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+        from till_infinity.statespace.service import Watcher
 
         watcher = Watcher(engine=Engine(Settings()))
         watcher.proposed = 7

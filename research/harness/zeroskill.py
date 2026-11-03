@@ -58,8 +58,8 @@ from statistics import NormalDist
 import numpy as np
 
 from till_infinity.structures import zma as zm
-from till_infinity.trading.strategies import policy as pol
-from till_infinity.trading.strategies.opportunity import PRESETS
+from till_infinity.strategies.strategies import policy as pol
+from till_infinity.strategies.strategies.opportunity import PRESETS
 
 JOURNAL = os.path.expanduser(os.environ.get("JOURNAL", "~/till_infinity/data/journal.db"))
 PART = os.environ.get("PART", "all")

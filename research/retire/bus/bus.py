@@ -1,0 +1,379 @@
+"""The message bus: how services talk to each other.
+
+Collectors publish what they just stored, agents consume it and publish alerts,
+notifications consume those. The SQLite stores stay the source of truth - the
+bus carries *notice that something happened*, not the data itself, so a dropped
+message costs latency rather than history.
+
+    prices  ──┐                        ┌──▶ notifications
+              ├──▶ bus ──▶ agents ──▶ bus
+    news    ──┘
+
+Backed by `queues`, in process only: Nautilus owns the bus, and this
+URL is set - the same in-process-or-shared choice `--store` offers.
+
+**Publishing fans out per subscriber group.** A channel's `recv()` is
+work-sharing: two consumers of one channel split the messages between them
+rather than each seeing all of them. That is right for scaling one consumer
+across workers and wrong for two different services watching the same topic, so
+each group gets its own channel and `publish()` writes to every one. It matches
+Redis consumer-group semantics, which is what the Redis backend gives for free.
+"""
+
+from __future__ import annotations
+
+import time
+from collections.abc import AsyncIterator
+from contextlib import suppress
+from dataclasses import dataclass, field
+from typing import Any
+
+from till_platform.logging import get_logger
+
+from .queues import ChannelClosed, ChannelFull, Receiver, Sender, bounded
+
+log = get_logger(__name__)
+
+#: What collectors announce.
+BARS = "prices.bars"
+QUOTES = "prices.quotes"
+ARTICLES = "news.articles"
+EVENTS = "news.events"
+MACRO = "news.macro"
+#: What the online models found. Agents consume it as evidence; an unambiguous
+#: one goes straight to ALERTS without waiting for a model to agree.
+SIGNALS = "structures.signals"
+#: How a touch ended: broke, held, was trapped, chopped. This is **ground
+#: truth** rather than a finding - the one message on the bus that says what
+#: actually happened rather than what something thinks will happen.
+#:
+#: It went only to the journal until it was put here, which left every
+#: consumer of `SIGNALS` unable to learn whether the calls it acted on were
+#: right. A strategy blind to its own outcomes cannot improve, and neither can
+#: a threshold that ought to move with them.
+RESOLUTIONS = "structures.resolutions"
+#: What the statespace service forecasts: how wide the next bars are, per feed
+#: and interval, with the band it is prepared to state.
+#:
+#: Separate from `SIGNALS` because it is a different kind of claim. A signal
+#: says something is worth looking at; this says how much movement to expect
+#: and says nothing at all about direction - the half this desk has measured
+#: closed. A consumer sizes, places a stop or declines to trade on it; nothing
+#: should read a side out of it, and there is none in the payload to read.
+DISPERSION = "statespace.dispersion"
+#: What the statespace service thinks is worth looking at **now**, as opposed
+#: to `DISPERSION`, which is a reading on every bar. Emitted on a transition
+#: only - a regime change, a widening, a quieting - because 207 armed
+#: feed-intervals at 1m would otherwise be a thousand messages an hour and no
+#: consumer could tell which mattered.
+#:
+#: **It carries a sign, and the sign names its own subject.** This service
+#: folds log variance, so `variance_side` is whether *dispersion* is drifting
+#: up - not whether price is - and `variance_side_z` ships beside it, omitted
+#: rather than zeroed when the drift's sd is unknown. `variance_up` is
+#: `hmm.Direction`'s independent reading of the same sign.
+#:
+#: Direction at the level is measured closed here - 0.50 across 112,429 rows
+#: and 67 feed cells, 16 of 17 bias kinds null, 0 of 28 cells profitable after
+#: costs - so a consumer acting on a sign without its significance is acting on
+#: a quantity this desk has measured at nothing. And a `variance_up` far from
+#: 0.5 is **reversion**, not an edge: the sign of a mean-reverting quantity is
+#: predictable in a way the sign of a price is not.
+STATESPACE_SIGNALS = "statespace.signals"
+#: A statespace **proposal**: the signal contract `trading` reads, so the
+#: strategies can build an Intent from it the way they do from `SIGNALS`.
+#:
+#: Deliberately **not** `SIGNALS`. Two producers on a topic named after one of
+#: them is how a consumer loses track of which produced what, and a separate
+#: topic is one subscription to remove if this turns out to be worth nothing.
+#:
+#: **`trading` consumes it as of 2026-10-28, and for a while nothing did.**
+#: The three reasons it published to nobody have each since gone:
+#: every strategy on the desk was level-based and statespace has no levels, so
+#: `wants` refused these on all of them - until `strategies/dispersing.py` was
+#: written against what statespace actually measures; and
+#: `TRADING_MIN_PROBABILITY` at 0.75 against a 2R barrier that cannot exceed a
+#: third, with `TRADING_MIN_BASE_RATE` at 0.51 against an honest 0.50, both of
+#: which now read 0.0 on the instance and are gated per-strategy instead.
+#:
+#: **The unsubscribed window was invisible while structures was running.** The
+#: producer's own tally said "proposed", which counts what it *published*, and
+#: the bus's "published to a topic with nobody subscribed" warning was one line
+#: among a desk's worth of traffic. Retiring the structures service is what
+#: surfaced it: with the other producer silent, the only thing left on the bus
+#: was a proposal nobody was listening to. A tally of what a producer sent is
+#: not evidence that anything received it.
+#:
+#: The **sign comes from the triggering bar**, not from the readout. This
+#: service folds log variance, so a side taken from its own innovation would be
+#: the side of a *volatility* move - the error already corrected twice here,
+#: where `side` became `variance_side` and the alert kind `break` became
+#: `surprise`.
+PROPOSALS = "statespace.proposals"
+#: What agents ask for. Notifications is the consumer.
+ALERTS = "alerts"
+#: Decisions and their reasoning, on their way to the journal. Any service can
+#: publish here; `journal listen` is what writes them down.
+JOURNAL = "journal"
+
+TOPICS: tuple[str, ...] = (
+    BARS,
+    QUOTES,
+    ARTICLES,
+    EVENTS,
+    MACRO,
+    SIGNALS,
+    RESOLUTIONS,
+    DISPERSION,
+    STATESPACE_SIGNALS,
+    # **Added 2026-10-28, having been published and consumed while undeclared.**
+    # `strategies.service.TOPICS` is the subscriber list and this is the registry;
+    # the fix that gave proposals a consumer updated the first and not the
+    # second, so the one topic the desk now trades on was missing from the list
+    # of topics the desk has. `tests/test_bus_contracts.py` asserts every entry
+    # here has a schema or a recorded reason.
+    PROPOSALS,
+    ALERTS,
+    JOURNAL,
+)
+
+DEFAULT_CAPACITY = 1_000
+DEFAULT_GROUP = "default"
+#: The send-only group `publish` uses over Redis. Never read from.
+PUBLISHER = "__publisher__"
+
+
+@dataclass(frozen=True, slots=True)
+class Message:
+    """One announcement. `payload` is small and JSON-safe by construction."""
+
+    topic: str
+    payload: dict[str, Any]
+    source: str = ""
+    time: float = field(default_factory=time.time)
+
+    def to_dict(self) -> dict[str, Any]:
+        return {
+            "topic": self.topic,
+            "payload": self.payload,
+            "source": self.source,
+            "time": self.time,
+        }
+
+    @classmethod
+    def from_dict(cls, raw: Any) -> Message | None:
+        """Rebuild from the wire. Returns None rather than raising on junk."""
+        if not isinstance(raw, dict) or not raw.get("topic"):
+            return None
+        payload = raw.get("payload")
+        return cls(
+            topic=str(raw["topic"]),
+            payload=payload if isinstance(payload, dict) else {},
+            source=str(raw.get("source") or ""),
+            time=float(raw.get("time") or time.time()),
+        )
+
+
+class Bus:
+    """Topic-addressed publish/subscribe over channels.
+
+    A publisher that nobody subscribes to is a no-op, which is what makes the
+    seam free: collectors call `publish()` unconditionally and pay nothing
+    until an agent is listening.
+    """
+
+    def __init__(
+        self,
+        *,
+        redis_url: str | None = None,
+        capacity: int = DEFAULT_CAPACITY,
+        namespace: str = "till",
+    ) -> None:
+        self.redis_url = redis_url
+        self.capacity = capacity
+        self.namespace = namespace
+        #: (topic, group) -> the channel that group reads
+        self._channels: dict[tuple[str, str], tuple[Sender[Any], Receiver[Any]]] = {}
+        #: (topic, group) -> how many messages that consumer has missed. See
+        #: `_note_drop`: the count is the reading, and the per-message warning
+        #: it replaces was actively harmful.
+        self._drops: dict[tuple[str, str], int] = {}
+        #: Messages published to a topic with no subscriber, by topic.
+        self._unheard: dict[str, int] = {}
+        self._closed = False
+
+    @property
+    def backend(self) -> str:
+        return "redis" if self.redis_url else "memory"
+
+    def key(self, topic: str) -> str:
+        """The Redis stream name. One stream per topic - groups read it in parallel."""
+        return f"{self.namespace}:{topic}"
+
+    def _channel(self, topic: str, group: str) -> tuple[Sender[Any], Receiver[Any]]:
+        existing = self._channels.get((topic, group))
+        if existing is not None:
+            return existing
+        # **In process only, since 2026-10-31.** `till-channels` carried a
+        # Redis transport and is retired to `research/retire/`: Nautilus owns
+        # the bus now, with its own Rust message bus and optional Redis
+        # backing. What is left here serves the legacy single-process path
+        # until `stack.py` and the `prices` CLI group go, and that path has
+        # never needed more than a queue.
+        pair = bounded(self.capacity)
+        self._channels[(topic, group)] = pair
+        return pair
+
+    def groups(self, topic: str) -> list[str]:
+        """The subscriber groups this process reads. Not the publisher's own.
+
+        `PUBLISHER` is a send-only channel over Redis; counting it here would
+        make `publish` deliver to itself on the in-process bus and would make
+        `unheard` undercount.
+        """
+        return [g for (t, g) in self._channels if t == topic and g != PUBLISHER]
+
+    async def publish(self, topic: str, payload: dict[str, Any], *, source: str = "") -> int:
+        """Announce something.
+
+        Returns how many destinations took it: one per local subscriber group
+        in process, or 1 over Redis, where a single write to the stream is
+        what every group reads.
+        """
+        if self._closed:
+            return 0
+        message = Message(topic=topic, payload=payload, source=source)
+        if self.redis_url:
+            return await self._publish_to_stream(topic, message)
+        sent = 0
+        for group in self.groups(topic):
+            sender, _ = self._channel(topic, group)
+            try:
+                # try_send, not send: a slow consumer must never stall a
+                # collector. A full channel drops the notice; the store keeps
+                # the data, so the consumer can still catch up by querying.
+                sender.try_send(message.to_dict())
+                sent += 1
+            except ChannelFull:
+                self._note_drop(topic, group)
+            except Exception as exc:  # a dead subscriber is not the publisher's problem
+                log.warning("bus: publish to %s/%s failed: %s", topic, group, exc)
+        if not sent:
+            self._note_unheard(topic)
+        return sent
+
+    async def _publish_to_stream(self, topic: str, message: Message) -> int:
+        """One write per topic, because the readers own their groups.
+
+        **The per-group loop is in-process semantics, and over Redis it
+        silently did nothing.** `groups()` lists the channels *this* process
+        opened, and a collector subscribes to nothing it publishes - so the
+        list was empty, the loop body never ran, no message reached Redis, and
+        `_note_unheard` logged that nobody was listening. The compose
+        topology could not have worked: `prices collect --publish` would have
+        filled its log with "nobody subscribed" while `journal listen` waited
+        on an empty stream.
+
+        A stream needs no fan-out. One `XADD` is read by every consumer group,
+        including groups that do not exist yet, so the publisher does not have
+        to know who is listening - which is the property that lets a service
+        in another language join at all.
+
+        `PUBLISHER` is a group this process never reads. Creating it costs a
+        name and a last-delivered-id; it accumulates no pending entries
+        because nothing is ever delivered to it.
+        """
+        sender, _ = self._channel(topic, PUBLISHER)
+        try:
+            sender.try_send(message.to_dict())
+        except ChannelFull:
+            self._note_drop(topic, PUBLISHER)
+            return 0
+        except Exception as exc:
+            log.warning("bus: publish to %s failed: %s", topic, exc)
+            return 0
+        return 1
+
+    def _note_unheard(self, topic: str) -> None:
+        """Count a message nobody was listening for, and say so occasionally.
+
+        See `bus.md` in research/docs.
+        """
+        seen = self._unheard.get(topic, 0) + 1
+        self._unheard[topic] = seen
+        if seen < 1000:
+            if seen not in (1, 10, 100):
+                return
+        elif seen % 1000:
+            return
+        log.warning(
+            "bus: %d message(s) published to %s with nobody subscribed - "
+            "whatever should be consuming this is not",
+            seen,
+            topic,
+        )
+
+    def _note_drop(self, topic: str, group: str) -> None:
+        """Count a dropped message and say so **occasionally**.
+
+        See `bus.md` in research/docs.
+        """
+        key = (topic, group)
+        seen = self._drops.get(key, 0) + 1
+        self._drops[key] = seen
+        # 1, 10, 100, 1000, ... then every 1000. Enough to notice it starting
+        # and to see it continuing, without a line per message.
+        if seen < 1000:
+            if seen not in (1, 10, 100):
+                return
+        elif seen % 1000:
+            return
+        log.warning(
+            "bus: %s full, dropped %d message(s) for %s - that consumer is not draining",
+            topic,
+            seen,
+            group,
+        )
+
+    def subscribe(self, topic: str, group: str = DEFAULT_GROUP) -> Subscription:
+        """Register a group's interest. Messages published from now on arrive."""
+        self._channel(topic, group)
+        return Subscription(self, topic, group)
+
+    async def receive(self, topic: str, group: str = DEFAULT_GROUP) -> Message | None:
+        _, receiver = self._channel(topic, group)
+        raw = await receiver.recv()
+        return Message.from_dict(raw)
+
+    async def close(self) -> None:
+        self._closed = True
+        for sender, _ in self._channels.values():
+            # Sender.close is a coroutine - awaiting it is what actually wakes
+            # blocked receivers with ChannelClosed and ends their iteration.
+            with suppress(Exception):
+                await sender.close()
+        self._channels.clear()
+
+
+@dataclass(slots=True)
+class Subscription:
+    """One group's view of one topic - an async iterator of messages."""
+
+    bus: Bus
+    topic: str
+    group: str = DEFAULT_GROUP
+
+    def __aiter__(self) -> AsyncIterator[Message]:
+        return self._messages()
+
+    async def _messages(self) -> AsyncIterator[Message]:
+        while True:
+            try:
+                message = await self.bus.receive(self.topic, self.group)
+            except ChannelClosed:
+                return
+            if message is not None:
+                yield message
+
+    async def next(self) -> Message | None:
+        return await self.bus.receive(self.topic, self.group)

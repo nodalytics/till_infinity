@@ -1,24 +1,41 @@
 """Whether a feature that is switched on has ever actually run.
 
 **Six defects in one week shared one shape**: code that was enabled, correct,
-and reached by nothing. Every one passed its own suite, because a test proves the
-code computes the right answer and nothing proves it ran. The clearest was a
-forecaster deferral that shipped, was verified against a freshly constructed
+and reached by nothing. Every one passed its own suite, because a test proves
+the code computes the right answer and nothing proves it ran. The clearest was
+a forecaster deferral that shipped, was verified against a freshly constructed
 object, and stayed inert for an afternoon - production **restores** rather than
 constructs, and the field it needed came back empty.
 
-These tests are about the ledger itself. The wiring tests - that each of the four
-sites actually calls `fired` - are at the bottom, and they are the ones that
-matter, because a ledger nothing reports to has the same failure as the features
-it was built to catch.
+This file was deleted on 2026-11-01, in the commit that retired `till_platform`
+and moved this module to `till_infinity/utils/effects.py`. Nothing about it had
+stopped being true; the one line that stopped working was
+`from till_platform import effects`. So the module built to catch features that
+are enabled and reached by nothing spent the interval with no test that it does
+so, which is the defect it exists for, one level up. `utils/effects.py` still
+says in its own docstring that this file asserts the firing paths reach their
+declarations - a sentence that was false for as long as the file was gone.
+
+What came back is the ledger: the eleven tests that only ever needed this
+module. What did not is the wiring half, for two reasons. Three of its five
+subjects retired with `structures/` and `strategies/service.py`, and the two
+that remain were asserted with `assert 'declare("x")' in inspect.getsource(mod)`
+- which holds for a line that exists and never runs, and is the shape of check
+that let an eight-multiplier sizing path stay dead for weeks. The pairing it was
+reaching for is below, by parse instead.
 """
 
 from __future__ import annotations
 
+import ast
+import pathlib
 import time
 
 import pytest
-from till_platform import effects
+
+from till_infinity.utils import effects
+
+PACKAGE = pathlib.Path(effects.__file__).resolve().parent.parent
 
 
 @pytest.fixture(autouse=True)
@@ -26,6 +43,9 @@ def clean():
     effects.reset()
     yield
     effects.reset()
+
+
+# ----------------------------------------------------------------- the ledger
 
 
 def test_a_feature_that_is_off_is_never_reported():
@@ -36,6 +56,8 @@ def test_a_feature_that_is_off_is_never_reported():
 
 
 def test_a_feature_that_fires_is_not_inert():
+    """The control. Without it, an `inert` that always answered empty would
+    satisfy every refusal in this file."""
     effects.declare("thing", enabled=True)
     effects.fired("thing")
     assert effects.inert(grace=0.0) == []
@@ -43,6 +65,9 @@ def test_a_feature_that_fires_is_not_inert():
 
 
 def test_a_feature_that_is_on_and_silent_is_named():
+    """The whole purpose, in three lines. The name has to reach the summary
+    string too, because that is the part a healthcheck prints and the only
+    part anybody reads."""
     effects.declare("thing", enabled=True)
     assert effects.inert(grace=0.0) == ["thing"]
     assert "NEVER FIRED: thing" in effects.summary(grace=0.0)
@@ -69,6 +94,9 @@ def test_a_feature_that_worked_and_stopped_is_still_visible():
 
 
 def test_declaring_twice_updates_the_flag_and_keeps_the_record():
+    """`declare` runs where the flag is read, so it runs repeatedly - once per
+    pass through the gate in `risk/guard.py`. Resetting the count there would
+    make every feature permanently inert."""
     effects.declare("thing", enabled=False)
     effects.fired("thing")
     effects.declare("thing", enabled=True)
@@ -85,182 +113,130 @@ def test_firing_something_undeclared_still_records_it():
 
 def test_nothing_here_raises(monkeypatch):
     """A diagnostic that can fail during the fault it describes is worse than
-    none - `_shout` carries the same note."""
+    none. Both calls below would raise on a `None` ledger if the `except` in
+    each were removed, and they are on the hot path of a live gate."""
     monkeypatch.setattr(effects, "_EFFECTS", None)  # type: ignore[arg-type]
     effects.declare("thing", enabled=True)
     effects.fired("thing")
 
 
 def test_the_declared_clock_starts_at_declaration_not_at_first_firing():
+    """Which is what makes the grace period mean anything: timed from the first
+    firing, a feature that never fires has no age and can never be reported."""
     effects.declare("thing", enabled=True)
     time.sleep(0.01)
     assert effects.report()["thing"]["declared_s"] >= 0.0
 
 
-# --------------------------------------------------- the wiring, which is the
-# --------------------------------------------------- part that actually failed
+def test_the_summary_counts_the_enabled_and_not_the_declared():
+    """A disabled feature in the firing count would make the one number an
+    operator reads unrelated to what the desk is doing."""
+    effects.declare("on", enabled=True)
+    effects.declare("off", enabled=False)
+    effects.fired("on", 3)
+    effects.fired("off", 99)
+    assert "1 enabled" in effects.summary(grace=0.0)
+    assert "3 firings" in effects.summary(grace=0.0)
 
 
-@pytest.mark.parametrize(
-    ("module", "name"),
-    [
-        ("till_infinity.structures.engine", "structures.projection"),
-        ("till_infinity.trading.service", "trading.reachable_check"),
-        ("till_infinity.structures.vol.har", "structures.stated_forecast"),
-        ("till_infinity.notifications.service", "notifications.delivered"),
-        ("till_infinity.trading.scaling", "trading.spike_switch"),
-    ],
-)
-def test_each_site_declares_and_fires(module: str, name: str):
-    """Each site must both declare its effect and contain a call that fires it.
-
-    **Static, and deliberately so after a first version was worse.** That one
-    called `importlib.reload` to force the declaration to re-run against a reset
-    ledger - which replaces the module's classes and breaks identity for every
-    test that runs afterwards. It passed alone and took four persistence tests
-    down in the full suite, which is a sharper lesson than the one it was
-    testing for.
-
-    A source check is the weak half of this discipline and it is not relied on
-    alone: `test_har_cj.py` drives a real `Book` and asserts the published
-    deferral reaches a restored object, and `test_broker_alarm.py` drives the
-    reachability alarm through its own thresholds. This pins that the call sites
-    exist and are named consistently; those pin that they run.
-    """
-    import importlib
-    import inspect
-
-    mod = importlib.import_module(module)
-    source = inspect.getsource(mod)
-    assert f'declare("{name}"' in source, f"{module} does not declare {name}"
-    assert f'fired("{name}")' in source, f"{module} never fires {name}"
-
-
-def test_the_published_deferral_actually_fires_the_ledger(monkeypatch):
-    """The behavioural half for the one that shipped inert.
-
-    `structures.stated_forecast` is the effect whose feature was deployed,
-    verified against a freshly built object, and reached nothing for an
-    afternoon. This drives the real path and asserts the ledger saw it.
-    """
-    from till_infinity.structures.vol import har as har_mod
-
-    monkeypatch.setattr(har_mod.stated, "ENABLED", True)
+def test_reset_clears_the_ledger_so_one_test_cannot_see_another():
+    """The ledger is process-wide by design, so without this the autouse
+    fixture above would be the only thing keeping these eleven tests
+    independent - and a leaked declaration reads as a feature that fired."""
+    effects.declare("thing", enabled=True)
+    effects.fired("thing")
     effects.reset()
-    model = har_mod.Har(feed="volatility_75_index", interval_seconds=3600.0)
-    assert model.published() is not None
-    assert effects.report()["structures.stated_forecast"]["count"] >= 1
+    assert effects.report() == {}
 
 
-def test_an_unnamed_feed_does_not_fire_the_deferral(monkeypatch):
-    """Firing on a feed that publishes nothing would make the count meaningless
-    - it would say the feature ran when it had declined to."""
-    from till_infinity.structures.vol import har as har_mod
-
-    monkeypatch.setattr(har_mod.stated, "ENABLED", True)
-    effects.reset()
-    assert har_mod.Har(feed="gold", interval_seconds=3600.0).published() is None
-    assert "structures.stated_forecast" not in effects.report()
+# ------------------------------------------------- the declarations and fires
 
 
-class TestTheThreeThatWereReachedByNothing:
-    """Each of these shipped correct, tested, and connected to nothing.
+def _named(attribute: str) -> dict[str, set[str]]:
+    """Every `effects.<attribute>("name")` in the package, by literal name.
 
-    `affordable.py` had no export and no CLI; `STRUCTURES_CYCLES_ACT` was read
-    only by its own `to_dict`; `turning.py` was never called from the close
-    path. All three passed their own suites the whole time, which is the exact
-    shape this module exists for - a test proves the code computes the right
-    answer and nothing proves it ran.
+    Parsed and not matched. A text search for `declare("x"` reads the same
+    string out of a docstring explaining the mechanism - which
+    `test_journal_actor.ACTOR_TREE` records being caught by, having called a
+    paragraph that ruled out `asyncio.sleep` a breach of it.
 
-    So each now declares an effect, and these tests prove the **firing path**
-    reaches it. A declaration nothing fires is the same defect one layer up.
+    Only literal first arguments are collected. A name built at run time would
+    be missed, and deliberately: this asserts a pairing between written call
+    sites, and a computed name has no written counterpart to pair with.
     """
+    found: dict[str, set[str]] = {}
+    for path in sorted(PACKAGE.rglob("*.py")):
+        for node in ast.walk(ast.parse(path.read_text(), filename=str(path))):
+            if not (isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)):
+                continue
+            if node.func.attr != attribute or not node.args:
+                continue
+            first = node.args[0]
+            if isinstance(first, ast.Constant) and isinstance(first.value, str):
+                found.setdefault(first.value, set()).add(
+                    path.relative_to(PACKAGE).as_posix(),
+                )
+    return found
 
-    def test_the_cycles_cap_fires_when_it_caps(self, clean, monkeypatch):
-        import random
 
-        from till_infinity.structures import cycles as cy
+def test_every_declared_effect_has_somewhere_that_fires_it():
+    """**A declaration nothing can fire is this defect wearing a badge saying
+    it is not.** It reports the feature as never having run, which is true, and
+    makes it indistinguishable from a feature that is merely waiting - so the
+    one list an operator checks grows an entry that can never clear.
 
-        monkeypatch.setattr(cy, "CYCLES_ACT", True)
-        book = cy.Book()
-        series = book.of("v75")
-        random.seed(5)
-        x = 100.0
-        for i in range(4000):
-            x += 0.15 * (100.0 - x) + random.gauss(0, 0.5)
-            series.observe("1m", x)
-            if i % 15 == 0:
-                series.observe("15m", x)
-            if i % 60 == 0:
-                series.observe("1h", x)
-        series.turns.settled = cy.WARM + 1
-        series.turns.depth_base_error, series.turns.depth_error = 100.0, 20.0
-        series.turns.depth.predict_one = lambda _x: 1.0
+    This is the assertion the retired wiring test was reaching for, held
+    across the whole package rather than against a hand-kept roster of five
+    module paths. Three entries on that roster had retired with their subjects
+    and the test had not noticed.
+    """
+    declared = _named("declare")
+    fired = _named("fired")
+    assert declared, "nothing declares an effect, so this asserts nothing"
 
-        effects.declare("structures.cycles_cap", enabled=True)
-        assert "structures.cycles_cap" in effects.inert(grace=0.0)
-        push, why = series.capped_push(9.0)
-        assert why
-        assert push < 9.0
-        assert "structures.cycles_cap" not in effects.inert(grace=0.0)
+    orphans = {name: sorted(where) for name, where in declared.items() if name not in fired}
+    assert not orphans, f"declared and never fired from anywhere: {orphans}"
 
-    def test_the_turn_exit_fires_when_a_close_is_scored(self, clean):
-        from till_infinity.trading import turning as tn
-        from till_infinity.trading.models import Side
 
-        effects.declare("trading.turn_exit", enabled=True)
-        assert "trading.turn_exit" in effects.inert(grace=0.0)
-        ride = tn.TurnExit(feed="v75", side=Side.BUY, entry=100.0, risk=2.0, suggested=103.0)
-        tn.score(ride, best_r=1.75, took_r=0.4)
-        assert "trading.turn_exit" not in effects.inert(grace=0.0)
+def test_every_fired_effect_is_declared_somewhere():
+    """The other direction, and the worse one.
 
-    def test_an_unscorable_row_does_not_claim_the_effect_fired(self, clean):
-        """A suggestion behind the entry is the model declining, not a
-        comparison - counting it would report the feature as working on rows it
-        never scored."""
-        from till_infinity.trading import turning as tn
-        from till_infinity.trading.models import Side
+    `fired` on an unknown name creates the entry with `enabled=True`, so the
+    feature appears in the report the moment it works and is invisible until
+    then. That is exactly backwards: the case this module exists to show is
+    the feature that never works.
+    """
+    declared = _named("declare")
+    fired = _named("fired")
+    assert fired, "nothing fires an effect, so this asserts nothing"
 
-        effects.declare("trading.turn_exit", enabled=True)
-        ride = tn.TurnExit(feed="v75", side=Side.BUY, entry=100.0, risk=2.0, suggested=99.0)
-        tn.score(ride, best_r=2.0, took_r=0.4)
-        assert "trading.turn_exit" in effects.inert(grace=0.0)
+    undeclared = {name: sorted(where) for name, where in fired.items() if name not in declared}
+    assert not undeclared, f"fired without being declared anywhere: {undeclared}"
 
-    def test_the_unaffordable_refusal_fires_when_sizing_refuses(self, clean):
-        from till_infinity.trading.models import SymbolSpec
-        from till_infinity.trading.sizing import lots
 
-        spec = SymbolSpec(
-            symbol="Boom 1000 Index",
-            digits=2,
-            point=0.01,
-            tick_size=0.01,
-            tick_value=1.0,
-            volume_min=5.0,
-            volume_max=100.0,
-            volume_step=0.1,
-        )
-        effects.declare("trading.unaffordable_refusal", enabled=True)
-        assert "trading.unaffordable_refusal" in effects.inert(grace=0.0)
-        got = lots(spec, equity=200.0, risk_fraction=0.0025, stop_distance=50.0)
-        assert not got.ok
-        assert "trading.unaffordable_refusal" not in effects.inert(grace=0.0)
+def test_the_pairing_scan_can_tell_a_call_from_a_mention():
+    """Power for the two above, and the reason they parse rather than match.
 
-    def test_an_affordable_trade_does_not_fire_the_refusal(self, clean):
-        from till_infinity.trading.models import SymbolSpec
-        from till_infinity.trading.sizing import lots
+    The string below is what a docstring explaining the mechanism looks like.
+    A text search would collect `docs.only` from it and demand a firing path
+    for a feature that does not exist.
+    """
+    mention = ast.parse('"""Call effects.declare("docs.only") where the flag is read."""')
+    calls = [
+        node
+        for node in ast.walk(mention)
+        if isinstance(node, ast.Call) and isinstance(node.func, ast.Attribute)
+    ]
+    assert calls == []
+    assert "docs.only" not in _named("declare")
 
-        spec = SymbolSpec(
-            symbol="EURUSD",
-            digits=5,
-            point=0.00001,
-            tick_size=0.00001,
-            tick_value=0.1,
-            volume_min=0.01,
-            volume_max=100.0,
-            volume_step=0.01,
-        )
-        effects.declare("trading.unaffordable_refusal", enabled=True)
-        got = lots(spec, equity=10_000.0, risk_fraction=0.0025, stop_distance=0.0017)
-        assert got.ok
-        assert "trading.unaffordable_refusal" in effects.inert(grace=0.0)
+
+# The behavioural half - that each firing path is actually reached when the
+# feature does its work - is not here, because it belongs with the subject.
+# `test_release_in_hold.test_it_declares_and_fires_its_effect` drives the gate
+# and asserts the ledger saw it, which is the model. The other four
+# (`notifications.delivered`, `trading.turn_exit`, `trading.spike_switch`,
+# `trading.unaffordable_refusal`) have no such test, and the pairing above is
+# weaker than one: it proves a firing call is written, not that anything
+# reaches it. Noted rather than written, because three of the four live under
+# `till_infinity/strategies/` and `till_infinity/risk/`.
