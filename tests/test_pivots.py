@@ -16,6 +16,7 @@ does not beat this, the swing detection is not earning its complexity.
 
 from __future__ import annotations
 
+import math
 from datetime import UTC, datetime
 
 import pytest
@@ -23,13 +24,16 @@ import pytest
 from till_infinity.indicators.levels import Sided
 from till_infinity.indicators.pivots import (
     NAMES,
+    SESSION_HOURS,
     SIDES,
+    Hours,
     Pivots,
     Session,
     Sessions,
     day_of,
     levels_from,
     month_of,
+    session_of,
     week_of,
 )
 
@@ -374,3 +378,133 @@ def test_a_stop_needs_a_published_level_and_a_unit():
     would otherwise place an order at it."""
     assert Pivots().beyond(100.0, 1, unit=1.0) is None
     assert built().beyond(100.0, 1, unit=0.0) is None
+
+
+# ------------------------------------------------------------- time awareness
+
+
+def test_a_published_set_has_an_age_on_the_bar_clock():
+    """**A pivot set decays and nothing could say by how much.** A daily set
+    is most useful on the open and least useful at the close.
+
+    Read off the bar's clock and never the host's, so a backtest and a live
+    node answer this identically - a wall-clock age would make a replay of
+    2007 report that its pivots are nineteen years old.
+    """
+    found = Pivots(periods=("daily",))
+    found.update_raw(101.0, 99.0, 100.0, moment(day=10, hour=0))
+    found.update_raw(101.0, 99.0, 100.0, moment(day=10, hour=12))
+    found.update_raw(101.0, 99.0, 100.0, moment(day=11, hour=6))
+
+    assert found.age("daily") == pytest.approx(18 * 3600.0)
+
+
+def test_an_unpublished_period_has_no_age():
+    """Zero rather than the whole epoch, which is what `when` minus nothing
+    would give."""
+    assert Pivots().age("daily") == 0.0
+
+
+@pytest.mark.parametrize(
+    ("period", "bars", "expected"),
+    [
+        ("daily", [(10, 0), (11, 6)], 0.25),
+        ("weekly", [(8, 0), (16, 6)], 30 / 168),
+        ("monthly", [(1, 0), (30, 6)], 29.25 / 30),
+    ],
+)
+def test_how_far_through_the_forming_period_the_last_bar_was(period, bars, expected):
+    """The companion to `age`, and the interval-independent one: a daily set
+    twelve hours old is halfway through its period and a weekly set twelve
+    hours old has barely started.
+
+    Computed from the next cut rather than a nominal length, so a month's own
+    length is right - 30 days in June, not an average - and a shifted boundary
+    is respected.
+    """
+    found = Pivots(periods=(period,))
+    for day, hour in bars:
+        found.update_raw(101.0, 99.0, 100.0, moment(day=day, hour=hour))
+    assert found.through(period) == pytest.approx(expected, abs=1e-3)
+
+
+def test_nothing_elapsed_before_a_period_opens():
+    """A cold start reads 0.0 rather than raising, because a node asks this on
+    its first bar."""
+    assert Pivots().through("daily") == 0.0
+
+
+def test_the_session_is_the_one_the_last_bar_closed_in():
+    found = Pivots(periods=("daily",))
+    found.update_raw(101.0, 99.0, 100.0, moment(hour=9))
+    assert found.session() == "london"
+    found.update_raw(101.0, 99.0, 100.0, moment(hour=15))
+    assert found.session() == "newyork"
+
+
+@pytest.mark.parametrize(
+    ("hour", "name"),
+    [(2, "tokyo"), (9, "london"), (15, "newyork"), (22, "sydney")],
+)
+def test_the_sessions_cover_the_clock(hour, name):
+    """Conventional boundaries, not measured ones - they exist so a journal
+    line reads "tokyo" rather than "03". Every hour has to land somewhere, or
+    a per-session tally silently drops bars."""
+    assert session_of(moment(hour=hour)) == name
+
+
+def test_every_hour_of_the_day_has_a_session():
+    assert {session_of(moment(hour=h)) for h in range(24)} == set(SESSION_HOURS)
+
+
+# -------------------------------------------------------- the hourly profile
+
+
+def test_a_flat_profile_has_no_effect_at_all():
+    """**Exactly 1.0, not approximately.** A capability whose neutral setting
+    is not neutral silently reparameterises every existing deployment, which
+    is the same argument `Sided` makes about its tilt."""
+    flat = Hours()
+    assert all(flat.factor(moment(hour=h)) == 1.0 for h in range(24))
+
+
+def test_a_profile_keeps_its_ratios_and_moves_no_average():
+    """**A multiplier whose mean is not one moves the average it multiplies.**
+    `q-multipliers-need-mean-one` records a profile running at 1.21 that a
+    base-noise refit could not catch, and
+    `refit-the-parameter-a-lever-multiplies` records the same error reversing a
+    +1192 result to -24.
+
+    So the 3x peak the FX measurement describes survives as a *ratio* while
+    the geometric mean stays exactly one: switching a profile on redistributes
+    across the clock without changing the level of anything.
+    """
+    weights = [1.0] * 24
+    weights[14] = weights[15] = 3.0
+    profile = Hours(tuple(weights))
+
+    assert profile.factor(moment(hour=14)) / profile.factor(moment(hour=3)) == pytest.approx(3.0)
+    factors = [profile.factor(moment(hour=h)) for h in range(24)]
+    geometric = math.exp(sum(math.log(f) for f in factors) / 24)
+    assert geometric == pytest.approx(1.0, abs=1e-12)
+
+
+def test_a_profile_that_is_not_a_whole_day_is_refused():
+    """A short one would shift the clock for every hour after the gap."""
+    with pytest.raises(ValueError, match="is not a day"):
+        Hours((1.0, 2.0, 3.0))
+
+
+def test_an_hour_cannot_weigh_nothing():
+    """Zero would make a stop distance zero in that hour, and a negative one
+    would put it on the wrong side of the entry."""
+    with pytest.raises(ValueError, match="must be positive"):
+        Hours(tuple([1.0] * 23 + [0.0]))
+
+
+def test_no_profile_is_shipped():
+    """The numbers are the caller's to measure. One invented here would look
+    like a measurement and not be one - the intraday shape is real and this
+    desk has it as "FX peaks 14-15 UTC at about 3x", which is a figure from a
+    study and not a calibration for every feed and interval."""
+    assert Hours().weights == ()

@@ -364,7 +364,7 @@ shape they are, not instructions.
 **line 2**
 
 
-  IMAGE=ghcr.io/owner/repo TAG=<sha> bash deploy.sh
+  IMAGE=ghcr.io/owner/repo TAG=<sha> bash scripts/deploy.sh
 
 One container, not the compose split. Six separate services need about 861 MB
 before Redis, data or the OS - measured, not estimated - against the 908 MB
@@ -549,7 +549,7 @@ the opposite of what the rule is for.
 **line 2**
 
 
-  IMAGE=ghcr.io/owner/repo TAG=<sha> bash deploy.sh
+  IMAGE=ghcr.io/owner/repo TAG=<sha> bash scripts/deploy.sh
 
 One container, not the compose split. Six separate services need about 861 MB
 before Redis, data or the OS - measured, not estimated - against the 908 MB
@@ -690,8 +690,8 @@ Two scripts, one on each box, and neither knows about the other:
 
 | | where | what it does |
 | --- | --- | --- |
-| [`ci-fallback.sh`](../ci-fallback.sh) | the research machine, cron | builds the image Actions did not, pushes it to ghcr |
-| [`pull-deploy.sh`](../pull-deploy.sh) | the instance, cron | deploys whatever is newest in the registry |
+| [`ci-fallback.sh`](../scripts/ci-fallback.sh) | the research machine, cron | builds the image Actions did not, pushes it to ghcr |
+| [`pull-deploy.sh`](../scripts/pull-deploy.sh) | the instance, cron | deploys whatever is newest in the registry |
 
 ### The trigger is a missing image, not a billing error
 

@@ -56,6 +56,7 @@ nothing else.
 
 from __future__ import annotations
 
+import math
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -201,6 +202,82 @@ def month_of(when: float, *, boundary: float = 0.0) -> int:
 CUTS = {"daily": day_of, "weekly": week_of, "monthly": month_of}
 
 
+# ---------------------------------------------------------------- time of day
+
+
+#: Which session a UTC hour belongs to. **A convention, not a measurement.**
+#: The boundaries are the ones desks quote and nothing here establishes them;
+#: they exist so a journal line reads "tokyo" rather than "03". Hours in more
+#: than one session are assigned to the one that opened latest, because an
+#: overlap is usually described by the market that just arrived.
+SESSION_HOURS: dict[str, range] = {
+    "sydney": range(21, 24),
+    "tokyo": range(7),
+    "london": range(7, 13),
+    "newyork": range(13, 21),
+}
+
+
+def hour_of(when: float) -> int:
+    """The UTC hour containing `when`."""
+    return datetime.fromtimestamp(when, UTC).hour
+
+
+def session_of(when: float) -> str:
+    """Which session the moment falls in, by `SESSION_HOURS`."""
+    hour = hour_of(when)
+    for name, hours in SESSION_HOURS.items():
+        if hour in hours:
+            return name
+    return "tokyo"  # 0-6 is covered, so this is unreachable and is not a guess
+
+
+@dataclass(frozen=True, slots=True)
+class Hours:
+    """A per-hour volatility profile, normalised to geometric mean one.
+
+    **Time of day belongs on the volatility unit and not on a direction.**
+    `seasonality-belongs-on-q` is measured here: the intraday pattern is in
+    volatility, FX peaks at 14-15 UTC at about three times its quiet hours,
+    and the instruction recorded with it is to drive Q squared and never R. So
+    this scales a width, a zone or a stop distance - never a probability and
+    never a side.
+
+    **Normalised, because a multiplier whose mean is not one moves the average
+    it multiplies.** `q-multipliers-need-mean-one` records a profile running at
+    1.21 that a base-noise refit could not catch, and
+    `refit-the-parameter-a-lever-multiplies` records the same error reversing a
+    +1192 result to -24. The geometric mean here is exactly one, so switching a
+    profile on redistributes across the clock without changing the level of
+    anything.
+
+    **Empty is flat and flat is exactly 1.0**, so the default has no effect at
+    all. The numbers are the caller's to measure; none are shipped, because a
+    profile invented here would look like a measurement and not be one.
+    """
+
+    weights: tuple[float, ...] = ()
+
+    def __post_init__(self) -> None:
+        if not self.weights:
+            return
+        if len(self.weights) != 24:
+            raise ValueError(
+                f"{len(self.weights)} weights is not a day - a profile is one "
+                f"figure per UTC hour, so a short one would silently shift the "
+                f"clock for every hour after the gap"
+            )
+        if any(w <= 0.0 for w in self.weights):
+            raise ValueError("an hour's weight must be positive; 1 means no change")
+
+    def factor(self, when: float) -> float:
+        """The multiplier for the hour containing `when`. 1.0 when flat."""
+        if not self.weights:
+            return 1.0
+        geometric = math.exp(sum(math.log(w) for w in self.weights) / len(self.weights))
+        return self.weights[hour_of(when)] / geometric
+
+
 class Sessions:
     """Folds bars into periods, emitting each one only when it is complete.
 
@@ -288,6 +365,10 @@ class Pivots(Indicator):
         self.sets: dict[str, dict[str, float]] = {}
         self.sources: dict[str, Session] = {}
         self.published = 0
+        #: The last bar's close time. The clock `age`, `through` and `session`
+        #: read, so every time reading here is the bar's and never the host's -
+        #: a backtest and a live node must answer these identically.
+        self.when = 0.0
 
     def handle_bar(self, bar: Bar) -> None:
         """Nautilus's entry point. `ts_event` is the bar's close."""
@@ -301,6 +382,7 @@ class Pivots(Indicator):
     def update_raw(self, high: float, low: float, close: float, when: float) -> None:
         """Fold one bar in and republish any period that completed."""
         self._set_has_inputs(True)
+        self.when = when
         for session in self.sessions.observe(when, high, low, close):
             self.sets[session.period] = levels_from(session)
             self.sources[session.period] = session
@@ -376,11 +458,55 @@ class Pivots(Indicator):
         room = Sided.of(buffer).for_side(SIDES.get(name, 0)) * unit
         return name, level - room if side > 0 else level + room
 
+    # ------------------------------------------------------------ time of day
+
+    def age(self, period: str = "daily") -> float:
+        """Seconds since this period's set was published, by the bar clock.
+
+        **A pivot set decays and nothing here was able to say by how much.** A
+        daily set is most useful on the open and least useful at the close,
+        and a caller weighting it needs the age rather than a guess at it.
+        Negative is impossible by construction, since the set is published
+        from a bar and `when` only advances.
+        """
+        source = self.sources.get(period)
+        return max(0.0, self.when - source.end) if source is not None else 0.0
+
+    def through(self, period: str = "daily") -> float:
+        """How far through the forming period the last bar was, 0.0 to 1.0.
+
+        The companion to `age`, and the one that is interval-independent: a
+        daily set 12 hours old is halfway through its period and a weekly set
+        12 hours old has barely started. Computed from the next cut rather
+        than from a nominal length, so a month's own length is right and a
+        shifted boundary is respected.
+
+        0.0 before any period has opened, which reads as "nothing has
+        elapsed" rather than raising on a cold start.
+        """
+        forming = self.sessions.forming(period)
+        if forming is None:
+            return 0.0
+        cut = CUTS[period]
+        # One second past this period's start lands in this period; one second
+        # past its end lands in the next, so stepping a day at a time from the
+        # start finds the next boundary for any period length.
+        nxt = forming.start
+        while cut(nxt + 86_400.0, boundary=self.sessions.boundary) == forming.start:
+            nxt += 86_400.0
+        length = (nxt + 86_400.0) - forming.start
+        return min(1.0, max(0.0, (self.when - forming.start) / length)) if length > 0 else 0.0
+
+    def session(self) -> str:
+        """Which trading session the last bar closed in."""
+        return session_of(self.when)
+
     def _reset(self) -> None:
         self.sessions = Sessions(self.periods, boundary=self.boundary)
         self.sets = {}
         self.sources = {}
         self.published = 0
+        self.when = 0.0
         self._set_has_inputs(False)
         self._set_initialized(False)
 

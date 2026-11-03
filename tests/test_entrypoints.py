@@ -42,7 +42,7 @@ RETIRED = (
 )
 
 #: Files whose job is to start or check the desk.
-STARTERS = ("Dockerfile", "docker-compose.yml", "deploy.sh")
+STARTERS = ("Dockerfile", "docker-compose.yml", "scripts/deploy.sh")
 
 
 def read(name: str) -> str:
@@ -122,7 +122,7 @@ def test_the_deploy_script_passes_no_command():
     """It passed `run`. With no console script that was the container's whole
     lifetime - it exited immediately, every time, and the rollback was what
     kept the box up."""
-    text = executable(read("deploy.sh"))
+    text = executable(read("scripts/deploy.sh"))
     assert '"$IMAGE:$TAG" run' not in text
     assert '"$IMAGE:$TAG" ||' in text
 
@@ -344,4 +344,40 @@ def test_no_ci_job_globs_a_directory_that_is_gone():
     assert not broken, (
         f"CI jobs glob paths that are not in the repository: {broken} - the job "
         f"cannot pass, and a job that cannot pass blocks every merge"
+    )
+
+
+def deploy_sources() -> list[str]:
+    """Repository paths the deploy workflow sends to the instance.
+
+    Only `scp` sources, which is the one place that workflow names a file in
+    this repository rather than on the host. Everything else in it is a path
+    on the instance - `/tmp/till-deploy.sh`, `$HOME/...` - and those are
+    runtime locations this test cannot and should not check.
+    """
+    text = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
+    found = re.findall(r"scp\s+(?:-\S+\s+\S+\s+)*([\w./-]+)\s+\"?\$?\w*HOST", text)
+    return [path for path in found if not path.startswith(("/", "~", "$"))]
+
+
+def test_the_deploy_workflow_sends_files_that_exist():
+    """**A moved script breaks the deploy and nothing before this said so.**
+
+    `deploy.sh` moved to `scripts/` and the workflow `scp`s it by path, so a
+    rename that misses line 163 leaves a deploy that fails at the copy - after
+    the image is built, pushed and tagged, which is the most expensive place
+    to find out. `scp` of a missing file is an error, so the deploy stops
+    rather than running a stale script, but it stops on the instance and not
+    in a check.
+
+    The same shape as `test_every_copy_source_exists`, and for the same
+    reason: the cheapest substitute for running the thing is asserting that
+    the paths it names are in the repository.
+    """
+    sources = deploy_sources()
+    assert sources, "no scp source found - the regex no longer matches the workflow"
+    missing = [path for path in sources if not (ROOT / path).exists()]
+    assert not missing, (
+        f"the deploy workflow copies paths that are not in the repository: "
+        f"{missing} - the deploy fails at the scp, after the image is pushed"
     )
