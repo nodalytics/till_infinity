@@ -320,3 +320,72 @@ def test_a_constant_panel_has_no_factor_rather_than_a_spurious_one():
     """Zero variance is the degenerate case a power iteration can divide by,
     and a factor invented from it would be regressed out of real series."""
     assert grouping.common([[1.0] * 20, [2.0] * 20, [3.0] * 20]) == []
+
+
+# ------------------------------------------------- which price in a group is it
+
+
+def test_a_floor_is_the_lowest_touch_and_a_ceiling_the_highest():
+    """**A floor is where price stopped, not the average of where it
+    stopped.** The lowest touch of a support cluster is the price that held;
+    the weighted mean sits inside the body of touches, which is a price price
+    has already traded through."""
+    group = grouping.cluster([99.80, 99.95, 100.00, 100.02], GAP, weights=[1, 3, 4, 2])[0]
+
+    assert group.price(grouping.Anchor.FLOOR) == pytest.approx(99.80)
+    assert group.price(grouping.Anchor.CEILING) == pytest.approx(100.02)
+    assert group.price(grouping.Anchor.CENTRE) == pytest.approx(99.969)
+
+
+def test_a_stop_at_the_centre_of_a_support_sits_inside_the_cluster():
+    """Which is the reason the anchor exists. A stop below the mean of a
+    support cluster is still above its lowest touch, so the level has to be
+    broken before the stop is even reached - the opposite of its purpose."""
+    group = grouping.cluster([99.80, 99.95, 100.00, 100.02], GAP, weights=[1, 3, 4, 2])[0]
+    assert group.price(grouping.Anchor.CENTRE) > group.price(grouping.Anchor.FLOOR)
+
+
+def test_the_sided_anchor_follows_the_pivot_that_formed_the_level():
+    """`levels.Level.side` is +1 resistance and -1 support, and it is the side
+    that *formed* the level rather than where it sits relative to price now -
+    which is the stable thing to key on, since the latter flips as price
+    moves."""
+    group = grouping.cluster([99.80, 100.02], GAP)[0]
+    assert group.price(grouping.Anchor.SIDED, side=-1) == pytest.approx(99.80)
+    assert group.price(grouping.Anchor.SIDED, side=1) == pytest.approx(100.02)
+
+
+def test_a_sideless_level_falls_back_to_the_centre():
+    """An unformed side is an absence, and picking the floor for it would make
+    every sideless level a support."""
+    group = grouping.cluster([99.80, 100.02], GAP)[0]
+    assert group.price(grouping.Anchor.SIDED, side=0) == pytest.approx(group.centre)
+
+
+def test_the_anchor_takes_its_own_name_as_a_string():
+    """So a config can carry it without importing the enum."""
+    group = grouping.cluster([99.80, 100.02], GAP)[0]
+    assert group.price("floor") == group.price(grouping.Anchor.FLOOR)
+    with pytest.raises(ValueError, match="floor"):
+        group.price("middle")
+
+
+def test_a_one_touch_group_reads_the_same_under_every_anchor():
+    """The degenerate case, and worth pinning: a level with one touch has no
+    edge distinct from its centre, so nothing should move."""
+    group = grouping.cluster([100.0], GAP)[0]
+    prices = {group.price(a) for a in grouping.Anchor}
+    assert prices == {100.0}
+
+
+def test_an_extreme_is_the_noisier_estimate():
+    """The honest trade-off, as a test rather than only a docstring. One spike
+    moves an edge and nothing averages it out, where the centre is an estimate
+    over the whole group - so the extreme is the better definition and the
+    worse estimator."""
+    clean = grouping.cluster([100.0, 100.05, 100.1], GAP, weights=[5, 5, 5])[0]
+    spiked = grouping.cluster([99.78, 100.0, 100.05, 100.1], GAP, weights=[1, 5, 5, 5])[0]
+
+    moved_floor = abs(spiked.price(grouping.Anchor.FLOOR) - clean.price(grouping.Anchor.FLOOR))
+    moved_centre = abs(spiked.centre - clean.centre)
+    assert moved_floor > moved_centre

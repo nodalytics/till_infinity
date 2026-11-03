@@ -165,7 +165,7 @@ from .bars import (
 )
 from .candles import Candles
 from .changepoint import Changepoint, Focus
-from .grouping import Group, cluster, common, crowding, modes, nearest, residual
+from .grouping import Anchor, Group, cluster, common, crowding, modes, nearest, residual
 from .levels import (
     BjorgumLevels,
     Clock,
@@ -531,6 +531,7 @@ __all__ = [
     "SCALED_BY",
     "SIDES",
     "TICK_DETECTORS",
+    "Anchor",
     "Basis",
     "BjorgumLevels",
     "Candles",

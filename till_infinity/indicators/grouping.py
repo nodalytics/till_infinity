@@ -82,6 +82,7 @@ from __future__ import annotations
 import math
 from collections.abc import Sequence
 from dataclasses import dataclass
+from enum import StrEnum
 
 #: How far apart two touches may sit and still be one level, in volatility
 #: units. `levels.MERGE_VOL`, repeated rather than imported so this module
@@ -94,13 +95,46 @@ WIDTH_VOL = 0.35
 NEIGHBOURS = 3
 
 
+class Anchor(StrEnum):
+    """Which price in a group is *the* level.
+
+    **A floor is where price stopped, not the average of where it stopped.** A
+    support cluster's lowest touch is the price that actually held; the
+    weighted mean sits inside the body of touches, which is a price price has
+    already traded through. Put a stop below the mean of a support cluster and
+    it is inside the cluster - the level has to be broken before the stop is
+    even reached, which is the opposite of what the stop is for.
+
+    The trade-off is robustness, and it runs the other way. An extreme is one
+    touch, so a single spike moves the level and nothing averages it out,
+    where `CENTRE` is an estimate over the whole group. So the extreme is the
+    better *definition* and the noisier *estimate*, and which to use depends
+    on whether the number is being placed against (an edge) or compared
+    (a centre).
+    """
+
+    #: The weighted mean. The best-evidenced single price for the group.
+    CENTRE = "centre"
+    #: The lowest touch - a support level, the price that held from above.
+    FLOOR = "floor"
+    #: The highest touch - a resistance level, the price that held from below.
+    CEILING = "ceiling"
+    #: `FLOOR` for a support, `CEILING` for a resistance, by the level's own
+    #: side. `levels.Level.side` is +1 resistance and -1 support, and it is
+    #: the pivot side that *formed* the level rather than where it sits
+    #: relative to price now - which is the stable thing to key on, because
+    #: the latter flips as price moves.
+    SIDED = "sided"
+
+
 @dataclass(frozen=True, slots=True)
 class Group:
     """One cluster of candidate prices.
 
     `centre` is the weighted mean rather than the midpoint: a level's price is
-    where the evidence is, and an unweighted midpoint moves with the stragglers
-    at the edge of the group.
+    where the evidence is, and an unweighted midpoint moves with the
+    stragglers at the edge of the group. `price` is how to ask for an edge
+    instead - see `Anchor`.
     """
 
     centre: float
@@ -112,6 +146,31 @@ class Group:
     @property
     def span(self) -> float:
         return self.high - self.low
+
+    def price(self, anchor: Anchor | str = Anchor.CENTRE, *, side: int = 0) -> float:
+        """The group's level price, under `anchor`.
+
+        `side` is read only by `Anchor.SIDED`, and a side of zero there falls
+        back to the centre rather than guessing an edge: an unformed side is
+        an absence, and picking the floor for it would make every sideless
+        level a support.
+        """
+        try:
+            chosen = Anchor(anchor)
+        except ValueError as exc:
+            raise ValueError(
+                f"{anchor!r} is not an anchor. Known: {', '.join(a.value for a in Anchor)}."
+            ) from exc
+        if chosen is Anchor.FLOOR:
+            return self.low
+        if chosen is Anchor.CEILING:
+            return self.high
+        if chosen is Anchor.SIDED:
+            if side < 0:
+                return self.low
+            if side > 0:
+                return self.high
+        return self.centre
 
 
 def _weights(prices: Sequence[float], weights: Sequence[float] | None) -> list[float]:
