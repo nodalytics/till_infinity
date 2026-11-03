@@ -69,8 +69,35 @@ def catalogue() -> Path:
     return Path(os.environ.get("CORPUS_DIR", Path.home() / "till-data" / "catalog"))
 
 
+#: Starting balance, in `BACKTEST_CURRENCY`. `BACKTEST_BALANCE` moves it.
+DEFAULT_BALANCE = 10_000.0
+
+#: Account leverage. **Named because it decides whether an order is
+#: affordable at all**, and it was previously left at Nautilus's default
+#: without anybody choosing it.
+#:
+#: This desk sizes a risk fraction, not a notional: 0.25% of the account
+#: against a stop measured in volatility units, which on EUR/USD produced
+#: **113,634 units - about 124,000 USD of notional** against a hardcoded
+#: 10,000 balance. Whether that order survives the risk engine is therefore
+#: entirely a leverage question, and an unset leverage silently decides every
+#: backtest's trade count. A run that cannot afford its own orders reports no
+#: trades, not an error.
+#:
+#: 30 is the retail cap on a major FX pair under both ESMA and the FCA, which
+#: is the ceiling the live account is subject to; `BACKTEST_LEVERAGE` moves
+#: it. It is deliberately **not** the broker's headline figure for an exotic:
+#: a leverage that makes every order affordable measures the rule without the
+#: constraint the desk actually trades under.
+DEFAULT_LEVERAGE = 30.0
+
+
 def venue(
-    starting: float = 10_000.0, currency: str = "USD", name: str = MT5
+    starting: float | None = None,
+    currency: str = "USD",
+    name: str = MT5,
+    leverage: float | None = None,
+    bar_execution: bool = True,
 ) -> BacktestVenueConfig:
     """The venue as the broker actually behaves.
 
@@ -82,8 +109,35 @@ def venue(
     deliberately rather than tuned: `the-updown-edge-is-dead` records an edge
     that produced good fills and -98%, so a backtest that is generous about
     fills is the specific way this desk has already been misled.
+
+    **The balance and the leverage are read from the environment**, because a
+    discovery sweep and a single run have to be able to state the account they
+    measured against. They were a hardcoded 10,000 and an unchosen default,
+    which is the shape of a parameter that moves every result and appears in
+    no write-up: `BACKTEST_BALANCE`, `BACKTEST_CURRENCY` and
+    `BACKTEST_LEVERAGE` now carry them, and `described()` prints what was
+    used so a result can say.
+
+    `bar_execution` is on, which is what makes a bar-only catalogue tradable
+    at all - and it is the generosity this desk has measured: a stop filled
+    off a bar path fills *at* the stop with no overshoot, where the real
+    overshoot was **+0.363R on spx500**. Named so a run can turn it off and
+    see what it is worth rather than inheriting it unseen.
     """
+    balance = (
+        starting
+        if starting is not None
+        else float(os.environ.get("BACKTEST_BALANCE", DEFAULT_BALANCE))
+    )
+    gearing = (
+        leverage
+        if leverage is not None
+        else float(os.environ.get("BACKTEST_LEVERAGE", DEFAULT_LEVERAGE))
+    )
+    money = os.environ.get("BACKTEST_CURRENCY", currency)
     return BacktestVenueConfig(
+        default_leverage=gearing,
+        bar_execution=bar_execution,
         # **Named, not hardcoded.** It was fixed at `MT5` while the desks were
         # built from the instrument's own venue, so a backtest on
         # `EURUSD.SIM` got a venue called MT5 and the instrument would never
@@ -92,8 +146,22 @@ def venue(
         name=name,
         oms_type="NETTING",
         account_type="MARGIN",
-        base_currency=currency,
-        starting_balances=[f"{starting} {currency}"],
+        base_currency=money,
+        starting_balances=[f"{balance} {money}"],
+    )
+
+
+def described() -> str:
+    """The account a run measured against, for a write-up to quote.
+
+    A result that does not say its balance and leverage cannot be compared to
+    another, and both were previously invisible.
+    """
+    config = venue()
+    return (
+        f"{config.starting_balances[0]} at {config.default_leverage:g}x, "
+        f"{config.account_type} {config.oms_type}, "
+        f"bar_execution={config.bar_execution}"
     )
 
 
@@ -201,6 +269,24 @@ def run_config(
         ),
         venues=[venue(name=venue_name or instrument_id.rsplit(".", 1)[-1])],
         data=data(instrument_id, bar_spec, start, end),
+        # **`dispose_on_completion=True` is Nautilus's default and it zeroes
+        # the trade counts in the result.** `node.py` calls `engine.dispose()`
+        # - "drop data and all state" - and *then* `engine.get_result()`, whose
+        # `total_orders` is `cache.orders_total_count()` and whose
+        # `total_positions` counts `cache.positions()`. Both read a cache that
+        # was just emptied, so every run reports 0 orders and 0 positions.
+        #
+        # `stats_pnls` survives because it comes off the portfolio analyzer
+        # rather than the cache, which is what makes this so hard to see: the
+        # result carries `PnL (total): -62.32` at a 0.25 win rate next to
+        # `total_orders = 0`. A sweep reading the counts concludes nothing
+        # traded on a run that traded eight times, which is how `leaf_sweep`
+        # reported 0 of 72 cells and why this was first mis-diagnosed as a
+        # `BacktestDataConfig` bar-type fault. The data was never the problem.
+        #
+        # `False` leaves `clear_data()` to drop the bars - the large part - and
+        # keeps the order and position records the counts are computed from.
+        dispose_on_completion=False,
     )
 
 
