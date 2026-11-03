@@ -22,6 +22,7 @@ from nautilus_trader.model.data import Bar, BarType
 from nautilus_trader.model.objects import Price, Quantity
 
 import till_infinity.indicators as ind
+from till_infinity.indicators import trend
 from till_infinity.indicators.bars import DIMENSION, SCALED_BY, Dimension, Reading, read
 
 BAR_TYPE = BarType.from_str("EURUSD.SIM-1-HOUR-LAST-EXTERNAL")
@@ -428,6 +429,91 @@ def test_a_pivot_is_confirmed_after_it_happened_and_both_times_are_kept():
     for pivot in (*detector.highs, *detector.lows):
         assert pivot.confirmed > pivot.when, "a pivot cannot be known when it printed"
         assert pivot.lag == pytest.approx(detector.reach, abs=0.01)
+
+
+def _sawtooth(n: int, *, rise: float = 1.0, period: int = 8) -> list[tuple[float, float, float]]:
+    """`(high, low, when)` bars with an interior extreme every `period` bars.
+
+    A sawtooth rather than a walk, because the assertions below are about
+    *which* bars qualify as pivots at a given reach, and a walk's pivots move
+    when the reach does for reasons that have nothing to do with the side.
+
+    `period` is even so each extreme is strict: at period 9 the turn sits on
+    two equal bars and ties go to neither, so the fixture would have no pivots
+    at all and every assertion below would pass vacuously.
+    """
+    out = []
+    for i in range(n):
+        leg = i % period
+        mid = rise * (leg if leg <= period // 2 else period - leg)
+        out.append((mid + 0.5, mid - 0.5, float(i * 60)))
+    return out
+
+
+def test_a_reach_per_side_defaults_to_the_shared_one_bar_for_bar():
+    """The default has to be free. A per-side lookback doubles the search, so
+    the version carrying the parameters must return **exactly** what the
+    version without them returned - otherwise every number ever measured on
+    `pivots` silently moved the day the parameters were added.
+    """
+    bars = _sawtooth(60)
+    for reach in (2, 3, 5, 7):
+        plain = trend.pivots(bars, reach)
+        assert trend.pivots(bars, reach, reach_up=0, reach_down=0) == plain
+        assert trend.pivots(bars, reach, reach_up=reach, reach_down=reach) == plain
+        assert plain, f"reach {reach} found no pivots, so this proves nothing"
+
+
+def test_each_side_is_confirmed_on_its_own_reach_and_dated_to_its_own_bar():
+    """What a per-side reach is *for*. A high found with a long window and a
+    low found with a short one are known at different moments, so they carry
+    different `confirmed` stamps off the same bar.
+
+    Taking one `confirmed` for both - the easy mistake - would date the slower
+    side's pivot to the faster side's bar, which is a level known before it
+    could be.
+    """
+    bars = _sawtooth(60)
+    found = trend.pivots(bars, reach_up=3, reach_down=2)
+    highs = [pivot for pivot in found if pivot.side == 1]
+    lows = [pivot for pivot in found if pivot.side == -1]
+    assert highs, "the fixture produced no swing highs"
+    assert lows, "the fixture produced no swing lows"
+    for pivot in highs:
+        assert pivot.confirmed - pivot.when == pytest.approx(3 * 60.0)
+    for pivot in lows:
+        assert pivot.confirmed - pivot.when == pytest.approx(2 * 60.0)
+
+
+def test_a_wider_reach_on_one_side_alone_thins_that_side_and_leaves_the_other():
+    """The control for the test above: the asymmetry has to *do* something,
+    and it has to do it to one side only.
+
+    A sawtooth of period 8 repeats its top every 8 bars, so a reach of 9 spans
+    the neighbouring top, ties with it and admits none, while a reach of 2
+    admits all. If both counts moved, `reach_up` is reaching the low branch.
+    """
+    bars = _sawtooth(60)
+    symmetric = trend.pivots(bars, 2)
+    sided = trend.pivots(bars, reach_up=9, reach_down=2)
+    assert [p for p in symmetric if p.side == 1], "the fixture has no swing highs at reach 2"
+    assert not [p for p in sided if p.side == 1], "a reach spanning the next top still admitted one"
+    assert [p for p in sided if p.side == -1] == [p for p in symmetric if p.side == -1], (
+        "widening the up reach moved the down side too"
+    )
+
+
+def test_a_reach_below_one_bar_each_side_is_refused_rather_than_degenerate():
+    """Zero already means "use the shared reach", so the remaining way to ask
+    for nonsense is a negative window - and that one is silent: `range(i - up,
+    i + up + 1)` is empty, `all` of nothing is True, and every bar becomes a
+    pivot. A detector that fires on everything reads as a productive one.
+    """
+    bars = _sawtooth(30)
+    for bad in ({"reach_up": -1}, {"reach_down": -1}):
+        with pytest.raises(ValueError, match="at least one bar"):
+            trend.pivots(bars, 3, **bad)
+    assert trend.pivots(bars, 3, reach_up=1, reach_down=1), "a reach of one must still work"
 
 
 def test_the_two_lines_are_fitted_independently_from_the_top_and_the_bottom():

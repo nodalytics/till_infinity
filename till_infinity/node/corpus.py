@@ -23,13 +23,18 @@ and into the close, and this desk has already costed that: `Envelope
 these quotes therefore understates cost in exactly the hours that matter most.
 
 **The instrument conventions are Nautilus's standard ones, not the broker's.**
-Without the terminal's `symbol_info` there is no contract size and no tick
-value to be had, so an FX pair is `TestInstrumentProvider.default_fx_ccy` -
-quantity in units of the base currency - and gold is a `Cfd` at 100 ounces.
-The consequence is worth stating plainly: **R is scale-free and money is not.**
-A trade count, a win rate, an R distribution and a stop-out share are all
-unaffected; any figure in account currency is this catalogue's and not the
-broker's.
+Without the terminal's `symbol_info` there is no tick value to be had, so an FX
+pair is quantity in units of the base currency and everything else is a `Cfd`
+at **one unit of the underlying, not a broker lot**. R is scale-free and money
+is not: a trade count, a win rate, an R distribution and a stop-out share are
+unaffected, and any figure in account currency is this catalogue's.
+
+**R was not scale-free while a contract size was asserted.** Nautilus's `Cfd`
+takes no `multiplier`, so stating gold's 100 ounces to the sizer and not to the
+engine made every gold R a hundredth of its size - see `CONTRACTS`. And both
+fee fields are zero here: the FX test provider's 0.00002 is a 2 bp commission
+worth 0.019R a trade at the `N20` stop, which gold never paid, so the feeds'
+R were not comparable with each other either.
 
 ## What the local store can and cannot support
 
@@ -54,13 +59,13 @@ from dataclasses import dataclass
 from decimal import Decimal
 from pathlib import Path
 
+from nautilus_trader.model.currencies import USD
 from nautilus_trader.model.data import Bar, BarType, QuoteTick
 from nautilus_trader.model.enums import AssetClass
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
-from nautilus_trader.model.instruments import Cfd, Instrument
-from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.model.instruments import Cfd, CurrencyPair, Instrument
+from nautilus_trader.model.objects import Currency, Money, Price, Quantity
 from nautilus_trader.persistence.catalog import ParquetDataCatalog
-from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
 #: Where the retired collector's store sits, relative to the repository.
 STORE = Path(".data/prices/prices.db")
@@ -82,15 +87,26 @@ PAIRS: dict[str, str] = {
     "gbpjpy": "GBP/JPY",
 }
 
-#: Contract size and price precision for the non-FX instruments, by feed.
-#: Gold's 100 ounces is the figure `adapters/mt5/providers.py` names.
-CONTRACTS: dict[str, tuple[float, int]] = {
-    "gold": (100.0, 2),
-    "silver": (5_000.0, 3),
-    "btc": (1.0, 2),
-    "eth": (1.0, 2),
-    "spx500": (1.0, 2),
-    "us100": (1.0, 2),
+#: Price precision for the non-FX instruments, by feed.
+#:
+#: **The broker's contract size is deliberately not carried here**, and that is
+#: a correction. `adapters/mt5/providers.py` names gold at 100 ounces a lot, and
+#: this module used to state that as `info={"trade_contract_size": 100.0}` -
+#: which `sizes.spec_of` reads and sizes against. Nautilus's `Cfd` takes no
+#: `multiplier`, so the engine computed P&L at one unit of quantity per price
+#: unit while the sizer had budgeted for a hundred: **every gold R in the
+#: catalogue was a hundredth of its true size**, a stop-out reading -0.013R
+#: instead of -0.85R, on the one instrument the standing result says carries
+#: half the R. Quantity here is therefore one unit of the underlying - ounces
+#: for gold - so the sizer and the engine use the same number. It also stops a
+#: $25 budget quantising to a 0.02 lot, a 15% rounding error on the risk.
+CONTRACTS: dict[str, int] = {
+    "gold": 2,
+    "silver": 3,
+    "btc": 2,
+    "eth": 2,
+    "spx500": 2,
+    "us100": 2,
 }
 
 #: Nautilus bar specifications by the store's interval name.
@@ -104,6 +120,29 @@ SPECS: dict[str, str] = {
 }
 
 NANOS = 1_000_000_000
+
+#: The venue whose recorded quotes support a measured spread, per feed.
+#:
+#: Six feeds and only six have both 15m bars and enough recorded quotes to
+#: measure one: gold 2,670, btc 2,682, gbpusd 1,120, eurusd 866, us100 791,
+#: spx500 345. `audusd, nzdusd, usdcad, usdchf, usdjpy, eurgbp, eurjpy,
+#: gbpjpy, silver, eth, sol` each have about 5,000 15m bars and **two or fewer
+#: recorded quotes at any venue**, so `write` skips them rather than invent a
+#: spread.
+#:
+#: **us100 and spx500 are not the venue the live desk trades.** Their best
+#: quote coverage is at FOREXCOM and PEPPERSTONE, and the same instrument's
+#: recorded spread runs 0.17 to 3.30 bps across venues - a nineteenfold range -
+#: so a result on either is a result about that venue's cost and must be
+#: reported saying so.
+VENUES: dict[str, str] = {
+    "eurusd": "DERIV",
+    "gbpusd": "DERIV",
+    "gold": "DERIV",
+    "btc": "DERIV",
+    "us100": "FOREXCOM",
+    "spx500": "PEPPERSTONE",
+}
 
 
 @dataclass(frozen=True, slots=True)
@@ -150,29 +189,61 @@ def instrument_for(feed: str, venue: str) -> Instrument:
     """The instrument a backtest trades this feed as.
 
     Standard conventions, not the broker's - see the module docstring. A pair
-    becomes Nautilus's own FX instrument so quantity is in base-currency units;
-    everything else becomes a `Cfd`, which is the split
-    `adapters/mt5/providers.py` makes and for the same reason.
+    is Nautilus's FX convention with quantity in base-currency units;
+    everything else is a `Cfd`, the split `adapters/mt5/providers.py` makes.
+
+    **Zero fees, and not the test provider's.**
+    `TestInstrumentProvider.default_fx_ccy` sets `maker_fee` and `taker_fee` to
+    0.00002, a 2 bp commission on notional that no rule measured here charges
+    and the Deriv account does not pay. At the `N20` stop it is 0.019R a trade
+    - measured at 5.72 USD over 12 eurusd trades and 10.47 over 19 gbpusd -
+    charged to the account and **invisible in the R**, because
+    `Position.realized_pnl` is read net of nothing. Gold, built below with
+    explicit zeros, paid none of it, so the three feeds' R were not comparable.
     """
     where = Venue(venue)
     pair = PAIRS.get(feed)
     if pair is not None:
-        return TestInstrumentProvider.default_fx_ccy(pair, where)
+        base, _, quote = pair.partition("/")
+        digits = 3 if quote == "JPY" else 5
+        return CurrencyPair(
+            instrument_id=InstrumentId(Symbol(pair), where),
+            raw_symbol=Symbol(pair),
+            base_currency=Currency.from_str(base),
+            quote_currency=Currency.from_str(quote),
+            price_precision=digits,
+            size_precision=0,
+            price_increment=Price(10.0**-digits, digits),
+            size_increment=Quantity(1, 0),
+            lot_size=Quantity(1_000, 0),
+            max_quantity=Quantity(10_000_000, 0),
+            min_quantity=Quantity(1_000, 0),
+            max_notional=Money(50_000_000.0, USD),
+            min_notional=Money(1_000.0, USD),
+            max_price=None,
+            min_price=None,
+            margin_init=Decimal("0.03"),
+            margin_maint=Decimal("0.03"),
+            maker_fee=Decimal("0"),
+            taker_fee=Decimal("0"),
+            ts_event=0,
+            ts_init=0,
+        )
 
-    size, digits = CONTRACTS.get(feed, (1.0, 2))
+    digits = CONTRACTS.get(feed, 2)
     symbol = feed.upper()
     return Cfd(
         instrument_id=InstrumentId(Symbol(symbol), where),
         raw_symbol=Symbol(symbol),
         asset_class=AssetClass.COMMODITY if feed in ("gold", "silver") else AssetClass.INDEX,
         base_currency=None,
-        quote_currency=TestInstrumentProvider.default_fx_ccy("EUR/USD").quote_currency,
+        quote_currency=USD,
         price_precision=digits,
         size_precision=2,
         price_increment=Price(10.0**-digits, digits),
         size_increment=Quantity(0.01, 2),
         lot_size=None,
-        max_quantity=Quantity(100.0, 2),
+        max_quantity=Quantity(10_000.0, 2),
         min_quantity=Quantity(0.01, 2),
         max_notional=None,
         min_notional=None,
@@ -184,10 +255,9 @@ def instrument_for(feed: str, venue: str) -> Instrument:
         taker_fee=Decimal("0"),
         ts_event=0,
         ts_init=0,
-        # Read by `strategies/sizes.spec_of`, which prefers a venue-stated tick
-        # value over a derived one. Stated here so the derivation is exercised
-        # rather than bypassed: this catalogue has no broker figure to offer.
-        info={"trade_contract_size": size},
+        # No `trade_contract_size`: see `CONTRACTS`. `sizes.spec_of` falls back
+        # to `instrument.multiplier`, which is the 1 the engine prices with.
+        info=None,
     )
 
 
@@ -343,18 +413,22 @@ def main() -> None:
 
     feeds = tuple(
         part
-        for part in (os.environ.get("CORPUS_FEEDS") or "eurusd gbpusd gold")
-        .replace(",", " ")
-        .split()
+        for part in (os.environ.get("CORPUS_FEEDS") or " ".join(VENUES)).replace(",", " ").split()
         if part
     )
     interval = os.environ.get("CORPUS_INTERVAL", "15m")
-    venue = os.environ.get("CORPUS_VENUE", "DERIV")
-    done = write(feeds, interval=interval, venue=venue)
+    forced = os.environ.get("CORPUS_VENUE", "")
+    # Grouped by venue, because `VENUES` gives a different one per feed and
+    # `write` takes one: a single call at one venue would skip the three feeds
+    # whose quotes are recorded elsewhere, and skipping is silent.
+    done = []
+    for venue in dict.fromkeys(forced or VENUES.get(feed, "DERIV") for feed in feeds):
+        chosen = tuple(f for f in feeds if forced or VENUES.get(f, "DERIV") == venue)
+        done.extend(write(chosen, interval=interval, venue=venue))
     if not done:
         print(
             f"nothing written: the store has no {interval} bars with recorded quotes "
-            f"for {', '.join(feeds)} on {venue}"
+            f"for {', '.join(feeds)}"
         )
         return
     for row in done:

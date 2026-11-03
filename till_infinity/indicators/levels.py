@@ -165,6 +165,71 @@ MERGE_VOL = 0.35
 FORGET_BARS = 500
 
 
+@dataclass(frozen=True, slots=True)
+class Sided:
+    """One parameter that may differ for resistance and support, as a tilt.
+
+    `tilt` is the ratio of the resistance side to the support side. The two
+    sides are `shared * sqrt(tilt)` and `shared / sqrt(tilt)`, so the
+    **geometric mean is `shared` whatever the tilt** and switching asymmetry on
+    cannot change the average.
+
+    That is the whole reason this is a tilt rather than two numbers.
+    `refit-the-parameter-a-lever-multiplies` is the recorded failure: a
+    multiplier whose mean was not 1 changed the average the lever multiplied,
+    and refitting it reversed a +1192 result to -24. Two free numbers would
+    have made "is the book better per side" a test of "is the book better on
+    average", which is a different question with a different answer.
+
+    A `tilt` of 1 returns `shared` on both sides **exactly**, not to within
+    floating point: `tests/test_levels_sided.py` asserts the identity on the
+    whole book, because an asymmetry capability whose neutral setting is not
+    neutral silently reparameterises every existing deployment.
+    """
+
+    shared: float
+    tilt: float = 1.0
+
+    def __post_init__(self) -> None:
+        if self.shared <= 0:
+            raise ValueError(f"shared={self.shared} is not a usable parameter value")
+        if self.tilt <= 0:
+            raise ValueError(
+                f"tilt={self.tilt} is not a ratio. A tilt is resistance over "
+                f"support and must be positive; 1 means no asymmetry."
+            )
+
+    @classmethod
+    def of(cls, value: Sided | float | int) -> Sided:
+        """Accept a `Sided`, or a bare number meaning the same on both sides."""
+        return value if isinstance(value, Sided) else cls(float(value), 1.0)
+
+    @property
+    def symmetric(self) -> bool:
+        return self.tilt == 1.0
+
+    def for_side(self, side: int) -> float:
+        """`side` +1 for resistance (a pivot high), -1 for support, 0 neither.
+
+        The pivot's own side, not the level's position relative to price. A
+        pivot high is price met from below and a pivot low is price met from
+        above, and `Level` already keeps those counts apart for the same
+        reason: they are two different observations, not one object seen twice.
+
+        **0 returns `shared`**, so a `Level` built without a side gets the
+        neutral value rather than whichever branch an `if side > 0` happens to
+        fall through to - which would have handed every sideless level the
+        support parameter and made the default quietly asymmetric.
+        """
+        if self.tilt == 1.0 or side == 0:
+            return self.shared
+        root = math.sqrt(self.tilt)
+        return self.shared * root if side > 0 else self.shared / root
+
+    def __str__(self) -> str:
+        return f"{self.shared:g}" if self.symmetric else f"{self.shared:g}@{self.tilt:g}"
+
+
 class Clock(StrEnum):
     """Which clock a horizon is measured on."""
 
@@ -593,6 +658,11 @@ class Level:
     #: Touches from below (price rose into it) and from above.
     from_below: int = 0
     from_above: int = 0
+    #: The pivot side that first formed it: +1 resistance, -1 support, 0 if
+    #: unset. Kept because a per-side parameter has to be applied to something
+    #: stable, and a level's position relative to price is not - it flips as
+    #: price moves, which would change a level's parameters under it.
+    side: int = 0
     #: Unix seconds of the first and last touch.
     first: float = 0.0
     last: float = 0.0
@@ -647,9 +717,9 @@ class Levels(Indicator):
         self,
         *,
         kind: Kind | str = Kind.KALMAN,
-        reach: int = REACH,
-        merge_vol: float = MERGE_VOL,
-        touch_noise_vol: float = TOUCH_NOISE_VOL,
+        reach: Sided | int = REACH,
+        merge_vol: Sided | float = MERGE_VOL,
+        touch_noise_vol: Sided | float = TOUCH_NOISE_VOL,
         forget: Forget | float | int = FORGET_BARS,
         keep: int = KEEP,
         span: int = 240,
@@ -661,18 +731,26 @@ class Levels(Indicator):
     ) -> None:
         check_scale(type(self).__name__, source, unit, unit_from)
         self.kind = Kind(kind)
-        if span < 2 * reach + 1:
+        self.reach = Sided.of(reach)
+        self.merge_vol = Sided.of(merge_vol)
+        self.touch_noise_vol = Sided.of(touch_noise_vol)
+        widest = max(self.reach_for(1), self.reach_for(-1))
+        if span < 2 * widest + 1:
             raise ValueError(
-                f"span={span} cannot hold a pivot at reach={reach}: a "
-                f"confirmation needs {2 * reach + 1} bars, so no touch would "
+                f"span={span} cannot hold a pivot at reach={widest}: a "
+                f"confirmation needs {2 * widest + 1} bars, so no touch would "
                 f"ever be seen and the book would stay empty."
             )
         super().__init__(
-            [self.kind, reach, merge_vol, touch_noise_vol, keep, str(Forget.of(forget))]
+            [
+                self.kind,
+                str(self.reach),
+                str(self.merge_vol),
+                str(self.touch_noise_vol),
+                keep,
+                str(Forget.of(forget)),
+            ]
         )
-        self.reach = int(reach)
-        self.merge_vol = float(merge_vol)
-        self.touch_noise_vol = float(touch_noise_vol)
         self.forget = Forget.of(forget)
         self.keep = int(keep)
         self.span = int(span)
@@ -684,7 +762,11 @@ class Levels(Indicator):
         self._bar_prev: float | None = None
         self._bar_scale = 0.0
         self._window: deque[tuple[float, float, float]] = deque(maxlen=self.span)
-        self._seen: set[float] = set()
+        #: Keyed on `(when, side)`, not `when`. With a per-side reach the two
+        #: sides confirm on different bars, so a time-only key lets a pivot
+        #: high folded at reach 3 suppress the pivot low at the same bar that
+        #: only confirms at reach 5 - the level would be silently absent.
+        self._seen: set[tuple[float, int]] = set()
         self.levels: list[Level] = []
         self.price = 0.0
         self.when = 0.0
@@ -701,9 +783,9 @@ class Levels(Indicator):
         self._window.append((float(bar.high), float(bar.low), self.when))
         self.bars_seen += 1
         self._set_has_inputs(True)
-        found = [p for p in pivots(self._window, self.reach) if p.when not in self._seen]
+        found = [p for p in self._pivots() if (p.when, p.side) not in self._seen]
         for pivot in found:
-            self._seen.add(pivot.when)
+            self._seen.add((pivot.when, pivot.side))
             self._fold(pivot, scale)
         self._forget()
         # **Pruned by the window, not by the book.** `pivots` rescans the whole
@@ -714,9 +796,32 @@ class Levels(Indicator):
         # bar, forever. Keyed on the window's oldest bar, this is bounded by
         # `span` and nothing is ever counted twice.
         oldest = self._window[0][2]
-        self._seen = {t for t in self._seen if t >= oldest}
+        self._seen = {(t, s) for t, s in self._seen if t >= oldest}
         if not self.initialized and self.levels:
             self._set_initialized(True)
+
+    def reach_for(self, side: int) -> int:
+        """The pivot reach for one side, at least 1 bar.
+
+        Rounded, because a reach is a bar count: a tilt of 1.2 on reach 3 is
+        3.29 and 2.74, which is 3 either way. The tilt therefore does nothing
+        to `reach` until it is large enough to move a whole bar, and a test
+        asserting otherwise would be asserting a rounding.
+        """
+        return max(1, round(self.reach.for_side(side)))
+
+    def _pivots(self) -> list[Pivot]:
+        """Confirmed pivots, one scan per distinct reach.
+
+        One scan when the reaches agree, which is every symmetric book, so the
+        asymmetry capability costs nothing where it is not used.
+        """
+        up, down = self.reach_for(1), self.reach_for(-1)
+        if up == down:
+            return pivots(self._window, up)
+        return [p for p in pivots(self._window, up) if p.side > 0] + [
+            p for p in pivots(self._window, down) if p.side < 0
+        ]
 
     def reset(self) -> None:
         """Nautilus's reset: as if this had never seen a bar."""
@@ -733,15 +838,21 @@ class Levels(Indicator):
         self._set_initialized(False)
 
     def _fold(self, pivot: Pivot, scale: float) -> None:
-        """One touch into the nearest level, or a new level if none is near."""
-        noise = (self.touch_noise_vol * scale) ** 2 if scale > 0.0 else 1e-12
-        level = self._nearest(pivot.price, scale)
+        """One touch into the nearest level, or a new level if none is near.
+
+        The noise and the merge gap are taken at the **pivot's** side, so a
+        book may believe a ceiling's touches more tightly than a floor's.
+        """
+        believed = self.touch_noise_vol.for_side(pivot.side)
+        noise = (believed * scale) ** 2 if scale > 0.0 else 1e-12
+        level = self._nearest(pivot.price, scale, pivot.side)
         if level is None:
             level = Level(
                 estimator=self._build(),
                 first=pivot.when,
                 last=pivot.when,
                 last_bar=self.bars_seen,
+                side=pivot.side,
             )
             self.levels.append(level)
         level.estimator.predict(pivot.confirmed, scale)
@@ -764,10 +875,10 @@ class Levels(Indicator):
             return build(seed=self.seed + len(self.levels))
         return build()
 
-    def _nearest(self, price: float, scale: float) -> Level | None:
+    def _nearest(self, price: float, scale: float, side: int = 0) -> Level | None:
         if not self.levels or scale <= 0.0:
             return None
-        gap = self.merge_vol * scale
+        gap = self.merge_vol.for_side(side) * scale
         near = [x for x in self.levels if abs(x.at(self.when) - price) <= gap]
         return min(near, key=lambda x: abs(x.at(self.when) - price)) if near else None
 
@@ -776,13 +887,19 @@ class Levels(Indicator):
 
         Keeps the one with more touches, because its posterior is the better
         estimate - not the older one, which only says it was found first.
+
+        The gap is the **wider** of the two levels' sides, because merging is
+        symmetric and `ordered` is by price: taking one level's own side would
+        make whether a pair merged depend on which came first in the scan, so
+        the same book would collapse differently read upwards and downwards.
         """
         if scale <= 0.0 or len(self.levels) < 2:
             return
-        gap = self.merge_vol * scale
         ordered = sorted(self.levels, key=lambda x: x.at(self.when))
         kept: list[Level] = []
         for level in ordered:
+            mine = self.merge_vol.for_side(level.side)
+            gap = scale * (max(mine, self.merge_vol.for_side(kept[-1].side)) if kept else mine)
             if kept and abs(level.at(self.when) - kept[-1].at(self.when)) <= gap:
                 better, worse = (
                     (level, kept[-1]) if level.touches > kept[-1].touches else (kept[-1], level)

@@ -219,6 +219,78 @@ def test_every_prefix_produces_the_events_the_full_series_produced():
         assert prefix == [event for event in whole if event.at <= cut], f"prefix {cut} disagrees"
 
 
+def test_a_reach_per_side_defaults_to_the_shared_one_event_for_event():
+    """The default has to be free. A reach per side is a second free parameter
+    and the version carrying it must fold **identically** to the version
+    without it, or every number this rule has ever produced moved the day the
+    parameter was added.
+    """
+    mids = zigzag(10, rise=2.0)
+    plain, events = fold_over(mids)
+    for sided in (
+        Fold(reach=REACH, reach_up=0, reach_down=0),
+        Fold(reach=REACH, reach_up=REACH, reach_down=REACH),
+    ):
+        found: list = []
+        for mid in mids:
+            found.extend(sided.update(mid + WICK, mid - WICK, mid))
+        assert found == events
+        assert (sided.highs, sided.lows, sided.trend) == (plain.highs, plain.lows, plain.trend)
+    assert events, "a series with no events cannot test this"
+
+
+def test_each_side_waits_its_own_reach_and_a_short_side_confirms_first():
+    """What a reach per side is for, and the control that it reaches one side
+    only. A swing low with a three-bar window is known long before a swing high
+    with a fifty-bar one, so a fold holding one window for both is asserting
+    that up legs and down legs take the same time to resolve.
+
+    Built to the short side's definition, so the long side must find nothing.
+    """
+    mids = zigzag(6, reach=3)
+    short = Fold(reach=REACH, reach_up=REACH, reach_down=3)
+    for mid in mids:
+        short.update(mid + WICK, mid - WICK, mid)
+    assert short.lows > 0, "the short side did not confirm on its own three-bar reach"
+    assert short.highs == 0, "a fifty-bar reach confirmed a three-bar turn"
+    symmetric = Fold(reach=3)
+    for mid in mids:
+        symmetric.update(mid + WICK, mid - WICK, mid)
+    assert symmetric.lows == short.lows, "the up reach moved the down side's count"
+    assert symmetric.highs > 0, "the fixture has no swing highs at a three-bar reach"
+
+
+def test_a_tie_is_not_a_swing_unless_the_fold_is_told_it_is():
+    """The one place this port and the rule's own statement disagree. The rule
+    reads `high[j] == max(window)`, which admits a tie; this fold requires
+    strictly beyond, because a tie lets a flat run nominate every bar in it.
+
+    With one live slot per side the last of them wins either way, so the two
+    differ only on exact equality - measured on the catalogue, it moved one
+    spx500 trade and no others. Both readings are kept because the difference
+    is a fact about the feed's price precision, not a preference.
+    """
+    flat = zigzag(4, reach=3)
+    flat = [*flat, flat[-1], flat[-1], flat[-1]]
+    plateau = [*flat[:-1], max(flat), max(flat), *[max(flat) - 1.0] * 4]
+    strict = Fold(reach=3)
+    loose = Fold(reach=3, strict=False)
+    for mid in plateau:
+        strict.update(mid + WICK, mid - WICK, mid)
+        loose.update(mid + WICK, mid - WICK, mid)
+    assert loose.highs > strict.highs, "a tie was not admitted by the non-strict fold"
+    assert strict.highs > 0, "the strict fold found nothing, so the comparison is vacuous"
+
+
+def test_a_negative_reach_per_side_is_refused_rather_than_degenerate():
+    """Zero already means "use the shared reach", so a negative one is the
+    remaining way to ask for nonsense - and it is silent: the window would be
+    shorter than its own candidate and every bar would confirm."""
+    for bad in ({"reach_up": -1}, {"reach_down": -1}):
+        with pytest.raises(ValueError, match="bar count or zero"):
+            Fold(reach=REACH, **bad)
+
+
 def test_a_fold_with_no_reach_is_refused_rather_than_degenerate():
     """A reach of zero makes every bar its own swing, which is a detector that
     fires on everything and looks like a very productive rule."""
@@ -227,6 +299,34 @@ def test_a_fold_with_no_reach_is_refused_rather_than_degenerate():
 
 
 # ---------------------------------------------------------------- the numbers
+
+
+def test_a_per_side_stop_resolves_to_the_shared_number_until_a_side_is_set():
+    """The three per-side stop parameters, and the control that the default is
+    free. `atr_mult`, `spreads` and `reach` each gain an `_up`/`_down` pair
+    where zero means the shared value, so a profile that sets neither has to
+    resolve to exactly the symmetric number on both sides.
+
+    `decide` multiplies the quote spread by `spreads_for` and
+    `on_position_closed` divides by it to recover that spread, so a pair that
+    resolved to the shared value on one path and the side's on the other would
+    misread the cost in R by the ratio of the two.
+    """
+    shipped = StructureProfile.__new__(StructureProfile)
+    for sign in (1, -1):
+        assert shipped.atr_mult_for(sign) == shipped.atr_mult
+        assert shipped.spreads_for(sign) == shipped.spreads == SPREADS
+        assert shipped.reach_for(sign) == shipped.reach == REACH
+
+    class Sided(StructureProfile):
+        atr_mult_up: ClassVar[float] = 1.5
+        spreads_down: ClassVar[float] = 30.0
+        reach_up: ClassVar[int] = 25
+
+    sided = Sided.__new__(Sided)
+    assert (sided.atr_mult_for(1), sided.atr_mult_for(-1)) == (1.5, 1.0)
+    assert (sided.spreads_for(1), sided.spreads_for(-1)) == (SPREADS, 30.0)
+    assert (sided.reach_for(1), sided.reach_for(-1)) == (25, REACH)
 
 
 def test_the_shipped_rule_runs_the_numbers_its_name_states():
@@ -280,6 +380,26 @@ class TinyEdge(Tiny, ManagedExit, EdgeEntry):
     """`StructureEdge` with a three-bar reach. Everything else is the rule."""
 
 
+class FillAnchoredProfile(TinyProfile):
+    """`TinyProfile` with both stop legs measured from the fill."""
+
+    stop_from_close: ClassVar[bool] = False
+
+
+class FillAnchoredEdge(Tiny, ManagedExit, EdgeEntry):
+    profile: ClassVar[FillAnchoredProfile] = FillAnchoredProfile.__new__(FillAnchoredProfile)
+
+
+class SecondsClockProfile(TinyProfile):
+    """`TinyProfile` timing the hold in seconds, which is the superseded read."""
+
+    hold_signal_bars: ClassVar[int] = 0
+
+
+class SecondsClockEdge(Tiny, ManagedExit, EdgeEntry):
+    profile: ClassVar[SecondsClockProfile] = SecondsClockProfile.__new__(SecondsClockProfile)
+
+
 def planted(*, after: list[float] | None = None) -> list[float]:
     """The M15 mids: a rising zigzag that breaks, then whatever follows it.
 
@@ -296,7 +416,9 @@ def planted(*, after: list[float] | None = None) -> list[float]:
     return mids + tail
 
 
-def feed(mids: list[float], spread: float) -> list[object]:
+def feed(
+    mids: list[float], spread: float, *, start_hour: int = 0, gap_at: int = -1
+) -> list[object]:
     """The M1 bars and quotes that aggregate to `mids` on the M15 clock.
 
     **The quote for a minute is stamped at its open and the bar at its close.**
@@ -310,9 +432,15 @@ def feed(mids: list[float], spread: float) -> list[object]:
     size = Quantity(1_000_000, 0)
     volume = Quantity(1, 0)
     data: list[object] = []
+    #: Minutes skipped at `gap_at`, which is a weekend on a real FX feed: 48.5
+    #: hours of no bars. A hold counted in seconds crosses it and a hold
+    #: counted in bars does not, which is the whole difference between them.
+    jump = 0
     for index, mid in enumerate(mids):
+        if index == gap_at:
+            jump += 48 * 60 + 30
         for minute in range(PER_WINDOW):
-            ts = (index * PER_WINDOW + minute) * MINUTE
+            ts = start_hour * 3_600 * SEC + (jump + index * PER_WINDOW + minute) * MINUTE
             data.append(
                 QuoteTick(
                     instrument_id=INSTRUMENT.id,
@@ -342,6 +470,85 @@ def feed(mids: list[float], spread: float) -> list[object]:
     return data
 
 
+def external_feed(
+    mids: list[float], spread: float, *, gap_at: int = -1
+) -> tuple[BarType, list[object]]:
+    """M15 bars as the catalogue holds them, with an optional session gap.
+
+    **Not the composite**, and the difference decides a test: an internally
+    aggregated bar type is driven by a time window, so a 48.5-hour hole in the
+    minute stream is back-filled with 194 empty M15 bars - measured, 120 bars
+    become 314 - and a hold counted in bars then behaves exactly like one
+    counted in seconds. `node/corpus.py` writes external bars, where a gap is
+    an absence, so that is the geometry this fixture carries.
+
+    The quote is the bar's own close straddled by half the spread and stamped a
+    nanosecond *before* the bar, which is what `corpus._quote` does and why a
+    fill lands at the signal bar's close rather than a minute later.
+    """
+    bar_type = BarType.from_str(f"{INSTRUMENT.id}-15-MINUTE-LAST-EXTERNAL")
+    half = spread / 2.0
+    size = Quantity(1_000_000, 0)
+    data: list[object] = []
+    jump = 0
+    for index, mid in enumerate(mids):
+        if index == gap_at:
+            jump += 48 * 60 + 30
+        # One window in, so the quote stamped a nanosecond before the first
+        # bar is not a negative timestamp.
+        ts = (PER_WINDOW + jump + index * PER_WINDOW) * MINUTE
+        data.append(
+            QuoteTick(
+                instrument_id=INSTRUMENT.id,
+                bid_price=Price(mid - half, DIGITS),
+                ask_price=Price(mid + half, DIGITS),
+                bid_size=size,
+                ask_size=size,
+                ts_event=ts - 1,
+                ts_init=ts - 1,
+            )
+        )
+        data.append(
+            Bar(
+                bar_type=bar_type,
+                open=Price(mid, DIGITS),
+                high=Price(mid + WICK, DIGITS),
+                low=Price(mid - WICK, DIGITS),
+                close=Price(mid, DIGITS),
+                volume=Quantity(1, 0),
+                ts_event=ts,
+                ts_init=ts,
+            )
+        )
+    return bar_type, data
+
+
+def run_external(
+    mids: list[float], spread: float = 0.10, *, gap_at: int = -1, seconds_clock: bool = False
+) -> TinyEdge:
+    """One engine over external M15 bars. See `external_feed`."""
+    engine = BacktestEngine(
+        config=BacktestEngineConfig(
+            trader_id="TESTER-001", logging=LoggingConfig(bypass_logging=True)
+        )
+    )
+    engine.add_venue(
+        venue=VENUE,
+        oms_type=OmsType.NETTING,
+        account_type=AccountType.MARGIN,
+        base_currency=USD,
+        starting_balances=[Money(1_000_000.0, USD)],
+    )
+    engine.add_instrument(INSTRUMENT)
+    bar_type, data = external_feed(mids, spread, gap_at=gap_at)
+    engine.add_data(data)
+    built = SecondsClockEdge if seconds_clock else TinyEdge
+    strategy = built(EdgeEntryConfig(instrument_id=INSTRUMENT.id, bar_type=bar_type))
+    engine.add_strategy(strategy)
+    engine.run()
+    return strategy
+
+
 def composite() -> BarType:
     """M15 aggregated from the M1 bars inside the engine.
 
@@ -352,7 +559,16 @@ def composite() -> BarType:
     return BarType.from_str(f"{INSTRUMENT.id}-15-MINUTE-LAST-INTERNAL@1-MINUTE-EXTERNAL")
 
 
-def run(mids: list[float] | None = None, spread: float = 0.10) -> TinyEdge:
+def run(
+    mids: list[float] | None = None,
+    spread: float = 0.10,
+    *,
+    from_close: bool = True,
+    equity: float = 1_000_000.0,
+    start_hour: int = 0,
+    gap_at: int = -1,
+    seconds_clock: bool = False,
+) -> TinyEdge:
     """One engine, one desk, the planted feed. Nothing is driven by hand."""
     mids = planted() if mids is None else mids
     engine = BacktestEngine(
@@ -366,7 +582,10 @@ def run(mids: list[float] | None = None, spread: float = 0.10) -> TinyEdge:
         oms_type=OmsType.NETTING,
         account_type=AccountType.MARGIN,
         base_currency=USD,
-        starting_balances=[Money(1_000_000, USD)],
+        # A wide stop needs an equity that covers the 1,000-unit minimum lot:
+        # at 0.0025 of a million the budget is 2,500 and a 2.60 stop risks
+        # 2,600, which `sizes.size` refuses rather than round down.
+        starting_balances=[Money(equity, USD)],
         # **Quotes alone fill.** With bar execution on, the engine would also
         # match against the bar it has just processed - the bar the signal was
         # read from, at no spread at all. That is a fill nobody could get, and
@@ -374,8 +593,10 @@ def run(mids: list[float] | None = None, spread: float = 0.10) -> TinyEdge:
         bar_execution=False,
     )
     engine.add_instrument(INSTRUMENT)
-    engine.add_data(feed(mids, spread))
-    strategy = TinyEdge(EdgeEntryConfig(instrument_id=INSTRUMENT.id, bar_type=composite()))
+    engine.add_data(feed(mids, spread, start_hour=start_hour, gap_at=gap_at))
+    anchored = TinyEdge if from_close else FillAnchoredEdge
+    built = SecondsClockEdge if seconds_clock else anchored
+    strategy = built(EdgeEntryConfig(instrument_id=INSTRUMENT.id, bar_type=composite()))
     engine.add_strategy(strategy)
     engine.run()
     return strategy
@@ -489,36 +710,69 @@ def test_the_entry_fills_at_the_quote_after_the_m15_close_and_not_at_it():
     assert entry.ts_last >= filled * PER_WINDOW * MINUTE
 
 
-def test_the_stop_takes_the_twenty_spread_floor_when_it_is_the_wider():
-    """The `N20`. One ATR can be tighter than the round trip on a quiet
-    instrument, and a stop inside its own cost is a trade that cannot pay for
-    itself - so the rule floors it at twenty spreads. This feed is built so the
-    floor wins: a 0.10 spread floors the stop at 2.00 against an ATR of about
-    1.2."""
+def test_the_spread_floor_is_measured_from_the_fill_and_binds_when_it_is_wider():
+    """The `N20`, with its anchor. One ATR can be tighter than the round trip
+    on a quiet instrument and a stop inside its own cost cannot pay for itself,
+    so the rule floors the stop at twenty spreads - measured from **the price
+    actually filled**, not from the signal close.
+
+    Read off the close instead, a fill that ran away from the close would buy
+    a stop that much wider for nothing, and the floor would stop guaranteeing
+    the trade clears its own round trip.
+    """
     mids = planted()
-    strategy = run(mids, spread=0.10)
+    strategy = run(mids, spread=0.15, equity=10_000_000.0)
     _, entry, stop = orders_of(strategy)
-    assert atr_at(mids, SIGNAL_BARS) < SPREADS * 0.10, "this feed does not exercise the floor"
-    distance = abs(float(entry.avg_px) - float(stop.trigger_price))
-    assert distance == pytest.approx(SPREADS * 0.10, abs=2e-5)
+    floor = float(entry.avg_px) - SPREADS * 0.15
+    assert floor < mids[SIGNAL_BARS - 1] - atr_at(mids, SIGNAL_BARS), (
+        "this feed does not exercise the floor - the ATR leg is the wider"
+    )
+    assert float(stop.trigger_price) == pytest.approx(floor, abs=2e-5)
 
 
-def test_the_stop_takes_one_atr_when_that_is_the_wider():
-    """The other branch of the same `max`, and the one a port is likelier to
-    drop: with a tight spread the ATR binds, and a rule that only ever read the
-    floor would be `N20` with an ATR in its name."""
+def test_the_atr_leg_is_measured_from_the_signal_close_and_binds_when_it_is_wider():
+    """Step 6's other anchor, and the one this port had wrong.
+
+    The ATR distance is taken from the **signal bar's close**, so the risk a
+    trade carries is one ATR plus however far the fill ran from that close:
+    1.10 plus 1.30 on this feed, a stop 2.18x the ATR. Anchoring both legs at
+    the fill makes `risk` exactly `max(atr, 20 * spread)`, which understates
+    the risk by the fill's own travel and so overstates every R by the same
+    fraction.
+    """
     mids = planted()
+    expected = mids[SIGNAL_BARS - 1] - atr_at(mids, SIGNAL_BARS)
     strategy = run(mids, spread=0.002)
-    expected = atr_at(mids, SIGNAL_BARS)
-    assert expected > SPREADS * 0.002, "this feed does not exercise the ATR branch"
     _, entry, stop = orders_of(strategy)
-    distance = abs(float(entry.avg_px) - float(stop.trigger_price))
-    assert distance == pytest.approx(expected, abs=2e-5)
-    # **And it is the ATR of the bars that had closed.** One bar more is a
-    # different number here, so this pins the causal count rather than the
-    # arithmetic alone: an ATR folded one bar late is the same look-ahead the
-    # swing confirmation is careful about, arriving through the stop distance.
-    assert distance != pytest.approx(atr_at(mids, SIGNAL_BARS + 1), abs=2e-5)
+    assert expected < float(entry.avg_px) - SPREADS * 0.002, (
+        "this feed does not exercise the ATR branch - the floor is the wider"
+    )
+    assert float(stop.trigger_price) == pytest.approx(expected, abs=2e-5)
+    # The ATR of the bars that had closed. One bar more is a different number
+    # here, so this pins the causal count and not the arithmetic alone.
+    assert float(stop.trigger_price) != pytest.approx(
+        mids[SIGNAL_BARS - 1] - atr_at(mids, SIGNAL_BARS + 1), abs=2e-5
+    )
+
+
+def test_anchoring_both_legs_at_the_fill_is_the_reading_the_flag_turns_off():
+    """`stop_from_close=False`, which is what this port read before the rule's
+    two anchors were separated. It must still produce a stop, and a *tighter*
+    one: the difference is the fill's travel from the close, 1.30 here, so a
+    run with the flag off cannot be mistaken for a run with it on.
+    """
+    mids = planted()
+    strict = run(mids, spread=0.002)
+    _, _, stop = orders_of(strict)
+    loose = run(mids, spread=0.002, from_close=False)
+    _, loose_entry, loose_stop = orders_of(loose)
+    atr = atr_at(mids, SIGNAL_BARS)
+    assert float(loose_entry.avg_px) - float(loose_stop.trigger_price) == pytest.approx(
+        atr, abs=2e-5
+    )
+    assert float(stop.trigger_price) < float(loose_stop.trigger_price), (
+        "the close anchor did not widen the stop"
+    )
 
 
 def test_a_change_of_character_places_nothing_and_still_flips_the_label():
@@ -565,6 +819,87 @@ def test_the_trade_comes_off_on_the_clock_when_the_stop_is_never_hit():
     assert trade.closed - trade.opened == pytest.approx(HOLD_MINUTES * 60.0, abs=120.0)
     assert strategy.passed_over.get("(exit):closed") == 1
     assert not strategy.cache.positions_open(strategy_id=strategy.id)
+
+
+def test_the_clock_counts_bars_and_so_does_not_run_during_a_session_gap():
+    """**The divergence worth the most R of any in this port.** `Intent.hold`
+    is seconds and `Exits._expired` compares elapsed time, so a 1,440-minute
+    hold expires *inside* a weekend and the position comes off at the first
+    quote after it - the reopen, which is the one bar a survivorship confound
+    lives on. The rule counts 1,440 M1 bars, so a gap spends none of them.
+
+    Measured on the catalogue, this moved eurusd by -0.146R a trade: three of
+    its exits had landed on a Sunday reopen quote at 49.0 and 56.8 hours of
+    clock. The feed here drops 48.5 hours mid-hold, which is that weekend.
+    """
+    mids = planted()
+    bars = run_external(mids, gap_at=50)
+    assert len(bars.closed) == 1, bars.closed
+    assert bars.closed[0].how == "clock"
+    held = bars.closed[0].closed - bars.closed[0].opened
+    assert held == pytest.approx((HOLD_MINUTES + 48 * 60 + 30) * 60.0, abs=120.0), (
+        f"the bar clock spent bars the feed does not have: held {held / 3600:.1f}h"
+    )
+
+    seconds = run_external(mids, gap_at=50, seconds_clock=True)
+    assert len(seconds.closed) == 1
+    assert seconds.closed[0].closed - seconds.closed[0].opened < held, (
+        "the seconds clock no longer exits earlier, so this test proves nothing"
+    )
+
+
+def test_an_internally_aggregated_bar_type_back_fills_a_session_gap():
+    """Why the test above needs external bars, asserted rather than asserted
+    about. A time-driven aggregator emits a bar per window whether or not any
+    minute arrived, so a 48.5-hour hole becomes 194 empty M15 bars and a
+    bar-count hold silently becomes a seconds hold.
+
+    Anything measuring a session effect on a composite bar type is measuring
+    a feed with no sessions in it.
+    """
+    mids = planted()
+    assert run(mids).structure["bars"] == len(mids) - 1
+    assert run(mids, gap_at=50).structure["bars"] > len(mids) + 100, (
+        "the aggregator no longer back-fills, so a composite feed can carry a gap"
+    )
+    assert run_external(mids, gap_at=50).structure["bars"] == len(mids), (
+        "external bars gained bars across the gap"
+    )
+
+
+def test_no_fill_is_taken_in_the_cut_off_hours_and_one_is_taken_outside_them():
+    """The later variants' entry cut-off, with its control.
+
+    A gate with no control is indistinguishable from a gate that refuses
+    everything, and this one is a window on a clock that every bar passes
+    through. The signal lands five hours into the feed, so the start hour
+    places it: 19:00 and 23:00 are cut, 18:00 and 00:00 are not.
+    """
+    mids = planted()
+    for hour in (14, 18):
+        cut = run(mids, start_hour=hour)
+        assert cut.taken == 0, f"a fill at {(hour + 5) % 24:02d}:00 UTC was taken"
+        assert cut.passed_over.get("smc-bos-causal:cut-off") == 1
+    for hour in (13, 19):
+        kept = run(mids, start_hour=hour)
+        assert kept.taken == 1, f"the cut-off refused a fill at {(hour + 5) % 24:02d}:00 UTC"
+        assert "smc-bos-causal:cut-off" not in kept.passed_over
+
+
+def test_a_cut_fill_still_spends_its_swing_and_does_not_free_the_slot():
+    """Where the cut-off sits in the sequence, which changes the trade list
+    rather than just shortening it.
+
+    The break is counted and the swing is marked broken whatever happens next,
+    because the refusal is in `decide` and the fold ran first. Cut in the fold
+    instead and the swing would stay live to break again on a later bar, at a
+    price the rule never offered - inventing trades rather than removing them.
+    """
+    mids = planted()
+    cut = run(mids, start_hour=14)
+    assert cut.structure["bos"] == 1, cut.structure
+    assert cut.taken == 0
+    assert not cut.fold.high_live, "the cut-off left the swing live to break twice"
 
 
 def test_a_stop_out_is_recorded_as_one_and_costs_about_a_whole_r():

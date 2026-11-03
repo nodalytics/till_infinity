@@ -112,10 +112,23 @@ class Fold:
     """
 
     reach: int = REACH
-    #: `(high, low)` for the last `2 * reach + 1` bars. The oldest `reach` are
-    #: the left window, the newest `reach` the right, and the one in the middle
-    #: is the candidate - so a candidate is judged exactly `reach` bars after
-    #: it printed and not before.
+    #: Bars each side of a swing **high** and of a swing **low**, zero meaning
+    #: `reach`. Two windows rather than one is the whole per-side question: a
+    #: buy break comes from a confirmed high and a sell break from a confirmed
+    #: low, so a reach per side is a lookback per traded direction. Zero on
+    #: both is arithmetically identical to the single-window version.
+    reach_up: int = 0
+    reach_down: int = 0
+    #: True requires a candidate strictly beyond both windows; False admits a
+    #: tie, which is what the rule's reference statement does (`high[j] ==
+    #: max(...)`). Strict is the default because a tie lets a flat run nominate
+    #: every bar in it, and with one live slot per side the last of them wins -
+    #: so the two differ only on exact equality. Measured on this catalogue:
+    #: 0 breaks of 94 moved.
+    strict: bool = True
+    #: `(high, low)` for the last `2 * max(reach_up, reach_down) + 1` bars. The
+    #: candidate for a side is the bar exactly that side's reach back from the
+    #: newest, so it is judged that many bars after it printed and not before.
     window: deque[tuple[float, float]] = field(default_factory=deque)
     #: The latest confirmed swing on each side, and whether it has triggered.
     #: One slot rather than a stack: the rule says *the latest unbroken swing*,
@@ -143,7 +156,14 @@ class Fold:
     def __post_init__(self) -> None:
         if self.reach < 1:
             raise ValueError(f"a swing needs at least one bar each side, not {self.reach}")
-        self.window = deque(self.window, maxlen=2 * self.reach + 1)
+        for name in ("reach_up", "reach_down"):
+            if getattr(self, name) < 0:
+                raise ValueError(f"{name} is a bar count or zero, not {getattr(self, name)}")
+        self.window = deque(self.window, maxlen=2 * max(self._reach(1), self._reach(-1)) + 1)
+
+    def _reach(self, side: int) -> int:
+        """This side's reach, falling back to the shared one on zero."""
+        return (self.reach_up if side > 0 else self.reach_down) or self.reach
 
     def update(self, high: float, low: float, close: float) -> list[Event]:
         """One closed bar. Every break it produced, in order.
@@ -164,31 +184,42 @@ class Fold:
         return self._broke(close)
 
     def _confirm(self) -> None:
-        """Promote the candidate in the middle of the window, if it is one."""
-        if self.window.maxlen is None or len(self.window) < self.window.maxlen:
-            return
-        reach = self.reach
-        highs = [bar[0] for bar in self.window]
-        lows = [bar[1] for bar in self.window]
-        candidate_high = highs[reach]
-        candidate_low = lows[reach]
-        # Strictly higher than both sides. A tie is not a swing: with `>=` on
-        # the left a flat run would nominate every bar in it, and the rule
-        # says *the highest*.
-        if candidate_high > max(highs[:reach]) and candidate_high > max(highs[reach + 1 :]):
-            self.highs += 1
-            self.high_step = _step(candidate_high, self.last_high) if self.last_high else 0
-            self.last_high = candidate_high
-            self.high = candidate_high
-            self.high_live = True
-            self._relabel()
-        if candidate_low < min(lows[:reach]) and candidate_low < min(lows[reach + 1 :]):
-            self.lows += 1
-            self.low_step = _step(candidate_low, self.last_low) if self.last_low else 0
-            self.last_low = candidate_low
-            self.low = candidate_low
-            self.low_live = True
-            self._relabel()
+        """Promote each side's candidate, if it is one.
+
+        Asked per side rather than once, because the two reaches can differ: a
+        short side ready at `2 * reach_down + 1` bars must not wait for the
+        long side's window to fill.
+        """
+        bars = list(self.window)
+        up, down = self._reach(1), self._reach(-1)
+        if len(bars) >= 2 * up + 1:
+            span = bars[len(bars) - (2 * up + 1) :]
+            highs = [bar[0] for bar in span]
+            candidate = highs[up]
+            beyond = max(highs[:up]), max(highs[up + 1 :])
+            if (candidate > beyond[0] and candidate > beyond[1]) or (
+                not self.strict and candidate >= beyond[0] and candidate >= beyond[1]
+            ):
+                self.highs += 1
+                self.high_step = _step(candidate, self.last_high) if self.last_high else 0
+                self.last_high = candidate
+                self.high = candidate
+                self.high_live = True
+                self._relabel()
+        if len(bars) >= 2 * down + 1:
+            span = bars[len(bars) - (2 * down + 1) :]
+            lows = [bar[1] for bar in span]
+            candidate = lows[down]
+            beyond = min(lows[:down]), min(lows[down + 1 :])
+            if (candidate < beyond[0] and candidate < beyond[1]) or (
+                not self.strict and candidate <= beyond[0] and candidate <= beyond[1]
+            ):
+                self.lows += 1
+                self.low_step = _step(candidate, self.last_low) if self.last_low else 0
+                self.last_low = candidate
+                self.low = candidate
+                self.low_live = True
+                self._relabel()
 
     def _relabel(self) -> None:
         """The trend, from the last pair of swings on each side.
@@ -297,6 +328,50 @@ class StructureProfile(Profile):
     #: The clock the signal is read on. Stated so a desk built on another one
     #: is visible rather than quietly measuring a different rule.
     interval: ClassVar[str] = "15m"
+    #: Signal-clock bars the trade is held: 1,440 one-minute bars is 96 M15
+    #: ones. **A bar count and not `hold_seconds`.** The two differ by whatever
+    #: the feed's gaps are worth: three of the 31 FX trades on this catalogue
+    #: exited at 49.0h and 56.8h of clock because the 86,400-second deadline
+    #: fell inside a weekend and the exit landed on the first quote at the
+    #: Sunday reopen - which is the one place a survivorship confound lives.
+    hold_signal_bars: ClassVar[int] = HOLD_MINUTES // 15
+    #: Bars each side of a swing, per side, zero meaning `reach`. See `Fold`.
+    reach_up: ClassVar[int] = 0
+    reach_down: ClassVar[int] = 0
+    #: Multiples of one M15 ATR the stop clears, per side on zero. Separate
+    #: from `spreads` because the two legs are anchored differently.
+    atr_mult: ClassVar[float] = 1.0
+    atr_mult_up: ClassVar[float] = 0.0
+    atr_mult_down: ClassVar[float] = 0.0
+    #: Spreads the stop clears, per side on zero. See `spreads`.
+    spreads_up: ClassVar[float] = 0.0
+    spreads_down: ClassVar[float] = 0.0
+    #: True admits a swing on a tie; see `Fold.strict`, whose default is the
+    #: opposite because this flag is stated the way the rule reads.
+    tie_is_a_swing: ClassVar[bool] = False
+    #: True anchors the **ATR leg at the signal bar's close** and the spread
+    #: floor at the fill, then takes the wider - which is how the rule states
+    #: it. False anchors both at the fill, which was this port's reading and
+    #: makes `risk` exactly `max(atr, 20 * spread)`. On this catalogue the two
+    #: differ by half a spread, because the modelled quote *is* the bar's
+    #: close, so nothing here can measure the real gap.
+    stop_from_close: ClassVar[bool] = True
+    #: UTC hours in which no fill is taken. The rule's later variants cut
+    #: 19:00-23:59, judged on the fill. Read here off the signal bar's close
+    #: stamp, which is the same hour except in its last minute.
+    no_fill_hours: ClassVar[tuple[int, ...]] = (19, 20, 21, 22, 23)
+
+    def reach_for(self, sign: int) -> int:
+        """This side's swing reach, falling back to `reach` on zero."""
+        return (self.reach_up if sign > 0 else self.reach_down) or self.reach
+
+    def atr_mult_for(self, sign: int) -> float:
+        """This side's ATR multiple, falling back to `atr_mult` on zero."""
+        return (self.atr_mult_up if sign > 0 else self.atr_mult_down) or self.atr_mult
+
+    def spreads_for(self, sign: int) -> float:
+        """This side's spread floor, falling back to `spreads` on zero."""
+        return (self.spreads_up if sign > 0 else self.spreads_down) or self.spreads
 
 
 class Structure:
@@ -333,7 +408,16 @@ class Structure:
         """
         from ..indicators import build_detector
 
-        self.fold = Fold(reach=self.profile.reach)
+        self.fold = Fold(
+            reach=self.profile.reach,
+            reach_up=self.profile.reach_up,
+            reach_down=self.profile.reach_down,
+            strict=not self.profile.tie_is_a_swing,
+        )
+        #: The signal-bar index a position opened on, for the bar clock. Kept
+        #: here rather than on `Held` because the clock is this rule's own: a
+        #: bar count is not a duration and `Exits._expired` reads seconds.
+        self.opened_on: dict[Any, int] = {}
         #: What the fold has produced, by kind, including the zeros. A port is
         #: judged on these before it is judged on any money: a run with no
         #: swings and a run with no breaks are different failures and a trade
@@ -375,6 +459,7 @@ class Structure:
         """
         super().on_bar(bar)
         self.structure["bars"] += 1
+        self._clock()
         events = self.fold.update(float(bar.high), float(bar.low), float(bar.close))
         self.structure["swing_highs"] = self.fold.highs
         self.structure["swing_lows"] = self.fold.lows
@@ -393,6 +478,28 @@ class Structure:
             # where the desk counts what it took, places it, and follows what
             # it declined. A dict is one of the two shapes it accepts.
             self.on_data(self._payload(event, bar))
+
+    def _clock(self) -> None:
+        """Close anything that has run out of bars.
+
+        **The `time` in the rule's name, as a bar count.** Run before the
+        fold's own events so the slot a closing trade holds is free for a
+        break on this bar, which is what a greedy one-position rule does.
+        """
+        due = self.profile.hold_signal_bars
+        if due <= 0:
+            return
+        for position_id, opened in list(self.opened_on.items()):
+            held = self.structure["bars"] - opened
+            if held < due:
+                continue
+            if self._close(position_id, f"held {held} bars and its rule allows {due}"):
+                self._count("(exit):closed")
+
+    def on_position_opened(self, event: Any) -> None:
+        """Stamp the bar the position opened on, for `_clock`."""
+        self.opened_on[event.position_id] = self.structure["bars"]
+        super().on_position_opened(event)
 
     def _payload(self, event: Event, bar: Bar) -> dict[str, Any]:
         """The BOS as the payload `Desk.consider` reads.
@@ -416,7 +523,10 @@ class Structure:
                 "bos_atr": float(self.atr.value) if self.atr.initialized else 0.0,
                 "bos_trend": float(event.trend),
                 "bos_close": float(bar.close),
-                "bos_reach": float(self.profile.reach),
+                "bos_reach": float(self.profile.reach_for(event.side.sign)),
+                # The hour the fill lands in, read off the close stamp. In
+                # whole hours, because that is what the cut-off is written in.
+                "bos_hour": float((bar.ts_event // 3_600_000_000_000) % 24),
             },
         }
 
@@ -458,14 +568,35 @@ class Structure:
             # trades through.
             return Refusal(gate="atr", detail=f"the M15 ATR reads {atr:.6g}", feed=feed)
 
+        hour = int(_number(features.get("bos_hour")))
+        if hour in self.profile.no_fill_hours:
+            # The later variants' entry cut-off. Refused here and not in the
+            # fold, so the break is still counted and still spends its swing:
+            # a cut trade must not free the one-position slot for a different
+            # one, and must not leave the swing live to break again.
+            return Refusal(gate="cut-off", detail=f"no fill at {hour:02d} UTC", feed=feed)
+
         entry = tick.ask if side is Side.BUY else tick.bid
         if entry <= 0.0:
             return Refusal(gate="bad-quote", detail=f"{feed} quoted {entry}", feed=feed)
-        # Step 6, in one line: the wider of one ATR and 20 spreads. The spread
-        # is the quote's own, not the spread *column*, whose conversion is a
-        # measured 476% error on this desk.
-        spreads = self.profile.spreads * tick.spread
-        risk = max(atr, spreads)
+        # Step 6: the wider of one ATR and 20 spreads, which are **anchored at
+        # different prices** - the ATR at the signal bar's close, the floor at
+        # the fill. The spread is the quote's own, not the spread *column*,
+        # whose conversion is a measured 476% error on this desk.
+        spreads = self.profile.spreads_for(side.sign) * tick.spread
+        reach = self.profile.atr_mult_for(side.sign) * atr
+        close = _number(features.get("bos_close"))
+        if self.profile.stop_from_close and close > 0.0:
+            # The wider of the two levels, which is a `min` on a buy: a stop
+            # further below is a wider one.
+            stop = (
+                min(close - reach, entry - spreads)
+                if side is Side.BUY
+                else max(close + reach, entry + spreads)
+            )
+        else:
+            stop = entry - side.sign * max(reach, spreads)
+        risk = abs(entry - stop)
         if risk <= 0.0:
             return Refusal(gate="stop", detail="a zero stop distance", feed=feed)
 
@@ -477,7 +608,7 @@ class Structure:
             # how they come to disagree.
             volume=0.0,
             entry=entry,
-            stop=entry - side.sign * risk,
+            stop=stop,
             # **No target, which is the rule.** `EdgeEntry` submits the entry
             # alone on a zero and attaches the stop from `on_order_filled`;
             # a target invented here would be a different rule with better
@@ -489,11 +620,13 @@ class Structure:
             ),
             interval=self.profile.interval,
             features={k: _number(v) for k, v in features.items()}
-            | {"bos_stop_spreads": spreads, "bos_stop_atr": atr},
-            # Step 7. Seconds because that is what the exit clock reads;
-            # 1,440 one-minute bars is this many seconds of a feed with no
-            # session gap in it, and one more than that on a feed with one.
-            hold=self.profile.hold_seconds,
+            | {"bos_stop_spreads": spreads, "bos_stop_atr": reach},
+            # Step 7 is `hold_signal_bars` and `_clock` runs it, so no seconds
+            # hold: the two would race and the seconds one wins across a
+            # session gap, which is what put three FX exits on the Sunday
+            # reopen quote. Zero bars falls back to the seconds clock, which
+            # exists only to reproduce the superseded reading.
+            hold=0.0 if self.profile.hold_signal_bars > 0 else self.profile.hold_seconds,
         )
 
     # -------------------------------------------------------------- the record
@@ -510,6 +643,7 @@ class Structure:
         because that is the only place the reason is written: a stop-out leaves
         it empty, the clock and the basket each say why.
         """
+        self.opened_on.pop(event.position_id, None)
         held = self.exits.held(event.position_id)
         position = self.cache.position(event.position_id)
         if held is not None and position is not None:
@@ -528,8 +662,12 @@ class Structure:
                     opened=held.opened,
                     closed=self.clock.timestamp(),
                     risk_px=held.intent.risk,
+                    # Divided by **this side's** floor, not the shared one:
+                    # `bos_stop_spreads` is `spreads_for(side) * spread`, so a
+                    # per-side floor recovers the wrong quote spread here and
+                    # the cost in R is misread by the ratio of the two.
                     spread_px=_number(held.intent.features.get("bos_stop_spreads"))
-                    / self.profile.spreads,
+                    / self.profile.spreads_for(held.intent.side.sign),
                 )
             )
         super().on_position_closed(event)

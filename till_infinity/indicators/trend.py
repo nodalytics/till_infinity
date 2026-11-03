@@ -270,7 +270,13 @@ class Trendline:
         return self.gradient * 3_600.0
 
 
-def pivots(window: Sequence[tuple[float, float, float]], reach: int = REACH) -> list[Pivot]:
+def pivots(
+    window: Sequence[tuple[float, float, float]],
+    reach: int = REACH,
+    *,
+    reach_up: int = 0,
+    reach_down: int = 0,
+) -> list[Pivot]:
     """Confirmed pivots in `window`, oldest first.
 
     `window` is `(high, low, when)` per bar, oldest first. A bar is a pivot
@@ -280,16 +286,45 @@ def pivots(window: Sequence[tuple[float, float, float]], reach: int = REACH) -> 
 
     Ties go to **neither**: a flat top of two equal highs is not a reversal,
     and admitting it would let a sideways stretch produce a pivot every bar.
+
+    `reach_up` and `reach_down` take a different lookback per side, zero
+    meaning "use `reach`". **Measured null** on the BOS rule over six feeds, 75
+    trades: a 3x3 reach grid's best asymmetric cell beat its best symmetric one
+    by -0.285R pooled while the side-reversed mirror, which has no asymmetry in
+    it, gained more on 5 of 6 instruments - so the gain is the max of six noisy
+    cells. The mirror's own gains run +0.117 to +0.692R, which is where the
+    test goes blind. See `research/docs/smc-bos-reconcile.md`.
+
+    **Zero on both is arithmetically identical to the version without them.**
+    That is the only safe default: a pair of windows is `k**2` cells and not
+    `2k`, because a confirmed high and a confirmed low both feed one trend
+    label, so an asymmetric default would be two confounded parameters wearing
+    one name.
     """
+    up = reach_up or reach
+    down = reach_down or reach
+    if min(up, down) < 1:
+        # Refused, not clamped: at a reach below one `range(i - up, i + up + 1)`
+        # is empty, `all(...)` of nothing is True, and every bar in the window
+        # is nominated a pivot - a detector that fires on everything.
+        raise ValueError(f"a pivot needs at least one bar each side, not {min(up, down)}")
     out: list[Pivot] = []
     n = len(window)
-    for i in range(reach, n - reach):
+    for i in range(min(up, down), n - min(up, down)):
         high, low, when = window[i]
-        confirmed = window[i + reach][2]
-        if all(window[k][0] < high for k in range(i - reach, i + reach + 1) if k != i):
-            out.append(Pivot(side=1, price=high, when=when, confirmed=confirmed))
-        if all(window[k][1] > low for k in range(i - reach, i + reach + 1) if k != i):
-            out.append(Pivot(side=-1, price=low, when=when, confirmed=confirmed))
+        if (
+            up <= i < n - up
+            # The confirmation is that side's own bar, so an asymmetric pair
+            # dates a high and a low found on one bar to different moments -
+            # which is the whole content of the asymmetry and the easiest
+            # thing to lose by taking one `confirmed` for both.
+            and all(window[k][0] < high for k in range(i - up, i + up + 1) if k != i)
+        ):
+            out.append(Pivot(side=1, price=high, when=when, confirmed=window[i + up][2]))
+        if down <= i < n - down and all(
+            window[k][1] > low for k in range(i - down, i + down + 1) if k != i
+        ):
+            out.append(Pivot(side=-1, price=low, when=when, confirmed=window[i + down][2]))
     return out
 
 
