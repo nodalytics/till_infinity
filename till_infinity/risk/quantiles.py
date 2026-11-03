@@ -58,7 +58,7 @@ divide.
 
 from __future__ import annotations
 
-import math
+import functools
 from dataclasses import dataclass, field
 
 from till_infinity.domain.costs import MAX_SPREAD_RISK_FRACTION
@@ -110,10 +110,36 @@ def student_stop(tau: float = TAU, dof: float = DOF) -> float:
             f"dof={dof} has no finite variance, so a unit-scale quantile is not "
             f"defined. The measured range is 3 to 5."
         )
-    from scipy import stats
+    return _cached(tau, dof)
 
-    raw = float(stats.t.ppf((1.0 + tau) / 2.0, dof))
-    return raw / math.sqrt(dof / (dof - 2.0))
+
+@functools.lru_cache(maxsize=256)
+def _cached(tau: float, dof: float) -> float:
+    """`domain.tails.reach`, memoised.
+
+    **Three fixes in one line, each forced by a test.**
+
+    Not scipy: it is absent from `pyproject.toml` and resolves only because
+    `river` pulls it in transitively, so
+    `test_every_third_party_import_is_declared` turned red the moment this
+    module imported it - the exact failure that test exists for. Four modules
+    state the policy outright, `node/metrics.py` among them: "hand-rolled
+    rather than taking scipy, which would be a dependency for one".
+
+    Not `statespace.tails` either, though it holds the same arithmetic:
+    **`risk` may import no layer at all**, which `test_service_boundaries.py`
+    pins as `"risk": frozenset()`. Reaching into `statespace` turned two more
+    tests red, so the function lives in `domain` - which `risk` may use, and
+    which this module already imports `costs` from.
+
+    **Memoised because the in-house version is three times slower per call** -
+    about 1,700 us against scipy's 630 - so the swap uncached would have made
+    the live path worse rather than better. It takes two floats and returns a
+    constant, so there is nothing to invalidate.
+    """
+    from till_infinity.domain.tails import reach
+
+    return reach(tau, dof)
 
 
 @dataclass(frozen=True, slots=True)
@@ -182,10 +208,20 @@ class Quantile:
             )
 
     def _side(self, side: int) -> dict[str, float]:
-        return self.state.setdefault(
-            side,
-            {"q": student_stop(self.tau, self.dof), "hits": 0.0, "flat": 0.0, "n": 0.0},
-        )
+        """This side's state, created on first use.
+
+        **Not `setdefault`.** Python builds a `setdefault` default *eagerly*,
+        on every call rather than only when the key is absent, so the
+        quantile was being computed twice per observation for a constant -
+        measured at 1,499 us an `observe` against `student_stop`'s own 630.
+        On a live path that is milliseconds per decision for a number that
+        never changes.
+        """
+        held = self.state.get(side)
+        if held is None:
+            held = {"q": student_stop(self.tau, self.dof), "hits": 0.0, "flat": 0.0, "n": 0.0}
+            self.state[side] = held
+        return held
 
     def observe(self, side: int, excursion: float) -> None:
         """Score the stop this excursion tested, then move the estimate.
