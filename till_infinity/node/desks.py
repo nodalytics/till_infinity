@@ -65,6 +65,7 @@ from __future__ import annotations
 import os
 import re
 import zlib
+from pathlib import Path
 
 from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import ImportableActorConfig, ImportableStrategyConfig
@@ -617,7 +618,19 @@ def importable(
     return out, [f"{r}/{e}/{s}" for r, e, s in clipped]
 
 
-def importable_actors(venue: str) -> list[ImportableActorConfig]:
+def _scratch_state() -> Path:
+    """A fold-state directory of this run's own, never the deployed one.
+
+    Named per process and per call so two cells of one sweep cannot share it.
+    `tempfile.mkdtemp` and not a path under `.data/`, so a sweep leaves nothing
+    behind that a later run could restore from by accident.
+    """
+    import tempfile
+
+    return Path(tempfile.mkdtemp(prefix="statespace-backtest-"))
+
+
+def importable_actors(venue: str, *, fresh: bool = False) -> list[ImportableActorConfig]:
     """The actors, as importable configs - **including statespace.**
 
     It was `BasketExit` alone, and that made the backtest path incapable of
@@ -657,6 +670,14 @@ def importable_actors(venue: str) -> list[ImportableActorConfig]:
                 config={
                     "bar_types": list(bars),
                     "indicators": list(_names(os.environ.get("STATESPACE_INDICATORS"))),
+                    # **A measurement must not inherit the desk's progress.**
+                    # `Engine.observe_bar` refuses a bar at or before the last
+                    # one folded for that feed-interval, so a restored engine
+                    # rejects a replayed window bar for bar: one cell placed 18
+                    # orders and the next over identical data placed 0. Live
+                    # keeps restoring, because a desk that forgot its progress
+                    # would refold whatever the bus re-announced.
+                    **({"restore": False, "state_dir": str(_scratch_state())} if fresh else {}),
                 },
             )
         )

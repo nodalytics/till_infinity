@@ -330,7 +330,7 @@ def desk_config(
     return run_config(
         instrument_id,
         bar_spec,
-        actors=desks.importable_actors(venue_name),
+        actors=desks.importable_actors(venue_name, fresh=True),
         strategies=strategies,
         start=start,
         end=end,
