@@ -86,7 +86,6 @@ class Filter:
     #: Shapes to accept - `level`, `stale`, `spread`, `dislocation`, `drift`.
     shapes: frozenset[str] = frozenset()
     #: Instruments to accept - `gold`, `btc`, …
-    feeds: frozenset[str] = frozenset()
     #: The fastest timeframe worth telling anyone about. Empty accepts every
     #: timeframe, which is what this did before.
     #:
@@ -116,7 +115,6 @@ class Filter:
 
         return cls(
             shapes=_names(os.environ.get("NOTIFY_SHAPES", "")),
-            feeds=_names(os.environ.get("NOTIFY_FEEDS", "")),
             floor=os.environ.get("NOTIFY_MIN_INTERVAL", "").strip().lower(),
             cooldown=number("NOTIFY_COOLDOWN_S", DEFAULT_COOLDOWN),
             max_per_hour=int(number("NOTIFY_MAX_PER_HOUR", DEFAULT_MAX_PER_HOUR)),
@@ -148,10 +146,10 @@ class Filter:
         which finding was dropped and on what grounds.
         """
         when = time.time() if when is None else when
-        shape, feed, _venue, _event = self.key(payload)
+        shape, _feed, _venue, _event = self.key(payload)
 
         # **A critical alert is not a topic preference and must not be filtered
-        # like one.** `shapes` and `feeds` say what somebody is interested in;
+        # like one.** `shapes` says what somebody is interested in;
         # `critical` says the system is broken. Until 2026-09-12 they were the
         # same gate, and every trading alarm this desk has ever raised went into
         # it: `key` falls back to the **source** when a payload carries no shape,
@@ -176,11 +174,8 @@ class Filter:
         # defect this whole gate was written for, in the other encoding. One
         # reading of what a payload says, shared with `from_message`.
         urgent = read_level(payload.get("level")) is Level.CRITICAL
-        if not urgent:
-            if self.shapes and shape.lower() not in self.shapes:
-                return f"shape {shape!r} not in {sorted(self.shapes)}"
-            if self.feeds and feed and feed.lower() not in self.feeds:
-                return f"instrument {feed!r} not in {sorted(self.feeds)}"
+        if not urgent and self.shapes and shape.lower() not in self.shapes:
+            return f"shape {shape!r} not in {sorted(self.shapes)}"
         if slow := self._too_fast(payload):
             return slow
 
@@ -252,8 +247,6 @@ class Filter:
             parts.append(f"shapes {'/'.join(sorted(self.shapes))}")
         if self.floor:
             parts.append(f"{self.floor} and slower")
-        if self.feeds:
-            parts.append(f"instruments {'/'.join(sorted(self.feeds))}")
         parts.append(f"one per {self.cooldown / 60:.0f}m")
         parts.append(f"max {self.max_per_hour}/hour")
         return ", ".join(parts)

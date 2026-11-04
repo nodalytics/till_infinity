@@ -211,7 +211,6 @@ answering something the others cannot:
 | variable | filters on | example |
 |---|---|---|
 | `NOTIFY_SHAPES` | kind of finding | `level,drift` - level calls and regime changes, nothing else |
-| `NOTIFY_FEEDS` | instrument | `gold,btc` |
 | `NOTIFY_COOLDOWN_S` | the same finding again | `900` - at most once per 15 minutes (default) |
 | `NOTIFY_MAX_PER_HOUR` | everything, together | `20` (default) |
 
@@ -225,7 +224,6 @@ the slash, so `agents/analyst` matches a filter naming `agents`.
 
 ```bash
 NOTIFY_SHAPES=level,drift,agent
-NOTIFY_FEEDS=gold,btc
 NOTIFY_COOLDOWN_S=1800
 NOTIFY_MAX_PER_HOUR=10
 ```

@@ -408,6 +408,7 @@ places and a node applying a plan to its own instance would leave the others on 
 | `TRADING_BACKEND` | `auto` | `auto`, `mt5`, `mt5-rpyc`, `mt5-http` or `paper`. | trades |
 | `TRADING_MT5_URL` | *(empty)* | The HTTP bridge, for hosts where MetaTrader5 can't run. In production, `http://host.docker.internal:8000`, a tunnel from the terminal host. The retraining workflow also uses it. | restart |
 | `TRADING_MT5_API_KEY` | *(empty)* | The bridge's key. Also a GitHub secret for the retrain workflow. | **secret** |
+| `TRADING_MT5_QUOTE_SOURCE` | `poll` | Quote transport: `poll` (a sample, one request per symbol per `MT5_POLL_SECONDS`), `ticks` (complete, up to one interval late) or `push` (one WebSocket for every symbol). | restart |
 | `TRADING_MT5_API_PATH` | `/api/v1` | The bridge's API prefix. | restart |
 | `TRADING_MT5_LOGIN` / `_PASSWORD` / `_SERVER` / `_TERMINAL` | *(blank)* | Native-terminal credentials. Blank means whatever terminal is logged in. | **secret** (password) |
 | `TRADING_RPYC_HOST` / `TRADING_RPYC_PORT` | *(empty)* / `18812` | An RPyC server exposing MetaTrader5 from a Wine prefix. **A non-loopback host is refused** unless `TRADING_RPYC_TUNNELLED` is also set, which will stop a deploy dead if it is missed: rpyc with `allow_all_attrs` over an open network is a remote execution surface, so the tunnel has to be asserted rather than assumed. | restart |
@@ -448,7 +449,6 @@ Nautilus port. A key set here reaches nothing.
 | `TELEGRAM_AUTO_CHATS` | `0` | Ask Telegram which chats the bot can see, instead of listing them. | restart |
 | `DISCORD_WEBHOOK_URLS` | *(empty)* | Discord webhooks, comma-separated. | **secret** |
 | `NOTIFY_SHAPES` | *(all)* | Shapes to deliver: `level`, `stale`, `spread`, `dislocation`, `drift`, … | restart |
-| `NOTIFY_FEEDS` | *(all)* | Instruments to deliver. | restart |
 | `NOTIFY_MIN_INTERVAL` | *(all)* | The fastest timeframe worth sending; sub-15m is where the noise and the losses live. | restart |
 | `NOTIFY_COOLDOWN_S` | `900` | The same finding at most once per this many seconds. | restart |
 | `NOTIFY_MAX_PER_HOUR` | `20` | Hourly ceiling on messages. | restart |
