@@ -445,6 +445,50 @@ def test_two_mt5_accounts_are_two_venues(monkeypatch, loop):
         node.dispose()
 
 
+def test_the_quote_source_reaches_the_client(monkeypatch):
+    """**It did not, and that is why this test exists.**
+
+    `data.py` implements three sources - `poll`, `ticks`, `push` - validates
+    the name on connect and is covered by tests, and `data_config` never
+    passed one. So every deploy ran `poll` whatever it asked for, and the
+    other two were unreachable from configuration: built, documented, tested
+    and dead. The news adapters and `statespace.proposals` hid the same way,
+    both for weeks.
+
+    The cost is not tidiness. `poll` asks each symbol for its latest tick every
+    `poll_seconds`, so seven symbols at 0.25s is **28 requests a second** and
+    sixty-four is 256 - on two cores, through an SSH tunnel. `push` is one
+    socket for every symbol.
+    """
+    from till_infinity.node import live
+
+    monkeypatch.delenv("TRADING_MT5_QUOTE_SOURCE", raising=False)
+    monkeypatch.delenv("TRADING_MT5_QUOTE_SOURCE_MT5", raising=False)
+    assert live.data_config("MT5").quote_source == "poll", (
+        "the default must stay what every existing deploy is running"
+    )
+
+    monkeypatch.setenv("TRADING_MT5_QUOTE_SOURCE", "push")
+    assert live.data_config("MT5").quote_source == "push"
+
+    # Per venue, like every other variable here: two venues are two feeds and
+    # only one of them may have an EA attached.
+    monkeypatch.setenv("TRADING_MT5_QUOTE_SOURCE_MT5", "ticks")
+    assert live.data_config("MT5").quote_source == "ticks"
+    assert live.data_config("DERIV").quote_source == "push"
+
+
+def test_every_quote_source_the_client_accepts_is_reachable():
+    """A name the config can carry that the client refuses is a deploy that
+    fails at connect, and one the client accepts that the config cannot carry
+    is a feature nobody can turn on."""
+    from till_infinity.adapters.mt5.config import MT5DataClientConfig
+    from till_infinity.adapters.mt5.data import QUOTE_SOURCES
+
+    for name in QUOTE_SOURCES:
+        assert MT5DataClientConfig(quote_source=name).quote_source == name
+
+
 def test_an_adapter_without_a_venue_field_is_one_account_per_node():
     """**A limit worth asserting rather than working around.**
     `BybitExecClientConfig` declares no `venue`, so two Bybit accounts cannot

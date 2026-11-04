@@ -126,9 +126,29 @@ def _env(name: str, venue: str, fallback: str | None = None) -> str | None:
 
 
 def data_config(venue: str) -> MT5DataClientConfig:
+    """The read side. **`quote_source` is wired here and was not.**
+
+    `data.py` implements three sources and validates the name, and this
+    function never passed one - so every deploy ran `poll` whatever it asked
+    for, and `push` and `ticks` were unreachable from configuration. That is
+    the third feature found this way: the news adapters had no consumer and
+    `statespace.proposals` had no subscriber, both for weeks.
+
+    It matters beyond tidiness. `poll` asks each symbol for its latest tick
+    every `poll_seconds`, so **seven symbols at 0.25s is 28 requests a second**
+    and sixty-four would be 256 - on an instance with two cores, through an SSH
+    tunnel. `push` is one WebSocket for every symbol, and the bridge polls
+    centrally for any symbol with no EA attached, so the request count stops
+    scaling with the universe whether or not the EA is there.
+
+    It stays `poll` by default: that is what every existing deploy has been
+    running, and a default that changes the transport under a working desk is
+    not a default.
+    """
     return MT5DataClientConfig(
         base_url=_env("TRADING_MT5_URL", venue, "http://localhost:8000"),
         api_key=_env("TRADING_MT5_API_KEY", venue),
+        quote_source=_env("TRADING_MT5_QUOTE_SOURCE", venue, "poll"),
         poll_seconds=float(_env("MT5_POLL_SECONDS", venue, "0.25")),
         transport=_env("TRADING_MT5_TRANSPORT", venue, "http"),
         rpyc_host=_env("TRADING_RPYC_HOST", venue),
