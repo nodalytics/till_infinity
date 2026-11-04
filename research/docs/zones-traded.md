@@ -19,8 +19,10 @@ and sizing path.
 | `measured` vs `script` preset | 99/272 (36.4%) | 88/272 |
 
 **The pivot source does nothing and neither asymmetry does anything.** Every
-instrument is negative in aggregate. The one consistent column - the preset -
-is confounded with trade count and is not separable here.
+instrument is negative in aggregate. The one consistent column is the preset,
+and the duty-cycle twin **clears it of the obvious confound** - matched on trade
+count `script` still wins 17 of 24 on payoff - but at p of about 0.06 on
+non-independent cells it is a candidate for a measurement, not a finding.
 
 ## The grid
 
@@ -58,15 +60,49 @@ has the same answer here that it has elsewhere.
 while worsening the other on the same cells is not an effect. The zone-width
 tilt is 57.4% / 54.4%, inside what a coin gives on 272 pairs.
 
-**The preset is the one consistent column and it is confounded.** `script`
-beats `measured` on 64% of pairs, with clear counts 99 against 51 and aggregate
--6,242 against -150,542. But `script` trades **half as much** - median 88
-positions against 165 - which is the duty-cycle confound named in the
-`finding-edges` skill: on a net-negative book any rule that trades less shows a
-profit improvement. The payoff ratio is per-trade and so less exposed, but the
-effect is not separable from trade count without a twin that trades less at
-random at the same rate, and that twin was not run. **Unresolved, not a
-finding.**
+**The preset is the one consistent column, and the duty-cycle twin clears it.**
+`script` beats `measured` on 64% of pairs with clear counts 99 against 51 and
+aggregate -6,242 against -150,542, while trading **half as much** - median 88
+positions against 165. That is the shape of the confound the `finding-edges`
+skill names: on a net-negative book any rule that trades less shows a profit
+improvement, and every pause rule ever proposed here beat its baseline and none
+beat its own random twin.
+
+So the twin was run. `TRADING_ZONE_DUTY` keeps each signal with a fixed
+probability and drops the rest, seeded on `(feed, zone, bar)` so a cell is
+reproducible. 144 cells: `script` at full duty against `measured` at five
+keep-rates, pivots and tilts held at the neutral settings.
+
+**Matched on trade count, `script` still wins: 17 of 24 on payoff and 15 of 24
+on PnL.** Matching did not remove the gap - it widened it slightly, from 64% to
+71%. And `measured`'s own payoff **falls** as it trades less, which is the
+opposite of what the confound predicts:
+
+| duty | cells | median positions | median payoff | median needed | sum PnL |
+|---|---|---|---|---|---|
+| 1.00 | 24 | 194 | 2.11 | 2.74 | -8,581 |
+| 0.80 | 24 | 188 | 2.00 | 2.54 | -5,128 |
+| 0.65 | 24 | 207 | 1.68 | 2.24 | -8,703 |
+| 0.50 | 24 | 191 | 1.45 | 1.95 | -7,701 |
+| 0.35 | 24 | 152 | 1.60 | 1.95 | -7,147 |
+
+**Two limits on this, both load against the result.** The match is incomplete:
+even at duty 0.35 `measured` holds a median 152 positions against `script`'s
+~90, because **dropping a signal also drops its exit** - the opposing-signal
+close never fires - so positions last longer and the count does not fall in
+proportion to the keep-rate. `measured` could not be brought down to
+`script`'s count with duty alone. The declining payoff column argues the
+remaining gap is not duty, since pushing lower would widen it rather than close
+it, but that is an inference and not a measurement.
+
+And **17 of 24 is p of about 0.06 two-sided**, on cells that are not
+independent: four modes share each preset, so the effective count is nearer
+six. Suggestive, not established.
+
+So the preset is **a candidate for a measurement rather than a finding**, and
+the duty cycle is ruled out as its explanation. What it would take to settle it
+is an exit that fires independently of the signal stream, so the trade count
+can be matched directly.
 
 ## Per instrument, and why the best cells are not a result
 
@@ -123,6 +159,10 @@ for a measurement rather than a finding.
 
 ## What is worth doing next
 
-The duty-cycle twin for the preset column, which is the only question this run
-leaves genuinely open. Everything else in the grid is a coin flip and does not
-need more cells.
+An exit that does not depend on the signal stream, so the trade count can be
+matched directly rather than approached with a keep-rate. The duty twin took
+`script` against `measured` as far as duty can - `measured` stays 60% above
+`script`'s count at the lowest keep-rate - and that is the only thing between
+this and a clean read on the preset.
+
+Everything else in the grid is a coin flip and does not need more cells.

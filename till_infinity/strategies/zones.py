@@ -143,6 +143,22 @@ class Tuning:
     stop_tilt: float = 1.0
     #: What an opposing signal does to a held position. See `EXITS_ON`.
     on_opposite: str = "close"
+    #: Keep each signal with this probability, dropping the rest at random.
+    #: **The duty-cycle control, and it is not optional for this rule.**
+    #:
+    #: `zones-traded.md` measured the `script` preset beating `measured` on 64%
+    #: of paired cells - and trading **half as much**, median 88 positions
+    #: against 165. The `finding-edges` skill's standing rule is that on a
+    #: net-negative book *any* rule that trades less shows a profit
+    #: improvement, so a preset that trades less cannot be told from a preset
+    #: that is better without a twin that trades less at random at the same
+    #: rate. Every pause rule ever proposed here beat its baseline and none
+    #: beat its own random twin, at p 0.45 to 0.51.
+    #:
+    #: Seeded from the feed, the zone and the bar so a cell is reproducible:
+    #: an unseeded drop would make two runs of the same cell different trades
+    #: and the comparison meaningless.
+    duty: float = 1.0
     #: Require the zone to have been visited this many times before trading
     #: it. **Reported as a swept parameter and not as a gate on a prior**:
     #: `gap-levels.md` measured `drawn_by_n` - how many passes agree on a
@@ -175,6 +191,7 @@ class Tuning:
             stop_vol=max(0.0, _float("TRADING_ZONE_STOP_VOL", DEFAULT_STOP_VOL)),
             stop_tilt=max(1e-6, _float("TRADING_ZONE_STOP_TILT", 1.0)),
             on_opposite=_opposite(os.environ.get("TRADING_ZONE_ON_OPPOSITE")),
+            duty=min(1.0, max(0.0, _float("TRADING_ZONE_DUTY", 1.0))),
             min_tested=max(0, _int("TRADING_ZONE_MIN_TESTED", 0)),
         )
 
@@ -282,6 +299,9 @@ class Zones:
             if self.tuning.on_opposite == "close" and self.standing != 0 and side == -self.standing:
                 self._leave(side)
             self.standing = side
+            if self.tuning.duty < 1.0 and not self._kept(zone, bar):
+                self.counts["duty_dropped"] = self.counts.get("duty_dropped", 0) + 1
+                continue
             self.counts["signals"] += 1
             # Through `on_data` and not `consider`, because that is where the
             # desk counts what it took and follows what it declined.
@@ -296,6 +316,21 @@ class Zones:
             del self.inside[gone]
         for gone in [at for at in self.flipped if at not in live]:
             del self.flipped[gone]
+
+    def _kept(self, zone: Any, bar: Bar) -> bool:
+        """Whether this signal survives the duty-cycle draw.
+
+        Deterministic in `(feed, zone, bar)` rather than drawn from a running
+        generator, so the same cell re-run drops the same signals. A sweep that
+        set a seed once per process would give each of its cells a different
+        draw and the comparison would be against a different twin each time.
+        """
+        import hashlib
+
+        key = f"{self._feed_name()}|{zone.at}|{bar.ts_event}|{self.tuning.duty}"
+        digest = hashlib.sha256(key.encode()).digest()
+        draw = int.from_bytes(digest[:8], "big") / float(1 << 64)
+        return draw < self.tuning.duty
 
     def _leave(self, side: int) -> None:
         """Flatten what the previous signal opened, because this one disagrees.
