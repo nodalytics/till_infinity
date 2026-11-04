@@ -221,6 +221,100 @@ def test_the_default_path_is_a_real_path_without_the_variable(monkeypatch):
     assert Heartbeat(config) is not None
 
 
+def test_a_venue_that_cannot_trade_is_reported_and_the_node_is_still_healthy(tmp_path):
+    """**Reported, not required** - the same argument `armed` won.
+
+    A terminal with AutoTrading off cannot fill anything, and it is also what
+    every weekend looks like. Failing the container healthcheck on it would
+    mark a correctly idle desk unhealthy every Saturday, and the `exec_clients`
+    fault already showed what a check nobody trusts is worth. So this exists so
+    that a person or an alert can see a desk that is **up and unable to
+    trade** - which on 2026-11-04 no signal showed, while `/account/health`,
+    `/terminal/ping` and the account's own `trade_allowed` all read green.
+
+    The payload is the execution client's own, published on the client's own
+    topic: a hand-built dict here would pass while the two ends disagreed,
+    which is the `publish_data_dict` lesson one level down.
+    """
+    import json
+
+    from nautilus_trader.test_kit.stubs.component import TestComponentStubs
+
+    from till_infinity.node.status import Heartbeat, HeartbeatConfig
+    from till_infinity.utils.topics import VENUE_TRADING
+
+    path = tmp_path / "status.json"
+    actor = Heartbeat(HeartbeatConfig(path=str(path), registered=4))
+    bus = TestComponentStubs.msgbus()
+    actor.register_base(
+        portfolio=TestComponentStubs.portfolio(),
+        msgbus=bus,
+        cache=TestComponentStubs.cache(),
+        clock=TestComponentStubs.clock(),
+    )
+    actor.on_start()
+
+    # Nothing has said either way yet, and that is a third answer.
+    assert actor.reading()["can_trade"] is None, (
+        "a node that has not asked must not claim the venue is shut: "
+        "`None` and `False` are different facts"
+    )
+
+    bus.publish(VENUE_TRADING, {"can_trade": False, "cause": "retcode 10027 on an order"})
+    found = actor.reading()
+    assert found["can_trade"] is False
+    assert "10027" in found["can_trade_cause"]
+    assert found["can_trade_at"] is not None, "a flag with no time cannot be told from a stale one"
+
+    actor._write()
+    body = json.loads(path.read_text())
+    assert body["can_trade"] is False, "the probe reads the file, so it has to be in the file"
+
+    bus.publish(VENUE_TRADING, {"can_trade": True, "cause": "terminal_info on connect"})
+    assert actor.reading()["can_trade"] is True, "the flag has to be able to come back"
+
+    # **And the verdict does not move.** The control, on an otherwise working
+    # node - this actor's own `venue_connected` is false because a stub cache
+    # holds no account, which would have made the assertion pass for the wrong
+    # reason.
+    ok, reason = status.healthy(written(tmp_path, can_trade=False))
+    assert ok is True, f"a weekend must not read as unhealthy: {reason}"
+
+
+def test_a_malformed_venue_flag_is_ignored_rather_than_believed(tmp_path):
+    """A message that is not the contract leaves the last good reading alone.
+
+    Believing a stray publish would let anything on the bus mark the desk
+    unable to trade, and `None` is the one value that means "nobody said".
+    """
+    from nautilus_trader.test_kit.stubs.component import TestComponentStubs
+
+    from till_infinity.node.status import Heartbeat, HeartbeatConfig
+    from till_infinity.utils.topics import VENUE_TRADING
+
+    actor = Heartbeat(HeartbeatConfig(path=str(tmp_path / "status.json")))
+    bus = TestComponentStubs.msgbus()
+    actor.register_base(
+        portfolio=TestComponentStubs.portfolio(),
+        msgbus=bus,
+        cache=TestComponentStubs.cache(),
+        clock=TestComponentStubs.clock(),
+    )
+    actor.on_start()
+
+    bus.publish(VENUE_TRADING, {"can_trade": True, "cause": "connect"})
+
+    # Through the bus for anything it will carry. It refuses `None` outright
+    # (`TypeError: 'msg' argument was None`), so that one reaches the handler
+    # directly - the handler is what is under test, and it must not assume the
+    # bus filtered anything for it.
+    for junk in ("off", {}, {"trade_allowed": False}, 0):
+        bus.publish(VENUE_TRADING, junk)
+        assert actor.reading()["can_trade"] is True, f"{junk!r} overwrote a good reading"
+    actor._venue_trading(None)
+    assert actor.reading()["can_trade"] is True, "None overwrote a good reading"
+
+
 def test_the_count_is_what_was_registered_not_what_has_traded(tmp_path):
     """**The healthcheck called every healthy fresh desk "trading nothing".**
 

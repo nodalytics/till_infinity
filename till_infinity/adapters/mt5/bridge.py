@@ -24,7 +24,8 @@ Routes, as the bridge exposes them under `/api/v1`:
 | `POST /positions/modify` | move a stop or target, by ticket |
 | `POST /positions/close` | close |
 | `DELETE /orders/{ticket}` | cancel a resting order |
-| `GET /history/deals` | fills, for reconciliation |
+| `GET /history/deals` | fills, for reconciliation (**`from_date`**, not `date_from`) |
+| `GET /terminal/info` | AutoTrading, which no other route reports |
 """
 
 from __future__ import annotations
@@ -151,6 +152,33 @@ class Bridge:
     async def account(self) -> dict[str, Any]:
         return (await self.get("/terminal/account/info")) or {}
 
+    async def terminal_info(self) -> dict[str, Any]:
+        """The terminal's own state, which is **where AutoTrading lives**.
+
+        MT5 has two flags spelled `trade_allowed` and they are different
+        facts. `account_info().trade_allowed` - what `account()` returns - is
+        the broker's permission on the account. `terminal_info().trade_allowed`
+        is the AutoTrading button in the terminal, and **that** is the one an
+        order is checked against: with it off every submission comes back
+        `10027, Autotrading disabled by client terminal`.
+
+        On 2026-11-04 this terminal held `trade_allowed: false` here while
+        `account()` said `true`, `/account/health` said
+        `{"status": "healthy", "mt5": "connected"}` and `/terminal/ping`
+        answered 200 - so every signal the desk had read green while no order
+        could be placed at all. Nothing consulted this route before then.
+        """
+        return (await self.get("/terminal/info")) or {}
+
+    async def can_trade(self) -> bool:
+        """Whether the terminal will accept an order **right now**.
+
+        False is a real and ordinary state - a broker's weekend - so this is a
+        reading to report and not a reason to refuse to start. `terminal.py`
+        makes the same argument about launch.
+        """
+        return bool((await self.terminal_info()).get("trade_allowed"))
+
     async def symbols(self) -> list[str]:
         raw = await self.get("/symbols/")
         if isinstance(raw, dict):
@@ -212,7 +240,45 @@ class Bridge:
         return _rows(await self.get("/orders/"))
 
     async def deals(self, start: int, end: int) -> list[dict]:
-        return _rows(await self.get("/history/deals", date_from=start, date_to=end))
+        """Fills in a window. **`from_date`/`to_date`, not `date_from`/`date_to`.**
+
+        The bridge spells the same concept two ways and this route takes the
+        other one. `/symbols/ticks/{s}/range` and `/symbols/rates/from` take
+        `date_from`; `/history/deals` and `/history/orders` declare
+        `from_date` and `to_date`. Sending the symbols spelling here meant
+        FastAPI saw **no** range, and `HistoryService.get_history_deals` falls
+        back to `datetime.now() - timedelta(days=30)` - so every call returned
+        a month.
+
+        Measured against the live terminal on 2026-11-04, asking for one hour:
+
+            from_date=...&to_date=...     0 rows   <- correct, a quiet hour
+            date_from=...&date_to=...  4,013 rows  <- the 30-day fallback
+            no parameters at all       4,013 rows
+
+        `generate_fill_reports` documented its window as "the command's
+        start/end when it names them, and the last day otherwise" and was
+        handed a month of deals every time. `_deal_for` survived only because
+        it then matches an exact order ticket. The 30-day payload is also
+        about 1MB and came back **unparseable** once, which a bounded window
+        avoids.
+
+        ISO rather than epoch ints because the route types both as `datetime`,
+        for the reason `_iso` gives. The window is then applied again in
+        Python: cheap, and it keeps the stated window true if this route ever
+        falls back again. A row whose time will not parse is **kept** - a deal
+        that cannot be dated is still a deal, and both callers filter again by
+        magic and by ticket, so dropping one would lose a fill to be safe from
+        a timestamp.
+        """
+        rows = _rows(await self.get("/history/deals", from_date=_iso(start), to_date=_iso(end)))
+        begin, finish = float(start), float(end)
+        kept = []
+        for row in rows:
+            when = _seconds(row.get("time"))
+            if when is None or begin <= when <= finish:
+                kept.append(row)
+        return kept
 
     # ──── the push stream ────
     async def stream(self, symbols: list[str]) -> AsyncIterator[dict[str, Any]]:
@@ -368,6 +434,32 @@ def _iso(stamp: int | float) -> str:
     broker this desk trades. A range off by hours reads as a quiet market.
     """
     return datetime.fromtimestamp(float(stamp), tz=UTC).isoformat()
+
+
+def _seconds(value: Any) -> float | None:
+    """A deal's time as POSIX seconds, whichever way the transport spelled it.
+
+    Deals arrive as epoch ints from this bridge, but the same rows reach the
+    tick path as ISO strings because they go through `pandas.to_datetime`, so
+    both are handled rather than assumed. `None` means "could not date it",
+    which the caller treats as a keep and not a drop.
+    """
+    if value in (None, ""):
+        return None
+    if isinstance(value, datetime):
+        stamped = value if value.tzinfo else value.replace(tzinfo=UTC)
+        return stamped.timestamp()
+    if isinstance(value, str):
+        try:
+            parsed = datetime.fromisoformat(value.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        parsed = parsed if parsed.tzinfo else parsed.replace(tzinfo=UTC)
+        return parsed.timestamp()
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
 
 
 def _rows(raw: Any) -> list[dict]:

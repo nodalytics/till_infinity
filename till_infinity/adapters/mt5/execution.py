@@ -44,6 +44,7 @@ from nautilus_trader.model.identifiers import (
 )
 from nautilus_trader.model.objects import Money, Price, Quantity
 
+from ...utils.topics import VENUE_TRADING
 from .config import MT5ExecClientConfig
 from .providers import MT5InstrumentProvider
 from .redact import redact
@@ -72,6 +73,13 @@ _POSITION_SIDES = {0: PositionSide.LONG, 1: PositionSide.SHORT}
 #: here whatever the transport does.
 DONE = 10009
 PLACED = 10008
+#: `TRADE_RETCODE_CLIENT_DISABLES_AT`: **AutoTrading is off in the terminal.**
+#:
+#: Not a property of the order. Every submission gets it until a human turns
+#: the button back on, so it is reported as a venue-level fault rather than as
+#: one order's rejection reason - which is how it stayed invisible: a desk
+#: reading per-order rejections sees twelve unrelated refusals, not one cause.
+AUTOTRADING_OFF = 10027
 #: Placed or done: the terminal has the request.
 _TAKEN = (PLACED, DONE)
 
@@ -160,6 +168,47 @@ class MT5ExecutionClient(LiveExecutionClient):
         login = account.get("login") or account.get("account")
         self._set_account_id(AccountId(f"{self._venue.value}-{login}"))
         self._log.info(f"account {login}, equity {account.get('equity')}")
+        await self._check_trading()
+
+    async def _check_trading(self) -> None:
+        """Read the terminal's AutoTrading flag and say so, loudly if it is off.
+
+        **`account()` cannot answer this.** MT5 spells `trade_allowed` twice:
+        on the account it is the broker's permission, and on the terminal it is
+        the AutoTrading button. An order is checked against the second. On
+        2026-11-04 the terminal held `trade_allowed: false` while the account
+        held `true`, `/account/health` said healthy and `/terminal/ping`
+        answered 200 - four signals, three green, over a desk that could not
+        place a single order.
+
+        **Not fatal.** A terminal that will not trade is an ordinary weekend,
+        and `terminal.py` makes the same argument about launch: refusing to
+        start then would make a Sunday deploy impossible. Unreadable is also
+        not false - a failed read publishes nothing rather than claiming the
+        venue is shut.
+        """
+        try:
+            allowed = await self._bridge.can_trade()
+        except Exception as exc:
+            self._log.warning(f"could not read the terminal's AutoTrading flag: {self._scrub(exc)}")
+            return
+        self._publish_trading(allowed, "terminal_info on connect")
+
+    def _publish_trading(self, allowed: bool, cause: str) -> None:
+        """Put the flag on the bus, and log what it means rather than the number."""
+        if allowed:
+            self._log.info(f"the terminal will accept orders ({cause})")
+        else:
+            self._log.error(
+                f"AUTOTRADING IS OFF on the terminal ({cause}): every order returns "
+                f"{AUTOTRADING_OFF} and nothing this desk trades can fill. The "
+                f"account's own trade_allowed and /account/health both read healthy "
+                f"regardless. Fixed on the terminal, not here."
+            )
+        try:
+            self._msgbus.publish(VENUE_TRADING, {"can_trade": bool(allowed), "cause": cause})
+        except Exception as exc:  # pragma: no cover - the bus is the framework's
+            self._log.warning(f"could not publish the venue trading flag: {exc}")
 
     async def _disconnect(self) -> None:
         await self._bridge.close()
@@ -464,6 +513,12 @@ class MT5ExecutionClient(LiveExecutionClient):
             # the order was never placed (a 404 is "no such route") or that it
             # was and the reply was lost; rejecting is the safe reading and
             # the next position report corrects it if it was placed.
+            if retcode == AUTOTRADING_OFF:
+                # **The cause is the terminal, not this order.** Published so
+                # the heartbeat reports a desk that cannot trade; without it
+                # the only trace was one rejection reason per order, which
+                # reads as twelve unrelated refusals.
+                self._publish_trading(False, f"retcode {AUTOTRADING_OFF} on an order")
             self._reject(
                 order,
                 str(result.get("comment") or f"retcode {retcode or 'missing'}: not confirmed"),

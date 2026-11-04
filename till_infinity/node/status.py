@@ -46,6 +46,8 @@ from typing import Any
 from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import ActorConfig
 
+from till_infinity.utils.topics import VENUE_TRADING
+
 #: Where the node writes it. `/app/.data` is the image's volume, so the file
 #: survives a restart and a probe can tell "not yet up" from "up two minutes
 #: ago and now gone".
@@ -96,8 +98,20 @@ class Heartbeat(Actor):
         self._path = Path(config.path)
         self._wrote = 0
         self._failed = 0
+        #: `None` means the venue has not said. Not `False`: "never asked" and
+        #: "the terminal is refusing orders" are different facts and the file
+        #: has to be able to say which.
+        self._can_trade: bool | None = None
+        self._can_trade_at: float | None = None
+        self._can_trade_cause: str = ""
 
     def on_start(self) -> None:
+        # **The venue's trading flag arrives on the bus, because an `Actor`
+        # cannot read it.** This actor has the bus, the cache, the clock and
+        # the portfolio and no transport; the execution client holds the
+        # bridge. Subscribed before the first write so a flag published during
+        # connect is not missed.
+        self.msgbus.subscribe(VENUE_TRADING, self._venue_trading)
         # Written once immediately, so a probe in the start period sees
         # "starting" rather than nothing - the difference between a node that
         # is warming up and one that never began.
@@ -169,9 +183,31 @@ class Heartbeat(Actor):
             "strategies": max(int(self._cfg.registered), len(self._strategy_ids())),
             "with_orders": len(self._strategy_ids()),
             "armed": self._armed(),
+            # **Reported, and deliberately not part of the healthy verdict.**
+            # `None` until the venue has said either way, so "not yet asked"
+            # and "the venue is shut" stay different answers.
+            #
+            # A terminal with AutoTrading off cannot fill anything, and it is
+            # also what every weekend looks like - so failing the container
+            # healthcheck on it would mark a correctly idle desk unhealthy
+            # every Saturday and get the check ignored, which is how the
+            # `exec_clients` fault cost its whole value. This exists so a
+            # person or an alert can see a desk that is up and unable to
+            # trade, which on 2026-11-04 no signal showed.
+            "can_trade": self._can_trade,
+            "can_trade_at": self._can_trade_at,
+            "can_trade_cause": self._can_trade_cause,
             "wrote": self._wrote,
             "write_failures": self._failed,
         }
+
+    def _venue_trading(self, message: Any) -> None:
+        """Remember whether the venue will take an order, and when it said so."""
+        if not isinstance(message, dict) or "can_trade" not in message:
+            return
+        self._can_trade = bool(message["can_trade"])
+        self._can_trade_at = time.time()
+        self._can_trade_cause = str(message.get("cause") or "")
 
     def _strategy_ids(self) -> list[str]:
         try:

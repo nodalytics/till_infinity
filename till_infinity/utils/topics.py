@@ -72,6 +72,17 @@ JOURNAL = "journal"
 #: rather than behind a second copy of the arithmetic.
 LADDER = "ladder"
 
+#: Whether the venue will accept an order **right now**, published by the
+#: execution client because it is the only component holding a bridge.
+#:
+#: The heartbeat has to report this and cannot read it: an `Actor` has the bus,
+#: the cache, the clock and the portfolio, and no transport. On 2026-11-04 the
+#: terminal's AutoTrading was off and every order came back `10027` while
+#: `/account/health`, `/terminal/ping` and the **account's own**
+#: `trade_allowed` all read green - so the desk could not place an order and
+#: nothing it published said so.
+VENUE_TRADING = "venue.trading"
+
 #: Every topic this desk declares. A publisher using a name not in here is
 #: publishing where nothing listens, which is the failure a registry catches
 #: and a literal does not.
@@ -83,6 +94,7 @@ LADDER = "ladder"
 DECLARED: tuple[str, ...] = (
     ALERTS,
     LADDER,
+    VENUE_TRADING,
     ARTICLES,
     BARS,
     DISPERSION,
