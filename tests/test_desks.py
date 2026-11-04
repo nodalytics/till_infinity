@@ -384,6 +384,38 @@ def test_a_live_node_with_no_desks_refuses_to_build(monkeypatch, loop):
         live.build()
 
 
+def test_the_desk_ceiling_can_be_raised_on_a_measured_box(monkeypatch):
+    """**It was the binding constraint on a wider instrument list.**
+
+    `PER_CORE` is 8 and the instance has two cores, so sixteen desks - which at
+    two rules a symbol is **eight symbols**. Twenty-one were configured on
+    2026-11-04 and twenty-six desks were clipped, every index among them, while
+    the container sat at 6.8% CPU and 182MiB of 2.6GiB and the clipped symbols
+    still paid for their feed and their fold.
+
+    The default does not move: this number protects against late quotes, and
+    late quotes are the one input every gate trusts. What changes is that a box
+    which has been *measured* can say so.
+    """
+    from till_infinity.node import desks
+
+    monkeypatch.delenv("TRADING_DESKS_PER_CORE", raising=False)
+    base = desks.ceiling()
+    assert base == max(1, desks.sizing.cores() * desks.PER_CORE)
+
+    monkeypatch.setenv("TRADING_DESKS_PER_CORE", str(desks.PER_CORE * 3))
+    assert desks.ceiling() == base * 3
+
+    # Never zero, whatever is asked: a live node with no strategies is a node
+    # that reports up and trades nothing.
+    monkeypatch.setenv("TRADING_DESKS_PER_CORE", "0")
+    assert desks.ceiling() >= 1
+
+    # And junk falls back to the default rather than to zero.
+    monkeypatch.setenv("TRADING_DESKS_PER_CORE", "lots")
+    assert desks.ceiling() == base
+
+
 def test_the_default_configuration_gets_the_fold_it_consumes(monkeypatch, loop):
     """**The default rule is `statespace-surprise`, and its producer was absent.**
 
