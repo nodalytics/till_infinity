@@ -165,8 +165,14 @@ class MT5ExecClientConfig(LiveExecClientConfig, frozen=True):
     magic: int = 777_701
     #: Max slippage in points for a market order.
     deviation: int = 20
-    #: MT5 order filling mode. The bridge passes it through as `type_filling`.
-    filling: str = "IOC"
+    #: Preferred MT5 order filling mode; **the symbol has the final say.**
+    #:
+    #: `execution._filling_for` replaces this with a mode the symbol reports in
+    #: `filling_mode` when it does not support this one. The default was `IOC`
+    #: and every symbol on this account reports **FOK only**, so every market
+    #: order came back `10030, Unsupported filling mode` - a refusal that
+    #: looked like a venue problem and was a one-word default.
+    filling: str = "FOK"
     request_timeout: float = 30.0
     #: Which transport reaches the terminal: `http` for the bridge, `rpyc` for
     #: the module proxy. The choice is the adapter's and nothing above it can

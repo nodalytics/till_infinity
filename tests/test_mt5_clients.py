@@ -85,6 +85,7 @@ from till_infinity.adapters.mt5.execution import MT5ExecutionClient, Reconciliat
 from till_infinity.adapters.mt5.factories import MT5LiveDataClientFactory, MT5LiveExecClientFactory
 from till_infinity.adapters.mt5.providers import MT5InstrumentProvider
 from till_infinity.adapters.mt5.redact import redact
+from till_infinity.utils.topics import VENUE_TRADING
 
 VENUE = Venue("MT5")
 EURUSD_ID = InstrumentId.from_str("EURUSD.MT5")
@@ -133,6 +134,11 @@ class FakeBridge:
             "positions": [],
             "pending": [],
             "deals": [],
+            #: A terminal that will take an order. `trade_allowed` here is the
+            #: **terminal's** AutoTrading flag, not the account's permission -
+            #: the two share a name and only this one decides a fill.
+            "terminal_info": {"connected": True, "trade_allowed": True, "build": 6230},
+            "can_trade": True,
             "order": {"success": True, "result": {"retcode": 10009, "order": 55}},
             "modify": DONE_ENVELOPE,
             "modify_order": DONE_ENVELOPE,
@@ -168,6 +174,12 @@ class FakeBridge:
 
     async def account(self) -> dict:
         return self._answer("account", (), {})
+
+    async def terminal_info(self) -> dict:
+        return self._answer("terminal_info", (), {})
+
+    async def can_trade(self) -> bool:
+        return self._answer("can_trade", (), {})
 
     async def symbols(self) -> list[str]:
         return self._answer("symbols", (), {})
@@ -1294,6 +1306,11 @@ def _limit(side: OrderSide = OrderSide.BUY, price: str = "1.08000") -> Any:
 
 
 REJECTION = {"success": False, "result": {"retcode": 10006, "comment": "Request rejected"}}
+#: What the live terminal actually returned on 2026-11-04, retcode and wording.
+AUTOTRADING_REJECTION = {
+    "success": False,
+    "result": {"retcode": 10027, "comment": "Autotrading disabled by client terminal"},
+}
 
 
 class TestSubmittingAnOrder:
@@ -1316,8 +1333,115 @@ class TestSubmittingAnOrder:
             "deviation": 20,
             "magic": 777_701,
             "comment": str(order.client_order_id)[:31],
-            "type_filling": "IOC",
+            # **FOK, from the symbol.** `_filling_for` reads the symbol's
+            # `filling_mode` bitmask and the config only names a preference.
+            # This asserted `IOC`, which was the old hardcoded default and is
+            # refused by every symbol on this account - `10030, Unsupported
+            # filling mode` on every market order, while this test passed
+            # because a `FakeBridge` accepts whatever body it is handed.
+            "type_filling": "FOK",
         }
+
+    async def test_the_filling_mode_comes_from_the_symbol_not_the_config(self):
+        """**The symbol has the final say, and a mismatch is the whole bug.**
+
+        Measured on the live terminal: EURUSD, GBPUSD, USDJPY and XAUUSD all
+        report `filling_mode=1` - FOK only - and this client sent `IOC`, so
+        every market order returned `10030` and filled nothing. FOK on the
+        same symbol filled at 10009 a second later.
+
+        Both directions, because a resolver that always answers FOK is not
+        reading anything: a symbol advertising IOC only must get IOC.
+        """
+        for mask, configured, expected in (
+            (1, "IOC", "FOK"),  # FOK-only symbol overrides a bad preference
+            (2, "IOC", "IOC"),  # IOC-only symbol keeps a good one
+            (2, "FOK", "IOC"),  # and overrides a preference it cannot fill
+            (3, "IOC", "IOC"),  # both offered: the preference is honoured
+        ):
+            info = {**EURUSD_INFO, "filling_mode": mask}
+            rig = make_exec(FakeBridge(order=REJECTION, symbol_info=info), filling=configured)
+            await rig.client._submit_order(_submit(rig, _market()))
+            sent = rig.bridge.called("order")[-1][0][0]["type_filling"]
+            assert sent == expected, (
+                f"filling_mode={mask} with {configured} configured sent {sent}, "
+                f"and a mode the symbol does not list returns 10030 on every order"
+            )
+
+    async def test_an_unreadable_filling_mode_falls_back_to_the_configured_one(self):
+        """**Absent is not a refusal.** The field is missing on some bridge
+        versions, and declining to trade over a missing hint would be worse
+        than sending the mode that was asked for."""
+        info = {k: v for k, v in EURUSD_INFO.items() if k != "filling_mode"}
+        rig = make_exec(FakeBridge(order=REJECTION, symbol_info=info), filling="IOC")
+        await rig.client._submit_order(_submit(rig, _market()))
+        assert rig.bridge.called("order")[-1][0][0]["type_filling"] == "IOC"
+
+    async def test_autotrading_off_is_reported_as_a_venue_fault_not_an_order_one(self):
+        """**10027 is the terminal, not the order**, so it goes on the bus.
+
+        On 2026-11-04 the terminal's AutoTrading was off and every order came
+        back `10027, Autotrading disabled by client terminal` while
+        `/account/health`, `/terminal/ping` and the **account's own**
+        `trade_allowed` all read green. A desk reading only per-order
+        rejections sees twelve unrelated refusals rather than one cause, and
+        the heartbeat had nothing to report because nothing published it.
+
+        The order is still rejected: the engine has to be told this order did
+        not happen, and the venue flag is a separate claim about the terminal.
+        """
+        seen: list[dict] = []
+        rig = make_exec(FakeBridge(order=AUTOTRADING_REJECTION))
+        rig.bus.subscribe(VENUE_TRADING, seen.append)
+
+        await rig.client._submit_order(_submit(rig, _market()))
+
+        assert seen, "a 10027 was seen and nothing said the venue cannot trade"
+        assert seen[-1]["can_trade"] is False
+        assert "10027" in seen[-1]["cause"]
+        assert len(rig.events(OrderRejected)) == 1, "the order itself must still be rejected"
+
+    async def test_an_ordinary_rejection_says_nothing_about_the_venue(self):
+        """**The control.** Without it, "it publishes on 10027" is
+        indistinguishable from "it publishes on every refusal" - and a desk
+        marked unable to trade by one rejected order is worse than no flag."""
+        seen: list[dict] = []
+        rig = make_exec(FakeBridge(order=REJECTION))
+        rig.bus.subscribe(VENUE_TRADING, seen.append)
+
+        await rig.client._submit_order(_submit(rig, _market()))
+
+        assert rig.events(OrderRejected), "the order was rejected"
+        assert seen == [], f"retcode 10006 is one order's refusal, not the venue's: {seen}"
+
+    async def test_connecting_reads_and_reports_the_terminals_autotrading_flag(self):
+        """`account()` cannot answer this, which is why the read exists.
+
+        Both directions, because a reporter that only ever says "off" is not a
+        reporter.
+        """
+        for allowed in (True, False):
+            seen: list[dict] = []
+            rig = make_exec(FakeBridge(can_trade=allowed))
+            rig.bus.subscribe(VENUE_TRADING, seen.append)
+
+            await rig.client._check_trading()
+
+            assert rig.bridge.called("can_trade"), "the flag was never read"
+            assert seen, f"allowed={allowed} and nothing was published"
+            assert seen[-1]["can_trade"] is allowed, f"allowed={allowed}: {seen}"
+
+    async def test_an_unreadable_flag_publishes_nothing_rather_than_false(self):
+        """**Unreadable is not shut.** Publishing `False` when the read failed
+        would report a working desk as unable to trade on one dropped request,
+        and a flag nobody can trust is a flag nobody reads."""
+        seen: list[dict] = []
+        rig = make_exec(FakeBridge(can_trade=RuntimeError("the bridge is down")))
+        rig.bus.subscribe(VENUE_TRADING, seen.append)
+
+        await rig.client._check_trading()
+
+        assert seen == [], f"a failed read claimed something about the venue: {seen}"
 
     async def test_a_market_sell_is_a_sell(self):
         rig = make_exec(FakeBridge(order=REJECTION))
@@ -2471,6 +2595,73 @@ def _wired(handler) -> Bridge:
 class TestTheBridgeSpeaksTheWireProtocol:
     """What actually crosses the network, for the writes that move money."""
 
+    async def test_the_deal_history_is_asked_with_the_names_that_route_declares(self):
+        """**`from_date`/`to_date`, not `date_from`/`date_to`.**
+
+        The bridge spells the same concept two ways: `/symbols/ticks/{s}/range`
+        and `/symbols/rates/from` declare `date_from`, while `/history/deals`
+        and `/history/orders` declare `from_date`. This adapter sent the
+        symbols spelling everywhere, so FastAPI saw no range at all and
+        `HistoryService` fell back to `datetime.now() - timedelta(days=30)`.
+
+        Measured against the live terminal asking for one hour: the declared
+        names gave **0 rows** (a correctly quiet hour) and `date_from` gave
+        **4,013** - a month, reported as an hour. `generate_fill_reports` was
+        handed that month on every call.
+
+        A name is not something a type checker can catch, so it is asserted on
+        the wire.
+        """
+        seen: list[httpx.Request] = []
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            seen.append(request)
+            return httpx.Response(200, json=[])
+
+        await _wired(handler).deals(1_700_000_000, 1_700_003_600)
+        (request,) = seen
+        assert request.url.path == "/api/v1/history/deals"
+        params = dict(request.url.params)
+        assert set(params) == {"from_date", "to_date"}, (
+            f"the route declares from_date/to_date and was sent {sorted(params)}; "
+            f"an unrecognised name is silently dropped and the service then "
+            f"answers with its own 30-day default"
+        )
+        # ISO, because the route types both as `datetime`. A naive string would
+        # be read in the bridge's own timezone, which is the terminal's.
+        assert params["from_date"].startswith("2023-11-14T"), params["from_date"]
+        assert "+00:00" in params["from_date"], (
+            f"explicitly UTC, or a range lands hours out: {params['from_date']}"
+        )
+
+    async def test_a_deal_outside_the_window_is_dropped_and_an_undateable_one_kept(self):
+        """The window is applied in Python too, and the fallback is why.
+
+        A route that silently answers with its own default is one typo from
+        happening again, so the stated window is enforced on this side as
+        well. An undateable row is **kept**: both callers filter again by
+        magic and by ticket, so dropping one would lose a fill to be safe from
+        a timestamp.
+        """
+
+        def handler(request: httpx.Request) -> httpx.Response:
+            return httpx.Response(
+                200,
+                json=[
+                    {"ticket": 1, "time": 1_700_001_000},
+                    {"ticket": 2, "time": 1_600_000_000},
+                    {"ticket": 3, "time": None},
+                    {"ticket": 4},
+                ],
+            )
+
+        found = await _wired(handler).deals(1_700_000_000, 1_700_003_600)
+
+        assert [row["ticket"] for row in found] == [1, 3, 4], (
+            "ticket 2 is a year outside the window and must go; 3 and 4 cannot "
+            "be dated and must stay"
+        )
+
     async def test_an_order_is_posted_as_json_to_the_trading_route(self):
         seen: list[httpx.Request] = []
 
@@ -2538,15 +2729,28 @@ class TestTheBridgeSpeaksTheWireProtocol:
 
     async def test_close_sends_a_volume_only_when_partial(self):
         bodies: list[bytes] = []
+        urls: list[httpx.URL] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             bodies.append(request.read())
+            urls.append(request.url)
             return httpx.Response(200, json={})
 
         bridge = _wired(handler)
         await bridge.close_position(9)
         await bridge.close_position(9, 0.25)
-        assert bodies == [b'{"ticket":9}', b'{"ticket":9,"volume":0.25}']
+
+        # **Query parameters, not a body.** `POST /positions/close` declares
+        # `ticket`, `volume` and `type_filling` as plain function arguments
+        # with no request model, so FastAPI reads them from the query string.
+        # Sent as JSON, every call came back **422 `field required` for
+        # `query.ticket`** - so the route every exit goes through had never
+        # worked, and this test passed while asserting the wrong wire.
+        assert bodies == [b"", b""], f"a body was sent to a query route: {bodies}"
+        assert [dict(u.params) for u in urls] == [
+            {"ticket": "9"},
+            {"ticket": "9", "volume": "0.25"},
+        ]
 
     async def test_a_refusal_is_a_bridge_error_naming_the_route_and_status(self):
         bridge = _wired(lambda r: httpx.Response(400, text="invalid volume"))
