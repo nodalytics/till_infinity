@@ -384,6 +384,43 @@ def test_a_live_node_with_no_desks_refuses_to_build(monkeypatch, loop):
         live.build()
 
 
+def test_the_default_configuration_gets_the_fold_it_consumes(monkeypatch, loop):
+    """**The default rule is `statespace-surprise`, and its producer was absent.**
+
+    `desks.rules()` with nothing configured returns `('statespace-surprise',)`,
+    whose only producer is `StatespaceActor`. The live node built that actor
+    only when `STATESPACE_BARS` was set, so the **default** deploy ran a
+    consumer with no producer: measured on the instance on 2026-11-04, seven of
+    fourteen desks subscribed to `statespace.proposals` and nothing published
+    it. Nothing raised, because each desk logged the topic it subscribed to and
+    the actor simply did not exist.
+
+    This is the case that was broken in production, so it is asserted with the
+    environment production actually has - no `TRADING_STRATEGIES`, no
+    `STATESPACE_BARS` - rather than with a rule named explicitly.
+    """
+    monkeypatch.delenv("STATESPACE_BARS", raising=False)
+    monkeypatch.delenv("TRADING_STRATEGIES", raising=False)
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+
+    from till_infinity.node import desks, live
+
+    assert any(rule.startswith("statespace") for rule in desks.rules()), (
+        "the default rule set no longer consumes proposals, so this test is "
+        "asserting something else - check what it should pin now"
+    )
+
+    node = live.build()
+    try:
+        names = {str(a.id) for a in node.trader.actors()}
+        assert "StatespaceActor" in names, (
+            f"the default rules consume statespace.proposals and nothing would "
+            f"publish it: {sorted(names)}"
+        )
+    finally:
+        node.dispose()
+
+
 def test_statespace_is_only_added_when_it_is_configured(monkeypatch, loop):
     """An actor subscribed to nothing is a fold that never runs pretending to
     be a model that does.
@@ -393,8 +430,19 @@ def test_statespace_is_only_added_when_it_is_configured(monkeypatch, loop):
     this desk was in since the port, and an opt-in record is a record nobody
     turns on. So the journal and the notifier are present here and statespace
     is not.
+
+    **The rule has to be one that does not consume proposals, and it did not
+    used to be.** This test ran on the default rule, which is
+    `statespace-surprise` - whose only producer is the actor it was asserting
+    absent. So it passed by encoding the bug: on 2026-11-04 the live instance
+    had seven desks subscribed to `statespace.proposals` with nothing
+    publishing it, and that was the *default* configuration rather than an
+    unusual one. The fold is now built when a configured rule needs it, and
+    this test names a rule that decides on bars so it still tests its own
+    sentence.
     """
     monkeypatch.delenv("STATESPACE_BARS", raising=False)
+    monkeypatch.setenv("TRADING_STRATEGIES", "smc-bos-causal")
     monkeypatch.setenv("LOG_LEVEL", "ERROR")
 
     from till_infinity.node import live
@@ -416,6 +464,9 @@ def test_the_record_can_be_switched_off_by_name(monkeypatch, loop):
     record says so, and the failure of forgetting is then a loud duplicate
     rather than a silent absence."""
     monkeypatch.delenv("STATESPACE_BARS", raising=False)
+    # A rule that decides on bars, so the fold is genuinely unwanted here and
+    # not merely missing - see the note on the test above.
+    monkeypatch.setenv("TRADING_STRATEGIES", "smc-bos-causal")
     monkeypatch.setenv("LOG_LEVEL", "ERROR")
     monkeypatch.setenv("JOURNAL_OFF", "1")
     monkeypatch.setenv("ALERTS_OFF", "1")

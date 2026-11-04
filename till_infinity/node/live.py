@@ -15,6 +15,7 @@ read our own side of the wire.
 from __future__ import annotations
 
 import contextlib
+import logging
 import os
 import sys
 from decimal import Decimal
@@ -34,9 +35,10 @@ from nautilus_trader.model.identifiers import StrategyId
 
 from till_infinity.adapters.mt5 import MT5DataClientConfig, MT5ExecClientConfig
 from till_infinity.node import desks, ladder, venues
-from till_infinity.statespace.actor import StatespaceActor, StatespaceConfig
-from till_infinity.utils.env import flag
+from till_infinity.utils.env import flag, symbol_names
 from till_infinity.utils.topics import LADDER
+
+log = logging.getLogger(__name__)
 
 #: The venue's magic, and **no longer how a strategy is identified.**
 #:
@@ -381,9 +383,31 @@ def _actors(registered: int = 0) -> list[Actor]:
     strategy has an order, so the healthcheck called every fresh desk "up and
     trading nothing".
 
-    `STATESPACE_BARS` names the bar types statespace folds. Absent, it is not
-    added - a node may trade without it, and an actor subscribed to nothing is
-    a fold that never runs pretending to be a model that does.
+    `STATESPACE_BARS` names the bar types statespace folds. **Absent, it is
+    derived from the desks when a configured rule needs it, and omitted only
+    when none does.**
+
+    It used to be omitted whenever the variable was empty, on the argument
+    that "an actor subscribed to nothing is a fold that never runs pretending
+    to be a model that does". That is true and it was the wrong default,
+    because it does not ask what the desks consume. Measured on the live
+    instance on 2026-11-04: `TRADING_STRATEGIES=smc-bos-causal,statespace-surprise`
+    with `STATESPACE_BARS` unset, so **seven of fourteen desks subscribed to
+    `statespace.proposals` and nothing published it**. They could not trade,
+    nothing raised, and both sides looked healthy - the desks logged
+    `proposals on statespace.proposals` and the actor simply did not exist.
+
+    `desks.importable_actors` already defaults the bar types this way for the
+    backtest path, and its docstring says why: a sweep over those rules
+    "completed, reported no orders and raised nothing: a consumer with no
+    producer, where both sides look healthy. That exact shape has now hidden
+    this topic three times." This is the fourth, and the asymmetry between the
+    two paths was the cause - the thing that measures and the thing that trades
+    were not the same thing, which is the failure the whole port argues
+    against.
+
+    So: if any configured rule consumes proposals, the actor is built on the
+    bars the desks already subscribe to. If none does, it is still omitted.
 
     **The journal and the notifier are added by default and switched off by
     name**, which is the opposite of statespace and deliberately so. A node
@@ -443,25 +467,70 @@ def _actors(registered: int = 0) -> list[Actor]:
         # `TRADING_LIVE`, and the reason `_supervise` is what finally lets it
         # reach the engine.
         found.append(ladder.LadderActor(ladder.configured()))
-    bars = tuple(
-        part for part in (os.environ.get("STATESPACE_BARS") or "").replace(",", " ").split() if part
-    )
-    if bars:
-        found.append(
-            StatespaceActor(
-                StatespaceConfig(
-                    bar_types=bars,
-                    indicators=tuple(
-                        part
-                        for part in (os.environ.get("STATESPACE_INDICATORS") or "")
-                        .replace(",", " ")
-                        .split()
-                        if part
-                    ),
-                )
+    found.extend(_statespace())
+    return found
+
+
+def _statespace() -> list[Actor]:
+    """The fold, built when a configured rule consumes its proposals.
+
+    **Two defects lived in the five lines this replaces.**
+
+    It split both variables with `.replace(",", " ").split()`, which cannot
+    express a value containing a space - and a bar type for a Deriv synthetic
+    is `Volatility 75 Index.MT5-15-MINUTE-LAST-EXTERNAL`. The same shape
+    produced three desks on instruments no venue lists before `symbol_names`
+    was written for it; this was the third place carrying it.
+
+    And it built the actor **only** when `STATESPACE_BARS` was set, without
+    asking what the desks consume. Measured on the live instance on
+    2026-11-04: `TRADING_STRATEGIES=smc-bos-causal,statespace-surprise` with
+    the variable unset, so **seven of fourteen desks subscribed to
+    `statespace.proposals` and nothing published it**. They could not trade,
+    nothing raised, and both halves looked healthy - each desk logged
+    `proposals on statespace.proposals` and the actor simply did not exist.
+
+    `desks.importable_actors` already defaults these bars for the backtest
+    path, and its docstring says why: a sweep over those rules "completed,
+    reported no orders and raised nothing: a consumer with no producer, where
+    both sides look healthy. That exact shape has now hidden this topic three
+    times." This was the fourth, and the asymmetry between the two paths was
+    the cause.
+
+    The import is function-local because `statespace` is a separate
+    distribution: a deleted directory should fail this actor, not stop the
+    node importing.
+    """
+    from till_infinity.statespace.actor import StatespaceActor, StatespaceConfig
+
+    named = symbol_names(os.environ.get("STATESPACE_BARS"))
+    wanted = tuple(rule for rule in desks.rules() if rule.startswith("statespace"))
+    bars = named
+    if not bars and wanted:
+        interval = desks.intervals()[0]
+        bars = tuple(
+            str(desks.bar_type(symbol, venue, interval))
+            for venue in _wanted()
+            for symbol in desks.symbols(venue)
+        )
+        if bars:
+            log.warning(
+                "STATESPACE_BARS is unset and %s consume statespace.proposals, so "
+                "the fold is built on the desks' own %d bar type(s). Nothing else "
+                "publishes that topic: without it those desks cannot trade.",
+                "/".join(wanted),
+                len(bars),
+            )
+    if not bars:
+        return []
+    return [
+        StatespaceActor(
+            StatespaceConfig(
+                bar_types=bars,
+                indicators=symbol_names(os.environ.get("STATESPACE_INDICATORS")),
             )
         )
-    return found
+    ]
 
 
 def check() -> int:
