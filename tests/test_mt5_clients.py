@@ -109,6 +109,18 @@ EURUSD_INFO: dict[str, Any] = {
     "ask": 1.08512,
 }
 
+#: What `GET /symbols/ticks/{symbol}` answers: the latest tick, with a time.
+#:
+#: Separate from `EURUSD_INFO` because they are different objects.
+#: `symbol_info` is the symbol's *specification*, and its bid/ask is a snapshot
+#: the terminal refreshes on its own terms - measured frozen across eight reads
+#: three seconds apart on 2026-11-04, while this route moved on every one.
+EURUSD_TICK: dict[str, Any] = {
+    "bid": 1.08500,
+    "ask": 1.08512,
+    "time_msc": 1_700_000_000_000,
+}
+
 
 # ──── the fake bridge ────
 
@@ -136,6 +148,9 @@ class FakeBridge:
             "symbol_info": EURUSD_INFO,
             "bars": [],
             "ticks": [],
+            #: The latest single tick, which is what the quote poll samples.
+            #: `symbol_info`'s bid/ask is a frozen specification snapshot.
+            "tick": dict(EURUSD_TICK),
             "positions": [],
             "pending": [],
             "deals": [],
@@ -191,6 +206,9 @@ class FakeBridge:
 
     async def symbol_info(self, symbol: str) -> dict:
         return self._answer("symbol_info", (symbol,), {})
+
+    async def tick(self, symbol: str) -> dict:
+        return self._answer("tick", (symbol,), {})
 
     async def bars(self, symbol: str, timeframe: str, count: int, start: int = 0) -> list[dict]:
         return self._answer("bars", (symbol, timeframe), {"count": count, "start": start})
@@ -630,7 +648,7 @@ class TestTheFeedWatchdog:
     async def test_a_working_poll_increments_attempt_reply_and_publish(self):
         """**The control.** Without it, "the counters catch a dead loop" is
         indistinguishable from "the counters are always zero"."""
-        rig = make_data(FakeBridge(symbol_info={**EURUSD_INFO, "bid": 1.1, "ask": 1.1002}))
+        rig = make_data(FakeBridge(tick={**EURUSD_TICK, "bid": 1.1, "ask": 1.1002}))
         await rig.client._connect()
         task = rig.client.create_task(rig.client._poll_quotes(EURUSD_ID))
         for _ in range(50):
@@ -771,7 +789,7 @@ class TestQuotePolling:
         rig = make_data()
         rig.client._instrument_provider.add(_eurusd())
         await rig.client._subscribe_quote_ticks(subscribe_quotes())
-        await until(lambda: len(rig.bridge.called("symbol_info")) >= 5)
+        await until(lambda: len(rig.bridge.called("tick")) >= 5)
         assert len(rig.published(QuoteTick)) == 1
         await stop(rig)
 
@@ -780,7 +798,12 @@ class TestQuotePolling:
         rig.client._instrument_provider.add(_eurusd())
         await rig.client._subscribe_quote_ticks(subscribe_quotes())
         await until(lambda: len(rig.published(QuoteTick)) == 1)
-        rig.bridge.responses["symbol_info"] = {**EURUSD_INFO, "bid": 1.0851, "ask": 1.08522}
+        rig.bridge.responses["tick"] = {
+            **EURUSD_TICK,
+            "bid": 1.0851,
+            "ask": 1.08522,
+            "time_msc": EURUSD_TICK["time_msc"] + 1_000,
+        }
         await until(lambda: len(rig.published(QuoteTick)) == 2)
         assert rig.published(QuoteTick)[1].bid_price == Price(1.0851, 5)
         await stop(rig)
@@ -788,24 +811,65 @@ class TestQuotePolling:
     @pytest.mark.parametrize("bid", [0.0, None])
     async def test_a_quote_with_no_bid_is_not_published(self, bid):
         """A closed market reads zero, and a zero bid is not a price."""
-        rig = make_data(FakeBridge(symbol_info={**EURUSD_INFO, "bid": bid}))
+        rig = make_data(FakeBridge(tick={**EURUSD_TICK, "bid": bid}))
         rig.client._instrument_provider.add(_eurusd())
         await rig.client._subscribe_quote_ticks(subscribe_quotes())
-        await until(lambda: len(rig.bridge.called("symbol_info")) >= 3)
+        await until(lambda: len(rig.bridge.called("tick")) >= 3)
         assert not rig.published(QuoteTick)
+        await stop(rig)
+
+    async def test_the_poll_reads_the_tick_route_and_never_the_specification(self):
+        """**`symbol_info` is frozen, and reading it cost the whole quote feed.**
+
+        Eight reads of `/symbols/info/EURUSD` three seconds apart on
+        2026-11-04 returned the same bid, the same ask and the same `time`,
+        while `/symbols/ticks/{symbol}` moved on every read: `symbol_info`
+        carries the symbol's *specification*, whose bid/ask the terminal
+        refreshes on its own terms. The live desk published **7 quotes from
+        2,399 polls** - one per symbol, then the dedupe correctly suppressing a
+        price that never changed - and nothing raised or warned.
+
+        A route name is not something a type checker can catch, so it is
+        asserted: the quote poll must ask for a tick and must not ask for the
+        specification.
+        """
+        rig = make_data()
+        rig.client._instrument_provider.add(_eurusd())
+        await rig.client._subscribe_quote_ticks(subscribe_quotes())
+        await until(lambda: rig.published(QuoteTick))
+
+        assert rig.bridge.called("tick"), "the poll did not ask for a tick"
+        assert not rig.bridge.called("symbol_info"), (
+            "the quote poll asked for the symbol specification, whose bid/ask "
+            "does not move - this is the fault that froze the feed"
+        )
+        await stop(rig)
+
+    async def test_a_tick_the_terminal_repeats_is_published_once(self):
+        """The dedupe is on `(time, bid, ask)`, which is why a frozen feed read
+        as a quiet market rather than an error."""
+        rig = make_data()
+        rig.client._instrument_provider.add(_eurusd())
+        await rig.client._subscribe_quote_ticks(subscribe_quotes())
+        await until(lambda: len(rig.bridge.called("tick")) >= 6)
+
+        assert len(rig.published(QuoteTick)) == 1, (
+            "the same tick was published more than once, so a repeated quote "
+            "would reach the engine as new information"
+        )
         await stop(rig)
 
     async def test_a_poll_that_fails_is_survived(self):
         """One dropped request must not end the subscription."""
-        answers = iter([httpx.ReadTimeout("slow"), EURUSD_INFO])
+        answers = iter([httpx.ReadTimeout("slow"), EURUSD_TICK])
 
         def flaky(*_):
-            answer = next(answers, EURUSD_INFO)
+            answer = next(answers, EURUSD_TICK)
             if isinstance(answer, BaseException):
                 raise answer
             return answer
 
-        rig = make_data(FakeBridge(symbol_info=flaky))
+        rig = make_data(FakeBridge(tick=flaky))
         rig.client._instrument_provider.add(_eurusd())
         await rig.client._subscribe_quote_ticks(subscribe_quotes())
         await until(lambda: rig.published(QuoteTick))
@@ -825,13 +889,13 @@ class TestQuotePolling:
         rig = make_data()
         rig.client._instrument_provider.add(_eurusd())
         await rig.client._subscribe_quote_ticks(subscribe_quotes())
-        await until(lambda: rig.bridge.called("symbol_info"))
+        await until(lambda: rig.bridge.called("tick"))
         await rig.client._unsubscribe_quote_ticks(unsubscribe_quotes())
         assert rig.client._pollers == {}
         await asyncio.sleep(0.05)
-        seen = len(rig.bridge.called("symbol_info"))
+        seen = len(rig.bridge.called("tick"))
         await asyncio.sleep(0.1)
-        assert len(rig.bridge.called("symbol_info")) == seen
+        assert len(rig.bridge.called("tick")) == seen
 
     async def test_unsubscribing_something_never_subscribed_is_harmless(self):
         rig = make_data()
@@ -841,8 +905,8 @@ class TestQuotePolling:
         rig = make_data()
         rig.client._instrument_provider.add(_eurusd())
         await rig.client._subscribe_quote_ticks(subscribe_quotes())
-        await until(lambda: rig.bridge.called("symbol_info"))
-        assert rig.bridge.called("symbol_info")[0][0] == ("EURUSD",)
+        await until(lambda: rig.bridge.called("tick"))
+        assert rig.bridge.called("tick")[0][0] == ("EURUSD",)
         await stop(rig)
 
 
