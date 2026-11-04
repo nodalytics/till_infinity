@@ -285,3 +285,49 @@ def test_a_node_that_registered_nothing_is_still_caught(tmp_path):
     ok, why = healthy(where)
     assert ok is False
     assert "0 strategies" in why
+
+
+def test_the_venue_check_reads_something_that_exists(tmp_path):
+    """**The check could never pass.**
+
+    `reading()` did `self.cache.exec_clients() if hasattr(self.cache,
+    "exec_clients") else []`, and `Cache` has no `exec_clients` method - so the
+    guard turned a missing method into an empty list, `any([])` into `False`,
+    and `venue_connected` into a value that was **permanently false whatever
+    the venue was doing**. The container reported `unhealthy` from the day it
+    shipped, with the execution client logging `Connected` and an account with
+    equity on the line above.
+
+    An account is the right source and is still the venue's word: it arrives
+    from the execution client's own reply, so its presence means the venue
+    answered. Asserted against the real `Cache` so a framework rename fails
+    here rather than in production.
+    """
+    from nautilus_trader.cache.cache import Cache
+
+    assert not hasattr(Cache, "exec_clients"), (
+        "if this ever exists, the original code was merely unlucky rather than "
+        "wrong - and this test should be revisited"
+    )
+    assert hasattr(Cache, "accounts"), "the replacement has to exist"
+
+
+def test_an_account_with_a_balance_is_the_venue_answering(tmp_path):
+    """A stub cache holds no account, so the reading is false - which is
+    correct, and is the state that made the old bug invisible: the answer was
+    right for the wrong reason until a real venue connected."""
+    from nautilus_trader.test_kit.stubs.component import TestComponentStubs
+
+    from till_infinity.node.status import Heartbeat, HeartbeatConfig
+
+    actor = Heartbeat(HeartbeatConfig(path=str(tmp_path / "s.json"), registered=14))
+    actor.register_base(
+        portfolio=TestComponentStubs.portfolio(),
+        msgbus=TestComponentStubs.msgbus(),
+        cache=TestComponentStubs.cache(),
+        clock=TestComponentStubs.clock(),
+    )
+    found = actor.reading()
+
+    assert found["venue_connected"] is False, "no account in a stub cache"
+    assert found["strategies"] == 14, "and the count is unaffected by it"
