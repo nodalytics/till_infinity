@@ -9794,6 +9794,109 @@ class TestService:
             assert engine.armed == 1
             assert engine.tracking == 1
 
+    def test_every_reason_a_bar_produced_nothing_is_counted_separately(self):
+        """**`observe_bar` returns `None` for six reasons and a caller wants none.**
+
+        The docstring used to say each was "counted where it matters" and
+        nothing counted them anywhere. So on 2026-11-04, with 693 bars
+        published to the node and no decision recorded for seven days, the
+        honest answer to "which stage swallowed them" was that nobody knew -
+        and a single `None` meaning six things eventually means the wrong one.
+
+        Every branch is exercised here, and `readouts` is the control: without
+        it, "the counters catch a dead fold" would be indistinguishable from
+        "the counters are always zero".
+        """
+        import tempfile
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Settings(
+                state_dir=directory, warm_bars=3, intervals=("1m",), feeds=("FX:EURUSD",)
+            )
+            engine = Engine(settings=settings)
+            good = self._bars(6)
+
+            # out of scope: an interval and a feed the settings do not want
+            assert engine.observe_bar({**good[0], "interval": "1h"}) is None
+            assert engine.observe_bar({**good[0], "feed": "FX:GBPUSD"}) is None
+            assert engine.tally["out_of_scope"] == 2
+
+            # a bar still forming is a different measurement, not an early one
+            assert engine.observe_bar({**good[0], "closed": False}) is None
+            assert engine.tally["still_forming"] == 1
+
+            # a close that is not a positive number
+            assert engine.observe_bar({**good[0], "close": None}) is None
+            assert engine.observe_bar({**good[0], "close": 0.0}) is None
+            assert engine.tally["bad_close"] == 2
+
+            # a bar that cannot produce a variance: no range at all
+            flat = {**good[0], "open": 1.0, "high": 1.0, "low": 1.0, "close": 1.0}
+            assert engine.observe_bar(flat) is None
+            assert engine.tally["no_variance"] == 1
+
+            # unwarmed, until `warm_bars` have been folded
+            assert engine.observe_bar(good[0]) is None
+            assert engine.observe_bar(good[1]) is None
+            assert engine.tally["unwarmed"] == 2
+
+            # **the control**: the third bar warms it and a readout comes out
+            assert engine.observe_bar(good[2]) is not None
+            assert engine.tally["readouts"] == 1
+
+            # a bar at or before the last one folded is a backfill re-announcing
+            assert engine.observe_bar(good[2]) is None
+            assert engine.tally["already_folded"] == 1
+
+            # and the arithmetic holds: everything offered is accounted for
+            tally = engine.tally
+            swallowed = sum(
+                tally[name]
+                for name in (
+                    "out_of_scope",
+                    "still_forming",
+                    "bad_close",
+                    "no_variance",
+                    "already_folded",
+                    "unwarmed",
+                )
+            )
+            assert swallowed + tally["readouts"] == tally["bars"], (
+                f"{tally['bars']} bars offered and {swallowed + tally['readouts']} "
+                f"accounted for - a reason is missing a counter, which is the "
+                f"defect this test exists for"
+            )
+
+    def test_the_tally_is_not_restored_from_disk(self):
+        """It describes this process's run.
+
+        A count restored from a state file would read as activity that did not
+        happen in this process, which is the opposite of what someone asking
+        "is it folding anything *now*" needs.
+        """
+        import tempfile
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Settings(state_dir=directory, warm_bars=2)
+            first = Engine(settings=settings)
+            for bar in self._bars(6):
+                first.observe_bar(bar)
+            assert first.tally["bars"] == 6
+            first.save()
+
+            second = Engine(settings=settings)
+            second.restore()
+            assert second.tally == {}, (
+                "the tally survived a restore, so it reports bars this process never saw"
+            )
+            assert second.progress.seen, "the progress itself must still restore"
+
     def test_only_the_intervals_asked_for_are_folded(self):
         import tempfile
 

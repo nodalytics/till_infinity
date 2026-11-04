@@ -41,6 +41,7 @@ from __future__ import annotations
 import logging
 import math
 import time
+from collections import Counter
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -85,6 +86,18 @@ class Engine:
     desk: Desk = field(default_factory=Desk)
     progress: Progress = field(default_factory=Progress)
     estimator: str = DEFAULT
+    #: Why a bar produced no readout, per reason. **Not persisted**: it
+    #: describes this process's run, and a count restored from disk would read
+    #: as activity that did not happen in it. A field rather than something set
+    #: in `restore`, which is a method and is not always called.
+    #:
+    #: `observe_bar` returns `None` for six different reasons and a caller
+    #: wants none of them, so one zero at the consumer cannot say which. With
+    #: 693 bars published and no decision recorded for seven days, the honest
+    #: answer to "where did the number die" was that nobody had counted.
+    #: `bars` is every payload offered and `readouts` is what came out; the
+    #: other keys sum to the difference.
+    tally: Counter[str] = field(default_factory=Counter)
     _last_save: float = 0.0
 
     def restore(self) -> Progress:
@@ -128,15 +141,24 @@ class Engine:
     def observe_bar(self, payload: dict[str, Any]) -> Readout | None:
         """Fold one `prices.bars` payload. Returns what may be published.
 
-        None covers four different things on purpose, because a caller wants
-        none of them: out of scope, a malformed bar, a bar that cannot produce
-        a variance, and a feed that has not warmed yet. Each is counted where
-        it matters and logged nowhere, because on a busy bus any of them at
-        debug level is the whole log.
+        None covers **six** different things, because a caller wants none of
+        them: out of scope, a bar still forming, a malformed close, a bar that
+        cannot produce a variance, a bar already folded, and a feed that has
+        not warmed yet.
+
+        **Each is now counted, in `self.tally`.** The docstring used to claim
+        they were "counted where it matters" and nothing counted them
+        anywhere - so on 2026-11-04, with 693 bars published and no decision
+        recorded for seven days, there was no way to say which of the six was
+        swallowing them. A single `None` meaning six things eventually means
+        the wrong one, and the only defence is to count the branches even
+        though none of them is logged.
         """
         feed = str(payload.get("feed") or "")
         interval = str(payload.get("interval") or "")
+        self.tally["bars"] += 1
         if not feed or not interval or not self.settings.wants(feed, interval):
+            self.tally["out_of_scope"] += 1
             return None
         # **A forming bar is a different measurement, not an early one.**
         # `prices.announce` publishes a notice per *touched* bar, so the bar in
@@ -153,9 +175,11 @@ class Engine:
         # `False`. The second guard is for what `closed` cannot catch: a
         # backfill re-announcing bars the service has already folded.
         if payload.get("closed") is False:
+            self.tally["still_forming"] += 1
             return None
         close = payload.get("close")
         if not isinstance(close, int | float) or not close > 0:
+            self.tally["bad_close"] += 1
             return None
         close = float(close)
         high = float(payload.get("high") or close)
@@ -164,12 +188,14 @@ class Engine:
         when = float(payload.get("time") or time.time())
         value = dispersion(opened, high, low, close, self.estimator)
         if value is None:
+            self.tally["no_variance"] += 1
             return None
         volume = payload.get("volume")
         volume = float(volume) if isinstance(volume, int | float) and volume > 0 else 0.0
 
         seen = self.progress.of(feed, interval)
         if seen.bars and when <= seen.at:
+            self.tally["already_folded"] += 1
             return None
 
         readout = self.desk.read(
@@ -186,7 +212,9 @@ class Engine:
         seen.spread = float(readout.spread)
         self.progress.folded += 1
         if seen.bars < self.settings.warm_bars:
+            self.tally["unwarmed"] += 1
             return None
+        self.tally["readouts"] += 1
         return readout
 
     def forget(self, feed: str = "", interval: str = "") -> int:
