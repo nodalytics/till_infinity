@@ -42,6 +42,7 @@ threshold inside statespace and was the conversion throwing the volume away.
 from __future__ import annotations
 
 from dataclasses import replace
+from datetime import timedelta
 from pathlib import Path
 from typing import Any
 
@@ -79,6 +80,10 @@ INTERVALS: dict[str, str] = {
     "4-HOUR": "4h",
     "1-DAY": "1d",
 }
+
+#: How often the fold says where its bars went, in seconds. Five minutes: it is
+#: a reading for a person reading a log after the fact, not a monitor.
+TALLY_EVERY = 300.0
 
 
 class StatespaceConfig(ActorConfig, frozen=True):
@@ -167,6 +172,8 @@ class StatespaceActor(Actor):
         self._cfg = config
         self._engine: Any = None
         self._seconds: dict[str, float] = {}
+        #: Proposals published, counted here because the engine cannot see them.
+        self._proposals = 0
         #: `(bar type, detector name, source)` -> the indicator, so a reader
         #: can find one without matching on `registered_indicators` order.
         self.detectors: dict[tuple[str, str, str], Any] = {}
@@ -196,6 +203,39 @@ class StatespaceActor(Actor):
             self._register(bar_type)
             self.subscribe_bars(bar_type)
             self.log.info(f"folding {bar_type}")
+
+        # **Say where the bars went, periodically.** `observe_bar` returns
+        # `None` for six reasons and `_propose` for its own, so a desk that
+        # trades nothing could be any of eight things - and on 2026-11-04,
+        # with 693 bars published and no decision recorded for seven days,
+        # none of them was counted. This reports and never acts: every one of
+        # those reasons is a legitimate state, and a quiet fold is what a
+        # warming feed looks like.
+        self.clock.set_timer(
+            name="statespace-tally",
+            interval=timedelta(seconds=TALLY_EVERY),
+            callback=lambda _event: self._say_tally(),
+        )
+
+    def _say_tally(self) -> None:
+        """One line: bars in, readouts out, proposals out, and what ate them."""
+        if self._engine is None:
+            return
+        tally = dict(self._engine.tally)
+        if not tally.get("bars"):
+            self.log.warning(
+                "statespace: no bar has reached the fold at all - the actor is "
+                "subscribed and `on_bar` is not being called"
+            )
+            return
+        reading = " ".join(f"{name}={value}" for name, value in sorted(tally.items()))
+        line = f"statespace: {reading} proposals={self._proposals}"
+        if tally.get("readouts"):
+            self.log.info(line)
+        else:
+            # Every bar was swallowed. Which reason it was is the whole
+            # diagnostic, and it is in the counters above.
+            self.log.warning(f"{line} - no bar has produced a readout")
 
     def _subscribed_intervals(self) -> tuple[str, ...]:
         """The intervals `bar_types` names, deduplicated and in order.
@@ -262,6 +302,7 @@ class StatespaceActor(Actor):
         topics.publish(self, self._cfg.topic, _as_dict(readout))
         proposal = self._propose(readout, payload)
         if proposal is not None:
+            self._proposals += 1
             topics.publish(self, self._cfg.proposals_topic, proposal)
 
     def _propose(self, readout: Any, payload: dict[str, Any]) -> dict[str, Any] | None:
