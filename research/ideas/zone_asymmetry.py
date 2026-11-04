@@ -88,6 +88,7 @@ class Cell:
     mult_tilt: float
     stop_tilt: float
     stop_vol: float
+    duty: float
     feed: str
     positions: int
     orders: int
@@ -125,6 +126,7 @@ def one(
     stop_vol: float,
     feed: str,
     spec: str,
+    duty: float = 1.0,
 ) -> Cell:
     """One cell. The environment is set per cell because `desks.build` and
     `zones.Tuning.read` both read it at construction - a sweep setting it once
@@ -141,6 +143,7 @@ def one(
     os.environ["TRADING_ZONE_MULT_TILT"] = str(mult_tilt)
     os.environ["TRADING_ZONE_STOP_TILT"] = str(stop_tilt)
     os.environ["TRADING_ZONE_STOP_VOL"] = str(stop_vol)
+    os.environ["TRADING_ZONE_DUTY"] = str(duty)
     # Held fixed: `band_asymmetry.py` measured both hurting the payoff ratio -
     # break-even in 92% of paired cells, the trail in 76% - so sweeping them
     # again here would spend cells re-measuring a known column.
@@ -156,6 +159,7 @@ def one(
         "mult_tilt": mult_tilt,
         "stop_tilt": stop_tilt,
         "stop_vol": stop_vol,
+        "duty": duty,
         "feed": feed,
     }
     started = time.perf_counter()
@@ -215,6 +219,14 @@ def main() -> None:
     parser.add_argument("--mult-tilts", default="1.0,2.0")
     parser.add_argument("--stop-tilts", default="1.0,2.0")
     parser.add_argument("--stop-vols", default="3.0")
+    parser.add_argument(
+        "--duties",
+        default="1.0",
+        help="keep-probabilities for the duty-cycle control. `script` beats "
+        "`measured` on 64% of pairs while trading half as much, and a preset "
+        "that trades less cannot be told from a preset that is better without "
+        "a twin that trades less at random at the same rate.",
+    )
     parser.add_argument("--feeds", default="")
     args = parser.parse_args()
 
@@ -227,6 +239,7 @@ def main() -> None:
     mults = tuple(float(v) for v in args.mult_tilts.split(","))
     stops = tuple(float(v) for v in args.stop_tilts.split(","))
     vols = tuple(float(v) for v in args.stop_vols.split(","))
+    duties = tuple(float(v) for v in args.duties.split(","))
     feeds = tuple(args.feeds.split(",")) if args.feeds else FEEDS
 
     import pathlib
@@ -235,17 +248,18 @@ def main() -> None:
     where.mkdir(parents=True, exist_ok=True)
     sink = where / "cells.jsonl"
 
-    grid = list(itertools.product(modes, presets, pivots, mults, stops, vols, feeds))
+    grid = list(itertools.product(modes, presets, pivots, mults, stops, vols, duties, feeds))
     print(f"venue: {described()}", file=sys.stderr)
     print(
         f"{len(grid)} cells = {len(modes)} modes x {len(presets)} presets x "
         f"{len(pivots)} sources x {len(mults)} width tilts x "
-        f"{len(stops)} stop tilts x {len(vols)} stops x {len(feeds)} feeds",
+        f"{len(stops)} stop tilts x {len(vols)} stops x "
+        f"{len(duties)} duties x {len(feeds)} feeds",
         file=sys.stderr,
     )
     done = 0
     with sink.open("w") as handle:
-        for mode, preset, source, mult, stop, vol, feed in grid:
+        for mode, preset, source, mult, stop, vol, duty, feed in grid:
             cell = one(
                 mode=mode,
                 preset=preset,
@@ -253,6 +267,7 @@ def main() -> None:
                 mult_tilt=mult,
                 stop_tilt=stop,
                 stop_vol=vol,
+                duty=duty,
                 feed=feed,
                 spec=args.spec,
             )
@@ -261,7 +276,7 @@ def main() -> None:
             done += 1
             print(
                 f"[{done}/{len(grid)}] {mode:7s} {preset:8s} {source:14s} "
-                f"w{mult:<4} s{stop:<4} v{vol:<4} {feed:19s} "
+                f"w{mult:<4} s{stop:<4} v{vol:<4} d{duty:<5} {feed:19s} "
                 f"pos {cell.positions:4d} pnl {cell.pnl:+9.2f} "
                 f"w {cell.win_rate:.2f} pay {cell.payoff:5.2f}/{cell.needed:5.2f} "
                 f"{'CLEARS' if cell.clears else ''} {cell.seconds:4.1f}s {cell.note}",

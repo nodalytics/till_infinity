@@ -208,6 +208,17 @@ max-returns = 8
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-addopts = "-ra"
+# **`not venue` is the point, not the `-ra`.** A test marked `venue` places a
+# real order through the bridge the live desk trades on, so it must never run
+# because somebody typed `pytest`. Select it deliberately:
+#
+#     uv run pytest -m venue tests/test_mt5_live.py
+#
+# Nothing else in the suite is excluded, so a default run is still the whole
+# suite minus that one file.
+addopts = "-ra -m 'not venue'"
+markers = [
+    "venue: places a real order against a live MT5 bridge; needs TRADING_MT5_URL and a demo account",
+]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"

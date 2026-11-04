@@ -133,11 +133,28 @@ class Heartbeat(Actor):
         from whether an execution client reports connected - **the venue's word
         and not ours**, which is the whole argument of `lifecycle.py`.
         """
+        # **`Cache` has no `exec_clients` method.** This read
+        # `self.cache.exec_clients() if hasattr(...) else []`, so the guard
+        # turned a missing method into an empty list, `any([])` into `False`,
+        # and `venue_connected` into a value that was **permanently false** -
+        # a check that could never pass whatever the venue was doing. The
+        # container therefore reported `unhealthy` from the day this shipped,
+        # which is the most expensive kind of broken check: one nobody trusts.
+        #
+        # An account is the right source and is still **the venue's word and
+        # not ours**, which is `lifecycle.py`'s whole argument: the account
+        # arrives from the execution client's own reply, which logs the
+        # account and its equity on connect - so its presence in the cache
+        # means the venue answered. No `hasattr`: if `accounts()` disappears,
+        # this should
+        # raise and be seen rather than silently read false forever.
         venue = False
         try:
-            clients = self.cache.exec_clients() if hasattr(self.cache, "exec_clients") else []
-            venue = any(getattr(client, "is_connected", False) for client in clients)
-        except Exception:  # pragma: no cover - cache shape is the framework's
+            venue = any(
+                getattr(found, "balance_total", None) is not None for found in self.cache.accounts()
+            )
+        except Exception as exc:  # the shape is the framework's, so say so
+            self.log.warning(f"status: could not read accounts: {exc}")
             venue = False
         return {
             "at": time.time(),
