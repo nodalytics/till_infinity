@@ -28,6 +28,7 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import os
 from datetime import UTC, datetime
 from typing import Any
 
@@ -36,6 +37,8 @@ from nautilus_trader.live.data_client import LiveMarketDataClient
 from nautilus_trader.model.data import Bar, BarType, QuoteTick
 from nautilus_trader.model.identifiers import ClientId, Venue
 from nautilus_trader.model.objects import Price, Quantity
+
+from till_infinity.utils.env import symbol_names
 
 from .clocks import Clocks
 from .config import MT5DataClientConfig
@@ -241,9 +244,50 @@ class MT5DataClient(LiveMarketDataClient):
         await self._instrument_provider.load_all_async()
         for instrument in self._instrument_provider.list_all():
             self._handle_data(instrument)
-        self._log.info(f"loaded {len(self._instrument_provider.list_all())} instruments")
+        listed = self._instrument_provider.list_all()
+        self._log.info(f"loaded {len(listed)} instruments")
+        self._check_configured(listed)
         if self._watchdog is None:
             self._watchdog = self.create_task(self._watch())
+
+    def _check_configured(self, listed: list[Any]) -> None:
+        """Say which configured symbols this terminal does not list.
+
+        **The broker's spelling is the only correct one, and it is right here.**
+        `TRADING_SYMBOLS` is typed by a human, and lowercase symbols once
+        returned `404 Symbol not found` on **2,605 of 2,609** log lines in
+        ninety seconds while the node reported itself healthy. The instruments
+        are in hand at this point - this is the call that just loaded them -
+        so a configured name that is not among them can be named now rather
+        than discovered as an order that never fills.
+
+        It **reports and never refuses**. A desk may legitimately be configured
+        for an instrument this venue does not carry when a deploy spans two
+        venues, and `TRADING_SYMBOLS_<VENUE>` exists for exactly that; refusing
+        here would turn a per-venue list into a startup failure. What it will
+        not do is stay quiet, which is what cost the day.
+        """
+        wanted = symbol_names(os.environ.get("TRADING_SYMBOLS"))
+        if not wanted or not listed:
+            return
+        have = {str(found.id.symbol): str(found.id.symbol) for found in listed}
+        folded = {name.casefold(): name for name in have}
+        missing = [name for name in wanted if name not in have]
+        if not missing:
+            return
+        for name in missing:
+            real = folded.get(name.casefold())
+            if real:
+                self._log.error(
+                    f"TRADING_SYMBOLS has {name!r} and this terminal lists it as "
+                    f"{real!r} - case and spacing are the broker's, so that desk "
+                    f"will quote an instrument that does not resolve"
+                )
+            else:
+                self._log.error(
+                    f"TRADING_SYMBOLS has {name!r} and this terminal does not list "
+                    f"it at all, under any case"
+                )
 
     def _scrub(self, value: Any) -> str:
         """Text safe to log: the configured API key and `api_key=` removed."""

@@ -30,9 +30,16 @@ from till_infinity.notifications.filters import DEFAULT_MAX_PER_HOUR, Filter
 
 @pytest.fixture
 def narrow(monkeypatch) -> Filter:
-    """The production shape list, which names no trading shape at all."""
+    """The production shape list, which names no trading shape at all.
+
+    **There is no instrument filter any more.** `NOTIFY_FEEDS` was a second
+    symbol specification and it was removed on 2026-11-04: it keyed on
+    `volatility_75_index` while `sizes.feed_of` produces `volatility 75 index`,
+    so the moment the desk took on a symbol with a space in its name every
+    alert for it would have been dropped - silently, with the reason logged as
+    an instrument "not in" a list. Narrowing is on shapes alone now.
+    """
     monkeypatch.setenv("NOTIFY_SHAPES", "level,drift,agent,trade")
-    monkeypatch.setenv("NOTIFY_FEEDS", "gold,volatility_75_index")
     monkeypatch.setenv("NOTIFY_COOLDOWN_S", "900")
     return Filter.from_env()
 

@@ -445,6 +445,116 @@ def test_two_mt5_accounts_are_two_venues(monkeypatch, loop):
         node.dispose()
 
 
+def test_the_fold_is_built_when_a_rule_consumes_its_proposals(monkeypatch):
+    """**Seven of fourteen live desks were subscribed to a topic nobody published.**
+
+    Measured on the instance on 2026-11-04:
+    `TRADING_STRATEGIES=smc-bos-causal,statespace-surprise` with
+    `STATESPACE_BARS` unset. `StatespaceActor` is the only producer of
+    `statespace.proposals`, the live node built it only when that variable was
+    set, and so the `statespace-surprise` desks could not trade. Nothing
+    raised: each desk logged `proposals on statespace.proposals` and the actor
+    simply did not exist, so both halves looked healthy.
+
+    `desks.importable_actors` already defaulted these bars for the backtest
+    path, and its docstring records the same failure three times over. The
+    asymmetry between the two paths was the cause, which is the thing the port
+    exists to prevent: the thing that measures and the thing that trades were
+    not the same thing.
+    """
+    from till_infinity.node import live
+
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD,GBPUSD")
+    monkeypatch.setenv("TRADING_INTERVALS", "15m")
+    monkeypatch.setenv("TRADING_VENUES", "MT5")
+    monkeypatch.delenv("STATESPACE_BARS", raising=False)
+
+    monkeypatch.setenv("TRADING_STRATEGIES", "smc-bos-causal,statespace-surprise")
+    built = live._statespace()
+    assert built, "a desk consumes statespace.proposals and nothing would publish it"
+    assert built[0]._cfg.bar_types == (
+        "EURUSD.MT5-15-MINUTE-LAST-EXTERNAL",
+        "GBPUSD.MT5-15-MINUTE-LAST-EXTERNAL",
+    ), "the fold must cover the bars the desks themselves subscribe to"
+
+
+def test_the_fold_is_omitted_when_nothing_consumes_it(monkeypatch):
+    """**The control.** An actor subscribed to nothing is a fold that never
+    runs pretending to be a model that does, so a node whose rules all decide
+    on bars directly should not carry one."""
+    from till_infinity.node import live
+
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD,GBPUSD")
+    monkeypatch.setenv("TRADING_INTERVALS", "15m")
+    monkeypatch.setenv("TRADING_VENUES", "MT5")
+    monkeypatch.delenv("STATESPACE_BARS", raising=False)
+    monkeypatch.setenv("TRADING_STRATEGIES", "smc-bos-causal")
+
+    assert live._statespace() == []
+
+
+def test_a_bar_type_with_a_space_survives_statespace_bars(monkeypatch):
+    """`STATESPACE_BARS` split on commas *and* spaces, which cannot express one.
+
+    A Deriv synthetic's bar type is `Volatility 75 Index.MT5-15-MINUTE-...`,
+    and the old `.replace(",", " ").split()` tore it into three. The same shape
+    produced three desks on instruments no venue lists before `symbol_names`
+    was written for it; this was the third place carrying it.
+    """
+    from till_infinity.node import live
+
+    monkeypatch.setenv("TRADING_VENUES", "MT5")
+    monkeypatch.setenv("STATESPACE_BARS", "Volatility 75 Index.MT5-15-MINUTE-LAST-EXTERNAL,")
+    built = live._statespace()
+
+    assert built
+    assert built[0]._cfg.bar_types == ("Volatility 75 Index.MT5-15-MINUTE-LAST-EXTERNAL",)
+
+
+def test_the_quote_source_reaches_the_client(monkeypatch):
+    """**It did not, and that is why this test exists.**
+
+    `data.py` implements three sources - `poll`, `ticks`, `push` - validates
+    the name on connect and is covered by tests, and `data_config` never
+    passed one. So every deploy ran `poll` whatever it asked for, and the
+    other two were unreachable from configuration: built, documented, tested
+    and dead. The news adapters and `statespace.proposals` hid the same way,
+    both for weeks.
+
+    The cost is not tidiness. `poll` asks each symbol for its latest tick every
+    `poll_seconds`, so seven symbols at 0.25s is **28 requests a second** and
+    sixty-four is 256 - on two cores, through an SSH tunnel. `push` is one
+    socket for every symbol.
+    """
+    from till_infinity.node import live
+
+    monkeypatch.delenv("TRADING_MT5_QUOTE_SOURCE", raising=False)
+    monkeypatch.delenv("TRADING_MT5_QUOTE_SOURCE_MT5", raising=False)
+    assert live.data_config("MT5").quote_source == "poll", (
+        "the default must stay what every existing deploy is running"
+    )
+
+    monkeypatch.setenv("TRADING_MT5_QUOTE_SOURCE", "push")
+    assert live.data_config("MT5").quote_source == "push"
+
+    # Per venue, like every other variable here: two venues are two feeds and
+    # only one of them may have an EA attached.
+    monkeypatch.setenv("TRADING_MT5_QUOTE_SOURCE_MT5", "ticks")
+    assert live.data_config("MT5").quote_source == "ticks"
+    assert live.data_config("DERIV").quote_source == "push"
+
+
+def test_every_quote_source_the_client_accepts_is_reachable():
+    """A name the config can carry that the client refuses is a deploy that
+    fails at connect, and one the client accepts that the config cannot carry
+    is a feature nobody can turn on."""
+    from till_infinity.adapters.mt5.config import MT5DataClientConfig
+    from till_infinity.adapters.mt5.data import QUOTE_SOURCES
+
+    for name in QUOTE_SOURCES:
+        assert MT5DataClientConfig(quote_source=name).quote_source == name
+
+
 def test_an_adapter_without_a_venue_field_is_one_account_per_node():
     """**A limit worth asserting rather than working around.**
     `BybitExecClientConfig` declares no `venue`, so two Bybit accounts cannot

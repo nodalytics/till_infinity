@@ -85,6 +85,52 @@ def flag(name: str, default: bool = False) -> bool:
     return raw.lower() not in FALSE
 
 
+def symbol_names(value: str | None) -> tuple[str, ...]:
+    """Broker symbol names from one env value. **Commas win over spaces.**
+
+    Moved here from `node/desks` so the adapter can read the same list the
+    desks are built from. Two derivations of this disagreed on exactly the
+    names that have a space in them, which is the whole family this guard is
+    about.
+
+    It used to split on both at once - `value.replace(",", " ").split()` -
+    which cannot express a broker symbol containing a space. Deriv's
+    synthetics all do: `TRADING_SYMBOLS="Volatility 75 Index"` became the three
+    symbols `Volatility`, `75` and `Index`, so one synthetic produced three
+    desks on instruments no venue lists. Nothing raised - `Symbol("75")` is
+    valid and the instrument simply never resolves - so the node came up,
+    registered three desks and traded none of them.
+
+    So: **a comma anywhere makes commas the only separator.** Whitespace still
+    works where there is no comma, because that is how every existing deploy
+    and test writes `EURUSD GBPUSD`. A single spaced name needs a trailing
+    comma - `"Volatility 75 Index,"` - which is what a hand-edited env file
+    tends to look like anyway.
+    """
+    if not value:
+        return ()
+    if "," in value:
+        return tuple(part.strip() for part in value.split(",") if part.strip())
+    found = tuple(part for part in value.split() if part)
+    # **Refuse the shape that used to pass silently.** No broker lists a symbol
+    # called `75`, so a bare number among whitespace-split parts means a name
+    # was torn apart: `Volatility 75 Index`, `Boom 1000 Index`, `Jump 25
+    # Index`. Raising costs a deploy a clear error; the alternative cost three
+    # desks quoting instruments that do not exist, with nothing to say so.
+    #
+    # It does not catch every case - `Step Index` has no number in it - and the
+    # comma rule is the one that always works.
+    if any(part.isdigit() for part in found):
+        raise ValueError(
+            f"{value!r} splits on whitespace into {list(found)}, which contains a "
+            f"bare number - so a symbol name with a space in it has been torn "
+            f"apart. Separate the names with commas: "
+            f'"Volatility 75 Index,Boom 1000 Index", or a single one with a '
+            f'trailing comma: "Volatility 75 Index,".'
+        )
+    return found
+
+
 def names(name: str, default: tuple[str, ...] = ()) -> tuple[str, ...]:
     """A comma-separated list, trimmed, with the empties dropped.
 
