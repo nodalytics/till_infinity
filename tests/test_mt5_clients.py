@@ -1414,6 +1414,131 @@ class TestSubmittingAnOrder:
         assert rig.events(OrderRejected), "the order was rejected"
         assert seen == [], f"retcode 10006 is one order's refusal, not the venue's: {seen}"
 
+    async def test_connecting_puts_the_account_in_the_cache(self):
+        """**The healthcheck reads the cache, and nothing ever filled it.**
+
+        `node/status.py` derives `venue_connected` from `cache.accounts()`
+        having a `balance_total`, on the argument that an account in the cache
+        is the venue's own word. No `AccountState` was ever generated, so the
+        cache held no account, `venue_connected` was permanently false, and on
+        2026-11-04 the container reported **unhealthy** with "the venue has not
+        answered" while its own log said `Connected` and reconciliation had
+        succeeded.
+
+        That is the third spelling of one bug - first `cache.exec_clients()`,
+        which does not exist; then `cache.accounts()`, empty for this reason -
+        and each time the argument for the new source was sound and unverified.
+        So this asserts the cache, not the call.
+        """
+        states: list = []
+        rig = make_exec(
+            FakeBridge(
+                account={
+                    "login": 5042,
+                    "currency": "USD",
+                    "equity": 10_000.0,
+                    "margin": 250.0,
+                    "margin_free": 9_750.0,
+                }
+            )
+        )
+        # **`Portfolio.update_account` is the endpoint**, and the portfolio is
+        # what calls `cache.add_account` (`portfolio.pyx`). Asserting the cache
+        # here would assert a component this rig does not wire, and would fail
+        # on correct code - which is how the previous two versions of this
+        # check came to be written against the wrong source.
+        rig.bus.register(endpoint="Portfolio.update_account", handler=states.append)
+
+        await rig.client._connect()
+
+        assert states, "connected and generated no AccountState: the cache stays empty"
+        found = states[-1]
+        assert found.account_id == rig.client.account_id
+        assert found.is_reported is True, "a balance the broker reported, not one we inferred"
+        (balance,) = found.balances
+        assert float(balance.total.as_double()) == 10_000.0
+        assert float(balance.locked.as_double()) == 250.0
+        assert str(balance.currency) == "USD"
+        await rig.client._disconnect()
+
+    async def test_a_balance_whose_parts_do_not_sum_is_still_published(self):
+        """`total` must equal `locked + free` or Nautilus refuses the balance.
+
+        MT5 defines `margin_free = equity - margin`, so `free` is computed from
+        the identity rather than trusted. A broker that breaks the identity is
+        worth a warning and is **not** worth failing over - refusing would put
+        the healthcheck back where it started.
+        """
+        states: list = []
+        rig = make_exec(
+            FakeBridge(
+                account={
+                    "login": 5042,
+                    "currency": "USD",
+                    "equity": 1_000.0,
+                    "margin": 100.0,
+                    "margin_free": 777.0,  # not 900, which is the identity
+                }
+            )
+        )
+        rig.bus.register(endpoint="Portfolio.update_account", handler=states.append)
+
+        await rig.client._connect()
+
+        assert states, "a broker that breaks the identity must not cost us the account"
+        (balance,) = states[-1].balances
+        assert float(balance.total.as_double()) == 1_000.0
+        assert float(balance.free.as_double()) == 900.0, (
+            "free must come from equity - margin, or the balance is refused outright"
+        )
+        await rig.client._disconnect()
+
+    async def test_the_autotrading_flag_is_republished_not_only_sent_on_connect(self):
+        """**Actors start after clients connect**, so a one-shot publish is missed.
+
+        The heartbeat subscribes to `VENUE_TRADING` when it starts, which
+        Nautilus does *after* connecting the execution client - so on
+        2026-11-04 it read `can_trade: None` on a node whose log said "the
+        terminal will accept orders (terminal_info on connect)". The flag is
+        therefore re-read on a timer, and this pins that the refresh exists and
+        publishes, rather than pinning the interval.
+        """
+        seen: list[dict] = []
+        rig = make_exec(FakeBridge())
+        rig.bus.subscribe(VENUE_TRADING, seen.append)
+        await rig.client._connect()
+        first = len(seen)
+        assert first, "connect published nothing"
+
+        # Drive one refresh directly rather than waiting a minute for the timer.
+        await rig.client._check_trading()
+
+        assert len(seen) > first, (
+            "the flag is published once and never again, so a subscriber that "
+            "starts later never learns it"
+        )
+        assert seen[-1]["can_trade"] is True
+        await rig.client._disconnect()
+
+    async def test_disconnecting_cancels_the_refresh(self):
+        """A loop that outlives its client keeps reading a closed bridge."""
+        rig = make_exec(FakeBridge())
+        await rig.client._connect()
+        task = rig.client._refresh
+        assert task is not None, "connect started no refresh loop"
+        assert not task.done()
+
+        await rig.client._disconnect()
+
+        assert rig.client._refresh is None, "the handle is still held after disconnect"
+        # `cancel()` requests; the task reaches cancelled on the next loop pass,
+        # so this waits for it rather than asserting on the same tick.
+        for _ in range(20):
+            if task.done():
+                break
+            await asyncio.sleep(0.01)
+        assert task.done(), "the refresh loop outlived its client and polls a closed bridge"
+
     async def test_connecting_reads_and_reports_the_terminals_autotrading_flag(self):
         """`account()` cannot answer this, which is why the read exists.
 

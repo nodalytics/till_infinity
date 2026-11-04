@@ -42,7 +42,7 @@ from nautilus_trader.model.identifiers import (
     Venue,
     VenueOrderId,
 )
-from nautilus_trader.model.objects import Money, Price, Quantity
+from nautilus_trader.model.objects import AccountBalance, Currency, Money, Price, Quantity
 
 from ...utils.topics import VENUE_TRADING
 from .config import MT5ExecClientConfig
@@ -97,6 +97,16 @@ AUTOTRADING_OFF = 10027
 #: FOK is first because it is the mode this account has and the most widely
 #: offered; a broker that is IOC-only reports bit 2 and gets IOC.
 FILLING_BITS: tuple[tuple[int, str], ...] = ((1, "FOK"), (2, "IOC"), (4, "RETURN"))
+
+#: How often to re-read the account and the AutoTrading flag, in seconds.
+#:
+#: **A one-shot publish on connect is not enough, and the ordering is why.**
+#: Nautilus connects its clients *before* it starts actors, so the heartbeat
+#: subscribed to `VENUE_TRADING` after the execution client had already
+#: published - it read `can_trade: None` on a node whose log said "the terminal
+#: will accept orders". A repeating read also means AutoTrading going off
+#: mid-session is noticed within a minute rather than at the next order.
+ACCOUNT_REFRESH_S = 60.0
 #: Placed or done: the terminal has the request.
 _TAKEN = (PLACED, DONE)
 
@@ -190,7 +200,9 @@ class MT5ExecutionClient(LiveExecutionClient):
         login = account.get("login") or account.get("account")
         self._set_account_id(AccountId(f"{self._venue.value}-{login}"))
         self._log.info(f"account {login}, equity {account.get('equity')}")
+        self._publish_account(account)
         await self._check_trading()
+        self._refresh = self.create_task(self._refresh_account())
 
     async def _check_trading(self) -> None:
         """Read the terminal's AutoTrading flag and say so, loudly if it is off.
@@ -233,7 +245,92 @@ class MT5ExecutionClient(LiveExecutionClient):
             self._log.warning(f"could not publish the venue trading flag: {exc}")
 
     async def _disconnect(self) -> None:
+        task = getattr(self, "_refresh", None)
+        if task is not None:
+            task.cancel()
+            self._refresh = None
         await self._bridge.close()
+
+    async def _refresh_account(self) -> None:
+        """Re-read the account and the AutoTrading flag, forever.
+
+        Two things need repeating rather than doing once. The **account state**
+        is what puts the account in the cache, and the portfolio prices margin
+        against it, so a figure from connect-time goes stale. The **AutoTrading
+        flag** has to be re-published because actors start after clients
+        connect: the heartbeat subscribes too late to hear the connect-time
+        publish and read `can_trade: None` on a node whose own log said the
+        terminal would accept orders.
+
+        Failures are logged and the loop continues. A dropped read is not a
+        reason to stop reporting, and `_check_trading` already refuses to claim
+        anything from a read that failed.
+        """
+        while True:
+            try:
+                await asyncio.sleep(ACCOUNT_REFRESH_S)
+                found = await self._bridge.account()
+                if found:
+                    self._publish_account(found)
+                await self._check_trading()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - the transport's shapes
+                self._log.warning(f"account refresh failed: {self._scrub(exc)}")
+
+    def _publish_account(self, account: dict) -> None:
+        """Put the broker's balances in the cache, which nothing else did.
+
+        **The healthcheck was failing on a connected desk because of this.**
+        `node/status.py` reads `venue_connected` from
+        `cache.accounts()` having a `balance_total`, on the argument that an
+        account in the cache is the venue's own word. Nothing ever generated an
+        `AccountState`, so the cache held no account, `venue_connected` was
+        **permanently false**, and the container reported `unhealthy` with
+        "the venue has not answered" while the log said `Connected` and
+        reconciliation had succeeded.
+
+        That is the third spelling of one bug: the check first read
+        `cache.exec_clients()`, which does not exist, then `cache.accounts()`,
+        which was empty for this reason. A check that cannot pass is worse than
+        no check, because it trains a reader to ignore the one signal that is
+        meant to be trusted.
+
+        **`total` must equal `locked + free`** or Nautilus refuses the balance,
+        and MT5 defines `margin_free = equity - margin`, so `free` is computed
+        from the identity rather than read. `margin_free` is logged when it
+        disagrees, because a broker that breaks the identity is worth knowing
+        about and is not worth failing over.
+        """
+        try:
+            currency = Currency.from_str(str(account.get("currency") or "USD"))
+            equity = float(account.get("equity") or 0.0)
+            margin = float(account.get("margin") or 0.0)
+            free = equity - margin
+            reported_free = account.get("margin_free")
+            if reported_free is not None and abs(float(reported_free) - free) > 0.01:
+                self._log.warning(
+                    f"margin_free {reported_free} is not equity - margin ({free:.2f}); "
+                    f"using the identity, since a balance whose parts do not sum is refused"
+                )
+            self.generate_account_state(
+                balances=[
+                    AccountBalance(
+                        Money(equity, currency),
+                        Money(max(margin, 0.0), currency),
+                        Money(max(free, 0.0), currency),
+                    )
+                ],
+                margins=[],
+                reported=True,
+                ts_event=self._clock.timestamp_ns(),
+            )
+        except Exception as exc:
+            self._log.error(
+                f"could not publish the account state ({self._scrub(exc)}): the "
+                f"healthcheck reads the cache for this and will report the venue "
+                f"as unanswered"
+            )
 
     # ──── instruments ────
     async def _instrument(self, instrument_id: InstrumentId) -> Any:
