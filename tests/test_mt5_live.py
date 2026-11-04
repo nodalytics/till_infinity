@@ -754,10 +754,19 @@ async def test_the_venue_refuses_an_impossible_order(live, spec, tradeable):
             # this test already; this is the assertion that says so, and it is
             # outside the `except` because a bare `pytest.raises` cannot
             # express "an exception **or** a retcode".
-            assert "10027" not in refusal, (
-                f"the venue refused this order because AutoTrading is off, not "
-                f"because a million lots is impossible: {refusal}"
-            )
+            for wrong, why in (
+                ("10027", "AutoTrading is off"),
+                # **10030 made this test pass for the wrong reason once.** With
+                # `type_filling` hardcoded to a mode the symbol does not
+                # accept, every order was refused `Unsupported filling mode` -
+                # so this test went green while proving nothing about volume,
+                # which is exactly the vacuous pass `CLAUDE.md` forbids.
+                ("10030", "the filling mode is unsupported"),
+            ):
+                assert wrong not in refusal, (
+                    f"the venue refused this order because {why}, not because a "
+                    f"million lots is impossible: {refusal}"
+                )
             return
         assert reply is not None
 

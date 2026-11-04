@@ -80,6 +80,23 @@ PLACED = 10008
 #: one order's rejection reason - which is how it stayed invisible: a desk
 #: reading per-order rejections sees twelve unrelated refusals, not one cause.
 AUTOTRADING_OFF = 10027
+#: `SYMBOL_FILLING_*` bits mapped to the bridge's own spelling, in the order to
+#: prefer when a symbol accepts more than one.
+#:
+#: **This is per symbol and is not a preference.** Measured on the live
+#: terminal on 2026-11-04: EURUSD, GBPUSD, USDJPY and XAUUSD all report
+#: `filling_mode=1` - **FOK only** - and this client sent `IOC`, which came
+#: back `10030, Unsupported filling mode` on **every market order**. FOK
+#: filled at retcode 10009 on the same symbol a second later.
+#:
+#: It was invisible because nothing went through this body builder against a
+#: real venue: a `FakeBridge` accepts whatever it is handed, and the one live
+#: test posted its own JSON without the field at all, so the bridge's default
+#: was used and a market order filled.
+#:
+#: FOK is first because it is the mode this account has and the most widely
+#: offered; a broker that is IOC-only reports bit 2 and gets IOC.
+FILLING_BITS: tuple[tuple[int, str], ...] = ((1, "FOK"), (2, "IOC"), (4, "RETURN"))
 #: Placed or done: the terminal has the request.
 _TAKEN = (PLACED, DONE)
 
@@ -144,6 +161,11 @@ class MT5ExecutionClient(LiveExecutionClient):
         self._cfg = config
         self._bridge = connect(config)
         self._venue = venue
+        #: Per symbol, because `filling_mode` is a property of the symbol and
+        #: not of the account. Asked once each: it does not change inside a
+        #: session, and an extra round trip on every order is latency on the
+        #: money path.
+        self._filling: dict[str, str] = {}
         #: Deals dropped from a fill report because their instrument would not
         #: resolve. Non-zero means a fill report was incomplete.
         self.skipped_deals = 0
@@ -237,6 +259,50 @@ class MT5ExecutionClient(LiveExecutionClient):
         if found is not None and self._cache.instrument(instrument_id) is None:
             self._cache.add_instrument(found)
         return found
+
+    async def _filling_for(self, symbol: str) -> str:
+        """The filling mode this symbol will actually accept.
+
+        `TRADING_MT5_FILLING` names a preference and the symbol has the final
+        say: a configured mode the symbol does not support is replaced by one
+        it does, loudly, because the alternative is `10030` on every order.
+
+        An unreadable `filling_mode` falls back to the configured value rather
+        than guessing - the field is absent on some bridge versions, and
+        refusing to trade over a missing hint would be worse than sending the
+        mode that was asked for.
+        """
+        found = self._filling.get(symbol)
+        if found is not None:
+            return found
+        wanted = str(self._cfg.filling or "FOK").upper()
+        try:
+            mask = int((await self._bridge.symbol_info(symbol)).get("filling_mode") or 0)
+        except Exception as exc:
+            self._log.warning(
+                f"{symbol}: could not read filling_mode ({self._scrub(exc)}), "
+                f"sending the configured {wanted}"
+            )
+            self._filling[symbol] = wanted
+            return wanted
+        supported = [name for bit, name in FILLING_BITS if mask & bit]
+        if not supported:
+            self._log.warning(
+                f"{symbol}: filling_mode={mask} names no mode this client knows, "
+                f"sending the configured {wanted}"
+            )
+            chosen = wanted
+        elif wanted in supported:
+            chosen = wanted
+        else:
+            chosen = supported[0]
+            self._log.warning(
+                f"{symbol}: does not accept {wanted} (filling_mode={mask} is "
+                f"{'/'.join(supported)}), sending {chosen}. Sending an "
+                f"unsupported mode returns 10030 on every order and fills nothing."
+            )
+        self._filling[symbol] = chosen
+        return chosen
 
     def _ours(self, row: dict) -> bool:
         return int(row.get("magic") or 0) == self._cfg.magic
@@ -487,7 +553,7 @@ class MT5ExecutionClient(LiveExecutionClient):
             "deviation": self._cfg.deviation,
             "magic": self._cfg.magic,
             "comment": str(order.client_order_id)[:31],
-            "type_filling": self._cfg.filling,
+            "type_filling": await self._filling_for(order.instrument_id.symbol.value),
         }
         if order.has_price:
             body["price"] = float(order.price)

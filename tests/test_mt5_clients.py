@@ -1333,8 +1333,49 @@ class TestSubmittingAnOrder:
             "deviation": 20,
             "magic": 777_701,
             "comment": str(order.client_order_id)[:31],
-            "type_filling": "IOC",
+            # **FOK, from the symbol.** `_filling_for` reads the symbol's
+            # `filling_mode` bitmask and the config only names a preference.
+            # This asserted `IOC`, which was the old hardcoded default and is
+            # refused by every symbol on this account - `10030, Unsupported
+            # filling mode` on every market order, while this test passed
+            # because a `FakeBridge` accepts whatever body it is handed.
+            "type_filling": "FOK",
         }
+
+    async def test_the_filling_mode_comes_from_the_symbol_not_the_config(self):
+        """**The symbol has the final say, and a mismatch is the whole bug.**
+
+        Measured on the live terminal: EURUSD, GBPUSD, USDJPY and XAUUSD all
+        report `filling_mode=1` - FOK only - and this client sent `IOC`, so
+        every market order returned `10030` and filled nothing. FOK on the
+        same symbol filled at 10009 a second later.
+
+        Both directions, because a resolver that always answers FOK is not
+        reading anything: a symbol advertising IOC only must get IOC.
+        """
+        for mask, configured, expected in (
+            (1, "IOC", "FOK"),  # FOK-only symbol overrides a bad preference
+            (2, "IOC", "IOC"),  # IOC-only symbol keeps a good one
+            (2, "FOK", "IOC"),  # and overrides a preference it cannot fill
+            (3, "IOC", "IOC"),  # both offered: the preference is honoured
+        ):
+            info = {**EURUSD_INFO, "filling_mode": mask}
+            rig = make_exec(FakeBridge(order=REJECTION, symbol_info=info), filling=configured)
+            await rig.client._submit_order(_submit(rig, _market()))
+            sent = rig.bridge.called("order")[-1][0][0]["type_filling"]
+            assert sent == expected, (
+                f"filling_mode={mask} with {configured} configured sent {sent}, "
+                f"and a mode the symbol does not list returns 10030 on every order"
+            )
+
+    async def test_an_unreadable_filling_mode_falls_back_to_the_configured_one(self):
+        """**Absent is not a refusal.** The field is missing on some bridge
+        versions, and declining to trade over a missing hint would be worse
+        than sending the mode that was asked for."""
+        info = {k: v for k, v in EURUSD_INFO.items() if k != "filling_mode"}
+        rig = make_exec(FakeBridge(order=REJECTION, symbol_info=info), filling="IOC")
+        await rig.client._submit_order(_submit(rig, _market()))
+        assert rig.bridge.called("order")[-1][0][0]["type_filling"] == "IOC"
 
     async def test_autotrading_off_is_reported_as_a_venue_fault_not_an_order_one(self):
         """**10027 is the terminal, not the order**, so it goes on the bus.
@@ -2688,15 +2729,28 @@ class TestTheBridgeSpeaksTheWireProtocol:
 
     async def test_close_sends_a_volume_only_when_partial(self):
         bodies: list[bytes] = []
+        urls: list[httpx.URL] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             bodies.append(request.read())
+            urls.append(request.url)
             return httpx.Response(200, json={})
 
         bridge = _wired(handler)
         await bridge.close_position(9)
         await bridge.close_position(9, 0.25)
-        assert bodies == [b'{"ticket":9}', b'{"ticket":9,"volume":0.25}']
+
+        # **Query parameters, not a body.** `POST /positions/close` declares
+        # `ticket`, `volume` and `type_filling` as plain function arguments
+        # with no request model, so FastAPI reads them from the query string.
+        # Sent as JSON, every call came back **422 `field required` for
+        # `query.ticket`** - so the route every exit goes through had never
+        # worked, and this test passed while asserting the wrong wire.
+        assert bodies == [b"", b""], f"a body was sent to a query route: {bodies}"
+        assert [dict(u.params) for u in urls] == [
+            {"ticket": "9"},
+            {"ticket": "9", "volume": "0.25"},
+        ]
 
     async def test_a_refusal_is_a_bridge_error_naming_the_route_and_status(self):
         bridge = _wired(lambda r: httpx.Response(400, text="invalid volume"))

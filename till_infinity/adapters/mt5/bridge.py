@@ -26,6 +26,7 @@ Routes, as the bridge exposes them under `/api/v1`:
 | `DELETE /orders/{ticket}` | cancel a resting order |
 | `GET /history/deals` | fills, for reconciliation (**`from_date`**, not `date_from`) |
 | `GET /terminal/info` | AutoTrading, which no other route reports |
+| `POST /positions/close` | every exit - **query parameters, not a body** |
 """
 
 from __future__ import annotations
@@ -379,7 +380,11 @@ class Bridge:
             "deviation": int(body.get("deviation") or 20),
             "comment": str(body.get("comment") or "")[:31],
             "magic": int(body.get("magic") or 0),
-            "type_filling": str(body.get("type_filling") or "IOC"),
+            # FOK, not IOC: every symbol on this account reports `filling_mode`
+            # 1 (FOK only) and IOC returns `10030` on every order. The caller
+            # normally names it from the symbol's own bitmask - see
+            # `execution._filling_for` - and this is only the fallback.
+            "type_filling": str(body.get("type_filling") or "FOK"),
         }
         if body.get("tp"):
             shared["tp"] = float(body["tp"])
@@ -416,10 +421,30 @@ class Bridge:
         return (await self.post("/positions/modify", body)) or {}
 
     async def close_position(self, ticket: int, volume: float | None = None) -> dict[str, Any]:
-        body: dict[str, Any] = {"ticket": int(ticket)}
+        """Close all or part of a position. **Query parameters, not a body.**
+
+        `POST /positions/close` declares `ticket: int`, `volume` and
+        `type_filling` as *function arguments* with no request model, so
+        FastAPI reads them from the query string. This client sent them as
+        JSON and every call came back **422 `field required` for
+        `query.ticket`** - so the route every exit on this desk goes through
+        had never once worked, and a position opened by the adapter could not
+        be closed by it.
+
+        It is the only write route on this bridge shaped that way:
+        `/trading/order` takes `MarketOrderRequest`, `/positions/modify` takes
+        `ModifySLTPRequest` and `/orders/pending` takes `PendingOrderRequest`,
+        all bodies. Checked against the service's routers rather than guessed,
+        after `close` was found by running it.
+
+        `volume` short of the position's own is a **partial** close; omitted
+        closes the lot. The route defaults `type_filling` to `FOK`, which is
+        what this account supports - see `FILLING_BITS`.
+        """
+        params: dict[str, Any] = {"ticket": int(ticket)}
         if volume is not None:
-            body["volume"] = float(volume)
-        return (await self.post("/positions/close", body)) or {}
+            params["volume"] = float(volume)
+        return (await self._send("POST", "/positions/close", params=params)) or {}
 
     async def cancel(self, ticket: int) -> dict[str, Any]:
         return (await self.delete(f"/orders/{int(ticket)}")) or {}
