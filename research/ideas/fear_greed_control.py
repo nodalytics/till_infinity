@@ -75,6 +75,21 @@ CRASH_BARS = 68
 #: Leg shifts swept by `plant_misalign`, in bars.
 MISALIGN = (0, 1, 2, 5)
 
+#: The fewest bars of the 2008 window an interval must hold before the crash
+#: control is scored at all.
+#:
+#: **An interval whose data starts in 2026 cannot have a 2008 control**, and
+#: that is a statement about the store rather than about the reading. The 15m
+#: intersection is 4,760 bars from 2026-06-03 to 2026-08-14, so
+#: `window_mask(CRASH_FROM, CRASH_TO)` selects **nothing** and `window_rank`
+#: raised `ValueError: a 0-bar window has no mean worth ranking` - which took
+#: the whole `control` section down with it and, because `control` runs first,
+#: wrote no output at all for the sections after it. The row is still written,
+#: carrying `skipped` and its own `bars_in_window` of 0, because
+#: `absent-is-not-zero`: a control that could not be run is not a control that
+#: came back empty, and the write-up has to be able to tell them apart.
+FEWEST_CRASH_BARS = 2
+
 
 def _dates(ts: np.ndarray) -> list[dt.date]:
     return [dt.datetime.fromtimestamp(t, tz=dt.UTC).date() for t in ts]
@@ -159,6 +174,9 @@ def crash_control(held: dict[str, F.Series], basket: F.Basket) -> dict:
     Every number the pass rule names, plus the cross drawdowns over the same
     window, so a reader can see both that the index fired and that the thing
     it fired on was the episode Brunnermeier, Nagel and Pedersen describe.
+
+    Returns a row carrying `skipped` and nothing else where the interval's
+    data does not reach the window - see `FEWEST_CRASH_BARS`.
     """
     ts = held["audusd"].ts
     dates = _dates(ts)
@@ -171,7 +189,14 @@ def crash_control(held: dict[str, F.Series], basket: F.Basket) -> dict:
         "legs": list(basket.legs),
         "halves": {},
         "crosses": {},
+        "episodes": [],
     }
+    if int(mask.sum()) < FEWEST_CRASH_BARS:
+        out["skipped"] = (
+            f"this interval holds {int(mask.sum())} bars in {F.CRASH_FROM}.."
+            f"{F.CRASH_TO}; its data runs {dates[0]}..{dates[-1]}"
+        )
+        return out
     for name in ("risk_off", "volatile_off", "directional_off"):
         values = getattr(basket, name)
         mean, rank, tiles, pct, _ = window_rank(values, mask)
