@@ -27,6 +27,7 @@ Routes, as the bridge exposes them under `/api/v1`:
 | `GET /history/deals` | fills, for reconciliation (**`from_date`**, not `date_from`) |
 | `GET /terminal/info` | AutoTrading, which no other route reports |
 | `POST /positions/close` | every exit - **query parameters, not a body** |
+| `GET /symbols/ticks/{symbol}` | the latest tick, for the quote poll |
 """
 
 from __future__ import annotations
@@ -200,6 +201,31 @@ class Bridge:
             count=count,
         )
         return _rows(raw)
+
+    async def tick(self, symbol: str) -> dict:
+        """The latest single tick. **The bare route, which a sampling poll wants.**
+
+        `/symbols/ticks/{symbol}` is `symbol_info_tick` and ignores any range,
+        which is exactly why `ticks()` below must not use it - and exactly what
+        a 0.25s sample does want.
+
+        **It replaces `symbol_info` on the quote poll, which is frozen.**
+        Measured against the live terminal on 2026-11-04: eight reads of
+        `/symbols/info/EURUSD` three seconds apart returned the same
+        `bid 1.12217 / ask 1.12225` and the same `time`, while this route moved
+        on every read. `symbol_info` carries the symbol's *specification* and a
+        bid/ask the terminal refreshes on its own terms.
+
+        The cost was total and silent: the quote loop published **7 quotes from
+        2,399 polls** - one per symbol, then the dedupe correctly suppressed a
+        price that never changed - so every quote-driven reading on the desk was
+        working from a startup snapshot.
+        """
+        raw = await self.get(f"/symbols/ticks/{symbol}", empty_on_404=True)
+        rows = _rows(raw)
+        if rows:
+            return rows[-1]
+        return raw if isinstance(raw, dict) else {}
 
     async def ticks(self, symbol: str, start: int, end: int) -> list[dict]:
         """Every tick in a range, which is where completeness lives.

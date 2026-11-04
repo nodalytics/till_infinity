@@ -338,30 +338,40 @@ class MT5DataClient(LiveMarketDataClient):
 
     # ──── polling ────
     async def _poll_quotes(self, instrument_id: Any) -> None:
+        """`quote_source='poll'`: the latest tick, sampled every `poll_seconds`.
+
+        **It used to read `symbol_info`, which is frozen.** Eight reads of
+        `/symbols/info/EURUSD` three seconds apart on 2026-11-04 returned the
+        same bid, the same ask and the same `time`, while
+        `/symbols/ticks/{symbol}` moved on every read: `symbol_info` carries
+        the symbol's *specification* and a bid/ask the terminal refreshes on
+        its own terms.
+
+        Nothing raised and nothing warned. The loop published **7 quotes from
+        2,399 polls** - one per symbol, and then the dedupe doing its job on a
+        price that never changed - so the desk's entire quote feed was a
+        startup snapshot and every quote-driven reading on it was stale. The
+        counters are what made that visible; before them it was indistinguishable
+        from a market nobody was quoting.
+
+        The row goes through `_publish_tick` rather than being built into a
+        `QuoteTick` here, so this source gets the same parse, the same server
+        offset and the same `(time, bid, ask)` dedupe as `ticks` and `push`.
+        The old inline version carried its own `last` tuple, which also
+        suppressed a genuine return to a previous price.
+        """
         symbol = instrument_id.symbol.value
         instrument = self._instrument_provider.find(instrument_id)
-        last: tuple[float, float] | None = None
+        # Zero, not the clock: this route answers with the *latest* tick, whose
+        # timestamp is already in the past, so seeding with now would reject it.
+        self._mark.setdefault(symbol, (0, set()))
         while True:
             try:
                 self._counts["quote_polls"] += 1
-                info = await self._bridge.symbol_info(symbol)
+                row = await self._bridge.tick(symbol)
                 self._counts["quote_replies"] += 1
-                bid, ask = float(info.get("bid") or 0.0), float(info.get("ask") or 0.0)
-                if bid > 0 and ask > 0 and (bid, ask) != last:
-                    last = (bid, ask)
-                    now = self._clock.timestamp_ns()
-                    self._counts["quotes"] += 1
-                    self._handle_data(
-                        QuoteTick(
-                            instrument_id=instrument_id,
-                            bid_price=Price(bid, instrument.price_precision),
-                            ask_price=Price(ask, instrument.price_precision),
-                            bid_size=Quantity(1, 0),
-                            ask_size=Quantity(1, 0),
-                            ts_event=now,
-                            ts_init=now,
-                        )
-                    )
+                if row:
+                    self._publish_tick(instrument_id, instrument, row)
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
