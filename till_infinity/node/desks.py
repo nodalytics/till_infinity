@@ -76,7 +76,7 @@ from nautilus_trader.trading.strategy import Strategy
 from till_infinity.adapters.mt5 import MT5
 from till_infinity.strategies.basket import BasketConfig, BasketExit
 from till_infinity.strategies.leaves import ENTRIES, EXITS, RULES, leaf
-from till_infinity.utils.env import symbol_names
+from till_infinity.utils.env import symbol_names, whole
 
 from . import sizing
 
@@ -90,6 +90,20 @@ __all__ = ["ENTRIES", "EXITS", "RULES"]
 #: bar rather than a thread - but a node that cannot keep up with its feed is
 #: a node whose quotes arrive late, and late quotes are the one input every
 #: gate here trusts.
+#:
+#: **`TRADING_DESKS_PER_CORE` raises it, and the default does not move.** This
+#: number was sized for a small VPS and it is the binding constraint on a wider
+#: instrument list: two cores give sixteen desks, which at two rules a symbol is
+#: **eight symbols**. Twenty-one symbols were configured on the instance on
+#: 2026-11-04 and twenty-six desks were clipped - every index among them - while
+#: the container sat at **6.8% CPU and 182MiB of 2.6GiB**, with the clipped
+#: symbols still paying for their feed and their fold.
+#:
+#: So the ceiling is worth raising on a box that has been measured, and is not
+#: worth raising by guess: the cost it protects against is late quotes, which is
+#: per *symbol* (one quote poller each) rather than per desk, and it does not
+#: show up in a desk count at all. Measure `cpu` and the `feeds:` line after
+#: each step rather than setting this once from arithmetic.
 PER_CORE = 8
 
 
@@ -348,7 +362,9 @@ def ceiling(budget: sizing.Budget | None = None) -> int:
     # revisiting against `tis-research-jobs-starve-the-service`, where tis has
     # two cores and a research job starving the desk is a measured outcome.
     cores = (budget or sizing.measure()).cores_seen if budget else sizing.cores()
-    return max(1, cores * PER_CORE)
+    # Read here rather than at import, so a test can move it and a deploy does
+    # not depend on import order.
+    return max(1, cores * max(1, whole("TRADING_DESKS_PER_CORE", PER_CORE)))
 
 
 def build(

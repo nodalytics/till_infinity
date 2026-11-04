@@ -40,6 +40,7 @@ one that takes effect on what gets built:
 |---|---|---|
 | `TRADING_STRATEGIES` | `statespace-surprise` | `level-scalp` |
 | `TRADING_SYMBOLS` | *(none - unset builds nothing)* | `gold,btc` |
+| `TRADING_DESKS_PER_CORE` | `8` | Desks a core may carry; the rest are clipped with a warning. Two cores at two rules a symbol is eight symbols. | restart |
 | `TRADING_INTERVALS` | `15m` | every timeframe |
 
 `TRADING_SYMBOLS` unset means the node raises rather than starting empty, which is deliberate: a
