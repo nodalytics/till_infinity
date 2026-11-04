@@ -80,7 +80,12 @@ from nautilus_trader.test_kit.stubs.identifiers import TestIdStubs
 
 from till_infinity.adapters.mt5.bridge import Bridge, BridgeError
 from till_infinity.adapters.mt5.config import MT5DataClientConfig, MT5ExecClientConfig
-from till_infinity.adapters.mt5.data import QUOTE_SOURCES, MT5DataClient, _milliseconds
+from till_infinity.adapters.mt5.data import (
+    QUOTE_SOURCES,
+    MT5DataClient,
+    _milliseconds,
+    feed_reading,
+)
 from till_infinity.adapters.mt5.execution import MT5ExecutionClient, ReconciliationError
 from till_infinity.adapters.mt5.factories import MT5LiveDataClientFactory, MT5LiveExecClientFactory
 from till_infinity.adapters.mt5.providers import MT5InstrumentProvider
@@ -581,6 +586,111 @@ class TestWhatThisVenueCannotDoStaysRefused:
         assert name not in vars(MT5ExecutionClient)
         with pytest.raises(NotImplementedError):
             await getattr(rig.client, name)(None)
+
+
+class TestTheFeedWatchdog:
+    """**The fault this reports was silent for a week.**
+
+    On 2026-11-04 the desk subscribed to seven symbols, logged `Connected` and
+    `loaded 725 instruments`, and then printed **nothing at all** for half an
+    hour. The bridge's own request counters showed no traffic from it and the
+    journal had recorded no decision since 2026-10-28. The poll loops are
+    `while True` with `except Exception -> log.warning`, so a *failing* loop
+    would have been loud - what is silent is a loop body that never runs, and
+    nothing told that apart from a quiet market.
+
+    `feed_reading` is asserted rather than the log call: the Cython `Logger`
+    has read-only attributes, and the **wording is the diagnostic** anyway.
+    """
+
+    def counts(self, **over: int) -> dict[str, int]:
+        base = dict.fromkeys(
+            (
+                "quote_polls",
+                "quote_replies",
+                "quotes",
+                "quote_failures",
+                "bar_polls",
+                "bar_replies",
+                "bars",
+                "bar_failures",
+            ),
+            0,
+        )
+        return base | over
+
+    async def test_a_fresh_client_has_counted_nothing(self):
+        """`polls=0` and `polls=9000 published=0` are different faults - the
+        first a task that is not executing, the second the bridge or the parse
+        giving nothing back. One counter could not say which, and that
+        ambiguity is why a week of silence read as a quiet market."""
+        rig = make_data()
+        assert rig.client._counts == self.counts()
+
+    async def test_a_working_poll_increments_attempt_reply_and_publish(self):
+        """**The control.** Without it, "the counters catch a dead loop" is
+        indistinguishable from "the counters are always zero"."""
+        rig = make_data(FakeBridge(symbol_info={**EURUSD_INFO, "bid": 1.1, "ask": 1.1002}))
+        await rig.client._connect()
+        task = rig.client.create_task(rig.client._poll_quotes(EURUSD_ID))
+        for _ in range(50):
+            if rig.client._counts["quotes"]:
+                break
+            await asyncio.sleep(0.02)
+        task.cancel()
+
+        counts = rig.client._counts
+        assert counts["quote_polls"] > 0, "the loop never attempted a poll"
+        assert counts["quote_replies"] > 0, "the bridge never answered"
+        assert counts["quotes"] > 0, "nothing was handed to the engine"
+        assert counts["quote_failures"] == 0
+        await rig.client._disconnect()
+
+    def test_nothing_published_with_no_polls_blames_the_tasks(self):
+        """The line must name which of the two it is.
+
+        A reader at 3am gets one line. "Nothing published" sends them to the
+        market; "no poll has run at all" sends them to the tasks, which is
+        where the fault was.
+        """
+        line, fault = feed_reading(7, self.counts())
+
+        assert fault is True
+        assert "nothing published" in line
+        assert "No poll has run at all" in line, f"it must name the tasks: {line!r}"
+        assert "quote_polls=0" in line, "the counters belong in the line"
+
+    def test_polls_that_return_nothing_blame_the_bridge(self):
+        """The other branch, so the message cannot be a constant."""
+        line, fault = feed_reading(7, self.counts(quote_polls=9000, quote_replies=9000))
+
+        assert fault is True
+        assert "the bridge or the parse is giving" in line
+        assert "No poll has run at all" not in line
+
+    def test_a_publishing_feed_is_not_a_fault(self):
+        """**The second control, and the one that keeps this usable.**
+
+        A watchdog that fires on a healthy desk gets muted, which is how
+        `status.py`'s own check lost its value three times over.
+        """
+        line, fault = feed_reading(7, self.counts(quote_polls=10, quote_replies=10, quotes=10))
+
+        assert fault is False
+        assert "7 subscribed" in line
+
+    def test_a_bar_only_feed_counts_as_publishing(self):
+        """A 15-minute desk can hold no quotes and still be working."""
+        _, fault = feed_reading(7, self.counts(bar_polls=3, bar_replies=3, bars=1))
+
+        assert fault is False
+
+    def test_no_subscriptions_is_nothing_to_report(self):
+        """A node that subscribed to nothing cannot have a late feed."""
+        line, fault = feed_reading(0, self.counts())
+
+        assert line is None
+        assert fault is False
 
 
 # ──── data: lifecycle ────

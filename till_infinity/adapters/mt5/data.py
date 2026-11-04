@@ -72,6 +72,40 @@ TIMEFRAMES: dict[str, tuple[str, float]] = {
 #:   immediate, and only available where the transport has a `stream`.
 QUOTE_SOURCES: tuple[str, ...] = ("poll", "ticks", "push")
 
+#: How long a subscribed feed may produce nothing before it is reported, and
+#: how often after that. 90 seconds because the bar loop sleeps `seconds / 10`
+#: - 90s on a 15-minute bar - so a shorter grace would report a feed that is
+#: merely between polls.
+WATCHDOG_GRACE = 90.0
+WATCHDOG_EVERY = 300.0
+
+
+def feed_reading(feeds: int, counts: dict[str, int]) -> tuple[str | None, bool]:
+    """What to say about the feeds, and whether it is a fault.
+
+    Separate from the logging because the **wording is the diagnostic**. A
+    reader gets one line, and "nothing published" sends them to the market
+    while "no poll has run at all" sends them to the tasks - which on
+    2026-11-04 is where the fault was. The Cython `Logger` has read-only
+    attributes, so a test cannot capture a log call; it can assert this.
+
+    `None` means there is nothing to report: no subscriptions, so no feed can
+    be late.
+    """
+    if feeds <= 0:
+        return None, False
+    reading = " ".join(f"{name}={value}" for name, value in counts.items())
+    if counts.get("quotes") or counts.get("bars"):
+        return f"feeds: {feeds} subscribed, {reading}", False
+    if not counts.get("quote_polls") and not counts.get("bar_polls"):
+        why = (
+            "No poll has run at all, so the tasks were created and are not "
+            "executing - this is not a quiet market."
+        )
+    else:
+        why = "The polls are running, so the bridge or the parse is giving nothing back."
+    return f"{feeds} feeds subscribed and nothing published: {reading}. {why}", True
+
 
 def _milliseconds(row: dict) -> int | None:
     """A tick's time in epoch milliseconds, whichever way the transport spelled it.
@@ -151,6 +185,26 @@ class MT5DataClient(LiveMarketDataClient):
         self._cfg = config
         self._bridge = connect(config)
         self._pollers: dict[str, asyncio.Task] = {}
+        #: What each poll loop has actually done, so a silence can be read.
+        #:
+        #: **Every stage is counted separately because one zero means four
+        #: things.** On 2026-11-04 the desk subscribed to seven symbols,
+        #: logged `Connected` and `loaded 725 instruments`, and then printed
+        #: **nothing at all** for half an hour - no error, no retry - while the
+        #: bridge's own request counters showed zero traffic from it and the
+        #: journal had recorded no decision for seven days. The loops are
+        #: `while True` with `except Exception -> log.warning`, so a *failing*
+        #: loop would have been loud; the silent case is the loop body never
+        #: running, and nothing distinguished that from a quiet market.
+        #:
+        #: `polls` counts attempts, `replies` answers from the bridge,
+        #: `published` data handed to the engine and `failures` exceptions
+        #: caught. "polls=0" and "polls=9000 published=0" are different faults
+        #: and the first is invisible without this.
+        self._counts: dict[str, int] = dict.fromkeys(
+            ("quote_polls", "quote_replies", "quotes", "quote_failures"), 0
+        ) | dict.fromkeys(("bar_polls", "bar_replies", "bars", "bar_failures"), 0)
+        self._watchdog: asyncio.Task | None = None
         #: How far the terminal's clock is from ours, measured off the feed.
         #: One per client rather than per symbol: it is a property of the
         #: terminal, and every symbol on it shares the clock.
@@ -188,6 +242,8 @@ class MT5DataClient(LiveMarketDataClient):
         for instrument in self._instrument_provider.list_all():
             self._handle_data(instrument)
         self._log.info(f"loaded {len(self._instrument_provider.list_all())} instruments")
+        if self._watchdog is None:
+            self._watchdog = self.create_task(self._watch())
 
     def _scrub(self, value: Any) -> str:
         """Text safe to log: the configured API key and `api_key=` removed."""
@@ -214,7 +270,37 @@ class MT5DataClient(LiveMarketDataClient):
                 f"without one"
             )
 
+    async def _watch(self) -> None:
+        """Say so when a subscribed feed has produced nothing.
+
+        **This exists because the failure it reports was silent for a week.**
+        A desk with seven subscriptions and no data looked exactly like a quiet
+        market: the loops log only on an exception, and a loop that never runs
+        raises none. The counters are printed whatever happens, so "polls=0"
+        and "polls=9000 published=0" can be told apart - the first is a task
+        that is not running, the second a market or a parse that gives nothing.
+
+        It reports and never acts. A feed can be legitimately quiet - a closed
+        session, a symbol nobody quotes - and a watchdog that restarted a
+        client over that would turn a quiet Sunday into a restart loop. The
+        first report is at `WATCHDOG_GRACE`, then every `WATCHDOG_EVERY`.
+        """
+        first = True
+        while True:
+            await asyncio.sleep(WATCHDOG_GRACE if first else WATCHDOG_EVERY)
+            first = False
+            line, fault = feed_reading(len(self._pollers), self._counts)
+            if line is None:
+                continue
+            if fault:
+                self._log.error(line)
+            else:
+                self._log.info(line)
+
     async def _disconnect(self) -> None:
+        if self._watchdog is not None:
+            self._watchdog.cancel()
+            self._watchdog = None
         for task in list(self._pollers.values()):
             task.cancel()
         for task in list(self._pollers.values()):
@@ -257,11 +343,14 @@ class MT5DataClient(LiveMarketDataClient):
         last: tuple[float, float] | None = None
         while True:
             try:
+                self._counts["quote_polls"] += 1
                 info = await self._bridge.symbol_info(symbol)
+                self._counts["quote_replies"] += 1
                 bid, ask = float(info.get("bid") or 0.0), float(info.get("ask") or 0.0)
                 if bid > 0 and ask > 0 and (bid, ask) != last:
                     last = (bid, ask)
                     now = self._clock.timestamp_ns()
+                    self._counts["quotes"] += 1
                     self._handle_data(
                         QuoteTick(
                             instrument_id=instrument_id,
@@ -276,6 +365,7 @@ class MT5DataClient(LiveMarketDataClient):
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                self._counts["quote_failures"] += 1
                 self._log.warning(f"quote poll for {symbol}: {self._scrub(exc)}")
             await asyncio.sleep(self._cfg.poll_seconds)
 
@@ -285,9 +375,11 @@ class MT5DataClient(LiveMarketDataClient):
         instrument = self._instrument_provider.find(bar_type.instrument_id)
         while True:
             try:
+                self._counts["bar_polls"] += 1
                 # Two bars, position 0 being the one still forming: the closed
                 # bar is the one behind it, and only that one is published.
                 rows = await self._bridge.bars(symbol, name, count=2, start=0)
+                self._counts["bar_replies"] += 1
                 for row in rows:
                     opened = int(_bar_seconds(row))
                     if opened <= self._last_bar.get(str(bar_type), 0):
@@ -295,10 +387,12 @@ class MT5DataClient(LiveMarketDataClient):
                     if _is_forming(opened, seconds, self._clock.timestamp_ns()):
                         continue
                     self._last_bar[str(bar_type)] = opened
+                    self._counts["bars"] += 1
                     self._handle_data(_bar(bar_type, row, instrument, seconds))
             except asyncio.CancelledError:
                 raise
             except Exception as exc:
+                self._counts["bar_failures"] += 1
                 self._log.warning(f"bar poll for {symbol} {name}: {self._scrub(exc)}")
             await asyncio.sleep(max(1.0, seconds / 10.0))
 
@@ -367,6 +461,9 @@ class MT5DataClient(LiveMarketDataClient):
                 ts_init=max(self._clock.timestamp_ns(), ts_event),
             )
         )
+        # Counted here too, or the watchdog calls a working `ticks` or `push`
+        # feed dead: `_poll_quotes` is only the `poll` source's path.
+        self._counts["quotes"] += 1
         return True
 
     async def _catch_up(self, instrument_id: Any, instrument: Any) -> int:
