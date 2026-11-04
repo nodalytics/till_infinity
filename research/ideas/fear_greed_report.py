@@ -99,6 +99,14 @@ def control(rows: list[dict]) -> None:
     for row in rows:
         if row.get("section") != "crash":
             continue
+        if row.get("skipped"):
+            # Not a null: the window is outside this interval's data. Printed
+            # rather than omitted, because a reader of a 15m panel has to be
+            # able to tell "the control came back empty" from "there was no
+            # control to run".
+            print(f"THE 2008 CONTROL  {row['from']} .. {row['to']}  NOT RUN: {row['skipped']}")
+            print()
+            continue
         print(f"THE 2008 CONTROL  {row['from']} .. {row['to']}  {row['bars_in_window']} bars")
         print(f"  breadth at the index peak: {row['breadth_at_peak']} of {row['breadth_legs']} legs")
         print(
@@ -264,7 +272,18 @@ def trade(rows: list[dict]) -> None:
     )
     for row in sorted(
         rows,
-        key=lambda r: (r["feed"], r["gate"], -r["side"], -r["target"], r["arm"], r.get("draw", 0)),
+        key=lambda r: (
+            # Interval first, because 1d and 15m are two rules and must never
+            # be read as one table: without it a two-interval run interleaves
+            # them feed by feed and every line looks like a cell of one study.
+            r.get("interval", ""),
+            r["feed"],
+            r["gate"],
+            -r["side"],
+            -r["target"],
+            r["arm"],
+            r.get("draw", 0),
+        ),
     ):
         if row.get("n", 0) < 8:
             continue
@@ -280,6 +299,93 @@ def trade(rows: list[dict]) -> None:
             f"{(row.get('win_rate') or float('nan')):>5.3f} {need_text:>9}"
         )
     print()
+    trade_summary(rows)
+
+
+def trade_summary(rows: list[dict]) -> None:
+    """The counts the trade verdict rests on, one block per interval.
+
+    The table above is one line per arm per cell, and the verdict is a count
+    over cells, so before this function the two numbers that decided the 1d
+    panel - **6 of 420 cells above their hardest null arm** and **206 of 420
+    above their own duty-cycle twin** - were not reproducible from this file.
+
+    * **above the hardest null arm**: the real mean R over the *largest* mean R
+      of every draw of every arm in `F.NULL_ARMS`. The chance baseline is
+      `cells / (1 + draws)` on exchangeable arms and is printed rather than
+      assumed: at four draws an arm it is 20 of 420 and at sixteen it is 5.2,
+      so the same count of six is a null against one baseline and a finding
+      against the other.
+    * **above its own duty-cycle twin**: against `random-twin`, placed at
+      random at the real arm's own realised duty. Every pause rule on this desk
+      beat its baseline and none beat its twin.
+    * **BH** over the real cells' day-block `t`, which asks whether the arm
+      makes money at all and not whether it beats a surrogate.
+    """
+    by: dict[tuple, dict[str, list[dict]]] = collections.defaultdict(
+        lambda: collections.defaultdict(list)
+    )
+    for row in rows:
+        key = (
+            row.get("interval", ""),
+            row["feed"],
+            row["gate"],
+            row["target"],
+            row["stop"],
+            row["side"],
+        )
+        by[key][row["arm"]].append(row)
+
+    for interval in sorted({k[0] for k in by}):
+        total = beaten = pairs = won = draws = 0
+        ps: list[float] = []
+        labels: list[str] = []
+        for key in sorted(k for k in by if k[0] == interval):
+            arms = by[key]
+            real = next((r for r in arms.get("real", []) if "mean_r" in r), None)
+            if real is None:
+                continue
+            total += 1
+            nulls = [
+                r["mean_r"]
+                for arm in F.NULL_ARMS
+                for r in arms.get(arm, [])
+                if "mean_r" in r
+            ]
+            draws = max(draws, len(nulls))
+            if nulls and real["mean_r"] > max(nulls):
+                beaten += 1
+            twin = next((r for r in arms.get("random-twin", []) if "mean_r" in r), None)
+            if twin is not None:
+                pairs += 1
+                won += int(real["mean_r"] > twin["mean_r"])
+            t = real.get("t", float("nan"))
+            if isinstance(t, float) and math.isfinite(t):
+                ps.append(2.0 * (1.0 - phi(abs(t))))
+                labels.append(
+                    f"{key[1]} {key[2]} {key[5]:+d} {key[3]:.0f}:{key[4]:.0f}"
+                )
+        if not total:
+            continue
+        print(f"THE VERDICT AS A COUNT OVER CELLS  {interval or '(no interval)'}")
+        print(f"  {total} cells, {draws} surrogate draws a cell")
+        chance = total / (1.0 + draws) if draws else float("nan")
+        print(
+            f"  above the hardest null arm:       {beaten:>4} / {total}"
+            f"   chance about {chance:.1f}"
+        )
+        if pairs:
+            print(
+                f"  above its own duty-cycle twin:   {won:>4} / {pairs}"
+                f" = {100.0 * won / pairs:.1f}%   (50% is chance)"
+            )
+        if ps:
+            survives = benjamini_hochberg(ps)
+            kept = [name for name, ok in zip(labels, survives, strict=True) if ok]
+            print(f"  BH over {len(ps)} cells' day-block t at 0.05: {len(kept)} survive")
+            for name in kept[:12]:
+                print(f"    {name}")
+        print()
 
 
 def power(rows: list[dict]) -> None:

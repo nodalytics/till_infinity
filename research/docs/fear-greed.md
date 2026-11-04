@@ -30,7 +30,7 @@ that produced the level, not of any sentiment source.
 | So is the asymmetry tradeable as a sequence rule? | **Not on this evidence, and the order is untested rather than null.** The power sweep drives the duration gap from -0.033 to **+0.557** by changing the up-bar share alone with the shuffle tracking it to +0.530, so the statistic is close to a marginal statistic by arithmetic; its zero cell reads **-0.002 +- 0.018**, correctly empty. But the **pure-order plant failed its own zero control** - excess **-0.180 at z -4.76 where nothing is planted** - so it was rejected and there is no calibrated test here for a path effect. **8 of 84 cells exceed the hardest arm against about 4 expected**, and exactly one - `usdchf` `speed` - does so at **both** swing scales, which is the pre-registered consistency rule met once |
 | Does a fear/greed label on a level's formation carry anything? | **No. 0 of 16 measurable cells** have a gap outside their surrogate range - the shuffle arms produce a label gap of +-0.13 to +-0.35 by themselves and every real gap lives inside it. The pooled sign is a coin flip (positive on 4 of 8 legs) and **flips on 6 of 8 when the overlap is removed**. Two books cannot answer at all: across eight legs `Levels` yields **4-14** crash-labelled levels with a touch and `BjorgumLevels` **1-7**. Only `Pivots`, the **no-parameter control**, has power |
 | Does the basket index predict a level's hold? | **No.** AUC 0.436-0.557 pooled and 0.433-0.525 within strata for `volatile_off`; 0.441-0.553 and 0.433-0.527 for `directional_off`. Both halves sit on 0.5 |
-| **Does the short-the-cross trade pay?** | **No, and neither does the long arm - the surrogates overturned that.** Of **420 cells, 6 exceed their hardest null arm where chance gives about 20**, and real sits *below* the hardest null in 414. The gate beats its own duty-cycle random twin in **206 of 420 = 49.0%** against a 50% chance. AUDJPY long reads +0.2030R ungated and +0.2301R gated - both **inside** their surrogate range (+0.2437, +0.3016), and on nzdjpy and gold the **random twin beats the real gated arm**. The 8 BH survivors are **all the ungated arm** on gold and usdjpy: drift, no gate |
+| **Does the short-the-cross trade pay?** | **No, and neither does the long arm - the surrogates overturned that.** Of **420 cells, 6 exceed their hardest null arm where chance gives about 20**, and real sits *below* the hardest null in 414. The gate beats its own duty-cycle random twin in **206 of 420 = 49.0%** against a 50% chance. AUDJPY long reads +0.2030R ungated and +0.2301R gated - both **inside** their surrogate range (+0.2437, +0.3016), and on nzdjpy and gold the **random twin beats the real gated arm**. Of the 8 BH survivors **6 are the ungated arm and 2 are `gold` under the `risk_off` gate** (`-1 1:2` and `+1 2:1`), on gold and usdjpy: mostly drift, not gate |
 | Is direction inside a volatility state the open question it was said to be? | **Measured, null, and the one apparent signal is circular with a mechanism.** The volatility half moves the next swing's direction by **-0.077 to +0.055 across all fourteen instruments** - nothing, anywhere. The direction half *looks* strong until the sign is checked: the down-share swing's sign **matches `RISK_OFF_SIGN` on 6 of 6 basket legs** (audusd -0.185 at sign -1, usdcad **+0.233** at sign +1) and is flat on all three out-of-basket feeds (mean -0.022). The index reads each instrument's own recent direction back to itself with the quote convention's sign on it |
 | So is the interaction closed? | **No - open, and this sample cannot close it.** The trade arm's version (`volatile_off` **and** `directional_off` both in their top fifth) reads -0.0010R short on AUDJPY on 65 trades against +0.1970R long, and at sd 1.33 its 95% interval is +-0.31R. The bound that *is* firm: **a conditional drift above a tenth of a stop over the 20-bar hold would have been seen** |
 | What would it have found? | **On AUDJPY itself, a conditional drift of a tenth of a stop over the 20-bar hold reads +0.2165R** against a zero cell of -0.0532R, monotone and steep from there. The real gated short arm reads **-0.0862R, below its own zero cell**. The four feeds' zero cells span -0.064 to +0.152, which is the measured version of the earlier caveat: **the race-geometry baseline is feed-specific** and no row should be read against zero |
@@ -1119,6 +1119,30 @@ close-to-close move, so a 3-4 bp round trip would be roughly 0.1R at the
 1.0-unit stop - the same size as the entire effect being looked for. **A costed
 read needs one thing: recorded quotes for the cross from the venue that would
 trade it.**
+
+## Corrections to this document
+
+* **"The 8 BH survivors are all the ungated arm" was wrong.** Reproduced from
+  this panel with `fear_greed_report.trade_summary`: 6 are the `all` arm and
+  **2 are `gold` under `risk_off`**. The verdict row is fixed. The counts it
+  rests on - 6 of 420 above the hardest null, 206 of 420 = 49.0% above the
+  duty-cycle twin, 8 BH survivors - reproduce to the digit, which is how the
+  wording error was found and how the 15m panel's 2 of 420 and 214 of 420 are
+  known to be the same statistic.
+* **Section 2's table omits `eurgbp`**, and the placebo is the worst cross in
+  the store: range over close-step **5.777 at 1d** and 8.363 at 15m, because
+  correlated legs cancel in the close step and not in the synthesised range. No
+  result changes - every cross reading in this document is close-only - but the
+  omission makes the 1.7x figure look like a bound on all crosses when the
+  placebo is worse.
+* The log-gap identity `speed = size - bars` is exact to 1.1e-15 on the
+  close-pivot rows reported here, and **leaks up to 3.3e-02 on the high/low
+  detector and the surrogate paths** through zero-move swings - larger than
+  several measured effects. It also means the 14 x 2 x 3 grid is **56
+  independent cells, not 84**.
+
+All three were found while running the 15m arm - see
+[fear-greed-15m.md](fear-greed-15m.md).
 
 ## What was not done, and why
 
