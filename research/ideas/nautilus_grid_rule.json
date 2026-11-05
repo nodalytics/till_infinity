@@ -1,0 +1,73 @@
+{
+  "frozen": "2026-11-05",
+  "question": "Do combinations of NautilusTrader's built-in indicators, their parameters and the desk's risk and money management produce a positive net expectancy through BacktestNode?",
+  "primary": "the money-management axis: does any of reward_floor, a volatility-targeted risk fraction or a volatility gate move net R per trade, against its own duty-cycle twin and against two null arms",
+  "secondary": "the entry axis: a declared re-measurement of battery.md's family, with the parameters swept, which battery.md did not do",
+  "prediction": "null on every money-management arm. deriving.md is a theorem that E[net] = -(c/2)*turnover for every stop, target, trail and sizing scheme on a martingale, and geraked-eas.md Mode R measured every risk-layer factor's shift in mean R matching the walks' to within 0.007R.",
+  "catalogue": "~/till-data/grid-catalog",
+  "out": "~/till_infinity/out/grid",
+  "cells": "~/till_infinity/out/grid-cells.jsonl",
+  "balance": 100000,
+  "leverage": 30,
+  "seed": 20261105,
+  "interval": "15-MINUTE-LAST-EXTERNAL",
+  "split": "2022-01-01",
+  "split_note": "discovery is every trade opened before this date, confirmation every trade opened on or after it. Fixed before the run; both halves are reported for every cell that is highlighted.",
+  "hold_bars": 200,
+  "regime_bars": 96,
+  "stop_atr": 2.0,
+  "target_r": 2.0,
+  "risk_fraction": 0.0025,
+  "arms": {
+    "real": ["EUR/USD.DERIV", "GBP/USD.DERIV", "GOLD.DERIV", "BTC.DERIV"],
+    "walk": ["EUR/USD.WALK", "GBP/USD.WALK", "GOLD.WALK", "BTC.WALK"],
+    "synth": ["VOL25.DERIV", "VOL75.DERIV", "JUMP75.DERIV", "STEP.DERIV"]
+  },
+  "arm_notes": {
+    "real": "the claim. Four feeds with a recorded DERIV quote to measure a spread from.",
+    "walk": "each real feed's own log returns resampled i.i.d. with its own bar shapes: the matched null, same instrument, same venue conventions, same measured spread.",
+    "synth": "Deriv's published-generator indices. Real markets without an auction. Costed to a round trip of 0.063R, the median of the four real legs, because no Deriv synthetic has a recorded quote anywhere in the store - a control's cost, not a tradability claim."
+  },
+  "rules": {
+    "ema_cross": [5, 10, 20],
+    "donchian_break": [20, 55, 100],
+    "rsi_revert": [7, 14, 28],
+    "macd_signal": [6, 12, 24],
+    "bb_revert": [10, 20, 40],
+    "keltner_break": [10, 20, 40]
+  },
+  "rule_notes": {
+    "ema_cross": "ExponentialMovingAverage(n) crossing ExponentialMovingAverage(3n).",
+    "donchian_break": "close beyond the PREVIOUS bar's DonchianChannel(n). Previous, because Nautilus updates a registered indicator before on_bar and the current upper is already this bar's high.",
+    "rsi_revert": "RelativeStrengthIndex(n) crossing back up through 0.30 or down through 0.70.",
+    "macd_signal": "MovingAverageConvergenceDivergence(n, 2n) crossing zero.",
+    "bb_revert": "close re-entering BollingerBands(n, 2.0) from outside.",
+    "keltner_break": "close beyond the previous KeltnerChannel(n, 2.0).",
+    "pairing": "every cell is two Nautilus indicators: the signal one above and AverageTrueRange(14), which sets the stop and therefore the risk unit every number is reported in."
+  },
+  "money": {
+    "base": {"reward_floor": 0.0, "note": "stop 2.0 x ATR(14), target 2.0R, risk 0.25% of equity"},
+    "floor": {"reward_floor": 1.7, "note": "Profile.floored_target: moves the target out, refuses nothing. Measured by no doc; hold-clock.md names it as the lever."},
+    "volsize": {"reward_floor": 0.0, "note": "risk fraction x median(ATR,96)/ATR, clipped to [0.5,2.0]. The sizing-multipliers.md volatility arm on a fresh population; judged on net over risk deployed, which is scale-free, so a multiplier whose mean is not one cannot fake it."},
+    "gate": {"reward_floor": 0.0, "note": "trade only where ATR(14) is below its own 96-bar median"},
+    "twin": {"reward_floor": 0.0, "note": "pass two: keeps signals at random at exactly the keep rate its own gate cell turned out to have"}
+  },
+  "counted": {
+    "hypothesis_cells": 288,
+    "arithmetic": "6 rules x 3 parameters x 4 money-management variants x 4 traded instruments = 288",
+    "expected_false_positives_at_5_percent": 14.4,
+    "control_runs": "288 on the walk arm, 288 on the synthetic arm, 72 duty-cycle twins. Controls are not hypotheses and are not in the BH family.",
+    "multiplicity": "Benjamini-Hochberg over all 288, both tails, never over the survivors."
+  },
+  "statistic": {
+    "primary": "mean net R per trade, which is net per unit traded",
+    "net": "r_engine minus the entry half-spread the engine does not charge. Measured: at 1.0414 bps and at 100 bps on the same feed the median entry slip was 0.0000100 and 0.0000097, one price increment both times, so bar_execution fills a market order from the bar's own one-tick book and the modelled quote is not the entry price. Stop and target exits are priced off the quote and are left alone.",
+    "error": "day-block bootstrap, 2000 draws, resampling whole UTC days, because trades cluster in days and an ordinary standard error is far too narrow",
+    "secondary": "sum(pnl)/sum(risk_money) for the sizing arm, which is scale-free; P(reach 2R before the stop) against 1/(1+2) = 0.3333; stop-out share; trades per year"
+  },
+  "bars": {
+    "positive": "mean net R > 0 with a BH q < 0.05 over 288, positive in BOTH halves, and beating the matched walk cell",
+    "money_arm": "a money-management variant beats base only if it beats base on net R per trade AND, where it gates, beats its own twin at the same keep rate",
+    "null": "a clean null is the valued result; power is shown by planting an effect and sweeping its strength"
+  }
+}
