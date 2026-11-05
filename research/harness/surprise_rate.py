@@ -50,6 +50,11 @@ SYMBOLS = [s for s in os.environ.get("SYMBOLS", "").split("|") if s] or [
     "EURUSD", "GBPUSD", "USDJPY", "XAUUSD", "Volatility 75 Index", "Step Index",
 ]
 LIMIT = int(os.environ.get("LIMIT", "60000"))
+#: The whole curve, not one point. A threshold is chosen by what it costs in
+#: events, and that cannot be read from a single reading - 3.0 looked rare on
+#: a Gaussian and is not, and the only way to see where the knee is is to
+#: print the neighbours.
+THRESHOLDS = tuple(float(x) for x in os.environ.get("THRESHOLDS", "1,1.5,2,2.5,3,3.5,4").split(","))
 
 
 def bars(symbol: str) -> list[dict]:
@@ -77,10 +82,18 @@ def main() -> None:
     from till_infinity.statespace.engine import Engine
     from till_infinity.statespace.proposing import TRIGGER
 
-    gauss = 2.0 * (1.0 - stats.norm.cdf(TRIGGER))
-    t4 = 2.0 * (1.0 - stats.t.cdf(TRIGGER, df=4))
-    print(f"trigger {TRIGGER}: gaussian {gauss:.4%}, student-t(4) {t4:.4%}\n")
-    print(f"{'instrument':22s} {'readouts':>9s} {'>=2':>8s} {'>=3':>8s} {'>=4':>8s} {'sd':>7s}")
+    head = "".join(f"{'>=' + str(x):>9s}" for x in THRESHOLDS)
+    print(f"the live trigger is {TRIGGER}\n")
+    print(f"{'reference':22s} {'':>9s}{head}")
+    for name, rate in (
+        ("gaussian", lambda x: 2.0 * (1.0 - stats.norm.cdf(x))),
+        ("student-t(4)", lambda x: 2.0 * (1.0 - stats.t.cdf(x, df=4))),
+        ("student-t(3)", lambda x: 2.0 * (1.0 - stats.t.cdf(x, df=3))),
+    ):
+        cells = "".join(f"{rate(x):9.3%}" for x in THRESHOLDS)
+        print(f"{name:22s} {'':>9s}{cells}")
+    print()
+    print(f"{'instrument':22s} {'readouts':>9s}{head} {'sd':>7s}")
 
     for symbol in SYMBOLS:
         try:
@@ -105,10 +118,8 @@ def main() -> None:
             print(f"{symbol:22s} {0:9d}  no readouts - check the feed and interval names")
             continue
         a = np.asarray(seen)
-        print(
-            f"{symbol:22s} {len(a):9d} {(a >= 2).mean():8.3%} {(a >= 3).mean():8.3%} "
-            f"{(a >= 4).mean():8.3%} {a.std():7.2f}"
-        )
+        cells = "".join(f"{(a >= x).mean():9.3%}" for x in THRESHOLDS)
+        print(f"{symbol:22s} {len(a):9d}{cells} {a.std():7.2f}")
 
 
 if __name__ == "__main__":

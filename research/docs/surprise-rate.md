@@ -9,6 +9,7 @@ synthetics, about 59,940 readouts each.
 | question | verdict |
 |---|---|
 | How often does `\|surprise\| >= 3` actually fire? | **0.91% to 1.86%** on traded markets - between **3.4x and 6.9x** the Gaussian rate of 0.27%, and well under a Student-t(4)'s 3.99% |
+| And at the thresholds either side of it? | **1.5 sigma: 15.2-17.4%. 2.0: 6.2-7.9%. 2.5: 2.4-3.7%.** The excess over Gaussian *grows* with the threshold - 1.18x at 1.5, 1.48x at 2.0, 5.19x at 3.0, 60x at 4.0 - so below about 1.5 sigma the distribution is essentially Gaussian and the fat tail only bites past 2 |
 | Is the constant's stated justification right? | **No.** `DEFAULT_SIGNAL_SURPRISE` says a 3-sigma reading is "genuinely rare here"; it is roughly one bar in 54 to one in 110 |
 | Is the *premise* behind it right? | **Yes, and both can be true.** The standardised innovation has sd **0.67 to 0.76**, so the bulk is narrower than Gaussian - conservative bands, as `band-coverage.md` found - while the tail past 3 is still four to seven times too heavy |
 | Does the control come back empty? | **Yes.** The two constant-generator synthetics read **0.000%** at 3 sigma and 0.15-0.20% at 2, against 6.2-7.9% at 2 on traded markets |
@@ -34,20 +35,68 @@ long contiguous histories, where neither restarts nor gaps can contribute.
 
 ## The reading
 
-| instrument | readouts | >= 2 | >= 3 | >= 4 | sd |
-|---|---|---|---|---|---|
-| EURUSD | 59,940 | 6.73% | **1.40%** | 0.36% | 0.71 |
-| GBPUSD | 59,939 | 6.49% | **1.26%** | 0.36% | 0.70 |
-| USDJPY | 59,940 | 7.90% | **1.86%** | 0.63% | 0.76 |
-| XAUUSD | 59,941 | 6.20% | **0.91%** | 0.19% | 0.67 |
-| Volatility 75 Index | 59,941 | 0.20% | **0.000%** | 0.000% | 0.39 |
-| Step Index | 59,941 | 0.15% | **0.000%** | 0.000% | 0.38 |
+| instrument | readouts | >=1.0 | >=1.5 | >=2.0 | >=2.5 | >=3.0 | >=3.5 | >=4.0 | sd |
+|---|---|---|---|---|---|---|---|---|---|
+| EURUSD | 59,940 | 33.94% | 15.83% | 6.73% | 2.91% | **1.40%** | 0.69% | 0.36% | 0.71 |
+| GBPUSD | 59,939 | 33.28% | 15.22% | 6.49% | 2.78% | **1.26%** | 0.67% | 0.36% | 0.70 |
+| USDJPY | 59,940 | 35.48% | 17.44% | 7.90% | 3.66% | **1.86%** | 1.05% | 0.63% | 0.76 |
+| XAUUSD | 59,941 | 34.22% | 15.68% | 6.20% | 2.43% | **0.91%** | 0.36% | 0.19% | 0.67 |
+| Volatility 75 Index | 59,941 | 12.41% | 1.94% | 0.20% | 0.010% | **0.000%** | 0.000% | 0.000% | 0.39 |
+| Step Index | 59,941 | 11.67% | 1.64% | 0.15% | 0.015% | **0.000%** | 0.000% | 0.000% | 0.38 |
 
-References at 3.0: Gaussian **0.270%**, Student-t(4) **3.994%**.
+References:
+
+| | >=1.0 | >=1.5 | >=2.0 | >=2.5 | >=3.0 | >=3.5 | >=4.0 |
+|---|---|---|---|---|---|---|---|
+| Gaussian | 31.73% | 13.36% | 4.55% | 1.24% | **0.270%** | 0.047% | 0.006% |
+| Student-t(4) | 37.39% | 20.80% | 11.61% | 6.68% | **3.994%** | 2.49% | 1.61% |
+| Student-t(3) | 39.10% | 23.06% | 13.93% | 8.77% | **5.767%** | 3.95% | 2.80% |
+
+## The excess is not a constant, it grows with the threshold
+
+EURUSD against a Gaussian of the same name:
+
+| threshold | 1.0 | 1.5 | 2.0 | 2.5 | 3.0 | 3.5 | 4.0 |
+|---|---|---|---|---|---|---|---|
+| ratio to Gaussian | 1.07x | 1.18x | **1.48x** | 2.35x | **5.19x** | 14.8x | 60x |
+
+**Below about 1.5 sigma the distribution is essentially Gaussian** - slightly
+*thin*, in fact, which is what an sd of 0.7 means. The fat tail only begins to
+bite past 2. So this is a Gaussian-ish core with a heavy tail attached, which
+is what a mixture of volatility regimes produces and why no single named
+distribution fits: every reading sits **between** Gaussian and Student-t(4),
+nearer the Gaussian low down and drifting toward the t high up without ever
+reaching it.
+
+That shape is the reason the constant's comment could be half right. A
+statement about the 0.99 interval is a statement about the core, where the
+model is conservative and the data are close to Gaussian. It carries no
+information about 3 sigma, which lives in the part of the distribution the
+bands were never describing.
+
+### What a different threshold would cost
+
+Across 21 symbols at 96 bars a day, using the EURUSD-to-USDJPY range:
+
+| threshold | share of readouts | proposals/day |
+|---|---|---|
+| 2.0 | 6.2-7.9% | 130-160 |
+| 2.5 | 2.4-3.7% | 50-75 |
+| 3.0 | 0.9-1.9% | 19-38 |
+| 3.5 | 0.36-1.05% | 7-21 |
+
+Moving from 3.0 to 2.0 multiplies candidates by about **five**, not the
+seventeen a Gaussian table would predict. A threshold chosen from the Gaussian
+column is wrong in both directions at once: too many events where it expected
+few, and a smaller change in event count than expected when it is moved.
 
 **The synthetics are the result that makes the rest believable.** They are
 real markets with a known, constant-volatility generator, and the statistic
-reads *exactly* zero past 3 sigma on both - 0 of about 120,000 readouts. An
+reads *exactly* zero past 3 sigma on both - 0 of about 120,000 readouts, and
+flat at zero across 3.0, 3.5 and 4.0, so the control holds over the whole
+grid rather than at one point. Their core is thin too (12.4% and 11.7% past 1
+sigma against 31.7% Gaussian, sd 0.38-0.39): a constant generator is
+predictable, the model fits it, and the surprise piles up near nothing. An
 estimator manufacturing surprise out of estimation error would have given them
 the same answer it gives EURUSD. It does not, so the 0.91-1.86% on traded
 markets is a property of those markets and not of the measurement.
