@@ -2895,6 +2895,57 @@ def _wired(handler) -> Bridge:
 class TestTheBridgeSpeaksTheWireProtocol:
     """What actually crosses the network, for the writes that move money."""
 
+    async def test_bars_counts_with_the_parameter_the_route_declares(self):
+        """**The route counts with `num_bars`, and this client sent `count`.**
+
+        FastAPI drops a query parameter the endpoint does not declare, so
+        `count` and `start_pos` were discarded and every request returned the
+        route's default of 100 bars from position 0 - whatever was asked for,
+        with a 200. A backfill asking for 1,000 bars got 100 and nothing said
+        so. The same defect as `/history/deals` taking `from_date` where this
+        client sent `date_from`.
+        """
+        seen: dict[str, str] = {}
+
+        def handler(request):
+            seen.update(dict(request.url.params))
+            return httpx.Response(200, json=[{"time": 1, "close": 1.0}])
+
+        await _wired(handler).bars("EURUSD", "M15", count=500, start=0)
+
+        assert seen.get("num_bars") == "500"
+        assert "count" not in seen, "the route does not declare `count` and drops it"
+        assert "start_pos" not in seen, "nor `start_pos`"
+
+    async def test_bars_drops_the_forming_bar_when_asked_past_it(self):
+        """`start=1` means "skip the bar that is still forming".
+
+        The route takes no start position and its own docstring says the last
+        element is the forming bar, whose close is simply the current price. A
+        caller that asked to skip it and silently got it was reading a pattern
+        from a bar the next tick can withdraw.
+        """
+        seen: dict[str, str] = {}
+        rows = [{"time": i, "close": float(i)} for i in range(5)]
+
+        def handler(request):
+            seen.update(dict(request.url.params))
+            return httpx.Response(200, json=rows)
+
+        got = await _wired(handler).bars("EURUSD", "M15", count=4, start=1)
+
+        assert seen.get("num_bars") == "5", "one extra is asked for, then dropped"
+        assert [r["time"] for r in got] == [0, 1, 2, 3], "the newest row is the forming one"
+
+    async def test_bars_keeps_the_forming_bar_when_start_is_zero(self):
+        """The control: a caller that wants the forming bar still gets it."""
+        rows = [{"time": i, "close": float(i)} for i in range(3)]
+        got = await _wired(lambda r: httpx.Response(200, json=rows)).bars(
+            "EURUSD", "M15", count=3, start=0
+        )
+
+        assert [r["time"] for r in got] == [0, 1, 2]
+
     async def test_the_subscribe_frame_is_sent_as_bytes(self):
         """**`send_text` wants bytes, and a `str` raised on every symbol.**
 
@@ -3129,21 +3180,34 @@ class TestTheBridgeSpeaksTheWireProtocol:
             with pytest.raises(BridgeError):
                 await call
 
-    async def test_bars_are_requested_by_position_with_the_documented_parameters(self):
+    async def test_bars_are_requested_with_the_parameters_the_route_declares(self):
+        """The exact query string, against the endpoint's own signature.
+
+        This test used to assert `start_pos` and `count` and called them "the
+        documented parameters" - documented by *this client's* docstring, not
+        by the route, which declares `fetch_data_pos(symbol, timeframe,
+        num_bars)`. FastAPI drops what it does not declare, so the request was
+        well formed, answered 200, and returned the route's default of 100
+        bars from position 0 every time.
+
+        **A test written from the caller's own convention cannot catch that.**
+        It passes for as long as the client is self-consistent, which is
+        exactly how long the bug survives.
+        """
         seen: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
             seen.append(request)
-            return httpx.Response(200, json=[{"time": 1}])
+            return httpx.Response(200, json=[{"time": 1}, {"time": 2}])
 
-        rows = await _wired(handler).bars("EURUSD", "M1", count=2, start=1)
-        assert rows == [{"time": 1}]
+        rows = await _wired(handler).bars("EURUSD", "M1", count=1, start=1)
+
+        assert rows == [{"time": 1}], "the forming bar is the newest and is dropped"
         assert seen[0].url.path == "/api/v1/symbols/rates/pos"
         assert dict(seen[0].url.params) == {
             "symbol": "EURUSD",
             "timeframe": "M1",
-            "start_pos": "1",
-            "count": "2",
+            "num_bars": "2",
         }
 
     async def test_close_releases_the_session_and_may_be_called_twice(self):

@@ -191,16 +191,33 @@ class Bridge:
         return (await self.get(f"/symbols/info/{symbol}")) or {}
 
     async def bars(self, symbol: str, timeframe: str, count: int, start: int = 0) -> list[dict]:
-        """Bars by position back from now. `start=0` is the forming bar."""
+        """Bars by position back from now, newest last. `start=0` is the forming bar.
+
+        **The route counts with `num_bars`, and takes no start position.** This
+        sent `count` and `start_pos`; FastAPI drops a query parameter it does
+        not declare, so both were discarded and every request returned the
+        route's default of **100 bars from position 0** - whatever was asked
+        for, with a 200. A backfill asking for 1,000 closed bars got 100 bars
+        with the forming one on the end, and nothing anywhere said so. It is
+        the same defect as `/history/deals` taking `from_date` where this
+        client sent `date_from`.
+
+        The forming bar is dropped here rather than at the route, which has no
+        parameter for it: ask for `count + start` and discard that many from
+        the newest end. A caller that wants the forming bar passes `start=0`
+        and still gets it.
+        """
         raw = await self.get(
             "/symbols/rates/pos",
             empty_on_404=True,
             symbol=symbol,
             timeframe=timeframe,
-            start_pos=start,
-            count=count,
+            num_bars=int(count) + int(start),
         )
-        return _rows(raw)
+        rows = _rows(raw)
+        if start and rows:
+            rows = rows[: max(len(rows) - int(start), 0)]
+        return rows
 
     async def tick(self, symbol: str) -> dict:
         """The latest single tick. **The bare route, which a sampling poll wants.**
