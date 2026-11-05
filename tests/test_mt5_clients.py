@@ -1515,6 +1515,22 @@ def _submit_list(rig: Rig, order_list: Any) -> Any:
     )
 
 
+def _cancel_leg(order: Any, venue_order_id: str) -> Any:
+    """A cancel of one order, addressed by the venue id the client gave it."""
+    from nautilus_trader.execution.messages import CancelOrder
+
+    return CancelOrder(
+        TestIdStubs.trader_id(),
+        TestIdStubs.strategy_id(),
+        EURUSD_ID,
+        order.client_order_id,
+        VenueOrderId(venue_order_id),
+        UUID4(),
+        time.time_ns(),
+        ClientId("MT5"),
+    )
+
+
 REJECTION = {"success": False, "result": {"retcode": 10006, "comment": "Request rejected"}}
 #: What the live terminal actually returned on 2026-11-04, retcode and wording.
 AUTOTRADING_REJECTION = {
@@ -1551,22 +1567,77 @@ class TestSubmittingABracket:
         assert args[0]["tp"] == 1.09
         assert len(rig.bridge.called("order")) == 1, "three orders, one request"
 
-    async def test_every_leg_is_accepted_against_the_one_ticket(self):
+    async def test_every_leg_is_accepted_and_the_legs_are_not_the_entry(self):
         """A leg left `INITIALIZED` is the engine waiting forever for a venue
-        that has nothing to say about it: MT5 returns one ticket and the stop
-        and target are properties of the position it opens."""
+        that has nothing to say about it. But the legs must not carry the
+        entry's bare ticket either.
+
+        **Giving all three the same id fabricates a fill on cancel.** The
+        cancel route would be called with the entry's ticket, which is a
+        position and not a resting order, so the cancel comes back
+        unconfirmed; the ticket is absent from the pending listing; and
+        `_withdraw` falls through to its deal fallback, finds the entry's own
+        opening deal, and reports *the target* as filled at the entry's price.
+        """
         rig = make_exec(
             FakeBridge(order={"success": True, "result": {"retcode": 10009, "order": 77}})
         )
-        orders = _bracket()
 
-        await rig.client._submit_order_list(_submit_list(rig, orders))
+        await rig.client._submit_order_list(_submit_list(rig, _bracket()))
 
         from nautilus_trader.model.events import OrderAccepted
 
         accepted = rig.events(OrderAccepted)
         assert len(accepted) == 3, "entry, stop and target"
-        assert {str(e.venue_order_id) for e in accepted} == {"77"}
+        assert {str(e.venue_order_id) for e in accepted} == {"77", "77-SL", "77-TP"}
+
+    async def test_cancelling_a_target_clears_it_on_the_position(self):
+        """On MT5 a target is a field, so withdrawing it is a modify that
+        zeroes `tp` - and must send the stop back unchanged, because
+        `/positions/modify` sets both and an omitted one is a cleared one."""
+        rig = make_exec(
+            FakeBridge(
+                order={"success": True, "result": {"retcode": 10009, "order": 77}},
+                positions=[{"ticket": 77, "magic": 777_701, "sl": 1.07, "tp": 1.09}],
+            )
+        )
+        from nautilus_trader.model.enums import OrderType
+
+        orders = _bracket()
+        await rig.client._submit_order_list(_submit_list(rig, orders))
+        target = next(o for o in orders.orders if o.order_type == OrderType.LIMIT)
+        rig.client._cache.add_order(target)
+
+        await rig.client._cancel_order(_cancel_leg(target, "77-TP"))
+
+        assert rig.bridge.called("cancel") == [], "a leg is never withdrawn by the cancel route"
+        ((args, _),) = rig.bridge.called("modify")
+        assert args == (77, 1.07, 0.0), "the stop is kept, the target is zeroed"
+
+        from nautilus_trader.model.events import OrderCanceled, OrderFilled
+
+        assert len(rig.events(OrderCanceled)) == 1
+        assert rig.events(OrderFilled) == [], "withdrawing a leg is not a fill"
+
+    async def test_cancelling_a_leg_of_a_closed_position_is_a_cancel(self):
+        """The other side filled, or the desk closed it. Refusing would leave
+        the engine holding an order the broker has no record of."""
+        rig = make_exec(
+            FakeBridge(order={"success": True, "result": {"retcode": 10009, "order": 77}})
+        )
+        from nautilus_trader.model.enums import OrderType
+
+        orders = _bracket()
+        await rig.client._submit_order_list(_submit_list(rig, orders))
+        target = next(o for o in orders.orders if o.order_type == OrderType.LIMIT)
+        rig.client._cache.add_order(target)
+
+        await rig.client._cancel_order(_cancel_leg(target, "77-TP"))
+
+        from nautilus_trader.model.events import OrderCanceled, OrderFilled
+
+        assert len(rig.events(OrderCanceled)) == 1
+        assert rig.events(OrderFilled) == []
 
     async def test_a_refused_bracket_refuses_every_leg(self):
         """Rejecting only the entry leaves the stop and the target
