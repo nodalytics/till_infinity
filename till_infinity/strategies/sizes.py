@@ -70,6 +70,39 @@ from ..risk import scaling, sizing
 UNTRADABLE_MODES = frozenset({0, 3})
 
 
+def equity_of(account: Any) -> float:
+    """The account's total equity, whatever currency shape it declares.
+
+    **`balance_total()` with no argument only works on a single-currency
+    account.** Nautilus falls back to `self.base_currency` and raises
+    `TypeError("'currency' argument was `None`")` when there is none - and the
+    MT5 client declares `base_currency=None`, because an exec client is built
+    before it has connected and so before the broker has said what the account
+    is held in.
+
+    That combination took the live desk down on 2026-11-05: every statespace
+    proposal reached `Desk._sized`, asked for equity, and raised inside
+    `Actor.on_bar`, so the actor logged a traceback per bar and **not one
+    proposal was ever sized**. Quotes were flowing and the terminal was
+    accepting orders; the only symptom was an exception in a handler.
+
+    An MT5 account holds exactly one currency, so the multi-currency reading
+    has a single entry and summing it is the same number. Summing rather than
+    picking the first keeps it honest if a venue ever reports two: the figure
+    would then be a sum of unlike units, which is wrong, so it refuses instead.
+    """
+    if account is None:
+        return 0.0
+    base = getattr(account, "base_currency", None)
+    if base is not None:
+        balance = account.balance_total()
+        return float(balance.as_double()) if balance is not None else 0.0
+    totals = account.balances_total() or {}
+    if len(totals) > 1:
+        return 0.0
+    return sum(float(money.as_double()) for money in totals.values())
+
+
 def feed_of(instrument_id: InstrumentId) -> str:
     """The feed name this desk's rules key on, from Nautilus's identifier.
 

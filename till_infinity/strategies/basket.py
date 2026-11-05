@@ -195,8 +195,6 @@ class BasketExit(Actor):
         """The one balance the book has, or 0.0 when there is no account yet."""
         from nautilus_trader.model.identifiers import Venue
 
-        account = self.portfolio.account(Venue(self._cfg.venue))
-        if account is None:
-            return 0.0
-        balance = account.balance_total()
-        return float(balance.as_double()) if balance is not None else 0.0
+        from till_infinity.strategies.sizes import equity_of
+
+        return equity_of(self.portfolio.account(Venue(self._cfg.venue)))

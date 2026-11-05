@@ -432,3 +432,96 @@ def test_a_volume_already_on_the_intent_is_replaced_and_recorded():
     assert isinstance(found, Intent)
     assert found.volume == pytest.approx(0.11)
     assert found.features["size_given"] == pytest.approx(1_337.0)
+
+
+class _Money:
+    def __init__(self, amount: float) -> None:
+        self._amount = amount
+
+    def as_double(self) -> float:
+        return self._amount
+
+
+class _SingleCurrencyAccount:
+    """What Nautilus gives when `base_currency` was declared."""
+
+    base_currency = "USD"
+
+    def balance_total(self, currency=None):
+        return _Money(10_000.0)
+
+    def balances_total(self):
+        return {"USD": _Money(10_000.0)}
+
+
+class _MultiCurrencyAccount:
+    """What the **MT5 client actually produces**: `base_currency=None`.
+
+    `balance_total()` with no argument falls back to `self.base_currency` and
+    raises when there is none, which is exactly what Nautilus does.
+    """
+
+    base_currency = None
+
+    def balance_total(self, currency=None):
+        if currency is None:
+            raise TypeError("'currency' argument was `None`")
+        return _Money(10_000.0)
+
+    def balances_total(self):
+        return {"USD": _Money(10_000.0)}
+
+
+def test_equity_reads_an_account_that_declares_no_base_currency():
+    """The live desk's shape, and the defect that stopped it trading.
+
+    `MT5ExecutionClient` passes `base_currency=None` because an exec client is
+    built before it has connected, so before the broker has said what the
+    account is held in. `Desk._equity` then called `balance_total()` with no
+    argument, which raises on such an account - **inside `Actor.on_bar`**, so
+    every statespace proposal died on the way to being sized while quotes
+    flowed and the terminal reported it would accept orders. The only symptom
+    was a traceback per bar.
+    """
+    import pytest
+
+    from till_infinity.strategies.sizes import equity_of
+
+    account = _MultiCurrencyAccount()
+    # The fixture is the failing shape, not a stand-in for one: the call the
+    # old code made still raises on it.
+    with pytest.raises(TypeError):
+        account.balance_total()
+
+    assert equity_of(account) == 10_000.0
+
+
+def test_equity_still_reads_a_single_currency_account():
+    """The control: the fix must not change the account shape that worked."""
+    from till_infinity.strategies.sizes import equity_of
+
+    assert equity_of(_SingleCurrencyAccount()) == 10_000.0
+
+
+def test_equity_is_zero_without_an_account():
+    """Zero rather than a guess - a size from an invented equity is the one
+    number nobody would catch."""
+    from till_infinity.strategies.sizes import equity_of
+
+    assert equity_of(None) == 0.0
+
+
+def test_equity_refuses_to_add_two_currencies():
+    """A sum of unlike units is a wrong number that looks like a right one.
+
+    MT5 holds one currency, so this cannot happen there; if a venue ever
+    reports two, returning 0.0 stops sizing rather than sizing off a figure
+    that is the addition of dollars and yen.
+    """
+    from till_infinity.strategies.sizes import equity_of
+
+    class _Two(_MultiCurrencyAccount):
+        def balances_total(self):
+            return {"USD": _Money(10_000.0), "JPY": _Money(1_500_000.0)}
+
+    assert equity_of(_Two()) == 0.0
