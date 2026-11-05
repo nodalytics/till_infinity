@@ -134,6 +134,19 @@ def _confirmed(raw: dict, codes: tuple[int, ...] = (DONE,)) -> bool:
     return bool(raw) and raw.get("success") is True and _retcode(raw) in codes
 
 
+def _leg_id(ticket: Any, order: Any, entry: Any) -> str:
+    """The venue id for one leg of a bracket.
+
+    The entry keeps the bare ticket, because it *is* the order the terminal
+    acknowledged. A stop or a target is a field on the position that ticket
+    opened, so it gets the ticket and a side - enough for a modify to find the
+    position and for a cancel to know which side to clear.
+    """
+    if order is entry:
+        return str(ticket)
+    return f"{ticket}-SL" if order.order_type == OrderType.STOP_MARKET else f"{ticket}-TP"
+
+
 class MT5ExecutionClient(LiveExecutionClient):
     """The order side of the venue.
 
@@ -583,6 +596,17 @@ class MT5ExecutionClient(LiveExecutionClient):
             ts_event=self._clock.timestamp_ns(),
         )
 
+    def _reject_all(self, orders: tuple, reason: str) -> None:
+        """Reject every order of a bracket for the one reason.
+
+        A bracket is submitted as a single MT5 order, so its parts share one
+        fate. Rejecting only the entry would leave the stop and the target
+        `INITIALIZED` forever - orders the engine believes are on their way to
+        a venue that was never told about them.
+        """
+        for order in orders:
+            self._reject(order, reason)
+
     def _fill(
         self,
         order: Any,
@@ -631,16 +655,86 @@ class MT5ExecutionClient(LiveExecutionClient):
         return found[-1] if found else None
 
     async def _submit_order(self, command: Any) -> None:
-        order = command.order
+        """One order, with any stop or target the command carries."""
+        params = getattr(command, "params", None) or {}
+        await self._place(command.order, sl=params.get("sl"), tp=params.get("tp"))
+
+    async def _submit_order_list(self, command: Any) -> None:
+        """A bracket, as the one MT5 order a bracket is here.
+
+        **Nothing could trade without this.** The base class raises
+        `NotImplementedError`, every strategy on this desk submits an entry
+        with a stop and a target as an OTO list, and so every order died in
+        the adapter with the engine reporting nothing worse than an error on a
+        command. Quotes flowed, the terminal said it would accept orders, the
+        healthcheck was green, and no trade had ever been placed through
+        Nautilus.
+
+        **MT5 has no separate orders for a stop and a target.** They are
+        properties of the position, set by `sl` and `tp` on the entry and
+        changed afterwards through `/positions/modify`, which is addressed by
+        the position's own ticket - which is why `_modify_order` already works
+        that way. So the three Nautilus orders become one request, and the
+        children are accepted against the entry's ticket: there is no second
+        ticket for them to carry, and leaving them `INITIALIZED` would be the
+        engine waiting forever for a venue that has nothing to say.
+
+        The shape is read from the order *types*, not the `tags`. Tags are
+        this desk's convention and a different strategy may not set them;
+        `STOP_MARKET` and `LIMIT` are what the orders are.
+        """
+        orders = tuple(command.order_list.orders)
+        entry = next((o for o in orders if o.parent_order_id is None), None)
+        if entry is None:
+            self._reject_all(orders, "no entry in the list: every order names a parent")
+            return
+        children = tuple(o for o in orders if o is not entry)
+
+        sl: float | None = None
+        tp: float | None = None
+        for child in children:
+            if child.order_type == OrderType.STOP_MARKET:
+                sl = float(child.trigger_price)
+            elif child.order_type == OrderType.LIMIT:
+                tp = float(child.price)
+            else:
+                # Refusing the bracket rather than the one leg. A bracket with
+                # a leg silently dropped is a position whose risk is not what
+                # the strategy sized it for.
+                self._reject_all(
+                    orders,
+                    f"{child.order_type.name} cannot be a bracket leg on MT5: a stop is "
+                    f"STOP_MARKET and a target is LIMIT",
+                )
+                return
+        await self._place(entry, sl=sl, tp=tp, also=children)
+
+    async def _place(
+        self,
+        order: Any,
+        *,
+        sl: Any = None,
+        tp: Any = None,
+        also: tuple = (),
+    ) -> None:
+        """Send one order to the terminal and report what came back.
+
+        `also` are orders that share this one's fate - the stop and target of
+        a bracket, which MT5 carries on the entry rather than as orders of
+        their own. They are submitted, rejected and accepted with it.
+        """
+        together = (order, *also)
         # Only the two shapes this client can express. A stop order has no
         # `price`, so `has_price` was False and it went out as a market order.
         if order.order_type not in (OrderType.MARKET, OrderType.LIMIT):
-            self._reject(order, f"{order.order_type.name} orders are not supported on MT5 here")
+            self._reject_all(
+                together, f"{order.order_type.name} orders are not supported on MT5 here"
+            )
             return
         instrument = await self._instrument(order.instrument_id)
         if instrument is None:
-            self._reject(
-                order, f"{order.instrument_id.symbol.value} is not a symbol this terminal lists"
+            self._reject_all(
+                together, f"{order.instrument_id.symbol.value} is not a symbol this terminal lists"
             )
             return
         body = {
@@ -657,16 +751,16 @@ class MT5ExecutionClient(LiveExecutionClient):
         # A stop or target the strategy attached, passed through as given. The
         # HTTP bridge's market-order route *requires* `sl`; this client never
         # invents one.
-        for key in ("sl", "tp"):
-            value = (getattr(command, "params", None) or {}).get(key)
+        for key, value in (("sl", sl), ("tp", tp)):
             if value is not None:
                 body[key] = float(value)
-        self.generate_order_submitted(
-            strategy_id=order.strategy_id,
-            instrument_id=order.instrument_id,
-            client_order_id=order.client_order_id,
-            ts_event=self._clock.timestamp_ns(),
-        )
+        for leg in together:
+            self.generate_order_submitted(
+                strategy_id=leg.strategy_id,
+                instrument_id=leg.instrument_id,
+                client_order_id=leg.client_order_id,
+                ts_event=self._clock.timestamp_ns(),
+            )
         raw = await self._bridge.order(body)
         result = raw.get("result") or {}
         trade = raw.get("trade") or {}
@@ -682,23 +776,41 @@ class MT5ExecutionClient(LiveExecutionClient):
                 # the only trace was one rejection reason per order, which
                 # reads as twelve unrelated refusals.
                 self._publish_trading(False, f"retcode {AUTOTRADING_OFF} on an order")
-            self._reject(
-                order,
+            self._reject_all(
+                together,
                 str(result.get("comment") or f"retcode {retcode or 'missing'}: not confirmed"),
             )
             return
         ticket = result.get("order") or trade.get("transaction_broker_id") or 0
         if not ticket:
             self._log.error(f"{order.client_order_id}: confirmed with no ticket - reconcile")
-            self._reject(order, "confirmed by the terminal but no ticket came back")
+            self._reject_all(together, "confirmed by the terminal but no ticket came back")
             return
-        self.generate_order_accepted(
-            strategy_id=order.strategy_id,
-            instrument_id=order.instrument_id,
-            client_order_id=order.client_order_id,
-            venue_order_id=VenueOrderId(str(ticket)),
-            ts_event=self._clock.timestamp_ns(),
-        )
+        # **The legs are the entry's ticket with a suffix, not the ticket
+        # itself.** MT5 answers a bracket with one order ticket; the stop and
+        # the target are fields on the position it opens, not orders with
+        # tickets of their own.
+        #
+        # Giving all three the bare ticket looked right - `_modify_order`
+        # resolves it to the position and sets `sl`/`tp`, which is correct -
+        # and was dangerous on cancel. Cancelling the target would call
+        # `/orders/<entry ticket>`, which is not a resting order, so the
+        # cancel is unconfirmed; the ticket is not in the pending listing; and
+        # `_withdraw` then falls through to its deal fallback, finds **the
+        # entry's own opening deal**, and reports the *target* as filled at
+        # the entry's price. A fabricated fill, after which the engine's
+        # position differs from the broker's.
+        #
+        # The suffix keeps `_ticket` resolving to the position for a modify
+        # while letting a cancel see which side it was asked to withdraw.
+        for leg in together:
+            self.generate_order_accepted(
+                strategy_id=leg.strategy_id,
+                instrument_id=leg.instrument_id,
+                client_order_id=leg.client_order_id,
+                venue_order_id=VenueOrderId(_leg_id(ticket, leg, order)),
+                ts_event=self._clock.timestamp_ns(),
+            )
         # **A fill is only a market order that came back DONE.** 10008 is
         # PLACED - a working order - and a pending order's DONE means placed,
         # not filled. Reporting either as a fill gave the desk a position it
@@ -730,10 +842,23 @@ class MT5ExecutionClient(LiveExecutionClient):
 
     @staticmethod
     def _ticket(venue_order_id: Any) -> int:
+        """The position or order ticket, with any bracket-leg suffix dropped.
+
+        A bracket's stop and target are `<ticket>-SL` and `<ticket>-TP`; they
+        name a side of the position that `<ticket>` opened, so everything that
+        addresses the terminal by ticket wants the number in front.
+        """
+        raw = str(venue_order_id or "").split("-", 1)[0]
         try:
-            return int(str(venue_order_id)) if venue_order_id else 0
+            return int(raw) if raw else 0
         except ValueError:
             return 0
+
+    @staticmethod
+    def _leg(venue_order_id: Any) -> str:
+        """`SL`, `TP`, or empty for an order that is one in its own right."""
+        parts = str(venue_order_id or "").split("-", 1)
+        return parts[1].upper() if len(parts) == 2 else ""
 
     @staticmethod
     def _near(a: float, b: float, digits: int) -> bool:
@@ -865,6 +990,67 @@ class MT5ExecutionClient(LiveExecutionClient):
             ts_event=self._clock.timestamp_ns(),
         )
 
+    async def _clear_leg(
+        self,
+        strategy_id: Any,
+        instrument_id: Any,
+        client_order_id: Any,
+        venue_order_id: Any,
+        ticket: int,
+        leg: str,
+        refuse: Any,
+    ) -> None:
+        """Withdraw one side of a bracket, which on MT5 means zeroing a field.
+
+        **Never through the cancel route.** A bracket leg's ticket is the
+        position's, not a resting order's, so `/orders/<ticket>` cannot
+        cancel it - and an unconfirmed cancel sends `_withdraw` to its deal
+        fallback, which would find the entry's own opening deal and report
+        *this* leg as filled at the entry's price.
+
+        A position that is already gone means the leg is gone with it: the
+        other side filled, or the desk closed it. That is a cancellation, not
+        a failure, and reporting it as one would leave the engine holding an
+        order the broker has no record of.
+        """
+        try:
+            _, held = await self._locate(ticket)
+        except _Refusal as exc:
+            refuse(str(exc))
+            return
+        if held is None:
+            self._log.info(
+                f"cancel {client_order_id}: position {ticket} is closed, and the leg with it"
+            )
+            self.generate_order_canceled(
+                strategy_id=strategy_id,
+                instrument_id=instrument_id,
+                client_order_id=client_order_id,
+                venue_order_id=venue_order_id,
+                ts_event=self._clock.timestamp_ns(),
+            )
+            return
+        # Zero the side being withdrawn and send the other one back unchanged:
+        # `/positions/modify` sets both, so omitting one would clear it too.
+        sl = 0.0 if leg == "SL" else float(held.get("sl") or 0.0)
+        tp = 0.0 if leg == "TP" else float(held.get("tp") or 0.0)
+        try:
+            raw = await self._bridge.modify(ticket, sl, tp)
+        except Exception as exc:
+            refuse(f"bridge: {exc}")
+            return
+        if not _confirmed(raw):
+            comment = (raw.get("result") or {}).get("comment")
+            refuse(str(comment or f"retcode {_retcode(raw) or 'missing'}: not confirmed"))
+            return
+        self.generate_order_canceled(
+            strategy_id=strategy_id,
+            instrument_id=instrument_id,
+            client_order_id=client_order_id,
+            venue_order_id=venue_order_id,
+            ts_event=self._clock.timestamp_ns(),
+        )
+
     async def _withdraw(
         self, strategy_id: Any, instrument_id: Any, client_order_id: Any, venue_order_id: Any
     ) -> None:
@@ -878,6 +1064,7 @@ class MT5ExecutionClient(LiveExecutionClient):
         a deal for it, in which case it filled and the fill is reported.
         """
         ticket = self._ticket(venue_order_id)
+        leg = self._leg(venue_order_id)
 
         def refuse(reason: str) -> None:
             reason = self._scrub(reason)
@@ -893,6 +1080,11 @@ class MT5ExecutionClient(LiveExecutionClient):
 
         if not ticket:
             refuse("cannot cancel an order with no venue id")
+            return
+        if leg:
+            await self._clear_leg(
+                strategy_id, instrument_id, client_order_id, venue_order_id, ticket, leg, refuse
+            )
             return
         try:
             raw = await self._bridge.cancel(ticket)

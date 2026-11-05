@@ -31,6 +31,7 @@ import inspect
 import json
 import time
 from datetime import UTC, datetime
+from decimal import Decimal
 from typing import Any
 
 import httpx
@@ -572,7 +573,16 @@ class TestTheAdapterOverridesNamesNautilusActuallyCalls:
 
 
 class TestWhatThisVenueCannotDoStaysRefused:
-    """MT5 has no order book, no trade ticks and no brackets here.
+    """MT5 has no order book and no trade ticks.
+
+    **It does have brackets, and this list used to say it did not.** That
+    sentence was the reason the desk could not trade: `_submit_order_list`
+    sat in `EXEC_REFUSALS`, every strategy here submits an entry with a stop
+    and a target as an OTO list, and so every order died in the adapter with
+    `NotImplementedError`. A stop and a target are `sl` and `tp` on an MT5
+    order - fields this very client already sends in `_submit_order` and
+    already changes in `_modify_order`. The premise was wrong, and a test
+    pinned it in place.
 
     A client that returns quietly from `subscribe_trade_ticks` is worse than one
     that refuses it, because the strategy believes it is subscribed and sees
@@ -590,7 +600,7 @@ class TestWhatThisVenueCannotDoStaysRefused:
         "_subscribe_funding_rates",
         "_request_trade_ticks",
     )
-    EXEC_REFUSALS = ("_submit_order_list", "_batch_cancel_orders")
+    EXEC_REFUSALS = ("_batch_cancel_orders",)
 
     @pytest.mark.parametrize("name", DATA_REFUSALS)
     async def test_the_data_client_refuses(self, name):
@@ -1480,12 +1490,192 @@ def _limit(side: OrderSide = OrderSide.BUY, price: str = "1.08000") -> Any:
     return _factory().limit(EURUSD_ID, side, Quantity.from_str("0.50"), Price.from_str(price))
 
 
+def _bracket(side: OrderSide = OrderSide.BUY, sl: str = "1.07000", tp: str = "1.09000") -> Any:
+    """An entry with a stop and a target, as every strategy here submits."""
+    return _factory().bracket(
+        instrument_id=EURUSD_ID,
+        order_side=side,
+        quantity=Quantity.from_str("0.50"),
+        sl_trigger_price=Price.from_str(sl),
+        tp_price=Price.from_str(tp),
+    )
+
+
+def _submit_list(rig: Rig, order_list: Any) -> Any:
+    from nautilus_trader.execution.messages import SubmitOrderList
+
+    return SubmitOrderList(
+        TestIdStubs.trader_id(),
+        TestIdStubs.strategy_id(),
+        order_list,
+        UUID4(),
+        time.time_ns(),
+        None,
+        ClientId("MT5"),
+    )
+
+
+def _cancel_leg(order: Any, venue_order_id: str) -> Any:
+    """A cancel of one order, addressed by the venue id the client gave it."""
+    from nautilus_trader.execution.messages import CancelOrder
+
+    return CancelOrder(
+        TestIdStubs.trader_id(),
+        TestIdStubs.strategy_id(),
+        EURUSD_ID,
+        order.client_order_id,
+        VenueOrderId(venue_order_id),
+        UUID4(),
+        time.time_ns(),
+        ClientId("MT5"),
+    )
+
+
 REJECTION = {"success": False, "result": {"retcode": 10006, "comment": "Request rejected"}}
 #: What the live terminal actually returned on 2026-11-04, retcode and wording.
 AUTOTRADING_REJECTION = {
     "success": False,
     "result": {"retcode": 10027, "comment": "Autotrading disabled by client terminal"},
 }
+
+
+class TestSubmittingABracket:
+    """**Nothing could trade until this existed.**
+
+    Every strategy on this desk submits an entry with a stop and a target as
+    an OTO list. `_submit_order_list` was not implemented, so the base class
+    raised `NotImplementedError` and every order died in the adapter - while
+    quotes flowed, the terminal reported it would accept orders, and the
+    healthcheck stayed green. The twelve-test venue suite passes because it
+    drives `Bridge` directly and never reaches this path: a route that never
+    works and a rule that never fires read identically.
+    """
+
+    async def test_a_bracket_is_one_order_carrying_sl_and_tp(self):
+        """MT5 has no separate orders for a stop and a target - they are
+        fields on the entry, which is why `_modify_order` changes them through
+        `/positions/modify` by the position's own ticket."""
+        rig = make_exec(FakeBridge(order=REJECTION))
+        orders = _bracket(OrderSide.BUY, sl="1.07000", tp="1.09000")
+
+        await rig.client._submit_order_list(_submit_list(rig, orders))
+
+        ((args, _),) = rig.bridge.called("order")
+        assert args[0]["order_type"] == "BUY"
+        assert args[0]["volume"] == 0.5
+        assert args[0]["sl"] == 1.07
+        assert args[0]["tp"] == 1.09
+        assert len(rig.bridge.called("order")) == 1, "three orders, one request"
+
+    async def test_every_leg_is_accepted_and_the_legs_are_not_the_entry(self):
+        """A leg left `INITIALIZED` is the engine waiting forever for a venue
+        that has nothing to say about it. But the legs must not carry the
+        entry's bare ticket either.
+
+        **Giving all three the same id fabricates a fill on cancel.** The
+        cancel route would be called with the entry's ticket, which is a
+        position and not a resting order, so the cancel comes back
+        unconfirmed; the ticket is absent from the pending listing; and
+        `_withdraw` falls through to its deal fallback, finds the entry's own
+        opening deal, and reports *the target* as filled at the entry's price.
+        """
+        rig = make_exec(
+            FakeBridge(order={"success": True, "result": {"retcode": 10009, "order": 77}})
+        )
+
+        await rig.client._submit_order_list(_submit_list(rig, _bracket()))
+
+        from nautilus_trader.model.events import OrderAccepted
+
+        accepted = rig.events(OrderAccepted)
+        assert len(accepted) == 3, "entry, stop and target"
+        assert {str(e.venue_order_id) for e in accepted} == {"77", "77-SL", "77-TP"}
+
+    async def test_cancelling_a_target_clears_it_on_the_position(self):
+        """On MT5 a target is a field, so withdrawing it is a modify that
+        zeroes `tp` - and must send the stop back unchanged, because
+        `/positions/modify` sets both and an omitted one is a cleared one."""
+        rig = make_exec(
+            FakeBridge(
+                order={"success": True, "result": {"retcode": 10009, "order": 77}},
+                positions=[{"ticket": 77, "magic": 777_701, "sl": 1.07, "tp": 1.09}],
+            )
+        )
+        from nautilus_trader.model.enums import OrderType
+
+        orders = _bracket()
+        await rig.client._submit_order_list(_submit_list(rig, orders))
+        target = next(o for o in orders.orders if o.order_type == OrderType.LIMIT)
+        rig.client._cache.add_order(target)
+
+        await rig.client._cancel_order(_cancel_leg(target, "77-TP"))
+
+        assert rig.bridge.called("cancel") == [], "a leg is never withdrawn by the cancel route"
+        ((args, _),) = rig.bridge.called("modify")
+        assert args == (77, 1.07, 0.0), "the stop is kept, the target is zeroed"
+
+        from nautilus_trader.model.events import OrderCanceled, OrderFilled
+
+        assert len(rig.events(OrderCanceled)) == 1
+        assert rig.events(OrderFilled) == [], "withdrawing a leg is not a fill"
+
+    async def test_cancelling_a_leg_of_a_closed_position_is_a_cancel(self):
+        """The other side filled, or the desk closed it. Refusing would leave
+        the engine holding an order the broker has no record of."""
+        rig = make_exec(
+            FakeBridge(order={"success": True, "result": {"retcode": 10009, "order": 77}})
+        )
+        from nautilus_trader.model.enums import OrderType
+
+        orders = _bracket()
+        await rig.client._submit_order_list(_submit_list(rig, orders))
+        target = next(o for o in orders.orders if o.order_type == OrderType.LIMIT)
+        rig.client._cache.add_order(target)
+
+        await rig.client._cancel_order(_cancel_leg(target, "77-TP"))
+
+        from nautilus_trader.model.events import OrderCanceled, OrderFilled
+
+        assert len(rig.events(OrderCanceled)) == 1
+        assert rig.events(OrderFilled) == []
+
+    async def test_a_refused_bracket_refuses_every_leg(self):
+        """Rejecting only the entry leaves the stop and the target
+        `INITIALIZED` - orders the engine believes are on their way to a venue
+        that was never told about them."""
+        rig = make_exec(FakeBridge(order=REJECTION))
+
+        await rig.client._submit_order_list(_submit_list(rig, _bracket()))
+
+        from nautilus_trader.model.events import OrderRejected
+
+        assert len(rig.events(OrderRejected)) == 3
+
+    async def test_a_leg_this_venue_cannot_express_refuses_the_whole_bracket(self):
+        """Not just the leg. A bracket with one side silently dropped is a
+        position whose risk is not what the strategy sized it for."""
+        from nautilus_trader.model.enums import OrderType, TrailingOffsetType
+
+        rig = make_exec(FakeBridge(order=REJECTION))
+        orders = _factory().bracket(
+            instrument_id=EURUSD_ID,
+            order_side=OrderSide.BUY,
+            quantity=Quantity.from_str("0.50"),
+            sl_order_type=OrderType.TRAILING_STOP_MARKET,
+            sl_trigger_price=Price.from_str("1.07000"),
+            sl_trailing_offset=Decimal("0.00100"),
+            sl_trailing_offset_type=TrailingOffsetType.PRICE,
+            tp_price=Price.from_str("1.09000"),
+        )
+
+        await rig.client._submit_order_list(_submit_list(rig, orders))
+
+        from nautilus_trader.model.events import OrderRejected
+
+        assert rig.bridge.called("order") == [], "nothing was sent"
+        rejected = rig.events(OrderRejected)
+        assert len(rejected) == 3
+        assert "cannot be a bracket leg" in rejected[0].reason
 
 
 class TestSubmittingAnOrder:
