@@ -26,6 +26,7 @@ the docstrings say which bug put each one here.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 import inspect
 import json
 import time
@@ -2893,6 +2894,61 @@ def _wired(handler) -> Bridge:
 
 class TestTheBridgeSpeaksTheWireProtocol:
     """What actually crosses the network, for the writes that move money."""
+
+    async def test_the_subscribe_frame_is_sent_as_bytes(self):
+        """**`send_text` wants bytes, and a `str` raised on every symbol.**
+
+        It is named `send_text`, its docstring says "sends the given text
+        `data`", and the pyo3 binding types `data` as a `Vec<u8>`. A `str`
+        gives `TypeError: Can't extract 'str' to 'Vec' while processing
+        'data'`.
+
+        Measured against the live bridge on 2026-11-04: every symbol logged
+        that once and the feed delivered nothing, so `quote_source='push'`
+        could never have worked - which also made it the thing standing
+        between a seven-symbol desk and a sixty-six-symbol one, because `poll`
+        costs four requests a second per symbol and the stream costs one
+        socket.
+
+        A type a binding will not accept is not something a type checker here
+        can see, so it is asserted on the call.
+        """
+        import nautilus_trader.core.nautilus_pyo3 as pyo3
+
+        sent: list[object] = []
+
+        class FakeClient:
+            @staticmethod
+            async def connect(loop_=None, config=None, handler=None, **_):
+                return FakeClient()
+
+            async def send_text(self, data, keys=None):
+                sent.append(data)
+
+            async def disconnect(self):
+                return None
+
+        monkey = pyo3.WebSocketClient
+        try:
+            pyo3.WebSocketClient = FakeClient
+            bridge = Bridge("http://localhost:8000", "key")
+            frames = bridge.stream(["EURUSD", "XAUUSD"])
+            with contextlib.suppress(Exception):
+                await asyncio.wait_for(frames.__anext__(), timeout=0.2)
+            with contextlib.suppress(Exception):
+                await frames.aclose()
+        finally:
+            pyo3.WebSocketClient = monkey
+
+        assert sent, "no subscribe frame was sent"
+        assert isinstance(sent[0], bytes), (
+            f"the subscribe frame went as {type(sent[0]).__name__}; the binding "
+            f"types `data` as a Vec<u8> and a str raises"
+        )
+        assert json.loads(sent[0]) == {
+            "action": "subscribe",
+            "symbols": ["EURUSD", "XAUUSD"],
+        }
 
     async def test_the_deal_history_is_asked_with_the_names_that_route_declares(self):
         """**`from_date`/`to_date`, not `date_from`/`date_to`.**
