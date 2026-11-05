@@ -9870,6 +9870,54 @@ class TestService:
                 f"defect this test exists for"
             )
 
+    def test_a_restored_progress_does_not_warm_a_member_this_process_built_cold(self):
+        """**Every deploy opened a position on nearly every symbol.**
+
+        `restore()` reads the progress file and says so itself: "The members
+        are not restored." The warmup gate read `seen.bars`, which is the
+        count across *all* processes, so after a restart it was already past
+        `warm_bars` while the member it gates had been created empty seconds
+        before. The first bar then produced a readout from a model with one
+        observation in it.
+
+        Measured live on 2026-11-05, on the first bar after a deploy:
+        `readouts=21 proposals=20` across 21 feeds, against a 3-sigma trigger
+        that `band-coverage.md` prices at 0.0006 to 0.0018. The side comes
+        from the triggering bar's body, so two correlated pairs were entered
+        in opposite directions on one candle each.
+        """
+        import tempfile
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Settings(
+                state_dir=directory, warm_bars=3, intervals=("1m",), feeds=("FX:EURUSD",)
+            )
+            bars = self._bars(12)
+
+            before = Engine(settings=settings)
+            for bar in bars[:6]:
+                before.observe_bar(bar)
+            assert before.tally["readouts"] >= 1, "the first process did warm up"
+            before.save(force=True)
+
+            after = Engine(settings=settings)
+            after.restore()
+            seen = after.progress.of("FX:EURUSD", "1m")
+            assert seen.bars >= settings.warm_bars, "the file remembers a warm feed"
+
+            assert after.observe_bar(bars[6]) is None, "a cold member scored its first bar"
+            assert after.observe_bar(bars[7]) is None
+            assert after.tally["unwarmed"] == 2
+            assert after.tally["readouts"] == 0
+
+            # **The control.** The gate must open again once this process has
+            # folded enough, or the fix is just a desk that never trades.
+            assert after.observe_bar(bars[8]) is not None
+            assert after.tally["readouts"] == 1
+
     def test_the_tally_is_not_restored_from_disk(self):
         """It describes this process's run.
 

@@ -98,6 +98,11 @@ class Engine:
     #: `bars` is every payload offered and `readouts` is what came out; the
     #: other keys sum to the difference.
     tally: Counter[str] = field(default_factory=Counter)
+
+    #: Bars folded **in this process**, per feed and interval. Deliberately not
+    #: persisted and deliberately not part of `Progress`: it exists to be zero
+    #: after a restart, because the members are zero after a restart.
+    _here: Counter[tuple[str, str]] = field(default_factory=Counter)
     _last_save: float = 0.0
 
     def restore(self) -> Progress:
@@ -211,7 +216,25 @@ class Engine:
         seen.value = float(readout.value)
         seen.spread = float(readout.spread)
         self.progress.folded += 1
-        if seen.bars < self.settings.warm_bars:
+        # **Warm on what *this* process folded, not on what a file remembers.**
+        #
+        # `restore()` reads the progress file and says so in its own docstring:
+        # "The members are not restored." So after a restart `seen.bars` is in
+        # the hundreds while the member it gates was created empty seconds ago
+        # - the gate passes on the first bar and the readout is a cold model
+        # scoring its first observation.
+        #
+        # Measured on the live desk on 2026-11-05, on the first bar after a
+        # deploy: `readouts=21 proposals=20` across 21 feeds, against a trigger
+        # of 3 sigma that `band-coverage.md` prices at 0.0006 to 0.0018. Every
+        # deploy therefore opened a position on nearly every symbol, with the
+        # side taken from that one bar's body - which is why two correlated
+        # pairs were entered in opposite directions.
+        #
+        # `seen.bars` still counts across processes, because progress is what
+        # it is for; what gates a readout is this member's own history.
+        self._here[(feed, interval)] += 1
+        if self._here[(feed, interval)] < self.settings.warm_bars:
             self.tally["unwarmed"] += 1
             return None
         self.tally["readouts"] += 1
