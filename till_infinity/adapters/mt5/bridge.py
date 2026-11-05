@@ -364,7 +364,14 @@ class Bridge:
         )
         client = await WebSocketClient.connect(loop_=loop, config=config, handler=_received)
         try:
-            await client.send_text(json.dumps({"action": "subscribe", "symbols": symbols}))
+            # **`.encode()`, because `send_text` wants bytes.** It is named
+            # `send_text`, its docstring says "sends the given text `data`",
+            # and the pyo3 binding types `data` as a `Vec<u8>`: a `str` raises
+            # `TypeError: Can't extract 'str' to 'Vec' while processing
+            # 'data'`. Measured against the live bridge on 2026-11-04 - every
+            # symbol logged that once and the feed delivered nothing, so
+            # `quote_source='push'` could never have worked.
+            await client.send_text(json.dumps({"action": "subscribe", "symbols": symbols}).encode())
             while True:
                 raw = await queue.get()
                 try:
