@@ -127,6 +127,20 @@ class StatespaceConfig(ActorConfig, frozen=True):
     #: one placed 18 orders, run two placed 0, same process and same data - and
     #: in a 72-cell sweep the first cell poisons the other seventy-one.
     restore: bool = True
+    #: How many historical bars to request per feed on start, to warm the
+    #: members that `restore` does **not** restore.
+    #:
+    #: `Engine.restore()` reads a progress file and says the members warm by
+    #: replay; nothing replayed, because this actor only subscribed. So every
+    #: restart left each feed waiting `warm_bars` live bars - fifteen hours at
+    #: 15m and 60 bars - with the engine's warmup gate reading a count from a
+    #: file while the model it gates was empty.
+    #:
+    #: Larger than `warm_bars` on purpose: a request is answered best-effort
+    #: and some of what comes back is older than the last bar folded, which
+    #: warms the member and is deliberately silent. 0 disables the request,
+    #: which is what a backtest wants - the replay is its own data.
+    warm_bars_request: int = 250
     #: Where the fold state lives, overriding `STATESPACE_STATE_DIR`. A
     #: backtest points this at a directory of its own so a measurement can
     #: neither read the live desk's progress nor leave any behind.
@@ -174,6 +188,9 @@ class StatespaceActor(Actor):
         self._seconds: dict[str, float] = {}
         #: Proposals published, counted here because the engine cannot see them.
         self._proposals = 0
+        #: Historical bars folded on start, reported in the tally so a feed
+        #: that warmed from replay can be told from one that waited.
+        self._warmed = 0
         #: `(bar type, detector name, source)` -> the indicator, so a reader
         #: can find one without matching on `registered_indicators` order.
         self.detectors: dict[tuple[str, str, str], Any] = {}
@@ -202,6 +219,26 @@ class StatespaceActor(Actor):
             self._seconds[str(bar_type)] = _seconds(bar_type)
             self._register(bar_type)
             self.subscribe_bars(bar_type)
+            # **Ask for history, because the members start empty.**
+            #
+            # `Engine.restore()` reads a progress file and says in its own
+            # docstring that the members are not restored - they "warm by
+            # replay". Nothing replayed: this actor only ever subscribed, so
+            # after every restart each feed waited `warm_bars` *live* bars
+            # before it could say anything, which at 15m and 60 bars is
+            # fifteen hours. Requesting the history makes the replay the
+            # restore has always assumed.
+            if self._cfg.warm_bars_request:
+                # `start` is positional and required: a request with no window
+                # is a `TypeError`, not a request for everything. It is asked
+                # for as a span of this bar type rather than a date, so the
+                # same number of bars is covered whatever the interval.
+                span = self._seconds[str(bar_type)] * self._cfg.warm_bars_request
+                self.request_bars(
+                    bar_type,
+                    self.clock.utc_now() - timedelta(seconds=span),
+                    limit=self._cfg.warm_bars_request,
+                )
             self.log.info(f"folding {bar_type}")
 
         # **Say where the bars went, periodically.** `observe_bar` returns
@@ -229,7 +266,7 @@ class StatespaceActor(Actor):
             )
             return
         reading = " ".join(f"{name}={value}" for name, value in sorted(tally.items()))
-        line = f"statespace: {reading} proposals={self._proposals}"
+        line = f"statespace: {reading} proposals={self._proposals} warmed={self._warmed}"
         if tally.get("readouts"):
             self.log.info(line)
         else:
@@ -290,6 +327,29 @@ class StatespaceActor(Actor):
         """
         if self._engine is not None:
             self._engine.save(force=True)
+
+    def on_historical_data(self, data: Any) -> None:
+        """Fold requested history, which warms and never speaks.
+
+        Nautilus delivers a `request_bars` response here rather than to
+        `on_bar`, so a model that warms by replay needs this handler to exist
+        at all. The engine refuses to publish anything for a bar at or before
+        the last one it folded, so these warm the member and produce no
+        readout and no proposal - a decision taken on a bar hours old would
+        name a price that has gone.
+        """
+        if self._engine is None:
+            return
+        rows = data if isinstance(data, (list, tuple)) else [data]
+        folded = 0
+        for row in rows:
+            if not isinstance(row, Bar):
+                continue
+            self._engine.observe_bar(self._payload(row))
+            folded += 1
+        if folded:
+            self._warmed += folded
+            self._engine.save()
 
     def on_bar(self, bar: Bar) -> None:
         if self._engine is None:

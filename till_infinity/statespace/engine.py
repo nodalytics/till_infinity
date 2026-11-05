@@ -103,6 +103,11 @@ class Engine:
     #: persisted and deliberately not part of `Progress`: it exists to be zero
     #: after a restart, because the members are zero after a restart.
     _here: Counter[tuple[str, str]] = field(default_factory=Counter)
+
+    #: Feeds that have delivered a bar past the last one the progress file
+    #: records. Until one does, the feed is replaying history and old bars
+    #: warm the member; afterwards they are refused as duplicates.
+    _live: set[tuple[str, str]] = field(default_factory=set)
     _last_save: float = 0.0
 
     def restore(self) -> Progress:
@@ -199,7 +204,31 @@ class Engine:
         volume = float(volume) if isinstance(volume, int | float) and volume > 0 else 0.0
 
         seen = self.progress.of(feed, interval)
-        if seen.bars and when <= seen.at:
+        key = (feed, interval)
+        # **A bar already folded still warms a member that is cold.**
+        #
+        # The members are not restored - `restore()` says so - so after a
+        # restart the model is empty while the progress file remembers
+        # hundreds of bars. Refusing everything at or before `seen.at` then
+        # throws away exactly the history that would warm it, and the feed
+        # waits `warm_bars` *live* bars instead: at 15m and 60 bars, fifteen
+        # hours before the desk may act on it.
+        #
+        # So until a *live* bar arrives - one past the last the file records -
+        # a replayed bar is folded. It never becomes a readout: history is not
+        # news, and a proposal from a bar hours old would name a price that
+        # has gone. It never advances the persisted progress either, which
+        # would double-count it across restarts.
+        #
+        # The phase ends at the first live bar rather than at `warm_bars`.
+        # Stopping at the count would warm the member on the **oldest** bars
+        # of the replay and refuse the rest - a 250-bar request with
+        # `warm_bars` of 60 would leave the model holding the oldest sixty and
+        # discarding the recent hundred and ninety, which is worse than not
+        # warming it at all. After that first live bar the guard is back, and
+        # a feed re-announcing what it has already sent is refused as before.
+        replay = bool(seen.bars) and when <= seen.at
+        if replay and key in self._live:
             self.tally["already_folded"] += 1
             return None
 
@@ -211,6 +240,14 @@ class Engine:
             noise=self.settings.noise,
             volume=volume,
         )
+        self._here[key] += 1
+        if replay:
+            # Warmed, and deliberately silent: the progress file already
+            # counts this bar, and a readout for it would be a decision about
+            # a price that is no longer there.
+            self.tally["replayed"] += 1
+            return None
+        self._live.add(key)
         seen.bars += 1
         seen.at = when
         seen.value = float(readout.value)
@@ -233,8 +270,7 @@ class Engine:
         #
         # `seen.bars` still counts across processes, because progress is what
         # it is for; what gates a readout is this member's own history.
-        self._here[(feed, interval)] += 1
-        if self._here[(feed, interval)] < self.settings.warm_bars:
+        if self._here[key] < self.settings.warm_bars:
             self.tally["unwarmed"] += 1
             return None
         self.tally["readouts"] += 1

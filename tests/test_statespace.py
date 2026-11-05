@@ -9870,6 +9870,82 @@ class TestService:
                 f"defect this test exists for"
             )
 
+    def test_replayed_history_warms_a_cold_member_and_says_nothing(self):
+        """**The fix for the fifteen-hour wait, and the reason it is safe.**
+
+        `restore()` reads a progress file and says the members warm by replay.
+        Nothing replayed: the actor only subscribed, so the warmup gate - now
+        counting bars folded in *this* process - left every feed waiting
+        `warm_bars` live bars after each restart. At 15m and 60 bars that is
+        fifteen hours, on a desk that deploys several times a day.
+
+        A bar at or before the last one folded now warms the member instead of
+        being refused. It must **never** produce a readout: a proposal from a
+        bar hours old would name a price that has gone, and the progress file
+        already counts it, so advancing progress would double-count it across
+        restarts.
+        """
+        import tempfile
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            settings = Settings(
+                state_dir=directory, warm_bars=3, intervals=("1m",), feeds=("FX:EURUSD",)
+            )
+            bars = self._bars(12)
+
+            before = Engine(settings=settings)
+            for bar in bars[:6]:
+                before.observe_bar(bar)
+            before.save(force=True)
+            folded_then = before.progress.of("FX:EURUSD", "1m").bars
+
+            after = Engine(settings=settings)
+            after.restore()
+
+            # The same history again: it warms and is silent.
+            for bar in bars[:6]:
+                assert after.observe_bar(bar) is None, "replayed history must not speak"
+            assert after.tally["replayed"] == 6, (
+                "every replayed bar must warm the member - stopping at `warm_bars` "
+                "would keep the oldest and discard the most recent"
+            )
+            assert after.tally["readouts"] == 0
+            assert after.progress.of("FX:EURUSD", "1m").bars == folded_then, (
+                "replay advanced the persisted progress and would double-count on restart"
+            )
+
+            # **The control**: the next live bar is now answered at once,
+            # where before the fix it would have waited `warm_bars` of them.
+            assert after.observe_bar(bars[6]) is not None
+            assert after.tally["readouts"] == 1
+
+    def test_a_warm_member_still_refuses_a_bar_it_has_folded(self):
+        """The guard that replay relaxes must come back once the member is warm.
+
+        Without it a backfill re-announcing bars would be folded twice into a
+        live model, which is the defect the guard was written for.
+        """
+        import tempfile
+
+        from till_infinity.statespace.config import Settings
+        from till_infinity.statespace.engine import Engine
+
+        with tempfile.TemporaryDirectory() as directory:
+            engine = Engine(
+                settings=Settings(
+                    state_dir=directory, warm_bars=3, intervals=("1m",), feeds=("FX:EURUSD",)
+                )
+            )
+            bars = self._bars(8)
+            for bar in bars[:6]:
+                engine.observe_bar(bar)
+
+            assert engine.observe_bar(bars[2]) is None
+            assert engine.tally["already_folded"] == 1, "a warm member must refuse, not refold"
+
     def test_a_restored_progress_does_not_warm_a_member_this_process_built_cold(self):
         """**Every deploy opened a position on nearly every symbol.**
 
