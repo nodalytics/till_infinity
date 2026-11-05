@@ -519,11 +519,7 @@ class Desk(NautilusStrategy):
         Zero rather than a guess: a size computed from an invented equity is
         the one number nobody would catch.
         """
-        account = self.portfolio.account(self._cfg.instrument_id.venue)
-        if account is None:
-            return 0.0
-        balance = account.balance_total()
-        return float(balance.as_double()) if balance is not None else 0.0
+        return sizes.equity_of(self.portfolio.account(self._cfg.instrument_id.venue))
 
     def _feed_name(self) -> str:
         """The feed name the rules key on, from the instrument.
