@@ -862,3 +862,75 @@ class TestTheTrailGetsAVolatilityFromEveryRule:
         assert _trail_vol_bps(self._intent(bos_atr=0.0012)) == 0.0, "an ATR with no anchor price"
         assert _trail_vol_bps(self._intent(bos_close=1.1)) == 0.0, "a price with no ATR"
         assert _trail_vol_bps(self._intent(vol_bps=0.0, bos_atr=0.0, bos_close=0.0)) == 0.0
+
+
+# ------------------------------------------------------- what the notifier sees
+
+
+def test_closing_a_position_publishes_a_trade_alert():
+    """**The Telegram notifier had nothing to send, and every signal said it was fine.**
+
+    It starts, subscribes to `alerts`, logs `RUNNING`, and reports the shapes
+    `NOTIFY_SHAPES` names - `trade` among them. The only code in the repository
+    that published to `alerts` was `basket.close`, from a strategy that is not
+    in the configured list. So the desk opened and closed positions for months
+    and not one message was ever sent.
+    """
+    from till_infinity.utils import topics
+
+    strategy, _ = run(SurpriseEdge, feed=quotes(count=20))
+    position = strategy.cache.positions_open(strategy_id=strategy.id)[0]
+
+    seen: list[dict] = []
+    topics.subscribe(strategy, topics.ALERTS, seen.append)
+    strategy.on_position_closed(
+        type(
+            "Closed",
+            (),
+            {
+                "position_id": position.id,
+                "instrument_id": position.instrument_id,
+                "realized_pnl": "1.23",
+            },
+        )()
+    )
+
+    trades = [p for p in seen if (p.get("fields") or {}).get("shape") == "trade"]
+    assert len(trades) == 1, f"nothing a notifier could send: {seen}"
+    sent = trades[0]["fields"]
+    assert sent["event"] == "closed"
+    assert sent["realized_pnl"] == "1.23"
+    assert sent["strategy_id"] == str(strategy.id)
+
+    # The payload the *filter* reads, which is the half that was wrong first.
+    from till_infinity.notifications.filters import Filter
+
+    assert Filter(shapes=frozenset({"trade"})).rejects(trades[0]) == ""
+
+
+def test_a_trade_alert_survives_the_notifier_s_own_filter(monkeypatch):
+    """Publishing is half of it: the filter decides whether it is sent.
+
+    `NOTIFY_SHAPES` on the instance lists `trade`, and an alert carrying no
+    interval is kept - so this is the pair that has to hold for a message to
+    arrive. A publisher whose shape the filter drops is the same silence with
+    an extra step.
+    """
+    from till_infinity.notifications.filters import Filter
+
+    monkeypatch.setenv("NOTIFY_SHAPES", "drift,agent,trade,statespace")
+    monkeypatch.delenv("NOTIFY_MIN_INTERVAL", raising=False)
+
+    kept = Filter.from_env()
+
+    assert kept.rejects({"fields": {"shape": "trade", "event": "closed"}}) == ""
+
+
+def test_the_filter_control_still_drops_a_shape_nobody_asked_for():
+    """The control. A filter that accepts everything would make the test above
+    pass for the wrong reason."""
+    from till_infinity.notifications.filters import Filter
+
+    only_trades = Filter(shapes=frozenset({"trade"}))
+
+    assert only_trades.rejects({"fields": {"shape": "spread"}}) != ""

@@ -650,6 +650,49 @@ class ExitMechanism:
         self._filled = found or getattr(self, "_intended", None)
         super().on_order_filled(event)
 
+    def _announce(self, what: str, event: Any, **extra: Any) -> None:
+        """Publish a trade alert, which is the only thing that ever reaches the notifier.
+
+        **`alerts` had one publisher and it was not a trade.** The Telegram
+        notifier starts, subscribes to `alerts`, logs `RUNNING` and accepts
+        the shapes `NOTIFY_SHAPES` names - `trade` among them - and the only
+        code in the repository that published to that topic was
+        `basket.close`, from a strategy that is not in the configured list. So
+        the desk opened and closed positions and nothing was ever sent, with
+        every signal saying notifications were healthy.
+
+        Never raises: this runs inside a Nautilus event handler, and an
+        exception here would take the exit path down with it over a message.
+        """
+        try:
+            from ..utils import topics
+
+            instrument = str(getattr(event, "instrument_id", ""))
+            fields = {
+                # **`fields`, not the top level.** The notifier's filter reads
+                # `fields.shape` (`filters.Filter.key`); `ExitMechanism.on_alert`
+                # reads a top-level `shape`. Two conventions share this topic,
+                # and a payload in the wrong one is dropped silently by the
+                # filter as `shape '' not in [...]` - which is what the test
+                # beside this caught.
+                "shape": "trade",
+                "event": what,
+                "instrument": instrument,
+                "feed": self._feed_name(),
+                "position_id": str(getattr(event, "position_id", "")),
+                "strategy_id": str(self.id),
+            }
+            fields.update({k: str(v) for k, v in extra.items() if v is not None})
+            payload: dict[str, Any] = {
+                "title": f"{self._feed_name()} {what}",
+                "body": ", ".join(f"{k} {v}" for k, v in extra.items() if v is not None),
+                "source": "trading",
+                "fields": fields,
+            }
+            topics.publish(self, topics.ALERTS, payload)
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log.warning(f"could not announce the {what}: {exc}")
+
     def on_position_opened(self, event: Any) -> None:
         """Track it, fold in the side's own numbers, and see that it is held."""
         intent = getattr(self, "_filled", None) or getattr(self, "_intended", None)
@@ -662,6 +705,15 @@ class ExitMechanism:
             return
         self.exits.opened(event.position_id, self._sided(intent), self.clock.timestamp())
         self._attach(event.position_id)
+        self._announce(
+            "opened",
+            event,
+            side=str(getattr(event, "entry", "")),
+            quantity=str(getattr(event, "quantity", "")),
+            price=str(getattr(event, "last_px", "")),
+            stop=round(float(intent.stop), 6),
+            target=round(float(intent.target), 6) if getattr(intent, "target", 0) else None,
+        )
 
     def _orphan(self, position_id: Any, why: str) -> None:
         """Close a position whose stop price cannot be reconstructed.
@@ -694,6 +746,12 @@ class ExitMechanism:
         held = self.exits.closed(event.position_id)
         if held is not None and held.ride is not None:
             self.log.info(f"{held.intent.feed} closed; the turn model wanted {held.ride}")
+        self._announce(
+            "closed",
+            event,
+            realized_pnl=str(getattr(event, "realized_pnl", "")),
+            duration_ns=int(getattr(event, "duration_ns", 0) or 0),
+        )
 
     def on_quote_tick(self, tick: QuoteTick) -> None:
         """Fold the quote into every position this strategy holds.
