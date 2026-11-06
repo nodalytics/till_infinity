@@ -563,18 +563,23 @@ class ExitMechanism:
     def on_start(self) -> None:
         """Subscribe to the basket's close request, then start the entry."""
         super().on_start()
-        from ..utils.topics import ALERTS, subscribe
+        from ..utils.topics import COMMANDS, subscribe
 
         # A bound method, which is what makes a stop/start cycle safe:
         # `msgbus.subscribe` deduplicates on `(topic, handler, priority)`, and
         # two bound methods of one instance compare equal where two fresh
         # `partial`s never do - the bug `notifications/actor.py` paid for by
         # delivering every later alert twice.
-        subscribe(self, ALERTS, self.on_alert)
+        subscribe(self, COMMANDS, self.on_command)
         self.log.info(f"{type(self).__name__} exits, listening for the basket close")
 
-    def on_alert(self, payload: Any) -> None:
+    def on_command(self, payload: Any) -> None:
         """Close this strategy's own position when the whole book says so.
+
+        **On `COMMANDS`, not `ALERTS`.** This acts; it does not report. The
+        two shared a topic and read incompatible payloads from it - this one
+        looks for a top-level `shape`, the notifier's filter reads
+        `fields.shape` - so each silently dropped what the other published.
 
         Filtered on `strategy_id`, because an exit rule that could close
         another strategy's position is the magic-number bug wearing a new hat -
@@ -666,35 +671,24 @@ class ExitMechanism:
         """
         try:
             from ..utils import topics
+            from ..utils.topics import alert
 
             instrument = str(getattr(event, "instrument_id", ""))
-            fields = {
-                # **`fields`, not the top level.** The notifier's filter reads
-                # `fields.shape` (`filters.Filter.key`); `ExitMechanism.on_alert`
-                # reads a top-level `shape`. Two conventions share this topic,
-                # and a payload in the wrong one is dropped silently by the
-                # filter as `shape '' not in [...]` - which is what the test
-                # beside this caught.
-                "shape": "trade",
-                "event": what,
-                "instrument": instrument,
-                "feed": self._feed_name(),
-                "position_id": str(getattr(event, "position_id", "")),
-                "strategy_id": str(self.id),
-            }
-            fields.update({k: str(v) for k, v in extra.items() if v is not None})
-            payload: dict[str, Any] = {
-                "title": f"{self._feed_name()} {what}",
-                "body": ", ".join(
+            payload = alert(
+                shape="trade",
+                title=f"{self._feed_name()} {what}",
+                body=", ".join(
                     f"{k} {v}" for k, v in extra.items() if v is not None and k != "level"
                 ),
-                "source": "trading",
-                # `level` rides at the top of the payload, where the notifier's
-                # own model reads it, and not inside `fields`, which is the
-                # structured block a destination renders.
-                "level": str(extra.get("level") or "info"),
-                "fields": {k: v for k, v in fields.items() if k != "level"},
-            }
+                source="trading",
+                level=str(extra.get("level") or "info"),
+                instrument=instrument,
+                event=what,
+                feed=self._feed_name(),
+                position_id=str(getattr(event, "position_id", "")),
+                strategy_id=str(self.id),
+                **{k: v for k, v in extra.items() if k != "level"},
+            )
             topics.publish(self, topics.ALERTS, payload)
         except Exception as exc:  # pragma: no cover - defensive
             self.log.warning(f"could not announce the {what}: {exc}")

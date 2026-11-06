@@ -186,25 +186,20 @@ def alert_for(proposal: dict[str, Any]) -> dict[str, Any] | None:
     if not feed or side == 0:
         return None
     named = "long" if side > 0 else "short"
-    return {
-        "title": f"{feed} {named} proposal",
-        "body": str(proposal.get("detail") or ""),
-        "source": "statespace",
-        "level": "info",
-        "fields": {
-            "shape": "statespace",
-            "event": "proposal",
-            # `instrument` is what the filter's repeat check keys on, beside
-            # the shape, so two feeds do not silence each other.
-            "instrument": feed,
-            "feed": feed,
-            "interval": str(proposal.get("interval") or ""),
-            "side": named,
-            "surprise": str(features.get("surprise", "")),
-            "vol_bps": str(features.get("vol_bps", "")),
-            "probability": str(features.get("probability", "")),
-        },
-    }
+    return topics.alert(
+        shape="statespace",
+        title=f"{feed} {named} proposal",
+        body=str(proposal.get("detail") or ""),
+        source="statespace",
+        instrument=feed,
+        event="proposal",
+        feed=feed,
+        interval=str(proposal.get("interval") or ""),
+        side=named,
+        surprise=features.get("surprise"),
+        vol_bps=features.get("vol_bps"),
+        probability=features.get("probability"),
+    )
 
 
 class StatespaceActor(Actor):

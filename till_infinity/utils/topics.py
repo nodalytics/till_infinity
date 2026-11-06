@@ -58,7 +58,38 @@ PROPOSALS = "statespace.proposals"
 STATESPACE_SIGNALS = "statespace.signals"
 
 # ──── the desk ────
+
+#: Findings, for a person. The notifier subscribes and nothing acts on one.
+#:
+#: **This topic used to carry commands as well**, and the two spoke different
+#: payload languages on one bus: `ExitMechanism.on_alert` read a *top-level*
+#: `shape` to recognise a close request, while `notifications.filters` reads
+#: `fields.shape` to route a message. A payload in the wrong one was dropped
+#: in silence by whichever reader it was not written for - three times in two
+#: days, each discovered by accident:
+#:
+#: * `basket.close` is correct for the command reader and invisible to the
+#:   notifier;
+#: * `proposing.proposal_for` stamps a top-level `shape` and its own comment
+#:   claims it is "routed on by `notifications/filters.py`", recording that it
+#:   had already been dropped once;
+#: * the first version of `ExitMechanism._announce` published top level and
+#:   was dropped as `shape '' not in [...]`.
+#:
+#: So commands moved to `COMMANDS` and this carries notifications only. One
+#: reader, one schema, and a payload that goes to the wrong place now goes
+#: nowhere loudly rather than quietly.
 ALERTS = "alerts"
+
+#: Asking another component of this desk to do something.
+#:
+#: Distinct from `ALERTS` because the reader acts rather than reports, and a
+#: close request that is merely *announced* is the failure `basket.py` records
+#: in its own docstring: "`alerts` had one subscriber, the Telegram notifier,
+#: so this published a close request that became a message and never an
+#: order - the log said 'closing all N position(s)' and the counter agreed".
+COMMANDS = "commands"
+
 JOURNAL = "journal"
 
 #: What the promotion ladder decided, for the one thing it cannot do itself.
@@ -87,12 +118,14 @@ VENUE_TRADING = "venue.trading"
 #: publishing where nothing listens, which is the failure a registry catches
 #: and a literal does not.
 #:
-#: **Declared is not the same as wired.** Only `ALERTS` and `JOURNAL` have a
+#: **Declared is not the same as wired.** Only `ALERTS`, `COMMANDS` and
+#: `JOURNAL` have a
 #: publisher and a subscriber in the ported desk; the rest were the retired
 #: services' and are kept because the names are the contract a producer would
 #: have to publish on. Declaring one does not mean something is listening.
 DECLARED: tuple[str, ...] = (
     ALERTS,
+    COMMANDS,
     LADDER,
     VENUE_TRADING,
     ARTICLES,
@@ -122,6 +155,48 @@ def publish(component: Any, topic: str, payload: Any) -> None:
             f"Declared: {', '.join(DECLARED)}."
         )
     component.msgbus.publish(topic=topic, msg=payload)
+
+
+def alert(
+    *,
+    shape: str,
+    title: str,
+    body: str = "",
+    source: str = "",
+    level: str = "info",
+    instrument: str = "",
+    **fields: Any,
+) -> dict[str, Any]:
+    """One alert payload, built here so no publisher has to remember the shape.
+
+    **`shape` belongs inside `fields` and three publishers put it outside.**
+    `filters.Filter.key` reads `fields.get("shape") or source`, so a top-level
+    one is invisible and the alert is dropped as `shape '' not in [...]` with
+    nothing logged where it was published. That happened to
+    `proposing.proposal_for` - whose own comment records it - and again to the
+    first version of `ExitMechanism._announce`, and it is why `basket.close`,
+    correct for the command reader it was written for, never reached a person.
+
+    `level` rides at the top, where `from_message` reads it, and not in
+    `fields`, which is the structured block a destination renders. Keeping
+    both facts in one function is the point: a caller that gets the schema
+    wrong now cannot, because it does not write the schema.
+
+    `instrument` is named rather than left to `**fields` because the repeat
+    check keys on it beside the shape, and two feeds that leave it empty
+    silence each other.
+    """
+    named = {str(k): str(v) for k, v in fields.items() if v is not None and v != ""}
+    named["shape"] = str(shape)
+    if instrument:
+        named["instrument"] = str(instrument)
+    return {
+        "title": str(title),
+        "body": str(body),
+        "source": str(source or shape),
+        "level": str(level),
+        "fields": named,
+    }
 
 
 def subscribe(component: Any, topic: str, handler: Any) -> None:

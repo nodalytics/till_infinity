@@ -62,7 +62,7 @@ from till_infinity.strategies.exits import (
     protection_for,
 )
 from till_infinity.strategies.surprise import Surprise, SurpriseEdge, SurpriseResting
-from till_infinity.utils.topics import ALERTS, PROPOSALS
+from till_infinity.utils.topics import COMMANDS, PROPOSALS
 
 VENUE = Venue("SIM")
 EURUSD = TestInstrumentProvider.default_fx_ccy("EUR/USD", VENUE)
@@ -174,7 +174,9 @@ class Closer(Actor):
         position = held[0]
         self.sent += 1
         self.msgbus.publish(
-            ALERTS,
+            # `COMMANDS`, as `BasketExit` publishes it: this asks for a close
+            # and is not a finding for a person.
+            COMMANDS,
             {
                 "shape": "basket.close",
                 "position_id": str(position.id),
