@@ -182,6 +182,39 @@ class TestTheProposalPath:
         assert got["direction"] == 1, "the bar closed up and the proposal did not"
         assert got["features"]["base_rate_up"] == 0.5, "direction is a coin here and says so"
 
+    def test_a_proposal_is_announced_where_the_notifier_can_see_it(self) -> None:
+        """**A proposal is the desk's decision and nothing told anyone.**
+
+        `proposal_for` stamps `shape: "statespace"` and its own comment says it
+        is "routed on by `notifications/filters.py`". It is not: proposals go
+        to `statespace.proposals`, which the notifier does not subscribe to,
+        and the filter reads `fields.shape` rather than a top-level one. The
+        same comment records that `NOTIFY_SHAPES` once "silently dropped every
+        statespace alert while the path itself worked".
+
+        So this asserts the chain rather than the publish: in the shape the
+        filter reads, past the filter, and into the `Notification` a
+        destination is handed. Publishing is not sending, and that distinction
+        is what both near-misses turned on.
+        """
+        from till_infinity.notifications.filters import Filter
+        from till_infinity.notifications.models import from_message
+
+        bar = {"open": 1.1000, "high": 1.1012, "low": 1.0999, "close": 1.1010}
+        proposal = self._actor()._propose(Readout(), bar)
+        assert proposal is not None
+
+        payload = ss_actor.alert_for(proposal)
+        assert payload is not None, "the proposal built no alert"
+        assert payload["fields"]["shape"] == "statespace"
+        assert payload["fields"]["side"] == "long"
+        assert Filter(shapes=frozenset({"statespace"})).rejects(payload) == "", (
+            "the filter dropped it - `fields.shape` is what it reads"
+        )
+        message = from_message(payload)
+        assert message is not None, "the filter passed it and nothing could be built"
+        assert message.title
+
     def test_the_sign_comes_from_the_bar_and_not_from_the_reading(self) -> None:
         """This service folds log variance, so a side taken from the reading
         would be the side of a volatility move published as a price claim - the
