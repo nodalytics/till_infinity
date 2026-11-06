@@ -1591,21 +1591,23 @@ class TestSubmittingABracket:
         assert len(accepted) == 3, "entry, stop and target"
         assert {str(e.venue_order_id) for e in accepted} == {"77", "77-SL", "77-TP"}
 
-    async def test_a_market_bracket_sets_the_stop_on_the_position(self):
-        """**The deal does not carry the stop, and the retcode does not say so.**
+    async def test_a_market_bracket_sets_the_stop_on_a_position_it_cannot_see(self):
+        """A position that cannot be read is not a protected one.
 
-        EURUSD on this account reports `trade_exemode: 2` - Market execution -
-        where the broker fills a deal and *discards* the `sl` and `tp` sent
-        with it. On 2026-11-06 that left ticket 5828118661 open, EURUSD SELL
-        0.43 at 1.11532 with `sl 0.0 tp 0.0`, `magic 777701`, comment
-        `O-20261106-135228-001-E270-37` - ours, unprotected, -25.8 when found,
-        and 90 minutes old across two restarts. The retcode was 10009 and this
-        client reported the stop and the target as accepted against the
-        entry's ticket, so the desk believed it was protected.
+        The bridge lists no positions here, so there is nothing to check the
+        deal against. The stop goes on with `/positions/modify` - the route
+        every exit on this desk already uses - rather than being assumed from
+        `retcode 10009`.
 
-        So the stop goes on with `/positions/modify`, which is the route that
-        already works for every exit on this desk, and the retcode is read as
-        *the deal happened* rather than *the protection exists*.
+        That retcode is why this exists: on 2026-11-06 ticket 5828118661 sat
+        open 90 minutes, EURUSD SELL 0.43 at 1.11532 with `sl 0.0 tp 0.0`,
+        `magic 777701`, comment `O-20261106-135228-001-E270-37` - ours,
+        unprotected, -25.8 when found - while this client reported both legs
+        accepted. A retcode means the deal happened.
+
+        Where the position *can* be read and already holds what was asked,
+        nothing is sent: see
+        `test_a_deal_that_already_carries_the_stop_is_not_modified`.
         """
         rig = make_exec(
             FakeBridge(order={"success": True, "result": {"retcode": 10009, "order": 77}})
@@ -1617,6 +1619,65 @@ class TestSubmittingABracket:
         assert int(args[0]) == 77, "addressed by the entry's ticket"
         assert float(args[1]) == pytest.approx(1.07)
         assert float(args[2]) == pytest.approx(1.09)
+
+    async def test_a_deal_that_already_carries_the_stop_is_not_modified(self):
+        """**The deal does carry the stop here, and #317 assumed it could not.**
+
+        Measured against the live venue on 2026-11-06: EURUSD 0.01 BUY at ask
+        1.11382 sent with `sl 1.10882 tp 1.11882` in the deal body read back
+        holding both. `trade_exemode: 2` does not imply the protection is
+        discarded - all 17 non-FX instruments on this book report mode 2.
+
+        So the stop must be **read before it is written**. Asking
+        `/positions/modify` for prices the position already holds gives MT5
+        nothing to change; it refuses, this bridge answers `HTTP 400`, and the
+        legs of a protected position were rejected for it.
+        """
+        from nautilus_trader.model.events import OrderAccepted, OrderRejected
+
+        rig = make_exec(
+            FakeBridge(
+                order={"success": True, "result": {"retcode": 10009, "order": 77}},
+                positions=[
+                    {"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 1.09, "magic": MAGIC}
+                ],
+            )
+        )
+
+        await rig.client._submit_order_list(_submit_list(rig, _bracket()))
+
+        assert rig.bridge.called("modify") == [], "nothing to change, so nothing is sent"
+        accepted = {str(e.venue_order_id) for e in rig.events(OrderAccepted)}
+        assert accepted == {"77", "77-SL", "77-TP"}, "the venue holds both legs"
+        assert rig.events(OrderRejected) == []
+
+    async def test_a_refused_modify_over_a_protected_position_is_not_a_rejection(self):
+        """A refusal is not evidence of a naked position - the position is.
+
+        The first read misses the row, so the modify is sent and fails. The
+        verdict comes from reading the position afterwards, which holds what
+        was asked, so the legs stand. Deciding on the refusal instead rejected
+        the stop and target of a position the broker was protecting.
+        """
+        from nautilus_trader.model.events import OrderAccepted, OrderRejected
+
+        protected = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 1.09, "magic": MAGIC}]
+        reads = iter(([], protected, protected, protected))
+
+        rig = make_exec(
+            FakeBridge(
+                order={"success": True, "result": {"retcode": 10009, "order": 77}},
+                positions=lambda: next(reads, protected),
+                modify=RuntimeError("Client error '400 Bad Request' for /positions/modify"),
+            )
+        )
+
+        await rig.client._submit_order_list(_submit_list(rig, _bracket()))
+
+        assert len(rig.bridge.called("modify")) == 1, "the first read saw nothing, so it tried"
+        assert rig.events(OrderRejected) == [], "the venue holds the stop; the refusal is noise"
+        accepted = {str(e.venue_order_id) for e in rig.events(OrderAccepted)}
+        assert accepted == {"77", "77-SL", "77-TP"}
 
     async def test_a_venue_that_keeps_no_stop_does_not_get_reported_as_holding_one(self):
         """Positive evidence beats a retcode: the modify was confirmed and the
@@ -1703,14 +1764,13 @@ class TestSubmittingABracket:
         await rig.client._cancel_order(_cancel_leg(target, "77-TP"))
 
         assert rig.bridge.called("cancel") == [], "a leg is never withdrawn by the cancel route"
-        # **Two modifies now, and the second one is the withdrawal.** Submitting
-        # the bracket puts the stop and target on the position, because a deal
-        # on a Market-execution symbol discards the ones sent with it - see
-        # `test_a_market_bracket_sets_the_stop_on_the_position`. So the call
-        # under test here is the last, not the only.
+        # **One modify, and it is the withdrawal.** The position already holds
+        # `sl 1.07 tp 1.09` - the deal carried them - so submitting the bracket
+        # sends nothing. Asking for prices the venue already has is refused with
+        # a 400 and used to reject the legs; see
+        # `test_a_deal_that_already_carries_the_stop_is_not_modified`.
         calls = rig.bridge.called("modify")
-        assert len(calls) == 2, [a for a, _ in calls]
-        assert calls[0][0] == (77, 1.07, 1.09), "the bracket's own protection"
+        assert len(calls) == 1, [a for a, _ in calls]
         assert calls[-1][0] == (77, 1.07, 0.0), "the stop is kept, the target is zeroed"
 
         from nautilus_trader.model.events import OrderCanceled, OrderFilled
