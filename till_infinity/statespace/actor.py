@@ -164,6 +164,49 @@ class StatespaceConfig(ActorConfig, frozen=True):
     intervals: tuple[str, ...] | None = None
 
 
+def alert_for(proposal: dict[str, Any]) -> dict[str, Any] | None:
+    """One proposal as a notification payload, or `None` if it is not one.
+
+    **`shape` goes inside `fields`.** `proposal_for` stamps a top-level
+    `shape` and its comment says it is "routed on by
+    `notifications/filters.py`" - it is not. `filters.Filter.key` reads
+    `fields.get("shape") or source`, so a top-level one is invisible and the
+    alert is dropped as `shape '' not in [...]` with nothing logged at the
+    publisher. The same comment records that happening once already.
+
+    A free function because `msgbus` and `log` are read-only on the Cython
+    `Actor`, so a test cannot replace them - the payload is the thing worth
+    asserting and this is the shape of it.
+    """
+    if not isinstance(proposal, dict):
+        return None
+    features = proposal.get("features") or {}
+    side = int(proposal.get("direction") or 0)
+    feed = str(proposal.get("feed") or "")
+    if not feed or side == 0:
+        return None
+    named = "long" if side > 0 else "short"
+    return {
+        "title": f"{feed} {named} proposal",
+        "body": str(proposal.get("detail") or ""),
+        "source": "statespace",
+        "level": "info",
+        "fields": {
+            "shape": "statespace",
+            "event": "proposal",
+            # `instrument` is what the filter's repeat check keys on, beside
+            # the shape, so two feeds do not silence each other.
+            "instrument": feed,
+            "feed": feed,
+            "interval": str(proposal.get("interval") or ""),
+            "side": named,
+            "surprise": str(features.get("surprise", "")),
+            "vol_bps": str(features.get("vol_bps", "")),
+            "probability": str(features.get("probability", "")),
+        },
+    }
+
+
 class StatespaceActor(Actor):
     """Folds bars into a dispersion reading and publishes it.
 
@@ -364,6 +407,34 @@ class StatespaceActor(Actor):
         if proposal is not None:
             self._proposals += 1
             topics.publish(self, self._cfg.proposals_topic, proposal)
+            self._announce(proposal)
+
+    def _announce(self, proposal: dict[str, Any]) -> None:
+        """Publish the proposal to `alerts`, where the notifier can see it.
+
+        The payload is built by `alert_for`, a free function, because `msgbus`
+        and `log` are read-only on the Cython `Actor` and cannot be replaced in
+        a test - the same reason `feed_reading` in the MT5 data client is a
+        pure function asserted directly rather than through its log call.
+
+        **A proposal is the desk's decision, and nothing told anyone.**
+        `proposal_for` already stamps `shape: "statespace"` and its comment
+        records that `NOTIFY_SHAPES` once "silently dropped every statespace
+        alert while the path itself worked" - but it is published to
+        `statespace.proposals`, which the notifier does not subscribe to, and
+        the notifier's filter reads `fields.shape` rather than a top-level
+        one. Two near-misses in the same direction, so the fix is to publish
+        on `alerts` in the shape the filter actually reads.
+
+        Never raises: this runs inside `on_bar`, and an exception here would
+        stop the fold over a message.
+        """
+        try:
+            payload = alert_for(proposal)
+            if payload is not None:
+                topics.publish(self, topics.ALERTS, payload)
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log.warning(f"could not announce the proposal: {exc}")
 
     def _propose(self, readout: Any, payload: dict[str, Any]) -> dict[str, Any] | None:
         """The trading proposal this bar is, or `None`. **Does not publish.**

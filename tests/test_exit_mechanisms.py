@@ -934,3 +934,95 @@ def test_the_filter_control_still_drops_a_shape_nobody_asked_for():
     only_trades = Filter(shapes=frozenset({"trade"}))
 
     assert only_trades.rejects({"fields": {"shape": "spread"}}) != ""
+
+
+def test_a_refused_order_is_announced():
+    """**The desk tried to trade and could not, and nobody was told.**
+
+    On the night of 2026-11-05 three brackets were refused with retcode 10018,
+    `Market closed`, on index feeds whose session had ended, and nine more
+    were denied as duplicates behind them. The only publisher on `alerts` was
+    a position *opening*, so a desk that reached twelve decisions and acted on
+    none of them sent nothing - and a position is rare, so the channel can
+    stay silent for days while the desk is refused nightly.
+    """
+    from till_infinity.utils import topics
+
+    strategy, _ = run(SurpriseEdge, feed=quotes(count=20))
+    seen: list[dict] = []
+    topics.subscribe(strategy, topics.ALERTS, seen.append)
+
+    strategy.on_order_rejected(
+        type(
+            "Rejected",
+            (),
+            {
+                "instrument_id": EURUSD.id,
+                "position_id": None,
+                "reason": "Order failed: Market closed",
+            },
+        )()
+    )
+
+    sent = [p for p in seen if (p.get("fields") or {}).get("shape") == "trade"]
+    assert len(sent) == 1, f"a refusal told nobody: {seen}"
+    assert sent[0]["fields"]["event"] == "rejected"
+    assert "Market closed" in sent[0]["fields"]["reason"]
+    assert sent[0]["level"] == "warning", "a refusal is not an info line"
+
+
+def test_a_denied_order_is_announced_separately_from_a_rejection():
+    """The cause differs and so does the remedy: a denial is this process's
+    own risk engine or a duplicate and names a defect here, where a rejection
+    names a condition at the broker."""
+    from till_infinity.utils import topics
+
+    strategy, _ = run(SurpriseEdge, feed=quotes(count=20))
+    seen: list[dict] = []
+    topics.subscribe(strategy, topics.ALERTS, seen.append)
+
+    strategy.on_order_denied(
+        type(
+            "Denied",
+            (),
+            {"instrument_id": EURUSD.id, "position_id": None, "reason": "duplicate OrderListId"},
+        )()
+    )
+
+    sent = [p for p in seen if (p.get("fields") or {}).get("shape") == "trade"]
+    assert len(sent) == 1
+    assert sent[0]["fields"]["event"] == "denied"
+
+
+def test_an_announced_refusal_survives_the_notifier_and_becomes_a_message():
+    """The whole chain in one assertion: published, past the filter, and built
+    into the Notification a destination is handed.
+
+    Publishing is not sending. The first version of `_announce` put `shape` at
+    the top of the payload where `ExitMechanism.on_alert` reads it, and the
+    notifier's filter reads `fields.shape` - so it was dropped silently as
+    `shape '' not in [...]`, with nothing logged at the publisher.
+    """
+    from till_infinity.notifications.filters import Filter
+    from till_infinity.notifications.models import Level, from_message
+    from till_infinity.utils import topics
+
+    strategy, _ = run(SurpriseEdge, feed=quotes(count=20))
+    seen: list[dict] = []
+    topics.subscribe(strategy, topics.ALERTS, seen.append)
+    strategy.on_order_rejected(
+        type(
+            "Rejected",
+            (),
+            {"instrument_id": EURUSD.id, "position_id": None, "reason": "Market closed"},
+        )()
+    )
+    payload = next(p for p in seen if (p.get("fields") or {}).get("shape") == "trade")
+
+    assert Filter(shapes=frozenset({"trade"})).rejects(payload) == ""
+
+    message = from_message(payload)
+    assert message is not None, "the filter passed it and nothing could be built"
+    assert message.level is Level.WARNING
+    assert message.title
+    assert message.fields["event"] == "rejected"
