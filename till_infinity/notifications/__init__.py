@@ -18,6 +18,8 @@ Credentials come from the environment and are never stored or logged:
 Each provider fans out to as many channels as you list.
 """
 
+from till_infinity.utils.topics import alert
+
 from .config import DEFAULT_TARGETS, Settings, parse_channels
 from .delivery import (
     NOTIFIERS,
@@ -63,6 +65,7 @@ __all__ = [
     "Settings",
     "TelegramNotifier",
     "TransientError",
+    "alert",
     "build_notifiers",
     "discover_telegram_chats",
     "from_message",

@@ -277,7 +277,10 @@ def test_the_basket_publishes_a_close_rather_than_submitting_one():
 
     assert len(published) == 1
     topic, payload = published[0]
-    assert topic == "alerts", "a declared topic, or the helper refuses it"
+    # `commands`, not `alerts`: this asks a strategy to close a position, and
+    # is not a finding for a person. The two shared a topic and read
+    # incompatible payloads from it, so each silently dropped the other's.
+    assert topic == "commands", "a declared topic, or the helper refuses it"
     assert payload["shape"] == "basket.close"
     assert payload["position_id"] == "P-1"
     assert payload["strategy_id"] == "EdgeEntry-000", "the owner is named, so it acts"

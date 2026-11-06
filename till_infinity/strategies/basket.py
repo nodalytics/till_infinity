@@ -182,7 +182,11 @@ class BasketExit(Actor):
         """
         topics.publish(
             self,
-            topics.ALERTS,
+            # **`COMMANDS`, not `ALERTS`.** This asks a strategy to close a
+            # position; it is not a finding for a person. They shared a topic
+            # and spoke different payload languages on it, so each reader
+            # silently dropped what the other wrote.
+            topics.COMMANDS,
             {
                 "shape": "basket.close",
                 "position_id": str(position.id),
