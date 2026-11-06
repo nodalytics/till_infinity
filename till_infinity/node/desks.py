@@ -442,12 +442,27 @@ def _wanted(
 def _tag(rule: str, entry: str, symbol: str, venue: str | None = None) -> str:
     """A short, stable, unique tag for one desk.
 
-    Stable so that a restart reclaims its own orders: Nautilus matches an
-    external order to a strategy by this tag, so a tag that changed between
-    runs would orphan everything the previous run left open. Hence derived from
-    the three names rather than from a counter or a uuid - a counter renumbers
-    when the config changes, which is the same positional bug `DEFAULT_MAGIC`
-    had.
+    Stable so that a restart reclaims its own orders. The tag is not itself
+    what Nautilus matches an external order on - `get_tag()` is read in four
+    places and all of them are in `generators.pyx` - but it composes the
+    `strategy_id`, and the cache indexes every order, fill and position by
+    that, so a tag that changed between runs would orphan what the previous
+    run left open just the same. Hence derived from the three names rather
+    than from a counter or a uuid - a counter renumbers when the config
+    changes, which is the same positional bug `DEFAULT_MAGIC` had.
+
+    **No hyphen inside the tag, and that is the whole reason for the `_`.**
+    `StrategyId.get_tag()` returns only the text after the **last** hyphen,
+    and the order-id generators namespace on that alone. With `-` separators
+    `EdgeEntry-EURUSD-E270` and `EdgeEntry-GBPUSD-E270` are two desks whose
+    ids share one namespace: each holds its own `OrderFactory` whose counter
+    starts from its own cached count, so both call their first bracket `-1`,
+    the datetime tag resolves only to the second, and two desks proposing on
+    one bar close emit byte-identical ids. The second is denied `duplicate
+    OrderListId` and `_deny_order_list` denies every leg, which is the three
+    refusals and nine denials seen on 2026-11-05. Venue-qualified it was
+    worse: the tag ended in the venue, so every desk on it shared one
+    namespace. A distinct `strategy_id` was never the property that mattered.
 
     **`crc32` and not `hash`.** The first version used `abs(hash(rule))`, and
     Python randomises `hash` of a `str` per process unless `PYTHONHASHSEED` is
@@ -470,8 +485,8 @@ def _tag(rule: str, entry: str, symbol: str, venue: str | None = None) -> str:
     anything that varies at runtime, so it is stable across restarts, which is
     the property that actually matters.
     """
-    short = f"{symbol}-{entry[:1].upper()}{zlib.crc32(rule.encode()) % 997:03d}"
-    return f"{short}-{venue}" if venue else short
+    short = f"{symbol}_{entry[:1].upper()}{zlib.crc32(rule.encode()) % 997:03d}"
+    return f"{short}_{venue}" if venue else short
 
 
 def build_all(
