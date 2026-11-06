@@ -685,13 +685,55 @@ class ExitMechanism:
             fields.update({k: str(v) for k, v in extra.items() if v is not None})
             payload: dict[str, Any] = {
                 "title": f"{self._feed_name()} {what}",
-                "body": ", ".join(f"{k} {v}" for k, v in extra.items() if v is not None),
+                "body": ", ".join(
+                    f"{k} {v}" for k, v in extra.items() if v is not None and k != "level"
+                ),
                 "source": "trading",
-                "fields": fields,
+                # `level` rides at the top of the payload, where the notifier's
+                # own model reads it, and not inside `fields`, which is the
+                # structured block a destination renders.
+                "level": str(extra.get("level") or "info"),
+                "fields": {k: v for k, v in fields.items() if k != "level"},
             }
             topics.publish(self, topics.ALERTS, payload)
         except Exception as exc:  # pragma: no cover - defensive
             self.log.warning(f"could not announce the {what}: {exc}")
+
+    def on_order_rejected(self, event: Any) -> None:
+        """Say so when the venue refuses an order.
+
+        **The desk tried to trade and could not, and nobody was told.** On the
+        night of 2026-11-05 three brackets were refused with retcode 10018,
+        `Market closed`, on two index feeds whose session had ended, and nine
+        more were denied as duplicates behind them. Every one of those is a
+        decision the desk reached and could not act on, which is exactly what
+        a person wants pushed - and the only publisher on `alerts` was a
+        position opening, so the channel stayed silent through all of it.
+
+        A refusal is reported at `warning`: it is not a fault in this process,
+        and a desk refused by a closed market at 23:00 is working correctly.
+        """
+        self._announce(
+            "rejected",
+            event,
+            reason=str(getattr(event, "reason", "") or "")[:200],
+            level="warning",
+        )
+
+    def on_order_denied(self, event: Any) -> None:
+        """Say so when the engine refuses an order before the venue sees it.
+
+        Separate from `on_order_rejected` because the cause is different and
+        so is the remedy: a denial is this process's own risk engine or a
+        duplicate, and names a defect here rather than a condition at the
+        broker.
+        """
+        self._announce(
+            "denied",
+            event,
+            reason=str(getattr(event, "reason", "") or "")[:200],
+            level="warning",
+        )
 
     def on_position_opened(self, event: Any) -> None:
         """Track it, fold in the side's own numbers, and see that it is held."""
