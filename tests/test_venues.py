@@ -342,8 +342,8 @@ def test_one_symbol_on_two_venues_is_two_strategy_ids(monkeypatch, loop):
 
     built, _ = desks.build_all()
     assert {str(strategy.id) for strategy in built} == {
-        "SurpriseEdge-EURUSD-E270-MT5",
-        "SurpriseEdge-EURUSD-E270-DERIV",
+        "SurpriseEdge-EURUSD_E270_MT5",
+        "SurpriseEdge-EURUSD_E270_DERIV",
     }
 
 
@@ -367,13 +367,32 @@ def test_a_single_venue_tag_is_unchanged(monkeypatch):
     It will not be safe a second time. If this test fails again it is reporting
     a migration: every resting order has to be drained before the deploy that
     carries the rename, and the expected value is the last thing to change.
+
+    **It fired a second time on 2026-11-06, and the migration was real.** The
+    separators inside the tag went from `-` to `_`, so this id went from
+    `SurpriseEdge-EURUSD-E270` to `SurpriseEdge-EURUSD_E270`. The reason is
+    `_tag`'s own docstring: `StrategyId.get_tag()` returns only the text after
+    the last hyphen, and the order-id generators namespace on that alone, so
+    eighteen desks shared two namespaces - one per entry class - and all
+    eighteen shared `MT5` when venue-qualified. Two desks proposing on the
+    same bar close emitted byte-identical order ids and the second was denied
+    `duplicate OrderListId`, three denials at a time. That is not a cost worth
+    carrying to keep a name.
+
+    Safe this time for the same reason as the first: the desk was flat, with
+    nothing open and nothing resting, confirmed before the change was made.
+    The expected value here was the last thing edited, after the code and
+    after that confirmation. The asymmetry this test guards is untouched - a
+    single-venue deploy still gets no venue suffix.
+
+    A third firing gets no such confirmation for free. Drain first.
     """
     monkeypatch.setenv("TRADING_VENUES", "MT5")
     monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD")
     monkeypatch.setenv("TRADING_ENTRIES", "edge")
 
     built, _ = desks.build_all()
-    assert [str(strategy.id) for strategy in built] == ["SurpriseEdge-EURUSD-E270"]
+    assert [str(strategy.id) for strategy in built] == ["SurpriseEdge-EURUSD_E270"]
 
 
 # ------------------------------------------------ two accounts on one broker

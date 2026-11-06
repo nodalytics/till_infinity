@@ -1972,6 +1972,29 @@ class TestSubmittingAnOrder:
         await rig.client._submit_order(_submit(rig, _market()))
         assert len(rig.bridge.called("order")[0][0][0]["comment"]) <= 31
 
+    def test_a_long_id_keeps_the_end_and_not_the_start(self):
+        """**The tail is the part that names the desk.**
+
+        A client order id is `O-<date>-<time>-<trader>-<desk>-<counter>`, so
+        the head is a timestamp the terminal already records against the deal
+        and the tail is what distinguishes one order from another. Taking the
+        first 31 characters was harmless while a desk tag was four characters
+        wide; once the tag carries the symbol - which is what stopped two
+        desks generating the same ids at all - every comment truncated to the
+        same `O-20261105-230145-001-EURUSD_E2` for a desk and for its
+        neighbours on other symbols.
+
+        Only ever read by a person looking at the terminal: orders are found
+        by `magic` and fills correlated by ticket.
+        """
+        from till_infinity.adapters.mt5.execution import _comment
+
+        long_id = "O-20261105-230145-001-Volatility 75 Index_E270-3"
+        got = _comment(long_id)
+        assert len(got) <= 31
+        assert got.endswith("_E270-3"), got
+        assert _comment("O-20261105-230145-001-E270-3") == "O-20261105-230145-001-E270-3"
+
     async def test_a_limit_order_carries_its_price(self):
         rig = make_exec(FakeBridge(order=REJECTION))
         await rig.client._submit_order(_submit(rig, _limit(price="1.08000")))

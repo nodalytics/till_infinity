@@ -111,6 +111,26 @@ ACCOUNT_REFRESH_S = 60.0
 _TAKEN = (PLACED, DONE)
 
 
+def _comment(client_order_id: Any) -> str:
+    """The client order id as MT5 will store it: the **last** 31 characters.
+
+    MT5 truncates a comment at 31 characters, and the discriminating part of a
+    Nautilus client order id is its tail - `...-001-EURUSD_E270-3` names the
+    trader, the desk and the counter, while the head is a timestamp the
+    terminal already records against the deal. Taking the first 31 was
+    harmless only while the tag was four characters: once it carries the
+    symbol, `O-20261105-230145-001-EURUSD_E270-3` truncates to
+    `O-20261105-230145-001-EURUSD_E2`, which is the same string for every
+    order that desk sends and for its neighbours on other symbols too.
+
+    Informational either way - this desk finds its own orders by `magic` and
+    correlates fills by ticket, never by comment - but a comment that cannot
+    tell two desks apart is no use to the person reading the terminal, which
+    is the only reason it is sent.
+    """
+    return str(client_order_id)[-31:]
+
+
 class _Refusal(Exception):  # noqa: N818 - a control-flow signal, not an error to catch widely
     """A modify that must be answered with a rejection, carrying the reason."""
 
@@ -743,7 +763,7 @@ class MT5ExecutionClient(LiveExecutionClient):
             "volume": float(order.quantity),
             "deviation": self._cfg.deviation,
             "magic": self._cfg.magic,
-            "comment": str(order.client_order_id)[:31],
+            "comment": _comment(order.client_order_id),
             "type_filling": await self._filling_for(order.instrument_id.symbol.value),
         }
         if order.has_price:

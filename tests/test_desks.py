@@ -187,8 +187,9 @@ def test_a_tag_is_stable_across_processes():
     """**`crc32`, not `hash`.** Python randomises `hash` of a `str` per
     process unless `PYTHONHASHSEED` is fixed - three runs gave 619, 480 and
     849 for the same rule. A tag derived from it changes on every restart,
-    which orphans every open order: Nautilus matches an external order to a
-    strategy by this tag.
+    which orphans every open order - not because Nautilus reads the tag
+    (`get_tag()` is used only to build order ids) but because the tag composes
+    the `strategy_id` the cache indexes every order, fill and position by.
     """
     import subprocess
     import sys
@@ -719,11 +720,83 @@ def test_two_synthetics_get_different_strategy_ids(monkeypatch, loop):
     assert len(built) == 2
     ids = {str(strategy.id) for strategy in built}
     assert ids == {
-        "SurpriseEdge-Volatility 75 Index-E270",
-        "SurpriseEdge-Volatility 100 Index-E270",
+        "SurpriseEdge-Volatility 75 Index_E270",
+        "SurpriseEdge-Volatility 100 Index_E270",
     }
     # The tag suffix is per-entry, so the symbol is what distinguishes these.
     # Both halves matter: a tag-only id would collide across symbols, and a
     # symbol-only id would collide across entries on one symbol.
+    #
+    # **Joined with `_` and not `-`, and these two desks are why.** They were
+    # `...-Volatility 75 Index-E270` and `...-Volatility 100 Index-E270`, two
+    # distinct `strategy_id`s - and `StrategyId.get_tag()` returns only what
+    # follows the last hyphen, so both named their orders `E270` and collided
+    # the moment they proposed on the same bar close. This assertion passing
+    # is what made that look impossible; see
+    # `test_two_desks_never_generate_the_same_order_id`.
     tags = {strategy.config.order_id_tag for strategy in built}
     assert len(tags) == 2
+
+
+def test_two_desks_never_generate_the_same_order_id(monkeypatch):
+    """**Distinct `strategy_id`s are not enough.**
+
+    Nautilus namespaces order ids on `StrategyId.get_tag()`, which returns
+    only the text after the **last** hyphen - and `_tag` put the symbol first
+    and the rule hash last, so `EdgeEntry-EURUSD-E287` and
+    `EdgeEntry-GBPUSD-E287` are two desks whose ids share one namespace.
+    Each carries its own `OrderFactory` with its own counter starting from
+    its own cached count, so both call their first bracket `-1`; the datetime
+    tag has one-second resolution, so two desks proposing on the same bar
+    close produce byte-identical ids and the second is denied `duplicate
+    OrderListId`. `_deny_order_list` denies every leg, so each collision is
+    three denials.
+
+    That is what happened on the night of 2026-11-05: three brackets refused
+    with retcode 10018 on index feeds whose session had ended, and nine
+    denials behind them - three collided brackets, not a retry. Nothing in
+    this repository retries a refused order.
+
+    With a venue qualifier it is worse: `EURUSD-E287-MT5` tags on `MT5`, so
+    every desk on the venue shares one namespace.
+
+    `test_every_desk_gets_a_distinct_tag` passed throughout, because distinct
+    tags and distinct `strategy_id`s were never the property that mattered.
+    """
+    from nautilus_trader.common.component import TestClock
+    from nautilus_trader.common.generators import ClientOrderIdGenerator, OrderListIdGenerator
+    from nautilus_trader.model.identifiers import TraderId
+
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD GBPUSD US500")
+    monkeypatch.setenv("TRADING_ENTRIES", "edge")
+    built, _ = desks.build("MT5")
+    assert len(built) >= 2, "need at least two desks to collide"
+
+    seats = [s.id.get_tag() for s in built]
+    assert len(set(seats)) == len(seats), (
+        f"desks share an order-id namespace: {sorted(seats)} from {[str(s.id) for s in built]}"
+    )
+
+    # The consequence, measured the way production meets it: one clock, so
+    # every desk is proposing in the same second.
+    trader, clock = TraderId("TRADER-001"), TestClock()
+    lists = [OrderListIdGenerator(trader, s.id, clock, 0).generate() for s in built]
+    orders = [ClientOrderIdGenerator(trader, s.id, clock, 0).generate() for s in built]
+    assert len(set(lists)) == len(lists), f"colliding order list ids: {sorted(map(str, lists))}"
+    assert len(set(orders)) == len(orders), (
+        f"colliding client order ids: {sorted(map(str, orders))}"
+    )
+
+
+def test_a_venue_qualified_tag_is_also_unique(monkeypatch):
+    """The multi-venue shape, which collided hardest: tagging on the venue put
+    every desk on the venue into one namespace."""
+    from nautilus_trader.model.identifiers import StrategyId
+
+    from till_infinity.node.desks import _tag
+
+    seats = {
+        StrategyId(f"EdgeEntry-{_tag('swing-level', 'edge', symbol, 'MT5')}").get_tag()
+        for symbol in ("EURUSD", "GBPUSD", "US500")
+    }
+    assert len(seats) == 3, f"venue-qualified desks share a namespace: {sorted(seats)}"
