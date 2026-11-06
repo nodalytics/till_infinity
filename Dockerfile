@@ -144,6 +144,6 @@ USER till
 # The start period covers the warm-up - `desk-handlers-arm-after-backfill`
 # records that `armed=0` straight after a deploy is normal.
 HEALTHCHECK --interval=60s --timeout=10s --start-period=180s --retries=3 \
-    CMD python -m till_infinity.node.status || exit 1
+    CMD python -m till_infinity.node.probe || exit 1
 
 ENTRYPOINT ["python", "-m", "till_infinity.node.live"]

@@ -425,3 +425,64 @@ def test_an_account_with_a_balance_is_the_venue_answering(tmp_path):
 
     assert found["venue_connected"] is False, "no account in a stub cache"
     assert found["strategies"] == 14, "and the count is unaffected by it"
+
+
+def test_the_probe_costs_nothing_to_import():
+    """**The healthcheck was the largest CPU consumer on the box.**
+
+    `python -m till_infinity.node.status` imports `Heartbeat`, which is a
+    Nautilus `Actor`, which costs 1.60s of import time -
+    `nautilus_trader.common.component` 1.34s and pandas 0.65s inside that -
+    to read one JSON file. Measured on tis 2026-11-06 the probe took 2.0s of
+    wall time and about **1.2 cores, every 60 seconds**: roughly 4% of the
+    machine, continuously, and the only real CPU spike on it. The trading
+    workload it was watching peaked at 0.238 cores.
+
+    So the reader lives apart from the writer and the probe imports neither
+    Nautilus nor pandas. Asserted in a subprocess because this process has
+    already imported both.
+    """
+    import subprocess
+    import sys
+
+    code = (
+        "import sys, till_infinity.node.probe as probe;"
+        "heavy = sorted({m.split('.')[0] for m in sys.modules"
+        " if m.split('.')[0] in ('nautilus_trader', 'pandas', 'numpy')});"
+        "print(','.join(heavy));"
+        "sys.exit(1 if heavy else 0)"
+    )
+    done = subprocess.run([sys.executable, "-c", code], capture_output=True, text=True, check=False)
+
+    assert done.returncode == 0, (
+        f"the probe pulled in {done.stdout.strip()} - a healthcheck that imports the "
+        f"trading stack costs more CPU than the desk it is checking"
+    )
+
+
+def test_the_healthcheck_runs_the_probe_and_not_the_writer():
+    """The Dockerfile has to name the light module, or the split buys nothing."""
+    import re
+    from pathlib import Path
+
+    text = Path(__file__).resolve().parents[1].joinpath("Dockerfile").read_text()
+    # Anchored to the directive: the word also appears in a comment near the
+    # top of the file, and matching that captured `HEALTHCHECK` alone.
+    found = re.search(r"^HEALTHCHECK(?:[^\n]*\\\n)*[^\n]*", text, re.M)
+    assert found, "no HEALTHCHECK in the Dockerfile"
+    line = found.group(0)
+    assert "till_infinity.node.probe" in line, f"HEALTHCHECK does not run the probe: {line}"
+    assert "node.status" not in line, (
+        f"HEALTHCHECK still runs the writer's module, which imports Nautilus: {line}"
+    )
+
+
+def test_the_writer_still_exposes_the_reader():
+    """`status.read` and `status.healthy` keep working: the move is where the
+    code lives, not what anything may call."""
+    from till_infinity.node import probe, status
+
+    assert status.read is probe.read
+    assert status.healthy is probe.healthy
+    assert status.STALE_AFTER == probe.STALE_AFTER
+    assert status.DEFAULT_PATH == probe.DEFAULT_PATH
