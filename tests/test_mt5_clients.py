@@ -1591,6 +1591,98 @@ class TestSubmittingABracket:
         assert len(accepted) == 3, "entry, stop and target"
         assert {str(e.venue_order_id) for e in accepted} == {"77", "77-SL", "77-TP"}
 
+    async def test_a_market_bracket_sets_the_stop_on_the_position(self):
+        """**The deal does not carry the stop, and the retcode does not say so.**
+
+        EURUSD on this account reports `trade_exemode: 2` - Market execution -
+        where the broker fills a deal and *discards* the `sl` and `tp` sent
+        with it. On 2026-11-06 that left ticket 5828118661 open, EURUSD SELL
+        0.43 at 1.11532 with `sl 0.0 tp 0.0`, `magic 777701`, comment
+        `O-20261106-135228-001-E270-37` - ours, unprotected, -25.8 when found,
+        and 90 minutes old across two restarts. The retcode was 10009 and this
+        client reported the stop and the target as accepted against the
+        entry's ticket, so the desk believed it was protected.
+
+        So the stop goes on with `/positions/modify`, which is the route that
+        already works for every exit on this desk, and the retcode is read as
+        *the deal happened* rather than *the protection exists*.
+        """
+        rig = make_exec(
+            FakeBridge(order={"success": True, "result": {"retcode": 10009, "order": 77}})
+        )
+
+        await rig.client._submit_order_list(_submit_list(rig, _bracket()))
+
+        ((args, _),) = rig.bridge.called("modify")
+        assert int(args[0]) == 77, "addressed by the entry's ticket"
+        assert float(args[1]) == pytest.approx(1.07)
+        assert float(args[2]) == pytest.approx(1.09)
+
+    async def test_a_venue_that_keeps_no_stop_does_not_get_reported_as_holding_one(self):
+        """Positive evidence beats a retcode: the modify was confirmed and the
+        position still reads `sl 0.0`, so the stop leg is rejected rather than
+        accepted. The entry is not - the position is real and saying otherwise
+        would leave the engine's book disagreeing with the broker's."""
+        from nautilus_trader.model.events import OrderAccepted, OrderRejected
+
+        rig = make_exec(
+            FakeBridge(
+                order={"success": True, "result": {"retcode": 10009, "order": 77}},
+                positions=[
+                    {"ticket": 77, "symbol": "EURUSD", "sl": 0.0, "tp": 1.09, "magic": MAGIC}
+                ],
+            )
+        )
+
+        await rig.client._submit_order_list(_submit_list(rig, _bracket()))
+
+        rejected = rig.events(OrderRejected)
+        assert len(rejected) == 1, "the stop only - the target did land"
+        assert "unprotected" in str(rejected[0].reason).lower(), rejected[0].reason
+        accepted = {str(e.venue_order_id) for e in rig.events(OrderAccepted)}
+        assert accepted == {"77", "77-TP"}, "the entry and the target, not the stop"
+
+    async def test_a_refused_modify_is_not_a_stop(self):
+        """The terminal declining the modify leaves the position naked, and
+        both legs go with it."""
+        from nautilus_trader.model.events import OrderRejected
+
+        rig = make_exec(
+            FakeBridge(
+                order={"success": True, "result": {"retcode": 10009, "order": 77}},
+                modify={"success": True, "result": {"retcode": 10016, "comment": "Invalid stops"}},
+            )
+        )
+
+        await rig.client._submit_order_list(_submit_list(rig, _bracket()))
+
+        rejected = rig.events(OrderRejected)
+        assert len(rejected) == 2, "the stop and the target"
+        assert "Invalid stops" in str(rejected[0].reason), rejected[0].reason
+
+    async def test_a_resting_entry_has_no_position_to_protect(self):
+        """**A limit that has not filled has no position**, and
+        `/positions/modify` addresses a position. Sending one there posted the
+        limit price as a target once; this must not call it at all. The stop
+        goes on when the fill arrives."""
+        orders = _bracket()
+        rig = make_exec(
+            FakeBridge(order={"success": True, "result": {"retcode": 10008, "order": 77}})
+        )
+
+        await rig.client._submit_order_list(_submit_list(rig, orders))
+
+        assert rig.bridge.called("modify") == [], "nothing to modify before the fill"
+
+    async def test_an_order_with_no_stop_asks_for_nothing(self):
+        """A plain market order carries no stop, so there is nothing to put on
+        the position and no call to make."""
+        rig = make_exec(FakeBridge())
+
+        await rig.client._submit_order(_submit(rig, _market()))
+
+        assert rig.bridge.called("modify") == []
+
     async def test_cancelling_a_target_clears_it_on_the_position(self):
         """On MT5 a target is a field, so withdrawing it is a modify that
         zeroes `tp` - and must send the stop back unchanged, because
@@ -1611,8 +1703,15 @@ class TestSubmittingABracket:
         await rig.client._cancel_order(_cancel_leg(target, "77-TP"))
 
         assert rig.bridge.called("cancel") == [], "a leg is never withdrawn by the cancel route"
-        ((args, _),) = rig.bridge.called("modify")
-        assert args == (77, 1.07, 0.0), "the stop is kept, the target is zeroed"
+        # **Two modifies now, and the second one is the withdrawal.** Submitting
+        # the bracket puts the stop and target on the position, because a deal
+        # on a Market-execution symbol discards the ones sent with it - see
+        # `test_a_market_bracket_sets_the_stop_on_the_position`. So the call
+        # under test here is the last, not the only.
+        calls = rig.bridge.called("modify")
+        assert len(calls) == 2, [a for a, _ in calls]
+        assert calls[0][0] == (77, 1.07, 1.09), "the bracket's own protection"
+        assert calls[-1][0] == (77, 1.07, 0.0), "the stop is kept, the target is zeroed"
 
         from nautilus_trader.model.events import OrderCanceled, OrderFilled
 

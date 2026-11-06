@@ -154,6 +154,21 @@ def _confirmed(raw: dict, codes: tuple[int, ...] = (DONE,)) -> bool:
     return bool(raw) and raw.get("success") is True and _retcode(raw) in codes
 
 
+def _field(leg: Any) -> str:
+    """Which field of the position this leg *is* - `sl`, `tp`, or neither.
+
+    Read from the order type and not from `tags`, for the same reason
+    `_submit_order_list` reads the shape that way: tags are this desk's
+    convention and another strategy may not set them.
+    """
+    kind = getattr(leg, "order_type", None)
+    if kind == OrderType.STOP_MARKET:
+        return "sl"
+    if kind == OrderType.LIMIT:
+        return "tp"
+    return ""
+
+
 def _leg_id(ticket: Any, order: Any, entry: Any) -> str:
     """The venue id for one leg of a bracket.
 
@@ -823,14 +838,9 @@ class MT5ExecutionClient(LiveExecutionClient):
         #
         # The suffix keeps `_ticket` resolving to the position for a modify
         # while letting a cancel see which side it was asked to withdraw.
-        for leg in together:
-            self.generate_order_accepted(
-                strategy_id=leg.strategy_id,
-                instrument_id=leg.instrument_id,
-                client_order_id=leg.client_order_id,
-                venue_order_id=VenueOrderId(_leg_id(ticket, leg, order)),
-                ts_event=self._clock.timestamp_ns(),
-            )
+        await self._report_legs(
+            order, ticket=ticket, also=also, sl=sl, tp=tp, instrument=instrument, retcode=retcode
+        )
         # **A fill is only a market order that came back DONE.** 10008 is
         # PLACED - a working order - and a pending order's DONE means placed,
         # not filled. Reporting either as a fill gave the desk a position it
@@ -859,6 +869,117 @@ class MT5ExecutionClient(LiveExecutionClient):
             if price <= 0 or qty <= 0:
                 return
         self._fill(order, instrument, ticket=ticket, trade_id=deal or ticket, qty=qty, px=price)
+
+    async def _report_legs(
+        self,
+        order: Any,
+        *,
+        ticket: Any,
+        also: tuple,
+        sl: Any,
+        tp: Any,
+        instrument: Any,
+        retcode: Any,
+    ) -> None:
+        """Accept the legs the venue is actually holding, and reject the rest.
+
+        Split out of `_place` to keep it under the complexity limits, but it
+        is also the one place that decides what this desk *claims* about a
+        position, which is worth being able to find.
+        """
+        # **A deal does not carry the stop, and the retcode does not say so.**
+        # EURUSD here is `trade_exemode: 2`, Market execution, where the
+        # broker fills the deal and discards the `sl` and `tp` sent with it.
+        # Ticket 5828118661 was open 90 minutes at `sl 0.0 tp 0.0` with our
+        # magic while this client reported both legs accepted, because the
+        # only thing read was `retcode 10009`. So the protection goes on with
+        # `/positions/modify` - the route every exit already uses - and is
+        # read back off the position. A retcode means the deal happened; it
+        # has never meant the protection exists.
+        #
+        # Accepted **after** this, not before: an accepted order cannot then
+        # be rejected, and a leg the venue is not holding must not be
+        # reported as live.
+        naked: frozenset[str] = frozenset()
+        why = ""
+        # `retcode == DONE` as well as MARKET, and for the same reason the
+        # fill below needs it: 10008 is PLACED, a working order, and a
+        # position only exists once the deal is done. `/positions/modify`
+        # addresses a position, and sending a resting order there posted its
+        # limit price as a target once already.
+        if (
+            (sl is not None or tp is not None)
+            and order.order_type == OrderType.MARKET
+            and retcode == DONE
+        ):
+            naked, why = await self._protect(int(ticket), sl=sl, tp=tp, instrument=instrument)
+        refused = tuple(leg for leg in also if _field(leg) in naked)
+        if refused:
+            self._log.error(f"{order.client_order_id}: {why}")
+            self._reject_all(refused, why)
+        for leg in (order, *also):
+            if leg in refused:
+                continue
+            self.generate_order_accepted(
+                strategy_id=leg.strategy_id,
+                instrument_id=leg.instrument_id,
+                client_order_id=leg.client_order_id,
+                venue_order_id=VenueOrderId(_leg_id(ticket, leg, order)),
+                ts_event=self._clock.timestamp_ns(),
+            )
+
+    async def _protect(
+        self, ticket: int, *, sl: Any, tp: Any, instrument: Any
+    ) -> tuple[frozenset[str], str]:
+        """Put the stop and target on the position; say which did not land.
+
+        Returns the fields the venue is **not** holding and why. Empty means
+        the position carries what was asked.
+
+        **A missing row is not evidence.** A position can be a moment behind
+        the deal that opened it, and rejecting a stop because the book has not
+        caught up would refuse protection that exists. So this fails on what
+        it can see - a listed position whose `sl` is not the one asked for -
+        and otherwise reports a confirmed modify as done, which is what
+        `/positions/modify` returning `DONE` means.
+        """
+        stop = float(sl) if sl is not None else 0.0
+        target = float(tp) if tp is not None else 0.0
+        both = frozenset(f for f, v in (("sl", stop), ("tp", target)) if v)
+        try:
+            raw = await self._bridge.modify(ticket, stop, target)
+        except Exception as exc:
+            return both, f"the stop could not be put on {ticket}: {self._scrub(exc)}"
+        if not _confirmed(raw):
+            comment = (raw.get("result") or {}).get("comment")
+            said = comment or f"retcode {_retcode(raw) or 'missing'}: not confirmed"
+            return both, f"the terminal would not put the stop on {ticket}: {said}"
+        try:
+            held = next(
+                (r for r in await self._bridge.positions() if int(r.get("ticket") or 0) == ticket),
+                None,
+            )
+        except Exception as exc:
+            self._log.warning(
+                f"{ticket}: stop confirmed, could not read it back: {self._scrub(exc)}"
+            )
+            return frozenset(), ""
+        if held is None:
+            return frozenset(), ""
+        digits = int(getattr(instrument, "price_precision", 5) or 5)
+        missing = frozenset(
+            field
+            for field, asked in (("sl", stop), ("tp", target))
+            if asked and not self._near(float(held.get(field) or 0.0), asked, digits)
+        )
+        if not missing:
+            return frozenset(), ""
+        return missing, (
+            f"{ticket} is open and unprotected: asked "
+            + ", ".join(f"{f} {a}" for f, a in (("sl", stop), ("tp", target)) if a)
+            + ", the venue holds "
+            + ", ".join(f"{f} {held.get(f) or 0.0}" for f in ("sl", "tp"))
+        )
 
     @staticmethod
     def _ticket(venue_order_id: Any) -> int:
