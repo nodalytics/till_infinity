@@ -63,12 +63,10 @@ names the number that was breached.
 
 **A measured null, recorded because it looks exactly like a live money bug.**
 
-The account reports `base_currency=None` with a single balance:
-
-```
-AccountState(account_id=MT5-6258778, account_type=MARGIN, base_currency=None,
-  balances=[AccountBalance(total=5_971.43 USD, locked=0.00 USD, free=5_971.43 USD)])
-```
+The account reports `base_currency=None` and carries a **single**
+`AccountBalance`, denominated in USD. (The balance and the account id stay out
+of this file: the repository is public, which is also why `.secrets/` holds
+anything that names the account.)
 
 So it is *not* the multi-currency account `Desk._rate` assumes when it returns
 `1.0`, and that looks like non-USD-quoted instruments being sized against a
