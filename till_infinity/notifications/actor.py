@@ -37,6 +37,7 @@ import asyncio
 import json
 from collections.abc import Callable
 from dataclasses import replace
+from datetime import timedelta
 from functools import partial
 from typing import TYPE_CHECKING, Any
 
@@ -62,6 +63,40 @@ effects.declare("notifications.delivered", enabled=True)
 
 #: The `on_save` key holding the cooldown window.
 STATE_DEDUPE = "dedupe"
+
+
+#: How often the delivery tally is reported, in seconds. Five minutes, as
+#: `statespace.actor.TALLY_EVERY` uses for the same reason: often enough to
+#: notice a destination that has gone, rare enough not to be the log.
+TALLY_EVERY = 300.0
+
+
+def tally_reading(sent: int, dropped: int, failed: dict[str, int]) -> tuple[str, bool] | None:
+    """The delivery line and whether it is urgent, or `None` when nothing came.
+
+    A free function because `log` is read-only on the Cython `Actor` and
+    cannot be replaced in a test - the same reason `feed_reading` in the MT5
+    data client is one. **The wording is the diagnostic**, so the wording is
+    what is asserted.
+
+    **The case worth seeing is `dropped` with no `sent`.** That is an alert
+    the desk raised, accepted onto the bus, and refused by the filter before
+    any destination saw it - which is how `NOTIFY_SHAPES` once discarded every
+    statespace alert while the path itself worked, and how a payload carrying
+    `shape` outside `fields` is dropped as `shape '' not in [...]` with
+    nothing said where it was published.
+
+    A quiet desk returns `None`: saying "0 sent" every five minutes would make
+    the tally the log rather than a reading in it.
+    """
+    if not (sent + dropped + sum(failed.values())):
+        return None
+    line = f"notifications: {sent} sent, {dropped} dropped" + (
+        f", failures {failed}" if failed else ""
+    )
+    if sent:
+        return line, False
+    return f"{line} - every alert was refused before a destination saw it", True
 
 
 class NotifierConfig(ActorConfig, frozen=True):
@@ -153,6 +188,25 @@ class Notifier(Actor):
             topics.subscribe(self, topic, self._handlers[topic])
             self.log.info(f"notifying on {topic}")
 
+        # **Say what was delivered, periodically.**
+        #
+        # A successful send logged nothing: `_record` counts it and returns,
+        # and only a *failure* is logged. `on_stop` reports the tally and a
+        # live desk never stops. So the three states a reader cares about -
+        # sent, dropped by the filter, and failed at the destination - were
+        # indistinguishable from each other and from no alert at all.
+        #
+        # That cost a day on 2026-11-06: one statespace proposal was made,
+        # nothing appeared in the log, and there was no way to tell whether
+        # the message had gone to Telegram or been dropped before it. A
+        # component whose whole job is telling someone things could not say
+        # whether it had told anyone anything.
+        self.clock.set_timer(
+            name="notifications-tally",
+            interval=timedelta(seconds=TALLY_EVERY),
+            callback=lambda _event: self._say_tally(),
+        )
+
     def on_stop(self) -> None:
         """Say what was done with the alerts.
 
@@ -166,6 +220,17 @@ class Notifier(Actor):
             f"notifications: {self._sent} sent, {self._dropped} dropped"
             + (f", failures {self._failed}" if self._failed else "")
         )
+
+    def _say_tally(self) -> None:
+        """Log what `tally_reading` makes of the counters, or nothing."""
+        said = tally_reading(self._sent, self._dropped, self._failed)
+        if said is None:
+            return
+        line, urgent = said
+        if urgent:
+            self.log.warning(line)
+        else:
+            self.log.info(line)
 
     def on_resume(self) -> None:
         """Nothing to redo.
