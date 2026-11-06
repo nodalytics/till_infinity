@@ -167,19 +167,63 @@ jobs:
       - name: Prove it came back up
         env:
           HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
+          # **Longer than the image's `--start-period`.** A healthcheck reports
+          # `starting` for the whole of that period whatever its probes say, so
+          # a gate that gives up sooner only ever sees `starting` and learns
+          # nothing. `test_the_deploy_waits_for_healthy_and_not_merely_running`
+          # reads both numbers and fails if this one stops being the larger.
+          HEALTH_WAIT_S: 420
         run: |
           sleep 20
+          # Sent as a quoted heredoc so the remote script is the text written
+          # here: the previous version nested three levels of quoting inside a
+          # single `ssh` argument, which is why it was never extended.
+          if ! ssh -i ~/.ssh/deploy.pem "$HOST" "HEALTH_WAIT_S=$HEALTH_WAIT_S bash -s" <<'REMOTE'
+          set -u
+          name=till-infinity
+
           # **`docker ps` prints `Up` for a container in restart backoff**, so
           # grepping for it passed over a desk that restarted 27 times on
           # 2026-11-03. `State.Status` and `State.Restarting` are what
           # distinguish them, and the restart count is compared across two
           # samples because a loop can be `running` at any single instant.
-          ssh -i ~/.ssh/deploy.pem "$HOST" '
-            read -r status restarting first <<<"$(docker inspect -f \
-              "{{.State.Status}} {{.State.Restarting}} {{.RestartCount}}" till-infinity)"
-            sleep 20
-            later="$(docker inspect -f "{{.RestartCount}}" till-infinity)"
-            echo "status=$status restarting=$restarting restarts=$first->$later"
-            [ "$status" = "running" ] && [ "$restarting" = "false" ] \
-              && [ "$later" -le "$first" ]
-          ' || { ssh -i ~/.ssh/deploy.pem "$HOST" 'docker logs --tail 40 till-infinity'; exit 1; }
+          read -r status restarting first <<<"$(docker inspect -f \
+            '{{.State.Status}} {{.State.Restarting}} {{.RestartCount}}' "$name")"
+          sleep 20
+          later="$(docker inspect -f '{{.RestartCount}}' "$name")"
+          echo "status=$status restarting=$restarting restarts=$first->$later"
+          [ "$status" = "running" ] && [ "$restarting" = "false" ] \
+            && [ "$later" -le "$first" ] || exit 1
+
+          # **And then health, because `running` is not `healthy`.** On
+          # 2026-11-06 the three checks above all passed while the node had
+          # already written that it was stopping; it failed its healthcheck
+          # fourteen times in a row and the deploy had long since gone green.
+          # A process can start, give up, and leave the container alive around
+          # it, and nothing above notices.
+          if [ -z "$(docker inspect -f '{{if .State.Health}}yes{{end}}' "$name")" ]; then
+            echo "no healthcheck on this image - liveness is all there is to check"
+            exit 0
+          fi
+          deadline=$(( $(date +%s) + HEALTH_WAIT_S ))
+          while :; do
+            health="$(docker inspect -f '{{.State.Health.Status}}' "$name")"
+            case "$health" in
+              healthy) echo "healthy"; exit 0 ;;
+              unhealthy) echo "unhealthy - the desk came up and stopped"; exit 1 ;;
+            esac
+            if [ "$(date +%s)" -ge "$deadline" ]; then
+              echo "still $health after ${HEALTH_WAIT_S}s - treating that as a failure"
+              exit 1
+            fi
+            sleep 10
+          done
+          REMOTE
+          then
+            # The health log first: it carries the probe's own words, which is
+            # what said "the node wrote that it was stopping".
+            ssh -i ~/.ssh/deploy.pem "$HOST" \
+              'docker inspect till-infinity --format "{{json .State.Health}}"; \
+               docker logs --tail 40 till-infinity'
+            exit 1
+          fi
