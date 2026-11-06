@@ -20,6 +20,7 @@
 | [edge.md](edge.md) | **measured** - the 0.08 alert gate sits in a flat region and should be 0.11; a rolling quantile is worse than a constant, and why |
 | [ledger.md](ledger.md) | what the journal can answer about money - per level, per instrument, per decision |
 | [reading.md](reading.md) | how to read a level call: the fields, the push, what the numbers mean next to each other |
+| [venue.md](venue.md) | **measured** - what this broker actually does, as distinct from what MT5 documents: a deal discards the stop it was sent, tick values are in the account currency, order ids namespace on the last hyphen, 725 names and 240 quotes |
 | [deployment.md](deployment.md) | running it - the node, compose, or CI to a server; what it needs from a box |
 | [backtest-engine-abort.md](backtest-engine-abort.md) | the day `BacktestEngine.run()` aborted with a double free, both wrong guesses, and the bisection that pinned it on `nautilus_trader` |
 | [environment.md](environment.md) | every environment variable: default, effect, the research behind it, and whether changing it moves trading |
