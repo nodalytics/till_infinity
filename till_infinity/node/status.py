@@ -38,7 +38,6 @@ and a probe that failed on it would make a dry run impossible.
 from __future__ import annotations
 
 import json
-import os
 import time
 from pathlib import Path
 from typing import Any
@@ -46,19 +45,18 @@ from typing import Any
 from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import ActorConfig
 
+from till_infinity.node import probe
 from till_infinity.utils.topics import VENUE_TRADING
 
-#: Where the node writes it. `/app/.data` is the image's volume, so the file
-#: survives a restart and a probe can tell "not yet up" from "up two minutes
-#: ago and now gone".
-DEFAULT_PATH = Path(os.environ.get("TILL_STATUS_PATH") or "/app/.data/status.json")
-
-#: Seconds before a written status stops counting as evidence.
-#:
-#: Three heartbeats. The `HEALTHCHECK` interval is 60s with 3 retries, so a
-#: node that has genuinely stopped writing fails on the third probe rather
-#: than the first - a single missed write is a loaded box, not an outage.
-STALE_AFTER = 180.0
+#: The reader lives in `probe`, which imports the standard library and nothing
+#: else, because this module imports a Nautilus `Actor` and the `HEALTHCHECK`
+#: was paying 1.6s of import time and about 1.2 cores a minute to read a JSON
+#: file. Re-exported so `status.read` and `status.healthy` keep working.
+DEFAULT_PATH = probe.DEFAULT_PATH
+STALE_AFTER = probe.STALE_AFTER
+read = probe.read
+healthy = probe.healthy
+main = probe.main
 
 #: How often the node refreshes it.
 HEARTBEAT = 30.0
@@ -225,79 +223,6 @@ class Heartbeat(Actor):
         from till_infinity.utils.env import flag
 
         return flag("TRADING_LIVE")
-
-
-def read(path: Path | str | None = None) -> dict[str, Any]:
-    """The last status the node wrote, or `{}` if there is none to read."""
-    found = Path(path or DEFAULT_PATH)
-    try:
-        body = json.loads(found.read_text())
-    except (OSError, ValueError):
-        return {}
-    return body if isinstance(body, dict) else {}
-
-
-def healthy(
-    path: Path | str | None = None,
-    now: float | None = None,
-    stale_after: float = STALE_AFTER,
-) -> tuple[bool, str]:
-    """Is the node up, fresh and trading something? And the reason if not.
-
-    The reason is the point. "Unhealthy" sends somebody to the logs; "up two
-    minutes ago, 0 strategies" tells them which of three different problems
-    they have - and `lifecycle.py`'s whole argument is that "failed to start"
-    is not an answer.
-    """
-    found = read(path)
-    if not found:
-        return False, f"no status at {path or DEFAULT_PATH}: the node has not written one"
-    if not found.get("running", False):
-        return False, "the node wrote that it was stopping"
-    age = (now if now is not None else time.time()) - float(found.get("at") or 0.0)
-    if age > stale_after:
-        return (
-            False,
-            f"status is {age:.0f}s old, past {stale_after:.0f}s - the node stopped writing",
-        )
-    strategies = int(found.get("strategies") or 0)
-    if strategies < 1:
-        # The recorded failure, caught where a monitoring system can see it: a
-        # node with no strategies connects, reconciles and trades nothing.
-        return False, "0 strategies: the node is up and trading nothing"
-    if not found.get("venue_connected", False):
-        return False, "no execution client is connected: the venue has not answered"
-    armed = "armed" if found.get("armed") else "unarmed (TRADING_LIVE is not set)"
-    return True, f"up, {strategies} strateg{'y' if strategies == 1 else 'ies'}, {armed}"
-
-
-def main(argv: list[str] | None = None) -> int:
-    """The health probe, as a module rather than a console script.
-
-    **Deliberately not a CLI with a `run` command.** `pyproject.toml` records
-    the decision and the reason: the 2,852-line original grew around services
-    that no longer exist and the replacement was a *second way to run the
-    desk*, and `till.env needs a container recreate` is the lesson about two
-    ways to change one thing - one of them goes silently stale. So the node is
-    started by `python -m till_infinity.node.live` and nothing here duplicates
-    that. This module answers a question; it does not start anything.
-
-    The reason goes to stdout because `docker inspect` keeps a probe's output:
-    "up two minutes ago, 0 strategies" tells somebody which of three problems
-    they have, where "unhealthy" sends them to the logs.
-    """
-    import argparse
-
-    parser = argparse.ArgumentParser(
-        prog="python -m till_infinity.node.status",
-        description="Is the node up, fresh, and trading something?",
-    )
-    parser.add_argument("--path", default=None, help="status file, if not the default")
-    args = parser.parse_args(argv)
-
-    ok, reason = healthy(args.path)
-    print(reason)
-    return 0 if ok else 1
 
 
 def _interval(seconds: float):

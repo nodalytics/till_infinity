@@ -105,12 +105,19 @@ def test_the_image_has_no_leftover_cmd():
 
 
 def test_the_health_probe_is_a_module_that_answers():
-    """The probe is the one thing in this file that can be run here."""
-    assert "python -m till_infinity.node.status" in read("Dockerfile")
+    """The probe is the one thing in this file that can be run here.
 
-    from till_infinity.node import status
+    `node.probe` and not `node.status`: the reader moved out of the writer's
+    module because importing it pulled in a Nautilus `Actor`, and the
+    `HEALTHCHECK` was spending 1.6s of import time and about 1.2 cores a
+    minute to read one JSON file - more CPU than the desk it was checking.
+    `status` re-exports these names, so the change is where the code lives.
+    """
+    assert "python -m till_infinity.node.probe" in read("Dockerfile")
 
-    ok, reason = status.healthy("/nonexistent/status.json")
+    from till_infinity.node import probe
+
+    ok, reason = probe.healthy("/nonexistent/status.json")
     assert ok is False
     # The reason, not just the verdict: `docker inspect` keeps a probe's
     # output, and "unhealthy" sends somebody to the logs where "has not
