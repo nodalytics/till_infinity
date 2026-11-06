@@ -33,7 +33,7 @@ import pytest
 from nautilus_trader.model.currencies import EUR, JPY, USD
 from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 from nautilus_trader.model.instruments import CurrencyPair
-from nautilus_trader.model.objects import Price, Quantity
+from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from till_infinity.domain.models import Intent, Refusal, Side
 from till_infinity.strategies import sizes
@@ -184,6 +184,171 @@ def test_a_missing_conversion_refuses_the_trade_rather_than_guessing_one():
     assert isinstance(found, Refusal)
     assert found.gate == "unsized"
     assert "no tick value" in found.detail
+
+
+def test_a_tick_value_its_own_contract_size_contradicts_is_refused():
+    """**NGAS, measured 2026-11-06.** The terminal states `trade_tick_size`
+    0.001 and `trade_contract_size` 10000, so one tick on one lot is 10.0 - and
+    states `trade_tick_value_loss` as **0.001**. Its `currency_profit` is USD,
+    so no conversion explains the gap: one of the two fields is wrong by a
+    factor of 10,000.
+
+    Every other instrument on the book satisfies the identity, XAGUSD being the
+    clean demonstration - tick 0.001, contract 5000, value 5.0. Which NGAS field
+    is the bad one decides whether a position is right or 10,000x too large, and
+    `volume_max` of 5.0 is the only thing bounding it. There is no safe guess,
+    so this refuses, exactly as a missing conversion does.
+    """
+    ngas = pair(
+        "NGAS",
+        digits=3,
+        trade_tick_size=0.001,
+        trade_contract_size=10_000,
+        trade_tick_value_loss=0.001,
+    )
+    assert sizes.spec_of(ngas, account_currency=USD).tick_value == pytest.approx(0.0)
+    found = sizes.size(
+        buy(symbol="NGAS", feed="ngas", entry=3.283, stop=3.233, target=3.383),
+        spec=sizes.spec_of(ngas, account_currency=USD),
+        settings=Settings(),
+        equity=10_000.0,
+    )
+    assert isinstance(found, Refusal)
+    assert found.gate == "unsized"
+    assert "no tick value" in found.detail
+
+    # **Fails open where the account currency is unknown.** No account yet, or
+    # a genuinely multi-currency one, must not start refusing instruments.
+    assert sizes.spec_of(ngas).tick_value == pytest.approx(0.001)
+
+
+def test_a_stated_value_a_conversion_explains_is_kept():
+    """USDJPY as the terminal really states it: tick 0.001 on a 100,000 contract
+    is 100 JPY, and the stated 0.6308 is that figure converted at 158.53. The
+    guard above must not fire on it - a stated value the contract size explains
+    *through the rate* is the venue doing its job."""
+    yen = pair(
+        "USDJPY",
+        digits=3,
+        quote=JPY,
+        trade_tick_size=0.001,
+        trade_contract_size=100_000,
+        trade_tick_value_loss=0.6308,
+    )
+    assert sizes.spec_of(yen, rate=1.0 / 158.53, account_currency=USD).tick_value == pytest.approx(
+        0.6308
+    )
+
+    # **And at the rate this desk actually passes.** The account states no base
+    # currency, so `Desk._rate` returns 1.0 - against which 0.6308 looks like a
+    # hundredfold contradiction. The guard must not fire: JPY is not the
+    # account's currency, so a conversion is exactly what explains the gap.
+    assert sizes.spec_of(yen, rate=1.0, account_currency=USD).tick_value == pytest.approx(0.6308)
+
+
+def test_a_stated_value_matching_the_contract_size_is_kept_whatever_the_rate():
+    """Germany 40: tick 0.01, contract 1, stated 0.01, `currency_profit` EUR.
+
+    The stated figure equals `tick x contract` exactly, which it does for all
+    seven non-USD CFDs on this book while the three non-USD FX pairs come back
+    at exactly their rate. That is strong evidence the CFD figures are in the
+    quote currency and are being sized as though they were dollars.
+
+    **It is not conclusive, and this deliberately does not act on it.** The
+    other reading is that the broker settles these in the account currency and
+    `currency_profit` names the underlying's currency, in which case 0.01 is
+    already right. Converting on the wrong reading would size Japan 225 **158x
+    larger**; not converting leaves it 158x smaller. Only one of those can
+    blow up an account, so the stated value stands until a realised P&L
+    observation settles it - see `docs/venue.md`.
+    """
+    dax = pair(
+        "Germany 40",
+        digits=2,
+        quote=EUR,
+        trade_tick_size=0.01,
+        trade_contract_size=1,
+        trade_tick_value_loss=0.01,
+    )
+    assert sizes.spec_of(dax, rate=1.1136, account_currency=USD).tick_value == pytest.approx(0.01)
+    assert sizes.spec_of(dax, rate=1.0, account_currency=USD).tick_value == pytest.approx(0.01)
+
+
+#: Every instrument the desk trades, as the terminal stated them on
+#: 2026-11-06: `(symbol, digits, tick_size, contract_size, stated_loss_value,
+#: currency_profit)`. Kept whole rather than sampled, because the guard in
+#: `spec_of` must be shown to refuse exactly one of them.
+LIVE_BOOK = [
+    ("EURUSD", 5, 1e-05, 100_000, 1.0, "USD"),
+    ("GBPUSD", 5, 1e-05, 100_000, 1.0, "USD"),
+    ("AUDUSD", 5, 1e-05, 100_000, 1.0, "USD"),
+    ("USDCAD", 5, 1e-05, 100_000, 0.7077241008365298, "CAD"),
+    ("USDCHF", 5, 1e-05, 100_000, 1.2184423433083147, "CHF"),
+    ("USDJPY", 3, 0.001, 100_000, 0.6307954330410648, "JPY"),
+    ("XAUUSD", 2, 0.01, 100, 1.0, "USD"),
+    ("XAGUSD", 3, 0.001, 5_000, 5.0, "USD"),
+    ("XPTUSD", 2, 0.01, 100, 1.0, "USD"),
+    ("XCUUSD", 2, 0.01, 1, 0.01, "USD"),
+    ("NGAS", 3, 0.001, 10_000, 0.001, "USD"),
+    ("US Oil", 3, 0.001, 1, 0.001, "USD"),
+    ("UK Brent Oil", 3, 0.001, 1, 0.001, "USD"),
+    ("Wall Street 30", 2, 0.01, 1, 0.01, "USD"),
+    ("US SP 500", 2, 0.01, 1, 0.01, "USD"),
+    ("US Tech 100", 2, 0.01, 1, 0.01, "USD"),
+    ("Germany 40", 2, 0.01, 1, 0.01, "EUR"),
+    ("France 40", 2, 0.01, 1, 0.01, "EUR"),
+    ("Europe 50", 2, 0.01, 1, 0.01, "EUR"),
+    ("UK 100", 2, 0.01, 1, 0.01, "GBP"),
+    ("Japan 225", 2, 0.01, 1, 0.01, "JPY"),
+    ("Australia 200", 2, 0.01, 1, 0.01, "AUD"),
+    ("Hong Kong 50", 2, 0.01, 1, 0.01, "HKD"),
+]
+
+
+def test_the_guard_refuses_exactly_one_instrument_on_the_live_book():
+    """**The check that stops this change being an outage.** A guard that
+    refuses a stated tick value has to be shown against the whole book, not a
+    sample: every instrument it refuses stops trading.
+
+    Of the 23 live instruments, 16 are USD-profit and satisfy
+    `stated == tick x contract` exactly, so the guard is silent on them. The
+    six non-USD ones are skipped because a conversion can explain any gap -
+    which is what keeps USDJPY, whose stated 0.6308 sits a hundredfold from its
+    100 JPY, out of it. NGAS is the only contradiction, and it is a real one.
+    """
+    refused = []
+    for symbol, digits, tick, contract, stated, profit in LIVE_BOOK:
+        currency = Currency.from_str(profit)
+        instrument = pair(
+            symbol,
+            digits=digits,
+            quote=currency,
+            trade_tick_size=tick,
+            trade_contract_size=contract,
+            trade_tick_value_loss=stated,
+        )
+        spec = sizes.spec_of(instrument, rate=1.0, account_currency=USD)
+        if spec.tick_value == 0.0:
+            refused.append(symbol)
+    assert refused == ["NGAS"], refused
+
+
+def test_every_other_instrument_keeps_the_tick_value_the_venue_stated():
+    """The converse of the above: the guard must not quietly alter a value it
+    accepts. Only NGAS is zeroed; the other 22 come through untouched."""
+    for symbol, digits, tick, contract, stated, profit in LIVE_BOOK:
+        if symbol == "NGAS":
+            continue
+        instrument = pair(
+            symbol,
+            digits=digits,
+            quote=Currency.from_str(profit),
+            trade_tick_size=tick,
+            trade_contract_size=contract,
+            trade_tick_value_loss=stated,
+        )
+        found = sizes.spec_of(instrument, rate=1.0, account_currency=USD).tick_value
+        assert found == pytest.approx(stated), f"{symbol}: {found} != {stated}"
 
 
 def test_the_venues_own_tick_beats_the_price_increment():

@@ -469,7 +469,36 @@ class Desk(NautilusStrategy):
         instrument = self.cache.instrument(self._cfg.instrument_id)
         if instrument is None:
             return None
-        return sizes.spec_of(instrument, rate=self._rate(instrument))
+        return sizes.spec_of(
+            instrument,
+            rate=self._rate(instrument),
+            account_currency=self._account_currency(),
+        )
+
+    def _account_currency(self) -> Any:
+        """The currency the account is actually denominated in, or `None`.
+
+        `base_currency` where the account states one. **This broker's does
+        not** - it reports `base_currency=None` while holding a single
+        `AccountBalance` in USD - and a single balance is the account's
+        currency, because there is nothing else it could be. More than one and
+        the account really is multi-currency, where there is no single answer.
+
+        Only `sizes.spec_of` wants this, to know whether a stated tick value is
+        comparable to `tick x contract` without a conversion. `None` is the
+        safe answer: it skips that check rather than guessing.
+        """
+        account = self.portfolio.account(self._cfg.instrument_id.venue)
+        if account is None:
+            return None
+        stated = getattr(account, "base_currency", None)
+        if stated is not None:
+            return stated
+        try:
+            held = list(account.currencies())
+        except Exception:  # pragma: no cover - a venue account without the call
+            return None
+        return held[0] if len(held) == 1 else None
 
     def _rate(self, instrument: Any) -> float:
         """The instrument's quote currency in the account's, for sizing.
