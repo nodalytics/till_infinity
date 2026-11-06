@@ -887,15 +887,21 @@ class MT5ExecutionClient(LiveExecutionClient):
         is also the one place that decides what this desk *claims* about a
         position, which is worth being able to find.
         """
-        # **A deal does not carry the stop, and the retcode does not say so.**
-        # EURUSD here is `trade_exemode: 2`, Market execution, where the
-        # broker fills the deal and discards the `sl` and `tp` sent with it.
-        # Ticket 5828118661 was open 90 minutes at `sl 0.0 tp 0.0` with our
-        # magic while this client reported both legs accepted, because the
-        # only thing read was `retcode 10009`. So the protection goes on with
-        # `/positions/modify` - the route every exit already uses - and is
-        # read back off the position. A retcode means the deal happened; it
-        # has never meant the protection exists.
+        # **A retcode does not say whether the protection exists.** Ticket
+        # 5828118661 was open 90 minutes at `sl 0.0 tp 0.0` with our magic
+        # while this client reported both legs accepted, because the only
+        # thing read was `retcode 10009`. So the position is read, and what it
+        # holds decides what is claimed.
+        #
+        # It is read *before* anything is written, because the deal usually
+        # does carry the stop: EURUSD 0.01 at ask 1.11382 sent with `sl
+        # 1.10882 tp 1.11882` read back holding both on 2026-11-06.
+        # `trade_exemode: 2` says nothing either way - all 17 non-FX
+        # instruments here report mode 2. Asking `/positions/modify` for
+        # prices already held gives MT5 nothing to change, so it refuses and
+        # this bridge answers `400`; a first cut at this rejected the legs of
+        # every protected position for it. Why 5828118661 was naked is still
+        # open - the stop may have sat inside `trade_stops_level`.
         #
         # Accepted **after** this, not before: an accepted order cannot then
         # be rejected, and a leg the venue is not holding must not be
@@ -936,49 +942,82 @@ class MT5ExecutionClient(LiveExecutionClient):
         Returns the fields the venue is **not** holding and why. Empty means
         the position carries what was asked.
 
+        **Read before writing.** A deal on this broker *does* carry the `sl`
+        and `tp` sent with it - EURUSD 0.01 at ask 1.11382 with `sl 1.10882
+        tp 1.11882` in the deal body read back holding both on 2026-11-06, and
+        `trade_exemode: 2` implies nothing either way, since all 17 non-FX
+        instruments on this book report mode 2. A modify asking for prices the
+        position already holds therefore has nothing to change: MT5 refuses
+        it, this bridge answers `400`, and reading that as a failed stop
+        rejected the legs of a position the broker was protecting. So a
+        position that is already right is left alone.
+
+        **Then judge on the position, not on the answer.** Whatever the modify
+        said, the verdict comes from reading the position afterwards. A
+        refusal over a position that holds the stop is noise; a confirmation
+        over one that does not is a lie.
+
         **A missing row is not evidence.** A position can be a moment behind
-        the deal that opened it, and rejecting a stop because the book has not
-        caught up would refuse protection that exists. So this fails on what
-        it can see - a listed position whose `sl` is not the one asked for -
-        and otherwise reports a confirmed modify as done, which is what
-        `/positions/modify` returning `DONE` means.
+        the deal that opened it, so a position that cannot be seen is not a
+        naked one: a confirmed modify stands on its own, and only a refusal
+        with nothing to look at is reported as unprotected.
         """
         stop = float(sl) if sl is not None else 0.0
         target = float(tp) if tp is not None else 0.0
         both = frozenset(f for f, v in (("sl", stop), ("tp", target)) if v)
+        if not both:
+            return frozenset(), ""
+        digits = int(getattr(instrument, "price_precision", 5) or 5)
+
+        held = await self._held(ticket)
+        if held is not None and not self._shortfall(held, stop, target, digits):
+            return frozenset(), ""
+
+        refused = ""
         try:
             raw = await self._bridge.modify(ticket, stop, target)
         except Exception as exc:
-            return both, f"the stop could not be put on {ticket}: {self._scrub(exc)}"
-        if not _confirmed(raw):
-            comment = (raw.get("result") or {}).get("comment")
-            said = comment or f"retcode {_retcode(raw) or 'missing'}: not confirmed"
-            return both, f"the terminal would not put the stop on {ticket}: {said}"
-        try:
-            held = next(
-                (r for r in await self._bridge.positions() if int(r.get("ticket") or 0) == ticket),
-                None,
-            )
-        except Exception as exc:
-            self._log.warning(
-                f"{ticket}: stop confirmed, could not read it back: {self._scrub(exc)}"
-            )
-            return frozenset(), ""
+            refused = self._scrub(exc)
+        else:
+            if not _confirmed(raw):
+                comment = (raw.get("result") or {}).get("comment")
+                refused = comment or f"retcode {_retcode(raw) or 'missing'}: not confirmed"
+
+        held = await self._held(ticket)
         if held is None:
+            if refused:
+                return both, f"the terminal would not put the stop on {ticket}: {refused}"
             return frozenset(), ""
-        digits = int(getattr(instrument, "price_precision", 5) or 5)
-        missing = frozenset(
+        missing = self._shortfall(held, stop, target, digits)
+        if not missing:
+            return frozenset(), ""
+        asked = ", ".join(f"{f} {a}" for f, a in (("sl", stop), ("tp", target)) if a)
+        holds = ", ".join(f"{f} {held.get(f) or 0.0}" for f in ("sl", "tp"))
+        return missing, (
+            f"{ticket} is open and unprotected: asked {asked}, "
+            f"the venue holds {holds}" + (f": {refused}" if refused else "")
+        )
+
+    async def _held(self, ticket: int) -> dict | None:
+        """The position, or `None` where it cannot be seen.
+
+        Unreadable and absent are the same answer here on purpose: neither is
+        evidence that the position is unprotected, and the caller treats both
+        as "look at the modify instead".
+        """
+        try:
+            rows = await self._bridge.positions()
+        except Exception as exc:
+            self._log.warning(f"{ticket}: could not read the position: {self._scrub(exc)}")
+            return None
+        return next((r for r in rows if int(r.get("ticket") or 0) == ticket), None)
+
+    def _shortfall(self, held: dict, stop: float, target: float, digits: int) -> frozenset[str]:
+        """Which of the asked-for fields the position is not holding."""
+        return frozenset(
             field
             for field, asked in (("sl", stop), ("tp", target))
             if asked and not self._near(float(held.get(field) or 0.0), asked, digits)
-        )
-        if not missing:
-            return frozenset(), ""
-        return missing, (
-            f"{ticket} is open and unprotected: asked "
-            + ", ".join(f"{f} {a}" for f, a in (("sl", stop), ("tp", target)) if a)
-            + ", the venue holds "
-            + ", ".join(f"{f} {held.get(f) or 0.0}" for f in ("sl", "tp"))
         )
 
     @staticmethod
