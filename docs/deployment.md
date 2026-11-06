@@ -105,15 +105,66 @@ AWS have neither problem.
 
 ### Sizing it
 
-Measured on the running instance:
+**Measured 2026-11-06 on tis: 2 cores, 3823 MB, 46 desks over 23 symbols on a
+15m clock.** The container gets 90% of the cores and 70% of the memory, both
+computed by `scripts/deploy.sh` rather than hard-coded - so 1.8 cores and
+2676 MiB here.
 
-```
-till-infinity | Up (healthy) | 243.5 MiB / 640 MiB
-```
+| | | of the quota |
+|---|---|---|
+| CPU, idle | 0.19 cores | 10% |
+| CPU, the 15-minute fold | 0.24 cores | 13% |
+| memory, 46 desks, young caches | 179 MiB | 7% |
 
-243 MB against a 640 MB cap on a 908 MB box - **and that reading is from six
-instruments.** At fourteen it sits nearer 260-280 MB and has peaked at 400 MB,
-which on this box is the edge.
+**CPU is not the constraint and the first measurement that said otherwise was
+wrong.** Sampling the cgroup once a second showed spikes to 1.429 cores, 95%
+of what was then a 1.5-core quota, with `nr_throttled 55` - and every one of
+those spikes was *the healthcheck*. It ran `python -m till_infinity.node.status`,
+which imported the `Heartbeat` Actor, which imported Nautilus:
+`nautilus_trader.common.actor` alone is 1.60s of import time. About 1.2 cores
+for 2.0s every 60 seconds, roughly 4% of the machine, continuously - **five
+times the entire trading workload it was watching.** The reader now lives in
+`node/probe.py` with nothing but the standard library and the probe takes
+0.27s. Three live desks were clipped before that was understood.
+
+How to measure it, so the next reading is not an artifact:
+
+- Sample `cpu.stat`'s `usage_usec` from the **host** cgroup, once a second.
+  `docker stats` averages, and two `docker exec`s a second cost more than the
+  thing being measured.
+- **Exclude the probe window.** Match `docker inspect --format '{{json
+  .State.Health.Log}}'` Start/End times against the samples. A 60s period is
+  easy to mistake for a bar boundary, and a 15-minute boundary will sometimes
+  coincide with one.
+- Read `cpu.max` for the real budget. `os.cpu_count()` and
+  `sched_getaffinity` both report 2 against a 1.8-core quota, because they see
+  `--cpuset-cpus` and not `--cpus`. `node/sizing.cpu_budget()` is the
+  quota-aware number and `desks.ceiling()` uses it; before that the desk
+  offered 48 desks on a box that allows 46.
+
+**Memory is the resource with a visible ceiling, and the 179 MiB above is a
+cold reading.** `CacheConfig` runs at Nautilus's defaults, which retain 10,000
+bars and 10,000 quote ticks *per feed*. Measured sizes are 304 bytes a `Bar`
+and 202 a `QuoteTick`, so a feed at capacity is **4.82 MiB**:
+
+| feeds | cache at capacity |
+|---|---|
+| 23 | 111 MiB |
+| 46 | 222 MiB |
+| 240 | 1158 MiB |
+| 725 | 3498 MiB - past the 2676 limit |
+
+15m bars take 104 days to fill; quotes fill in under an hour, so most of that
+arrives on the first day and the rest accrues for a quarter.
+
+**Nothing reads them.** The only cache calls in the repository are
+`instrument`, `position`, `positions_open`/`closed`, `orders`, `order`,
+`strategy_ids`, `accounts`, `exec_clients`, `get_xrate` and `quote_tick` -
+the **singular** latest quote. Indicators are fed bars as they arrive and the
+statespace folds the `request_bars` response directly; no component asks the
+cache for history. So the per-feed figure above is retention the desk pays for
+and never uses, and `bar_capacity`/`tick_capacity` are the lever that makes a
+wide instrument list a memory question rather than a memory problem.
 
 The cap exists so that a leak takes the container down and the restart policy
 brings it back, instead of the kernel choosing what to kill. **On 2026-08-14 the
