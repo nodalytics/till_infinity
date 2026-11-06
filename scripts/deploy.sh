@@ -183,12 +183,29 @@ LIMIT_MB="$(( TOTAL_MB * 70 / 100 ))"
 [[ "$LIMIT_MB" -lt 512 ]] && LIMIT_MB=512
 echo "host has ${TOTAL_MB}MB, giving the container ${LIMIT_MB}MB"
 
+# **And the same argument for CPU, which was hard-coded at 1.5 while the
+# memory beside it scaled.** The share is 90% rather than the memory's 70%
+# because the two run out differently: over-committing memory gets the
+# container OOM-killed, while over-committing CPU only makes the host's own
+# work wait, and this box runs nothing else that matters.
+#
+# 90% is a measured number, not a round one. On 2026-11-06 the fifteen-minute
+# fold across 46 desks peaked at **1.429 cores** - 95% of the 1.5 the
+# container was given - and the cgroup reported `nr_throttled 55`,
+# `throttled_usec 2095683`: 2.1 seconds of CPU denied in fourteen minutes.
+# Every feed folds on the same boundary, so the burst is five seconds long and
+# scales with the instrument count. 1.8 of two cores clears that peak by 26%;
+# 1.5 did not clear it at all.
+CORES="$(nproc)"
+CPU_LIMIT="$(awk -v c="$CORES" 'BEGIN{v=(c*90)/100; if (v<0.5) v=0.5; printf "%.2f", v}')"
+echo "host has ${CORES} core(s), giving the container ${CPU_LIMIT}"
+
 docker run -d \
   --name "$NAME" \
   --restart unless-stopped \
   --memory "${LIMIT_MB}m" \
   --memory-swap "${LIMIT_MB}m" \
-  --cpus 1.5 \
+  --cpus "$CPU_LIMIT" \
   -e TZ=UTC \
   --env-file /home/ubuntu/till.env \
   `# Lets the container reach a service on the host, which the trading

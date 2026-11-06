@@ -461,6 +461,82 @@ def test_the_health_gate_decides_each_case_correctly(tmp_path, scenario, env, co
     assert says in done.stdout, f"{scenario}: said {done.stdout!r}"
 
 
+@pytest.mark.parametrize(("cores", "limit"), [("2", 1.80), ("8", 7.20), ("1", 0.90)])
+def test_the_deploy_scales_the_cpu_limit_to_the_host(tmp_path, cores, limit):
+    """**It was hard-coded at 1.5 while the memory beside it scaled.**
+
+    The memory limit is 70% of the host's and says why: hard-coding "wastes a
+    bigger machine and over-commits a smaller one, unnoticed until the kills
+    start". CPU had the same problem and not the same treatment.
+
+    1.5 was also simply too small. Measured 2026-11-06, the fifteen-minute
+    fold across 46 desks peaked at **1.429 cores** and the cgroup reported
+    `nr_throttled 55` - the desk was being denied CPU at every bar close.
+
+    Run rather than read, with `nproc` stubbed: an arithmetic expression is
+    exactly the kind of line that looks right and is off by a factor.
+    """
+    import subprocess
+
+    text = (ROOT / "scripts" / "deploy.sh").read_text()
+    found = re.search(r'^(CPU_LIMIT="\$\(awk.*\)")$', text, re.M)
+    assert found, "the deploy no longer computes CPU_LIMIT - has it gone back to a constant?"
+
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "nproc").write_text(f"#!/usr/bin/env bash\necho {cores}\n")
+    (fake / "nproc").chmod(0o755)
+    script = tmp_path / "limit.sh"
+    script.write_text(f'CORES="$(nproc)"\n{found.group(1)}\necho "$CPU_LIMIT"\n')
+
+    done = subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": f"{fake}:/usr/bin:/bin"},
+    )
+
+    assert done.returncode == 0, done.stderr
+    assert float(done.stdout.strip()) == pytest.approx(limit)
+
+
+def test_the_cpu_limit_clears_the_measured_fold(tmp_path):
+    """The number the limit has to beat is the burst, not the average.
+
+    `PER_CORE` was raised to 24 on the strength of the container sitting at
+    "6.8% CPU", and that average was true and misleading: steady state is
+    0.195 of 1.5 cores, 13%, while the fold five seconds either side of a bar
+    boundary is 1.429. A limit chosen from the average throttles at every
+    close.
+    """
+    import subprocess
+
+    text = (ROOT / "scripts" / "deploy.sh").read_text()
+    found = re.search(r'^(CPU_LIMIT="\$\(awk.*\)")$', text, re.M)
+    assert found
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "nproc").write_text("#!/usr/bin/env bash\necho 2\n")
+    (fake / "nproc").chmod(0o755)
+    script = tmp_path / "limit.sh"
+    script.write_text(f'CORES="$(nproc)"\n{found.group(1)}\necho "$CPU_LIMIT"\n')
+    got = float(
+        subprocess.run(
+            ["bash", str(script)],
+            capture_output=True,
+            text=True,
+            check=False,
+            env={"PATH": f"{fake}:/usr/bin:/bin"},
+        ).stdout.strip()
+    )
+
+    assert got > 1.429, (
+        f"two cores gives the container {got}, which does not clear the measured "
+        f"1.429-core fold - the desk would be throttled at every bar close"
+    )
+
+
 def deploy_sources() -> list[str]:
     """Repository paths the deploy workflow sends to the instance.
 

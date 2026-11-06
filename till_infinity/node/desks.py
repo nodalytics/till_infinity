@@ -361,10 +361,19 @@ def ceiling(budget: sizing.Budget | None = None) -> int:
     # existing deploy runs, and changing that silently is not a bug fix. Worth
     # revisiting against `tis-research-jobs-starve-the-service`, where tis has
     # two cores and a research job starving the desk is a measured outcome.
-    cores = (budget or sizing.measure()).cores_seen if budget else sizing.cores()
+    #: **The quota, not the core count.** `cores_seen` and `cores()` both come
+    #: from `sched_getaffinity`, which reflects `--cpuset-cpus` and not
+    #: `--cpus`: tis reports 2 cores against a 1.5-core quota, so this read 48
+    #: where the box allows 36. Measured 2026-11-06, 46 desks took the
+    #: fifteen-minute fold to **1.429 of 1.5 cores** and the container was
+    #: throttled 55 times in fourteen minutes - so the overstatement was not
+    #: theoretical, it was already costing CPU at every bar close.
+    seen = float(budget.cores_seen) if budget else sizing.cpu_budget()
+    quota = sizing.cpu_quota()
+    cores = min(seen, quota) if quota and quota > 0 else seen
     # Read here rather than at import, so a test can move it and a deploy does
     # not depend on import order.
-    return max(1, cores * max(1, whole("TRADING_DESKS_PER_CORE", PER_CORE)))
+    return max(1, int(cores * max(1, whole("TRADING_DESKS_PER_CORE", PER_CORE))))
 
 
 def build(

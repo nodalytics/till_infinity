@@ -58,6 +58,56 @@ def cores() -> int:
         return max(1, os.cpu_count() or 1)
 
 
+def cpu_quota(root: Path = Path("/sys/fs/cgroup")) -> float | None:
+    """The container's CPU quota in cores, or `None` where nothing caps it.
+
+    **`cores()` cannot see this.** `sched_getaffinity` reflects
+    `--cpuset-cpus`, which pins *which* CPUs may be used, not `--cpus`, which
+    caps *how much*. tis runs the desk with `cpu.max` of `150000 100000` - 1.5
+    cores - while `os.cpu_count()`, `sched_getaffinity` and therefore `cores()`
+    all report 2. On 2026-11-06 the desk was throttled 55 times in fourteen
+    minutes, denied 2.1 seconds of CPU, while sizing itself against a third
+    more budget than it had.
+
+    `root` is a parameter so a test can point it at a directory it wrote,
+    rather than at the machine running the test.
+    """
+    both = root / "cpu.max"  # cgroup v2
+    try:
+        parts = both.read_text().split()
+    except OSError:
+        parts = []
+    if len(parts) == 2:
+        if parts[0] == "max":
+            return None
+        try:
+            quota, period = int(parts[0]), int(parts[1])
+        except ValueError:
+            return None
+        return quota / period if quota > 0 and period > 0 else None
+    try:  # cgroup v1, where -1 is unlimited
+        quota = int((root / "cpu" / "cpu.cfs_quota_us").read_text())
+        period = int((root / "cpu" / "cpu.cfs_period_us").read_text())
+    except (OSError, ValueError):
+        return None
+    return quota / period if quota > 0 and period > 0 else None
+
+
+def cpu_budget() -> float:
+    """Cores this process may actually use, the quota included.
+
+    A float, because a quota is not whole and a desk is small enough that the
+    fraction matters: 1.5 cores at 24 desks a core is 36 desks, not 48.
+
+    **Exactly an integer where no quota applies**, which keeps every
+    unconstrained box behaving as it did and lets the ceiling tests assert
+    that tripling the multiplier triples the ceiling.
+    """
+    seen = float(cores())
+    quota = cpu_quota()
+    return min(seen, quota) if quota and quota > 0 else seen
+
+
 def _cgroup_limit() -> int | None:
     """The container's memory ceiling, if there is one."""
     for path, unlimited in (
