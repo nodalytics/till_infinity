@@ -541,3 +541,51 @@ def test_the_cooldown_memory_is_bounded(monkeypatch):
         msgbus.publish(topic="alerts", msg=alert(fields={"ref": str(n)}))
     assert len(actor._filter._sent) == MEMORY
     assert not hasattr(actor, "_seen")
+
+
+def test_a_delivery_is_reported_and_not_only_counted(monkeypatch):
+    """**A successful send logged nothing.**
+
+    `_record` counts it and returns; only a failure logs. `on_stop` reports
+    the tally and a live desk never stops. So sent, dropped and failed were
+    indistinguishable from each other and from no alert at all - and on
+    2026-11-06 one statespace proposal produced no log line anywhere, with no
+    way to tell whether Telegram had been told or the filter refused it first.
+    """
+    from till_infinity.notifications.actor import tally_reading
+
+    actor, msgbus, _sender = build(monkeypatch, dedupe_seconds=0.0)
+    msgbus.publish(topic="alerts", msg=alert())
+
+    assert actor.tally["sent"] == 1
+    said = tally_reading(actor.tally["sent"], actor.tally["dropped"], {})
+    assert said is not None, "the delivery was silent"
+    line, urgent = said
+    assert "1 sent" in line
+    assert urgent is False
+
+
+def test_alerts_refused_before_any_destination_are_a_warning():
+    """The case worth seeing: the desk raised something and nobody was told.
+
+    An alert dropped by the filter never reaches a destination, so no failure
+    is recorded and the tally reads zero sent - which is exactly how
+    `NOTIFY_SHAPES` once discarded every statespace alert while the path
+    itself worked.
+    """
+    from till_infinity.notifications.actor import tally_reading
+
+    said = tally_reading(0, 3, {})
+
+    assert said is not None
+    line, urgent = said
+    assert urgent is True
+    assert "refused before a destination" in line
+
+
+def test_a_quiet_desk_says_nothing():
+    """The control. Reporting every five minutes on a desk that raised no
+    alert would make the tally the log rather than a reading in it."""
+    from till_infinity.notifications.actor import tally_reading
+
+    assert tally_reading(0, 0, {}) is None
