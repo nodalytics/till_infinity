@@ -5,24 +5,69 @@ MT5 documents or what the bridge accepts. Every number here was read off the
 live account on the date given, and most of them were found the expensive way.
 
 The short version: **a retcode means the deal happened. It has never meant the
-protection exists.**
+protection exists.** The corollary, learned later and more expensively: a
+*refusal* does not mean the protection is absent either. Read the position.
 
 | | |
 |---|---|
-| [A deal discards the stop](#a-deal-discards-the-stop) | `trade_exemode: 2`, so `sl`/`tp` sent with an order are silently dropped |
-| [Tick values are in the account currency](#tick-values-are-in-the-account-currency) | `base_currency=None` is not a sizing bug |
+| [A deal does carry the stop](#a-deal-does-carry-the-stop) | and assuming otherwise cost a live regression |
+| [A no-op modify is a 400](#a-no-op-modify-is-a-400) | asking for prices already held is an error, not a confirmation |
+| [Tick values convert for FX and not for CFDs](#tick-values-convert-for-fx-and-not-for-cfds) | seven live instruments are sized in the wrong currency |
+| [NGAS contradicts its own contract size](#ngas-contradicts-its-own-contract-size) | by a factor of 10,000, in the dangerous direction |
+| [What is quoting when](#what-is-quoting-when) | the book closes in four waves, not one |
 | [Order ids namespace on the last hyphen](#order-ids-namespace-on-the-last-hyphen) | eighteen desks once shared two namespaces |
 | [The comment is 31 characters](#the-comment-is-31-characters) | and the useful half is the tail |
 | [The book is 725 names and 240 quotes](#the-book-is-725-names-and-240-quotes) | naming is inconsistent; most of it is untradeable |
+| [Specs worth having to hand](#specs-worth-having-to-hand) | all 23 live instruments, and `stops_level` spans 5 to 2000 |
+| [Proving any of this](#proving-any-of-this) | the per-instrument test, and how it stays safe |
 
-## A deal discards the stop
+## A deal does carry the stop
 
-EURUSD reports `trade_exemode: 2` - **Market execution**. The broker fills a
-`TRADE_ACTION_DEAL` and *ignores the `sl` and `tp` sent in the same request*.
-They have to be applied afterwards, as a separate action, which is
-`POST /positions/modify` addressed by ticket.
+**This section said the opposite until 2026-11-06, and the desk was changed on
+the strength of it. The premise was wrong.**
 
-What that cost, on 2026-11-06:
+EURUSD reports `trade_exemode: 2` - Market execution - which MT5's own
+documentation describes as filling a `TRADE_ACTION_DEAL` and applying
+protection separately. Read against the live account, it does no such thing:
+
+```
+0.01 BUY EURUSD at ask 1.11382, sl 1.10882 and tp 1.11882 in the deal body
+-> retcode 10009, ticket 5828521206
+-> position reads sl 1.10882  tp 1.11882
+```
+
+The broker kept both. And `trade_exemode` carries no information here anyway:
+**all 23 live instruments report mode 2**, including every one whose deal has
+never dropped anything. So does `trade_mode`: all 23 report 4, shut markets
+included.
+
+### What the wrong premise cost
+
+`_place` puts `sl`/`tp` in the deal body. Believing they were discarded,
+`_protect` was added to set them afterwards with `/positions/modify` - which
+meant asking the venue for the prices it already held. MT5 has nothing to
+change, refuses, and this bridge answers `400`. So:
+
+1. `_bridge.modify` raises
+2. `_protect` catches it and reports **both legs naked**
+3. `_report_legs` **rejects the stop and target of a protected position**
+
+The broker held a bracket while the engine believed two legs were rejected -
+the same disagreement the change was written to prevent, inverted. It never
+fired: it needs a market bracket, and the desk was inside
+`TRADING_QUIET_HOURS` for the whole time it was deployed.
+
+`_protect` now reads the position **before** it writes, leaves a position that
+is already right alone, and takes its verdict from reading the position again
+afterwards rather than from what the modify said. A refusal over a position
+that holds the stop is noise; a confirmation over one that does not is a lie.
+An unreadable position is still not a naked one - a position can lag the deal
+that opened it - so only a refusal with nothing to look at is reported as
+unprotected.
+
+### What is still unexplained
+
+The naked position that started all of this is **not** accounted for:
 
 ```
 ticket 5828118661  EURUSD  SELL 0.43  open 1.11532
@@ -30,61 +75,198 @@ sl 0.0   tp 0.0   magic 777701   profit -25.8
 comment 'O-20261106-135228-001-E270-37'
 ```
 
-Ours, by the magic and the comment. Open and unprotected for ninety minutes
-across two restarts, and nothing said so - because `_place` sent `sl`/`tp`
-with the deal, read `retcode 10009`, and then generated `OrderAccepted` for
-the stop and target legs against the entry's ticket. The engine held a bracket
-the venue knew nothing about. **This was true of every position opened on a
-Market-execution symbol**, so the in-process exit was the only protection, and
-that dies with the process.
-
-`_protect` now puts them on the position after the deal and reads the position
-back. Three judgements in it worth keeping:
-
-- **A missing position row is not evidence of failure.** A position can lag
-  the deal that opened it, and rejecting a stop because the book has not
-  caught up would refuse protection that exists. It fails on what it can see -
-  a listed position whose `sl` is not the one asked for.
-- **Only the leg that failed is rejected.** Reporting a stop as dead while the
-  venue holds it is the same lie inverted.
-- **Accepted after the check, never before.** An accepted order cannot then be
-  rejected, so the verification has to precede `generate_order_accepted`.
+Ours by the magic and the comment, open and unprotected for ninety minutes
+across two restarts. A valid stop *is* kept, so something else dropped this
+one. The live hypothesis is that its stop sat inside `trade_stops_level` - 20
+points on EURUSD, `trade_freeze_level` 3 - and the broker filled the deal
+while discarding a level it would not accept.
+`risk/sizing.respects_stops_level` is supposed to catch that before the order,
+so either it uses a different distance basis than the broker does or the stop
+was moved after placement. **Unproven.** The test is a deal with a
+deliberately too-close stop; until that is run, do not assume either the
+discard or the guard.
 
 Gated on `MARKET` **and** `retcode == DONE`: 10008 is PLACED, a position
 exists only once the deal is done, and sending a resting order to
 `/positions/modify` once posted its limit price as a target.
 
-`trade_stops_level` is 20 points on EURUSD and 3 for `trade_freeze_level`. A
-stop inside that is refused, which `risk/sizing.respects_stops_level` catches
-before the order rather than discovering it from a retcode - so the refusal
-names the number that was breached.
+## A no-op modify is a 400
 
-## Tick values are in the account currency
+`POST /positions/modify` with the `sl` and `tp` the position already carries
+comes back **HTTP 400**, not a 200 with a retcode. The body was not captured
+on the run that found it; the reading that fits is MT5 retcode 10025,
+`No changes`, surfaced as a status code.
 
-**A measured null, recorded because it looks exactly like a live money bug.**
+Two consequences:
 
-The account reports `base_currency=None` and carries a **single**
-`AccountBalance`, denominated in USD. (The balance and the account id stay out
+- **A refusal from this route is not evidence about the position.** Decide on
+  what a position read says, not on what the route answered.
+- **Check before writing.** A modify is only worth sending when something it
+  would change actually differs.
+
+`ModifySLTPRequest` requires `ticket` and `sl`, with `tp` optional - so a
+schema problem would be FastAPI's `422`, and a `400` is the broker talking.
+
+## Tick values convert for FX and not for CFDs
+
+**The blanket claim this section used to make - that MT5 states all tick
+values in the account currency - holds for FX and fails for every CFD whose
+profit currency is not USD.** Measured across all 23 live instruments by
+comparing `trade_tick_value_loss` against `trade_tick_size x
+trade_contract_size`, which is the same quantity in the *quote* currency:
+
+| instrument | profit ccy | stated | quote-ccy | ratio | reading |
+|---|---|---|---|---|---|
+| USDJPY | JPY | 0.6308 | 100.0 | **158.53** | converted - the ratio *is* USDJPY |
+| USDCAD | CAD | 0.7077 | 1.0 | 1.4130 | converted |
+| USDCHF | CHF | 1.2184 | 1.0 | 0.8207 | converted |
+| EURUSD, GBPUSD, AUDUSD | USD | 1.0 | 1.0 | 1.0 | nothing to convert |
+| XAUUSD, XPTUSD | USD | 1.0 | 1.0 | 1.0 | correct |
+| XAGUSD | USD | 5.0 | 5.0 | 1.0 | correct, and proves the contract size is applied |
+| Germany 40, France 40, Europe 50 | **EUR** | 0.01 | 0.01 | 1.0 | **not converted** |
+| UK 100 | **GBP** | 0.01 | 0.01 | 1.0 | **not converted** |
+| Japan 225 | **JPY** | 0.01 | 0.01 | 1.0 | **not converted** |
+| Australia 200 | **AUD** | 0.01 | 0.01 | 1.0 | **not converted** |
+| Hong Kong 50 | **HKD** | 0.01 | 0.01 | 1.0 | **not converted** |
+
+The FX rows settle that conversion does happen: USDJPY's ratio is the USDJPY
+rate to four figures. The CFD rows have ratio exactly 1.0 while their profit
+currency is not USD, so their figure is the quote-currency one.
+
+`strategies/sizes.spec_of` takes `trade_tick_value_loss` whenever it is
+positive and never applies `rate` to it, on the documented assumption that it
+is already in the account currency. For seven live instruments it is not, and
+position size is inversely proportional to the tick value, so each is
+mis-sized by its own rate (quotes of 2026-11-06 22:50 UTC):
+
+| instrument | factor | effect on size |
+|---|---|---|
+| Japan 225 | JPY, 1/158.53 | **158x too small** |
+| Hong Kong 50 | HKD | much too small; this terminal quotes no HKD pair, so unmeasured here |
+| Australia 200 | AUD 0.6863 | 31% too small |
+| Germany 40, France 40, Europe 50 | EUR 1.1136 | 11% too large |
+| UK 100 | GBP 1.3347 | 33% too large |
+
+**Not yet confirmed against realised P&L**, which is the check that would
+settle it: compare the money lost on a stop against the risk the intent asked
+for, per instrument. `r_multiple` cannot show this - it is computed from price
+distance, so a currency scaling error is invisible to it. Japan 225's
+`volume_min` of 10 lots is consistent with a lot being small in JPY, which is
+weak supporting evidence and not proof.
+
+Do not "fix" `Desk._rate` on the strength of `base_currency=None`. The account
+reports `base_currency=None` with a **single** `AccountBalance` in USD, so it
+is not the multi-currency account `_rate`'s `1.0` assumes, and `currency_profit`
+being JPY is not evidence either - that is the quote currency, not necessarily
+the unit the tick value is quoted in. The error above is in `spec_of` trusting
+a stated value, not in `rate` itself. (The balance and the account id stay out
 of this file: the repository is public, which is also why `.secrets/` holds
 anything that names the account.)
 
-So it is *not* the multi-currency account `Desk._rate` assumes when it returns
-`1.0`, and that looks like non-USD-quoted instruments being sized against a
-budget in the wrong currency - a ~150x error on USDJPY. It is not.
-`sizes.spec_of` sizes from `trade_tick_value_loss` and **does not apply `rate`
-to it**, because MT5 states all three tick values in the account currency:
+## NGAS contradicts its own contract size
 
-| symbol | `trade_tick_value_loss` | check |
+Every other instrument satisfies `trade_tick_value == trade_tick_size x
+trade_contract_size` in the quote currency. XAGUSD is the clean demonstration:
+tick `0.001`, contract `5000`, tick value `5.0`. NGAS does not:
+
+| field | value |
+|---|---|
+| `trade_tick_size` | 0.001 |
+| `trade_contract_size` | 10000 |
+| `trade_tick_value_loss` | **0.001**, where the pattern gives **10.0** |
+| `volume_min` / `volume_max` | 0.1 / 5.0 |
+| `currency_profit` | USD, so no conversion explains it |
+
+One of the two fields is wrong by a factor of 10,000, and because `spec_of`
+prefers the stated tick value, the desk sizes NGAS as though a 0.001 move were
+worth a tenth of a cent a lot rather than ten dollars. That is the **dangerous
+direction** - too large - and it is bounded only by `volume_max` of 5.0 lots,
+which at 10,000 MMBtu a lot is 50,000 MMBtu, about 164,000 USD of notional at
+3.28. A margin refusal (`retcode 10019`) is the likely practical outcome on a
+small account, but nothing in the desk refuses it first.
+
+NGAS is in `TRADING_SYMBOLS` and live. It is also the most expensive thing on
+the book to trade - a 0.261 bar-range round trip, see
+`.secrets/instruments.md` - so dropping it costs little.
+
+## What is quoting when
+
+The book does not close at one time. Quote ages read at **21:50 UTC on Friday
+2026-11-06**, where age is now minus the last tick:
+
+| group | age | state |
 |---|---|---|
-| USDJPY | 0.6315 | 100 JPY / ~158 = 0.633 USD |
-| USDCHF | 1.2202 | 1 CHF / ~0.82 = 1.22 USD |
-| USDCAD | 0.7092 | 1 CAD / ~1.41 = 0.709 USD |
-| EURUSD | 1.0 | 1 USD |
+| NGAS, US Oil, UK Brent Oil | 0-1 min | still trading |
+| Germany 40, UK 100, France 40, Europe 50 | 0 min | still trading |
+| Australia 200, Hong Kong 50 | 0 min | still trading |
+| XAUUSD, XAGUSD, XPTUSD | 8 min | shut ~21:41 |
+| Wall Street 30, US SP 500, US Tech 100 | 8-9 min | shut ~21:41 |
+| XCUUSD | 54 min | shut ~20:55 |
+| FX (all six) | fresh at 21:50, 36 min by 22:50 | shut ~22:15 |
 
-Each is the USD figure. `rate` reaches only the contract-size fallback, which
-these instruments never use. Do not "fix" `_rate` on the strength of
-`base_currency=None`; `currency_profit` being JPY is not evidence either -
-that is the quote currency, not the unit the tick value is quoted in.
+**Quote age is the usable session signal.** `/symbols/info` returns
+`session_open` and `session_close` as *prices*, not times - Wall Street 30
+reports `session_close: 53556.35` - so there is no schedule to read off the
+venue. `strategies/sessions.py` learns schedules from data and **nothing
+consumes it**: `trading_at` and `closes_in` have no callers.
+
+A stale quote is not the same as a refusal. Every instrument above kept
+`trade_mode: 4` while shut, so trade mode cannot be used to detect a closed
+market either.
+
+## Specs worth having to hand
+
+All 23 live instruments, read 2026-11-06. `stops` is `trade_stops_level` in
+points; every one of them is `trade_exemode: 2` and `trade_mode: 4`, and all
+six FX pairs carry `trade_freeze_level: 3`.
+
+| instrument | vol min | vol max | stops | tick | contract |
+|---|---|---|---|---|---|
+| EURUSD, GBPUSD, AUDUSD, USDCAD, USDCHF | 0.01 | 50 | 20 | 1e-05 | 100000 |
+| USDJPY | 0.01 | 50 | 20 | 0.001 | 100000 |
+| XAUUSD | 0.01 | 10 | 20 | 0.01 | 100 |
+| XAGUSD | 0.01 | 15 | 20 | 0.001 | 5000 |
+| XPTUSD | 0.01 | 10 | 400 | 0.01 | 100 |
+| XCUUSD | 1.0 | 1000 | 600 | 0.01 | 1 |
+| NGAS | 0.1 | 5 | 5 | 0.001 | 10000 |
+| US Oil, UK Brent Oil | 1.0 | 1000 | 50 | 0.001 | 1 |
+| US SP 500 | 0.1 | 150 | 50 | 0.01 | 1 |
+| UK 100, France 40 | 0.1 | 100 | 100 | 0.01 | 1 |
+| US Tech 100, Germany 40 | 0.1 | 100 | 150 | 0.01 | 1 |
+| Europe 50 | 0.1 | 150 | 200 | 0.01 | 1 |
+| Wall Street 30 | 0.1 | 100 | 300 | 0.01 | 1 |
+| Australia 200 | 0.1 | 100 | 500 | 0.01 | 1 |
+| Japan 225 | **10.0** | 1500 | 1000 | 0.01 | 1 |
+| Hong Kong 50 | 0.1 | 100 | **2000** | 0.01 | 1 |
+
+`stops_level` spans 5 points on NGAS to 2000 on Hong Kong 50, so a stop
+distance that is legal on one instrument is refused on another. Japan 225's
+`volume_min` of 10 lots makes it the one instrument no small test can touch:
+the tightest legal stop at the minimum size is several hundred dollars.
+
+## Proving any of this
+
+`/tmp/protect_all.py` on the instance tests the protection path per
+instrument. `survey` reads only - it sends no order - and reports which
+instruments are tradeable now, with the worst case priced two ways. `prove`
+then trades only what the survey passed, asking three separate questions per
+instrument: does the deal keep the stop, does a no-op modify fail, does a real
+modify work.
+
+It trades at `volume_min` under **magic 990001**, deliberately not the desk's
+`777701`, so `_ours` ignores it and reconciliation cannot adopt one. Each
+instrument closes in its own `finally`, with a final sweep for anything
+carrying that magic, and any instrument whose worst case cannot be priced -
+or exceeds `PROOF_RISK_CAP`, default 20 - is skipped rather than traded.
+
+Two lessons already paid for:
+
+- **Price the risk both ways.** The cap read `0.00` for NGAS on the tick-value
+  basis and `15.00` on the contract basis. A cap computed from a single
+  unverified field is not a cap.
+- **One snapshot is not a measurement.** A single read at 16:00 UTC gave NGAS
+  a 0.788 bar-range round trip against a 96-bar median of 0.261, and nearly
+  cost four live feeds.
 
 ## Order ids namespace on the last hyphen
 
