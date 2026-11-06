@@ -385,6 +385,64 @@ def test_a_live_node_with_no_desks_refuses_to_build(monkeypatch, loop):
         live.build()
 
 
+def test_the_cpu_quota_is_read_from_the_cgroup(tmp_path):
+    """**`sched_getaffinity` does not see `--cpus`.**
+
+    It reflects `--cpuset-cpus`, which pins *which* CPUs a container may use,
+    not `--cpus`, which caps *how much*. tis gives the container `cpu.max` of
+    `150000 100000` - 1.5 cores - and `os.cpu_count()`, `sched_getaffinity`
+    and therefore `cores()` all report 2. Measured on 2026-11-06 the desk was
+    throttled 55 times in fourteen minutes while believing it had a third more
+    CPU than it did.
+    """
+    from till_infinity.node import sizing
+
+    (tmp_path / "cpu.max").write_text("150000 100000\n")
+    assert sizing.cpu_quota(tmp_path) == pytest.approx(1.5)
+
+    (tmp_path / "cpu.max").write_text("max 100000\n")
+    assert sizing.cpu_quota(tmp_path) is None, "an unlimited quota is not a limit"
+
+    (tmp_path / "cpu.max").unlink()
+    cpu = tmp_path / "cpu"
+    cpu.mkdir()
+    (cpu / "cpu.cfs_quota_us").write_text("180000\n")
+    (cpu / "cpu.cfs_period_us").write_text("100000\n")
+    assert sizing.cpu_quota(tmp_path) == pytest.approx(1.8), "cgroup v1"
+
+    (cpu / "cpu.cfs_quota_us").write_text("-1\n")
+    assert sizing.cpu_quota(tmp_path) is None, "v1 says -1 for unlimited"
+
+
+def test_a_box_with_no_quota_is_unchanged(monkeypatch):
+    """The budget is the core count where nothing caps it, and **exactly** an
+    integer - `test_the_desk_ceiling_can_be_raised_on_a_measured_box` asserts
+    the ceiling triples when the multiplier does, which only holds without a
+    rounding step in between."""
+    from till_infinity.node import sizing
+
+    monkeypatch.setattr(sizing, "cpu_quota", lambda *_: None)
+    assert sizing.cpu_budget() == float(sizing.cores())
+    assert sizing.cpu_budget().is_integer()
+
+
+def test_the_ceiling_scales_with_the_quota_not_the_core_count(monkeypatch):
+    """A fractional budget gives a fractional ceiling, floored.
+
+    1.5 cores at 24 desks a core is 36, not the 48 the desk believed it had
+    while 46 of them already took the fold to 95% of the quota.
+    """
+    from till_infinity.node import desks
+
+    monkeypatch.delenv("TRADING_DESKS_PER_CORE", raising=False)
+    monkeypatch.setattr(desks.sizing, "cpu_budget", lambda: 1.5)
+    monkeypatch.setattr(desks.sizing, "cpu_quota", lambda *_: 1.5)
+    assert desks.ceiling() == int(1.5 * desks.PER_CORE)
+
+    monkeypatch.setenv("TRADING_DESKS_PER_CORE", "24")
+    assert desks.ceiling() == 36, "1.5 cores x 24 is 36 desks, not 48"
+
+
 def test_the_desk_ceiling_can_be_raised_on_a_measured_box(monkeypatch):
     """**It was the binding constraint on a wider instrument list.**
 
@@ -397,6 +455,15 @@ def test_the_desk_ceiling_can_be_raised_on_a_measured_box(monkeypatch):
     The default does not move: this number protects against late quotes, and
     late quotes are the one input every gate trusts. What changes is that a box
     which has been *measured* can say so.
+
+    **And the measurement above was the wrong one.** "6.8% CPU" was an
+    average, and the average is not what runs out. Sampled properly on
+    2026-11-06 - one second at a time, across a bar boundary - the desk sits
+    at 0.195 cores and the fold spikes to **1.429**, 95% of the 1.5 the
+    container is given, for about five seconds while every feed folds on the
+    same boundary. The cgroup had already recorded `nr_throttled 55`. So 24 a
+    core was set from a number that could not see the constraint, and a
+    *measured* box means a burst measured at a boundary, not an idle reading.
     """
     from till_infinity.node import desks
 
