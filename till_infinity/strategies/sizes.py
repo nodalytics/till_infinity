@@ -162,7 +162,39 @@ def _stated(info: dict[str, Any], *names: str) -> float:
     return 0.0
 
 
-def spec_of(instrument: Instrument, *, rate: float = 1.0) -> SymbolSpec:
+#: How far a stated tick value may sit from everything the venue's own contract
+#: size can account for before it is treated as a contradiction rather than a
+#: conversion. Deliberately loose: the failure being caught is an
+#: order-of-magnitude disagreement, and a tight band would refuse live
+#: instruments over rounding or an asymmetric conversion.
+CONTRADICTION = 2.0
+
+
+def _contradicts(stated: float, by_lot: float) -> bool:
+    """Whether `stated` is a figure the contract size cannot account for.
+
+    **Only ever asked where the instrument's profit currency is the account's**,
+    so that `tick_size x contract_size` already *is* the value in the account
+    currency and there is no conversion left to explain a gap. Asking it
+    anywhere else refuses good instruments: USDJPY states 0.6308 against a
+    `tick x contract` of 100 JPY, which is right, and this desk's `rate` reads
+    1.0 because the account states no base currency - so a rate-based check
+    would have refused a live pair.
+
+    **NGAS, 2026-11-06:** tick 0.001 on a 10000 contract is 10.0, the stated
+    loss value is 0.001, and `currency_profit` is USD - the account's own
+    currency, so nothing can explain it. One field is wrong by 10,000 and
+    `volume_max` is all that bounds the position. Refusing is the only honest
+    answer.
+    """
+    if by_lot <= 0.0 or stated <= 0.0:
+        return False
+    return not 1.0 / CONTRADICTION <= stated / by_lot <= CONTRADICTION
+
+
+def spec_of(
+    instrument: Instrument, *, rate: float = 1.0, account_currency: Any = None
+) -> SymbolSpec:
     """A Nautilus instrument as the spec `risk/sizing.lots` sizes against.
 
     `rate` converts the instrument's **quote** currency into the one the
@@ -181,9 +213,23 @@ def spec_of(instrument: Instrument, *, rate: float = 1.0) -> SymbolSpec:
     profit value sizes the position slightly too large, which is the direction
     nobody notices.
 
-    All three are already in the account currency, so `rate` is not applied to
-    them. It is applied only to the figure derived from the contract size,
-    which is in the quote currency by construction.
+    **Only for FX is "already in the account currency" true.** Measured across
+    all 23 live instruments on 2026-11-06 by comparing the stated value against
+    `trade_tick_size x trade_contract_size`, which is the same quantity in the
+    profit currency: the three non-USD FX pairs come back at exactly their FX
+    rate, so MT5 converted them, while the seven CFDs whose profit currency is
+    EUR, GBP, JPY, AUD or HKD come back at exactly 1.0, so theirs are not
+    converted. `rate` is still not applied to a stated value, because the
+    reading that says those CFDs are mis-sized is **not proven** - the other
+    reading is that the broker settles them in the account currency and
+    `currency_profit` names the underlying's. Converting on the wrong one sizes
+    Japan 225 158x *larger*; leaving it sizes it 158x smaller, and only one of
+    those can blow up an account. See `docs/venue.md`; it needs a realised P&L
+    observation, not another read.
+
+    What *is* acted on is a stated value no contract size can explain at all -
+    see `_contradicts`. `rate` is otherwise applied only to the figure derived
+    from the contract size, which is in the quote currency by construction.
     """
     info: dict[str, Any] = dict(instrument.info or {})
     digits = int(instrument.price_precision)
@@ -200,6 +246,21 @@ def spec_of(instrument: Instrument, *, rate: float = 1.0) -> SymbolSpec:
     # multiplier is 1 and quantity is in base units, so this is the tick
     # itself, which is the right answer for that convention too.
     value = stated if stated > 0.0 else tick * contract * max(0.0, rate)
+    # **A stated value still has to be a value the contract size can explain.**
+    # Three conditions, each of them load-bearing: the venue stated a contract
+    # size of its own (so Binance, which states none, is unaffected), it stated
+    # a tick value, and the instrument's profit currency is the account's - the
+    # only case where `tick x contract` is comparable to the stated figure
+    # without a conversion. Unknown account currency fails open.
+    comparable = account_currency is not None and str(account_currency) == str(
+        instrument.quote_currency
+    )
+    if (
+        comparable
+        and _stated(info, "trade_contract_size") > 0.0
+        and _contradicts(stated, tick * contract)
+    ):
+        value = 0.0
 
     mode = info.get("trade_mode")
     return SymbolSpec(
