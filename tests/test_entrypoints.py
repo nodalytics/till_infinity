@@ -347,6 +347,120 @@ def test_no_ci_job_globs_a_directory_that_is_gone():
     )
 
 
+def test_the_deploy_waits_for_healthy_and_not_merely_running():
+    """**A deploy that checks liveness reports success over a dead desk.**
+
+    On 2026-11-06 the gate passed with `status=running restarting=false
+    restarts=0->0` and the deploy went green - while the node had already
+    written that it was stopping. It then failed its healthcheck fourteen
+    times in a row with `the node wrote that it was stopping`, CPU flat at
+    0.00% with markets open, and nobody would have known from the deploy.
+
+    `running` and `healthy` are different questions. The restart-count
+    comparison stays, because it catches a different failure - a container in
+    backoff reads `Up` at any single instant - but it cannot see a process
+    that started, gave up, and left the container alive around it.
+
+    **The wait must outlast the start period.** A healthcheck reports
+    `starting` for the whole of `--start-period`, whatever its probes say, so
+    a gate that gives up sooner can only ever see `starting` and learns
+    nothing. Read from the Dockerfile here rather than hardcoded, so raising
+    one and not the other fails this test instead of the next deploy.
+    """
+    text = (ROOT / ".github" / "workflows" / "deploy.yml").read_text()
+    assert ".State.Health.Status" in text, (
+        "the deploy does not read the container's health - it can only prove the "
+        "container is running, which is what let a stopped node deploy green"
+    )
+    assert "unhealthy" in text, "nothing in the deploy fails on an unhealthy desk"
+
+    start = re.search(r"--start-period=(\d+)s", (ROOT / "Dockerfile").read_text())
+    assert start, "no start period in the Dockerfile's HEALTHCHECK"
+    waits = [int(n) for n in re.findall(r"HEALTH_WAIT_S\s*[:=]\s*(\d+)", text)]
+    assert waits, "the deploy names no health deadline (HEALTH_WAIT_S)"
+    assert max(waits) > int(start.group(1)), (
+        f"the deploy waits {max(waits)}s for health but the healthcheck reports "
+        f"`starting` for {start.group(1)}s - the gate would time out before the "
+        f"first real probe and never see `healthy`"
+    )
+
+
+FAKE_DOCKER = """#!/usr/bin/env bash
+case "$*" in
+  *"{{.State.Status}} {{.State.Restarting}} {{.RestartCount}}"*)
+    echo "${FAKE_LIVENESS:-running false 0}" ;;
+  *"{{.RestartCount}}"*) echo "${FAKE_RESTARTS_LATER:-0}" ;;
+  *"{{if .State.Health}}yes{{end}}"*) echo "${FAKE_HAS_HEALTH-yes}" ;;
+  *"{{.State.Health.Status}}"*) echo "${FAKE_HEALTH:-healthy}" ;;
+  *) echo "" ;;
+esac
+"""
+
+
+def health_gate() -> str:
+    """The script the deploy runs on the instance, out of the workflow.
+
+    Extracted rather than copied, so the test runs the deployed text and not a
+    paraphrase of it that can drift.
+    """
+    import yaml
+
+    doc = yaml.safe_load((ROOT / ".github" / "workflows" / "deploy.yml").read_text())
+    step = next(
+        s for s in doc["jobs"]["deploy"]["steps"] if s.get("name") == "Prove it came back up"
+    )
+    found = re.search(r"<<'REMOTE'\n(.*?)\nREMOTE\n", step["run"], re.S)
+    assert found, "the deploy's health gate is no longer a REMOTE heredoc"
+    return found.group(1)
+
+
+@pytest.mark.parametrize(
+    ("scenario", "env", "code", "says"),
+    [
+        ("a healthy desk", {"FAKE_HEALTH": "healthy"}, 0, "healthy"),
+        ("one that stopped", {"FAKE_HEALTH": "unhealthy"}, 1, "came up and stopped"),
+        ("one still warming", {"FAKE_HEALTH": "starting"}, 1, "still starting"),
+        ("an image with no healthcheck", {"FAKE_HAS_HEALTH": ""}, 0, "no healthcheck"),
+        ("a restart loop", {"FAKE_RESTARTS_LATER": "7"}, 1, "restarts=0->7"),
+    ],
+)
+def test_the_health_gate_decides_each_case_correctly(tmp_path, scenario, env, code, says):
+    """**Run the gate, do not just read it.**
+
+    The gate is the thing that failed on 2026-11-06 - it proved
+    `status=running restarting=false restarts=0->0` over a node that had
+    written that it was stopping, and the deploy went green. A test that only
+    greps the workflow for `Health.Status` would have passed against a gate
+    that read health and then ignored it.
+
+    So `docker` and `sleep` are replaced on `PATH` and the real script runs.
+    `an image with no healthcheck` is the case that must still pass: an image
+    without one is not a broken deploy, and failing there would block any
+    service that does not define one.
+    """
+    import subprocess
+
+    fake = tmp_path / "bin"
+    fake.mkdir()
+    (fake / "docker").write_text(FAKE_DOCKER)
+    (fake / "sleep").write_text("#!/usr/bin/env bash\nexit 0\n")
+    for name in ("docker", "sleep"):
+        (fake / name).chmod(0o755)
+    script = tmp_path / "gate.sh"
+    script.write_text(health_gate())
+
+    done = subprocess.run(
+        ["bash", str(script)],
+        capture_output=True,
+        text=True,
+        check=False,
+        env={"PATH": f"{fake}:/usr/bin:/bin", "HEALTH_WAIT_S": "1", **env},
+    )
+
+    assert done.returncode == code, f"{scenario}: {done.stdout}{done.stderr}"
+    assert says in done.stdout, f"{scenario}: said {done.stdout!r}"
+
+
 def deploy_sources() -> list[str]:
     """Repository paths the deploy workflow sends to the instance.
 
