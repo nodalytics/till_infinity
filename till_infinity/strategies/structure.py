@@ -556,12 +556,13 @@ class Structure:
                 self.structure[event.kind] += 1
                 if event.kind == "bos":
                     self.warmed["bos"] += 1
-        if self.warmed["bars"]:
-            self.log.info(
-                f"warmed {self.warmed['bars']} bars: "
-                f"swing_highs={self.fold.highs} swing_lows={self.fold.lows} "
-                f"breaks={self.warmed['breaks']} bos={self.warmed['bos']}"
-            )
+        # **No log line here.** Nautilus delivers a `request_bars` response one
+        # bar per call, not as a batch, so logging the running total once per
+        # call wrote "warmed 1 bars", "warmed 2 bars" ... up to the request
+        # limit, per feed: measured at **38,748 lines** on a 32-feed start,
+        # which buries everything else on a two-core box. The desk tally
+        # reports `warm=` on one line every TALLY_EVERY seconds, which is the
+        # number anyone wants - `_tally_extra` above.
 
     def on_bar(self, bar: Bar) -> None:
         """One closed M15 bar through the fold, and any BOS it produced.
