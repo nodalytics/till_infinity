@@ -25,6 +25,12 @@ Every result here passed or failed the same discipline. Most of the "discoveries
 have shipped without it.
 
 - **Walk-forward by time,** with both halves reported, and thresholds pre-registered before the run.
+  **Halves that disagree are information, not a verdict** - the operator's standing instruction of
+  2026-11-07: *"the regime check is necessary but not important, given strategies and findings are
+  meant to be regime specific sometimes."* A mechanism that works in one regime is still a
+  mechanism. When the halves differ, the question is which half we are in now and whether anything
+  observable says so - a gate, not a rejection. Deploying across a disagreement without naming it
+  is a bet on the regime rather than on the edge, and is sized as one.
 - **Controls we generate ourselves:** iid Student-t walks, and GARCH walks where clustering matters.
   **Deriv synthetics are a real market, never a control** (a rule set on 2026-09-29): what we score is
   the feed as served, not the generator Deriv publishes.
