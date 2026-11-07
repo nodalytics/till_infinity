@@ -295,6 +295,32 @@ class Desk(NautilusStrategy):
             self._count("(desk):untraded")
             return None
 
+        # ──── the feed, before the rule's own gates ────
+        #
+        # **`PROPOSALS` is one topic and every desk subscribes to it**, so a
+        # proposal reaches all of them and not only the one whose instrument
+        # it is about. `Surprise.wants` checked the payload's feed against its
+        # *allowlist* - whether anybody may trade that feed - and nothing
+        # checked it was **this** desk's feed, while `place` always sizes
+        # `self._cfg.instrument_id`.
+        #
+        # On 2026-11-07 at 12:30:38 that turned one proposal, `surprise 5.66
+        # on btcusd`, into BUY brackets on USDCAD, EURUSD, USDJPY, USDCHF,
+        # Wall Street 30, US SP 500 and US Tech 100 - seven desks, 21 orders,
+        # 119ms, each logging `btcusd` beside its own prices. EURUSD and
+        # USDCHF were both bought, which is one exposure taken twice in
+        # opposite directions. Only the closed weekend market saved it.
+        #
+        # Here rather than in `wants` because it is not a rule's judgement:
+        # `place` can only size this desk's instrument, so a payload about
+        # another feed is a category error for every rule, and a rule that
+        # forgot the check would reintroduce it. `None` rather than a
+        # `Refusal` because it was never this desk's to decline.
+        feed = str(payload.get("feed") or "")
+        if feed != self._feed_name():
+            self._count("(desk):other-feed")
+            return None
+
         if not self.wants(payload):
             self._count(f"{self.label}:unwanted")
             return None
