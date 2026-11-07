@@ -28,3 +28,19 @@ def donchian_peek(bars, book):
     nxt = bars["close"].shift(-1)
     i = bars.index[(nxt > hi) & tr.notna()]
     return pd.DataFrame({"i": i, "side": 1, "stop": STOP * tr[i].to_numpy(), "hold": 4})
+
+def donchian_entry_peek(bars, book):
+    """Leaks **only through the resting entry level**, which the audit used to ignore.
+
+    The signal bar, side, stop, target and hold are all causal and identical to
+    `strategy`; the one contaminated field is `entry`, set to the next bar's
+    low - a limit nobody could have placed. `audit.lookahead` compared only
+    `["i", "side", "stop", "target", "hold"]`, so this passed it clean, and
+    `research/ideas/zones.py` emits exactly `entry`/`limit`/`expires`.
+    """
+    hi = bars["high"].rolling(N).max().shift(1)
+    tr = (bars["high"] - bars["low"]).rolling(14).mean()
+    i = bars.index[(bars["close"] > hi) & tr.notna()]
+    return pd.DataFrame({"i": i, "side": 1, "stop": STOP * tr[i].to_numpy(), "hold": 4,
+                         "entry": bars["low"].shift(-1)[i].to_numpy(), "limit": 1,
+                         "expires": 4})

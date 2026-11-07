@@ -112,6 +112,29 @@ def test_the_audit_catches_a_peek_and_passes_a_causal_rule():
     assert not lookahead(donchian_peek, walk)["ok"]
 
 
+def test_the_audit_catches_a_peek_in_the_entry_level():
+    """**The hole this audit had.** `donchian_entry_peek` is causal in `i`,
+    `side`, `stop`, `target` and `hold` - the five fields the audit used to
+    compare - and takes its resting entry from the next bar's low. It passed
+    the old comparison and fails the full one. `research/ideas/zones.py`
+    emits exactly those fields, which is how a real leak went unseen."""
+    from mt5bt.strategies.donchian import donchian_entry_peek
+
+    walk = Book("EURUSD", t_walk(3000, seed=5), SPEC, "15m")
+    assert not lookahead(donchian_entry_peek, walk)["ok"]
+
+    # And the old five-field comparison would have let it through, which is
+    # the claim this whole change rests on.
+    import mt5bt.audit as audit_mod
+
+    was = audit_mod.COMPARED
+    try:
+        audit_mod.COMPARED = ("i", "side", "stop", "target", "hold")
+        assert lookahead(donchian_entry_peek, walk)["ok"], "the old list should miss it"
+    finally:
+        audit_mod.COMPARED = was
+
+
 def test_no_edge_on_a_walk_costs_the_spread():
     """Random entries on an iid walk: gross about zero, net about minus the spread, in R."""
     from mt5bt.strategies.random_entry import strategy
