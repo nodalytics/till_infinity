@@ -1,5 +1,21 @@
 """Do origins hold when price comes back to them, and for how many visits?
 
+**SUPERSEDED, and it cannot run.** It imports `till_infinity.structures`,
+retired with `till_platform`, so it has not imported since that move - and it
+scans from `int(origin.when) + 1`, the volatility turn, where an origin is not
+knowable until the impulse that followed broke structure. Measured on the live
+implementation, **0 of 37,542 origins are knowable on their own bar** (median
+delay 2 bars), and those bars are the impulse leaving the zone - this file's
+own definition of a bounce. The error is worth **+0.254 of hold rate on the
+first visit**, 0.931 against 0.677, and the revisit decay this file reports is
+entirely that inflation washing out of visit 1.
+
+See `revisiting.py` and `research/docs/revisiting.md`, which ask the same
+question against `indicators.levels.Origins` - streaming, so an origin's
+knowable time is the bar it first appears at and no index can be got wrong.
+The answer there is no: a distance-matched placebo reproduces the hold rate.
+
+
 The question that decides whether origins are worth trading. An origin is where
 volatility turned and the impulse that followed broke structure, so the claim is
 that unfilled interest was left behind. If that claim is true, price returning
