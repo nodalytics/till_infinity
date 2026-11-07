@@ -75,7 +75,20 @@ def main() -> int:
     listed = raw if isinstance(raw, list) else (raw.get("symbols") or raw.get("data") or [])
     listed = {n if isinstance(n, str) else (n.get("name") or n.get("symbol")) for n in listed}
     listed = {n for n in listed if n}
-    legs = wanted(listed)
+    #: `SYMBOLS` overrides the triangle construction, because some panels are
+    #: a named list rather than a closed set of legs - the COT fade wants the
+    #: seven USD majors **and gold**, and gold is in no currency triangle, so
+    #: `wanted` cannot produce it. Names not listed by the venue are printed
+    #: and skipped rather than silently dropped: a panel that is quietly one
+    #: instrument short still produces a table.
+    named = [s.strip() for s in os.environ.get("SYMBOLS", "").split(",") if s.strip()]
+    if named:
+        legs = [s for s in named if s in listed]
+        absent = [s for s in named if s not in listed]
+        if absent:
+            print(f"not listed by the venue, skipped: {', '.join(absent)}")
+    else:
+        legs = wanted(listed)
     OUT.mkdir(parents=True, exist_ok=True)
     print(f"{len(legs)} legs at {TF} x{BARS} -> {OUT}\n")
     done = 0
