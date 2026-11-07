@@ -212,6 +212,11 @@ class FakeBridge:
     async def tick(self, symbol: str) -> dict:
         return self._answer("tick", (symbol,), {})
 
+    async def calc_profit(
+        self, action: str, symbol: str, volume: float, price_open: float, price_close: float
+    ) -> float:
+        return self._answer("calc_profit", (action, symbol, volume, price_open, price_close), {})
+
     async def bars(self, symbol: str, timeframe: str, count: int, start: int = 0) -> list[dict]:
         return self._answer("bars", (symbol, timeframe), {"count": count, "start": start})
 
@@ -3266,6 +3271,37 @@ def _wired(handler) -> Bridge:
 
 class TestTheBridgeSpeaksTheWireProtocol:
     """What actually crosses the network, for the writes that move money."""
+
+    async def test_calc_profit_names_the_parameters_the_route_declares(self):
+        """**The reading that settles what a tick is worth, without a trade.**
+
+        `order_calc_profit` is the function the terminal computes P&L with, and
+        it answers in the account currency - so it says whether
+        `trade_tick_value` was already converted, which two readings of the
+        field disagreed about and `spec_of` would not guess between.
+
+        The parameter names are checked for the same reason `num_bars` is
+        above: FastAPI drops a query parameter the endpoint does not declare,
+        so a misspelling here would not raise, it would hand back the route's
+        own defaults with a 200 - and a tick value sized off another
+        instrument's price is the error nobody sees.
+        """
+        seen: dict[str, str] = {}
+
+        def handler(request):
+            seen.update(dict(request.url.params))
+            seen["path"] = request.url.path
+            return httpx.Response(200, json={"profit": 1234.5})
+
+        got = await _wired(handler).calc_profit("BUY", "Japan 225", 1.0, 50000.0, 51000.0)
+
+        assert got == pytest.approx(1234.5)
+        assert seen["path"].endswith("/orders/calc/profit")
+        assert seen.get("action") == "BUY"
+        assert seen.get("symbol") == "Japan 225"
+        assert seen.get("volume") == "1.0"
+        assert seen.get("price_open") == "50000.0"
+        assert seen.get("price_close") == "51000.0"
 
     async def test_bars_counts_with_the_parameter_the_route_declares(self):
         """**The route counts with `num_bars`, and this client sent `count`.**

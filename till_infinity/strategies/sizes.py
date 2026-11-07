@@ -224,8 +224,15 @@ def spec_of(
     reading is that the broker settles them in the account currency and
     `currency_profit` names the underlying's. Converting on the wrong one sizes
     Japan 225 158x *larger*; leaving it sizes it 158x smaller, and only one of
-    those can blow up an account. See `docs/venue.md`; it needs a realised P&L
-    observation, not another read.
+    those can blow up an account. See `docs/venue.md`.
+
+    **That ambiguity is now settled per instrument, by the broker.**
+    `calc_tick_value` below is `order_calc_profit` over a known move - the
+    arithmetic the terminal settles P&L with, answered in the account's
+    currency - so where it is present it is preferred to the stated figure,
+    and where it contradicts the stated figure by more than `CONTRADICTION`
+    the instrument is refused rather than resized. `rate` is still never
+    applied to a stated value.
 
     What *is* acted on is a stated value no contract size can explain at all -
     see `_contradicts`. `rate` is otherwise applied only to the figure derived
@@ -255,12 +262,37 @@ def spec_of(
     comparable = account_currency is not None and str(account_currency) == str(
         instrument.quote_currency
     )
-    if (
+    unexplained = (
         comparable
         and _stated(info, "trade_contract_size") > 0.0
         and _contradicts(stated, tick * contract)
-    ):
+    )
+
+    # ──── the broker's own arithmetic, where it answered ────
+    #
+    # `calc_tick_value` is `order_calc_profit` over a known move divided by the
+    # ticks in it: the account-currency value of one tick on one lot, from the
+    # same function the broker settles P&L with. `adapters/mt5/providers.py`
+    # asks once per instrument at load.
+    #
+    # **This is what the ambiguity above was waiting for.** The docstring says
+    # it "needs a realised P&L observation, not another read" - and this is
+    # neither. Nothing is inferred from a field whose unit is in question; the
+    # broker is asked what a move is worth and answers in the account's
+    # currency.
+    #
+    # It corrects a value and never multiplies one. A calculated figure the
+    # stated one contradicts refuses instead of being adopted, because a 158x
+    # gap means one of the two numbers means something nobody has confirmed,
+    # and of the two possible mistakes only one can empty an account. Nor does
+    # it overturn a refusal `tick x contract` already made: NGAS stays refused
+    # whatever this says, because that gap is between two of the venue's own
+    # fields and is not this reading's to settle.
+    calculated = _stated(info, "calc_tick_value")
+    if unexplained:
         value = 0.0
+    elif calculated > 0.0:
+        value = 0.0 if stated > 0.0 and _contradicts(stated, calculated) else calculated
 
     mode = info.get("trade_mode")
     return SymbolSpec(

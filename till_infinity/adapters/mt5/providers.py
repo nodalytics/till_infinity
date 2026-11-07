@@ -51,6 +51,15 @@ from nautilus_trader.model.objects import Currency, Price, Quantity
 
 from .transport import Transport
 
+#: Ticks spanned when asking the broker what a move is worth.
+#:
+#: One tick is rounded to the cent on most instruments, so asking about a
+#: single one returns zero or a figure quantised to uselessness. A thousand
+#: ticks is a move every instrument on the book prices without rounding, and
+#: the answer divides back down exactly because `order_calc_profit` is linear
+#: in the distance.
+CALC_SPAN = 1000
+
 
 class MT5InstrumentProvider(InstrumentProvider):
     """Loads instruments from the bridge, as the type the terminal says.
@@ -70,6 +79,12 @@ class MT5InstrumentProvider(InstrumentProvider):
         self._bridge = bridge
         self._venue = venue
         self._wanted = symbols
+        # Deferred like `terminal.py` does it: `Logger` is Nautilus's and
+        # wants the logging subsystem up, which it is by the time a node
+        # builds its providers but not necessarily when a test imports this.
+        from nautilus_trader.common.component import Logger
+
+        self.log = Logger(type(self).__name__)
 
     async def _ready(self) -> None:
         """Open the transport before using it, every time.
@@ -104,12 +119,78 @@ class MT5InstrumentProvider(InstrumentProvider):
 
     async def load_async(self, instrument_id: InstrumentId, filters: dict | None = None) -> None:
         await self._ready()
-        info = await self._bridge.symbol_info(instrument_id.symbol.value)
+        symbol = instrument_id.symbol.value
+        info = await self._bridge.symbol_info(symbol)
         if not info:
             return
+        calculated = await self._calculated_tick_value(symbol, info)
+        if calculated > 0.0:
+            # A copy: the transport's dict is not this provider's to edit, and
+            # `Proxy.symbol_info` returns one it has already merged a quote into.
+            info = {**info, "calc_tick_value": calculated}
         instrument = self._build(instrument_id, info)
         if instrument is not None:
             self.add(instrument)
+
+    async def _calculated_tick_value(self, symbol: str, info: dict[str, Any]) -> float:
+        """What the **broker** says one tick on one lot is worth, in the
+        account's currency - or `0.0` where it would not say.
+
+        `order_calc_profit` is the function the terminal computes P&L with, so
+        this is the one reading that settles what `trade_tick_value`'s unit
+        is. Two readings of that field were open, one of them sizes a
+        yen-quoted CFD 158x larger than the other, and `sizes.spec_of` refused
+        to guess between them - see `docs/venue.md`, which says it needs a
+        realised P&L observation. This is that observation without the
+        position.
+
+        **Asked over a wide move and divided back down.** One tick is rounded
+        to the cent on most instruments, so a one-tick question comes back
+        quantised to uselessness or to zero.
+
+        **`symbol_info`'s own quote is the right price here, stale as it is.**
+        Everywhere else in this adapter that is a bug - the route is frozen,
+        which is why `tick()` exists and why the quote poll moved to it - but
+        a tick value is a property of the contract and the account's currency,
+        not of where the price is this second. A price minutes old names the
+        same region, and using it costs no extra round trip.
+
+        Never raises. The question is asked once per instrument at startup and
+        can fail for reasons that have nothing to do with this instrument: a
+        name the terminal will not `symbol_select` is a 400, and a transport
+        with no calculator at all is an `AttributeError`. Either leaves sizing
+        on the stated value, which is how the desk already behaves - whereas
+        letting it propagate would drop the instrument and read as a feed that
+        went quiet for no recorded reason.
+        """
+        tick = float(info.get("trade_tick_size") or 0.0)
+        price = float(info.get("ask") or info.get("bid") or 0.0)
+        if tick <= 0.0 or price <= 0.0:
+            return 0.0
+        try:
+            profit = await self._bridge.calc_profit(
+                "BUY", symbol, 1.0, price, price + CALC_SPAN * tick
+            )
+        except Exception:
+            return 0.0
+        value = abs(float(profit or 0.0)) / CALC_SPAN
+
+        # **The measurement, in the startup log.** `docs/venue.md` records the
+        # seven CFDs whose stated value is a factor out and says the question
+        # needs a realised P&L observation; this line is that observation, per
+        # instrument, every time the desk starts. A ratio near 1 says the
+        # stated figure was already in the account's currency; the ratio being
+        # the instrument's FX rate says it was not.
+        #
+        # Only where they differ, because 23 lines that all read `1.00x` is a
+        # startup log nobody reads twice.
+        stated = float(info.get("trade_tick_value_loss") or info.get("trade_tick_value") or 0.0)
+        if stated > 0.0 and value > 0.0 and not 0.99 <= value / stated <= 1.01:
+            self.log.warning(
+                f"{symbol}: the broker prices a tick at {value:.6g} "
+                f"against a stated {stated:.6g} ({value / stated:.4g}x)"
+            )
+        return value
 
     def _build(self, instrument_id: InstrumentId, info: dict[str, Any]) -> Instrument | None:
         digits = int(info.get("digits") or 5)

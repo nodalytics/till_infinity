@@ -286,6 +286,39 @@ class Proxy:
                 info[field] = tick[field]
         return info
 
+    async def calc_profit(
+        self, action: str, symbol: str, volume: float, price_open: float, price_close: float
+    ) -> float:
+        """What a move is worth in the **account** currency, by the terminal's
+        own arithmetic.
+
+        `order_calc_profit` - the same function the broker settles P&L with,
+        which is why it answers a question no field on `symbol_info` can: see
+        `strategies/sizes.spec_of` on the two readings of `trade_tick_value`
+        and the 158x between them.
+
+        Nothing is traded or changed; this is arithmetic. The order type comes
+        through `_const` rather than a literal for the reason every constant
+        here does - the remote module owns the numbering, and a hardcoded one
+        that drifts would price a sell as a buy.
+        """
+        await self._select(symbol)
+        name = "ORDER_TYPE_BUY" if action.upper() == "BUY" else "ORDER_TYPE_SELL"
+        kind = await self._const(name)
+        if kind is None:  # pragma: no cover - a module without the constant
+            raise ProxyError(f"the remote MetaTrader5 has no {name}")
+        got = await self._call(
+            "order_calc_profit",
+            kind,
+            symbol,
+            float(volume),
+            float(price_open),
+            float(price_close),
+        )
+        if got is None:
+            raise ProxyError(f"order_calc_profit said nothing for {symbol}")
+        return float(got)
+
     async def bars(self, symbol: str, timeframe: str, count: int, start: int = 0) -> list[dict]:
         """Bars by position back from now. `start=0` is the forming bar."""
         await self._select(symbol)
