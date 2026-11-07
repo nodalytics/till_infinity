@@ -157,6 +157,38 @@ def test_the_rule_still_refuses_the_dearest_round_trips_on_the_target():
     assert verdict.gate == "cost"
 
 
+def test_the_tally_carries_the_cost_arithmetic_whichever_gate_bound():
+    """**One line at INFO would have saved a whole diagnosis.**
+
+    On 2026-11-07 the live desk refused two of two proposals on `cost` and
+    nothing at INFO carried the numbers, so which side of the inequality the
+    refusal sat on had to be inferred from tally ordering and a 5.7-year
+    volatility estimate off a different data source. The two gates use
+    different denominators - the target and the risk - so a reader needs both
+    ratios and both limits to know which one bound.
+
+    The **tally** rather than a log line, because refusals are hundreds a day
+    by design, which is exactly why `Desk.consider` records them at debug, and
+    this desk has already filled a log with 38,748 lines in one deploy.
+    """
+    dear = Standing(0.60 * UNIT)
+    assert dear.decide(proposal()).gate == "cost"
+
+    extra = dear._tally_extra()
+    assert "of target" in extra, extra
+    assert "of risk" in extra, extra
+    # Both limits named, so the line says what it was measured against.
+    assert "limit" in extra
+    assert extra.count("limit") == 2, extra
+
+
+def test_a_desk_that_has_priced_nothing_reports_nothing():
+    """Absent is not zero. A tally reading "0% of target" on a desk that never
+    saw a quote is a measurement of nothing presented as a measurement - the
+    failure the `{}`-not-zeros rule exists for."""
+    assert Standing(0.10 * UNIT)._tally_extra() == ""
+
+
 def test_a_cheap_round_trip_still_becomes_a_trade():
     """The control. A gate added to the money path has to be shown to let
     something through, or the 40% it refuses is indistinguishable from 100%."""

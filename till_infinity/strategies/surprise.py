@@ -190,6 +190,38 @@ class Surprise:
                 f"this desk can never trade. Allowed: {sorted(self._allowed())}"
             )
 
+    #: The last round trip this rule priced, as `(cost, risk, reward)`.
+    #:
+    #: **Kept so the tally can say which denominator bound a refusal.** On
+    #: 2026-11-07 the live desk refused two of two proposals on `cost` and
+    #: nothing at INFO carried the numbers, so which side of
+    #: `spread <= cost_share * reward` the refusal sat on had to be inferred
+    #: from tally ordering and a 5.7-year volatility estimate off a different
+    #: data source. The two gates divide by different things - the target and
+    #: the risk - so one ratio cannot say which bound.
+    #:
+    #: `None` rather than zeros, because a desk that has priced nothing must
+    #: not report a round trip of 0%.
+    _priced: tuple[float, float, float] | None = None
+
+    def _tally_extra(self) -> str:
+        """The cost arithmetic, for the tally line that is already at INFO.
+
+        Here rather than in a log call at the refusal: refusals are hundreds a
+        day by design - which is why `Desk.consider` records them at debug -
+        and a line per refusal is how this desk produced a 38,748-line deploy.
+        """
+        if self._priced is None:
+            return ""
+        cost, risk, reward = self._priced
+        if reward <= 0.0 or risk <= 0.0:
+            return ""
+        return (
+            f" cost: {cost / reward:.0%} of target (limit "
+            f"{self.profile.cost_share:.0%}), {cost / risk:.0%} of risk "
+            f"(limit {self._spread_limit():.0%})"
+        )
+
     def _spread_limit(self) -> float:
         """The share of the risk a round trip may cost, as configured.
 
@@ -256,6 +288,9 @@ class Surprise:
         reward = target_r * risk
         if reward <= 0.0:
             return Refusal(gate="reward", detail="a zero target", feed=feed)
+        # Recorded whether or not a gate fires, so the tally shows the state of
+        # a desk that is passing as well as one that is refusing.
+        self._priced = (cost, risk, reward)
         if cost > reward * self.profile.cost_share:
             return Refusal(
                 gate="cost",
