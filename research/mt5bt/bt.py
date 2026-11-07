@@ -60,7 +60,11 @@ def main() -> None:
     ap.add_argument("--equity", type=float, default=10_000.0)
     ap.add_argument("--max-open", type=int, default=0)
     ap.add_argument("--null", type=int, default=0, help="random-entry replays")
-    ap.add_argument("--audit", action="store_true")
+    # **Default on.** It was `--audit`, opt-in, and had two callers in the
+    # whole repository - this one and its own test. A guard nobody remembers
+    # to point at the code protects nothing, so the flag is now the opt-out.
+    ap.add_argument("--audit", action="store_true", help="deprecated: the audit is the default")
+    ap.add_argument("--no-audit", action="store_true", help="skip the look-ahead audit")
     ap.add_argument("--ticks", action="store_true",
                     help="load the store's ticks for the span: fills from ticks where they cover")
     ap.add_argument("--from-ticks", action="store_true",
@@ -122,7 +126,7 @@ def main() -> None:
     costs = Costs(spread_points=a.spread_points, spread_mult=a.spread_mult,
                   commission_per_lot=a.commission, slippage_points=a.slippage_points,
                   stop_slip_frac=a.stop_slip_frac, fill=a.fill)
-    if a.audit:
+    if not a.no_audit:
         for b in books:
             res = lookahead(strat, b)
             print(f"look-ahead audit {b.symbol}: {'pass' if res['ok'] else 'FAIL'} over "

@@ -24,7 +24,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from till_infinity.strategies.models import SymbolSpec
+from till_infinity.domain.models import SymbolSpec
 
 DB = os.environ.get("MT5BT_DB", os.path.expanduser("~/till_infinity/data/mt5bt.db"))
 
