@@ -1101,8 +1101,19 @@ def retest(o, h, l, c, z: Zone, A: float, n: int) -> dict:
     for k in range(end + 1, min(n - 1, end + 1 + RETEST)):
         if l[k] > hi2:
             continue
-        if c[k] < lo2 - BUF * A:  # it did not hold; this is not a retest
-            break
+        # **No outcome filter on the fill bar.** This used to `break` when
+        # `c[k] < lo2 - BUF * A` - which is `stop_px` on the next line - so a
+        # retest whose fill bar closed through its own stop was never emitted
+        # and the engine never saw it. Since the first bar to reach the zone
+        # *is* the fill bar, no earlier invalidation is possible, so that test
+        # could only ever be about this bar's own result: a one-sided removal
+        # of losers, and selective rather than total, because the engine stops
+        # on `low <= stop` and not on the close - a bar that traded through and
+        # closed back above still counted. Strictly favourable, therefore.
+        # Found by the look-ahead audit of 2026-11-07; `audit.lookahead` could
+        # not catch it because it compared five of the signal's eleven fields
+        # and ignored `entry`, `limit` and `expires` - exactly what is emitted
+        # here. Re-run anything this file reported before that date.
         out["retest"] = dict(i=k - 1, entry=hi2, stop_px=lo2 - BUF * A, limit=1, expires=RETEST)
         out["retest_line"] = dict(i=k - 1, entry=line2, stop_px=lo2 - BUF * A, limit=1,
                                   expires=RETEST)

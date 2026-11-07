@@ -22,6 +22,7 @@ from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
 from till_infinity.domain.models import Intent, Refusal, Side
+from till_infinity.statespace.proposing import TRIGGER
 from till_infinity.strategies.entries import (
     ArrivalEntry,
     ArrivalEntryConfig,
@@ -757,7 +758,16 @@ def test_the_profile_keeps_the_measured_numbers():
         EdgeEntryConfig(order_id_tag="C", instrument_id=EURUSD.id, bar_type=BAR_TYPE)
     ).profile
     assert profile.reward_floor == 1.70
-    assert profile.least_surprise == 3.5
+    # **The floor is the producer's trigger, not a number of its own.** At 3.5
+    # against `proposing.TRIGGER` of 3.0, every proposal in [3.0, 3.5) was
+    # emitted only to be refused here - and `|surprise| >= 3.0` fires on 1.80%
+    # of real-market 15m bars, so the discarded band was not rare. The refusal
+    # counter then reads as a quiet market rather than as two constants in
+    # different modules disagreeing.
+    assert profile.least_surprise == TRIGGER
+    assert profile.least_surprise <= TRIGGER, (
+        "a floor above the producer's trigger refuses everything it is sent"
+    )
     assert profile.cost_share == 0.10
     for helper in ("floored_target", "protection", "risk_scale", "share_of_risk", "hold_for"):
         assert hasattr(profile, helper), helper

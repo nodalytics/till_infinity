@@ -45,6 +45,7 @@ from typing import Any, ClassVar
 
 from ..domain import costs
 from ..domain.models import Intent, Refusal, Side
+from ..statespace.proposing import TRIGGER
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .exits import ManagedExit
 from .profile import Profile
@@ -67,7 +68,19 @@ class SurpriseProfile(Profile):
     #: A target must pay this multiple of the real risk. 1.70 measured.
     reward_floor: ClassVar[float] = 1.70
     #: How surprising a reading has to be. Below it there is nothing to trade.
-    least_surprise: ClassVar[float] = 3.5
+    #:
+    #: **It must not exceed the producer's own trigger.** `proposing.TRIGGER`
+    #: is 3.0, so at 3.5 every proposal in [3.0, 3.5) was emitted only to be
+    #: refused here - a band of work done and thrown away, and a refusal
+    #: counter that reads as the market being quiet rather than as two
+    #: constants in different modules disagreeing. Measured 2026-11-07:
+    #: `|surprise| >= 3.0` on 1.80% of real-market 15m bars, so the discarded
+    #: band was not rare.
+    #:
+    #: Set to the trigger. Raising it again is a decision to refuse what was
+    #: asked for, and `test_the_floor_is_not_above_the_producers_trigger`
+    #: fails if the two drift apart.
+    least_surprise: ClassVar[float] = TRIGGER
     #: The share of the move a round trip may cost before the idea is over.
     #:
     #: **Chosen, not measured.** `statespace/deciding.py` cited this as the

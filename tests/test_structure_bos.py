@@ -329,6 +329,97 @@ def test_a_per_side_stop_resolves_to_the_shared_number_until_a_side_is_set():
     assert (sided.reach_for(1), sided.reach_for(-1)) == (25, REACH)
 
 
+def test_warm_history_advances_the_fold_and_never_acts():
+    """**A cold fold cannot produce a signal for days.** `on_start` builds an
+    empty `Fold`, a swing needs `2 * reach + 1` bars, and a BOS needs two
+    swings a side. Replayed cold on production M15 bars the first BOS landed
+    at bar 508-939 - five to ten days of continuous bars after every deploy.
+    Measured 2026-11-07: a desk 7.8 hours old had zero swings on all 32 feeds.
+
+    `on_historical_data` is driven directly here. A `BacktestEngine` with no
+    catalogue has nothing to answer a `request_bars` with, so the engine rig
+    can only prove the request does not raise - which the composite path did,
+    once: Nautilus refuses `request_bars` for a composite bar type outright,
+    and that raised in `on_start` and took the desk down rather than leaving
+    it cold. The wiring is exercised live; this is the handler.
+    """
+    strategy = run_external(zigzag(40, reach=3))
+    _bar_type, data = external_feed(zigzag(140, reach=3), 0.10)
+    bars = [row for row in data if isinstance(row, Bar)]
+    assert bars, "no bars to warm with"
+
+    before_bos = strategy.structure["bos"]
+    taken_before = len(strategy.closed)
+    strategy.on_historical_data(bars)
+
+    # 1. It folded, and the fold carries swings from it.
+    assert strategy.warmed["bars"] == len(bars)
+    assert strategy.fold.highs + strategy.fold.lows > 0, "warm bars produced no swings"
+    # 2. `structure["bars"]` counts them, because it is the bar clock and is
+    #    only ever read as a difference.
+    assert strategy.structure["bars"] >= strategy.warmed["bars"]
+    # 3. **Warm breaks are counted and never acted on.** A BOS on a bar hours
+    #    old names a price that has gone.
+    assert strategy.structure["bos"] >= before_bos
+    assert len(strategy.closed) == taken_before, "a warm bar reached the venue"
+
+
+def test_a_warm_break_is_counted_apart_from_a_live_one():
+    """A warmed fold and a fold filled by the market are different states, and
+    a tally that pools them cannot say which happened. Measured apart."""
+    strategy = run_external(zigzag(40, reach=3))
+    _bar_type, data = external_feed(zigzag(200, reach=3), 0.10)
+    bars = [row for row in data if isinstance(row, Bar)]
+
+    strategy.on_historical_data(bars)
+
+    assert strategy.warmed["breaks"] >= strategy.warmed["bos"]
+    assert strategy.warmed["bos"] <= strategy.structure["bos"]
+
+
+def test_the_atr_is_warm_when_the_fold_is():
+    """**Version-dependent, so asserted.** `register_indicator_for_bars` wires
+    an indicator to the *subscription*; whether Nautilus also feeds it from a
+    `request_bars` response is not guaranteed. It matters because a cold ATR
+    behind a warm fold makes the first stop `20 * spread` wearing an ATR's
+    name - safe only while the fold took days to produce anything."""
+    strategy = run_external(zigzag(140, reach=3))
+
+    assert strategy.atr.initialized, "the fold is warm and the ATR is not"
+
+
+def test_a_profile_asking_for_no_warming_requests_nothing():
+    """The escape hatch has to work: a sweep comparing warm against cold sets
+    `warm_bars_request = 0`, and that must not request or fold anything."""
+
+    class ColdProfile(TinyProfile):
+        warm_bars_request: ClassVar[int] = 0
+
+    class ColdEdge(Tiny, ManagedExit, EdgeEntry):
+        profile: ClassVar[ColdProfile] = ColdProfile.__new__(ColdProfile)
+
+    engine = BacktestEngine(
+        config=BacktestEngineConfig(
+            trader_id="TESTER-001", logging=LoggingConfig(bypass_logging=True)
+        )
+    )
+    engine.add_venue(
+        venue=VENUE,
+        oms_type=OmsType.NETTING,
+        account_type=AccountType.MARGIN,
+        base_currency=USD,
+        starting_balances=[Money(1_000_000.0, USD)],
+    )
+    engine.add_instrument(INSTRUMENT)
+    bar_type, data = external_feed(zigzag(140, reach=3), 0.10)
+    engine.add_data(data)
+    strategy = ColdEdge(EdgeEntryConfig(instrument_id=INSTRUMENT.id, bar_type=bar_type))
+    engine.add_strategy(strategy)
+    engine.run()
+
+    assert strategy.warmed["bars"] == 0
+
+
 def test_the_shipped_rule_runs_the_numbers_its_name_states():
     """`L50|M15|N20|time`, read off the profile a deploy would build.
 
