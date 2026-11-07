@@ -52,6 +52,7 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
+from datetime import timedelta
 from typing import Any, ClassVar
 
 from nautilus_trader.model.data import Bar
@@ -307,6 +308,19 @@ class StructureProfile(Profile):
 
     name: ClassVar[str] = "smc-bos-causal"
     description: ClassVar[str] = "smc_bos_c_L50|M15|N20|time"
+    #: Bars of history to fold before trading, and **not a tuning knob**.
+    #:
+    #: `on_start` builds an empty `Fold`, and a swing needs `2 * reach + 1`
+    #: bars - 101 at the shipped reach of 50. A *break* needs more: the trend
+    #: label stays `unlabelled` until two swing highs and two swing lows are
+    #: confirmed. Replayed cold on production M15 bars, the first swing landed
+    #: at bar 102-147, the first trend label at 375-548 and **the first BOS at
+    #: 508-939** - five to ten days of continuous bars after every deploy, and
+    #: longer on a feed whose market closes over a weekend. A desk that reports
+    #: healthy and cannot produce a signal for a week is the failure this
+    #: removes, and `StatespaceActor.warm_bars_request` already does the same
+    #: thing with the same machinery.
+    warm_bars_request: ClassVar[int] = 1_000
     #: Its own shape, so a statespace proposal on the same topic is skipped
     #: rather than judged - this rule reads bars and nothing else.
     shape: ClassVar[str] = "structure"
@@ -436,7 +450,36 @@ class Structure:
         self.closed: list[Closed] = []
         self.atr = build_detector("atr", period=self.profile.atr_period)
         self.register_indicator_for_bars(self._cfg.bar_type, self.atr)
+        #: Warm events are counted apart from live ones, so a fold warmed by
+        #: replay and a fold filled by the market can be told apart in the
+        #: tally. A port is judged on these before it is judged on any money.
+        self.warmed: dict[str, int] = {"bars": 0, "breaks": 0, "bos": 0}
         super().on_start()
+        if self.profile.warm_bars_request > 0:
+            # Asked as a span of this bar type rather than a date, so the same
+            # number of bars is covered whatever the interval - the shape
+            # `StatespaceActor` uses. `start` is positional and required: a
+            # request with no window is a TypeError, not a request for
+            # everything.
+            span = timedelta(seconds=self._bar_seconds() * self.profile.warm_bars_request)
+            start = self.clock.utc_now() - span
+            # **A composite bar type cannot be requested.** Nautilus refuses
+            # `request_bars` for one outright - "Use a standard bar type with
+            # request_bars. Composite bar types can be used with
+            # request_aggregated_bars" - and this rule is configured both ways:
+            # the live desks run `...-15-MINUTE-LAST-EXTERNAL`, which is
+            # standard, while a backtest aggregates M15 from an M1 feed. Asking
+            # the wrong one raises in `on_start`, which takes the desk down
+            # rather than leaving it cold.
+            if self._cfg.bar_type.is_composite():
+                self.request_aggregated_bars(
+                    [self._cfg.bar_type],
+                    start,
+                    limit=self.profile.warm_bars_request,
+                    include_external_data=False,
+                )
+            else:
+                self.request_bars(self._cfg.bar_type, start, limit=self.profile.warm_bars_request)
         if not str(self._cfg.bar_type.spec).startswith("15-MINUTE"):
             # Said out loud rather than refused: a sweep may deliberately run
             # the same rule on another clock, and a deploy that did so by
@@ -449,6 +492,76 @@ class Structure:
             )
 
     # -------------------------------------------------------------- the signal
+
+    def _tally_extra(self) -> str:
+        """The fold's state on the desk's tally line.
+
+        **A trade count of zero cannot tell "no setups" from "no swings
+        yet".** On 2026-11-07 all 32 feeds had zero confirmed swings after 7.8
+        hours and nothing said so: the fold needs 101 bars for one swing and
+        two a side before a break can be labelled, so this is the number that
+        reads a cold fold at a glance.
+        """
+        return (
+            f" bars={self.structure['bars']}"
+            f" warm={self.warmed['bars']}"
+            f" swings={self.fold.highs}/{self.fold.lows}"
+            f" bos={self.structure['bos']} choch={self.structure['choch']}"
+        )
+
+    def _bar_seconds(self) -> float:
+        """This bar type's interval in seconds, for the warm request's span."""
+        spec = self._cfg.bar_type.spec
+        step = float(spec.step)
+        unit = str(spec.aggregation)
+        if "SECOND" in unit:
+            return step
+        if "MINUTE" in unit:
+            return step * 60.0
+        if "HOUR" in unit:
+            return step * 3600.0
+        if "DAY" in unit:
+            return step * 86400.0
+        # Unknown aggregation: ask for the bars by count and let the window be
+        # generous rather than refuse to warm at all.
+        return step * 900.0
+
+    def on_historical_data(self, data: Any) -> None:
+        """Fold requested history, which warms and never acts.
+
+        **The fold advances; `on_data` is not called.** A BOS on a bar hours
+        old names a price that has gone - the rule `StatespaceActor`'s own
+        handler states - so a warm break is counted and nothing is proposed.
+
+        The ATR is fed here too. `register_indicator_for_bars` wires an
+        indicator to the *subscription*, and whether Nautilus also feeds it
+        from a `request_bars` response is version-dependent - so this is
+        asserted by a test rather than assumed, because a cold ATR when the
+        fold is already warm makes the first stop `20 * spread` wearing an
+        ATR's name. That used to be safe only because the fold took days.
+        """
+        rows = data if isinstance(data, (list, tuple)) else [data]
+        for row in rows:
+            if not isinstance(row, Bar):
+                continue
+            if not self.atr.initialized:
+                self.atr.handle_bar(row)
+            self.warmed["bars"] += 1
+            self.structure["bars"] += 1
+            events = self.fold.update(float(row.high), float(row.low), float(row.close))
+            self.structure["swing_highs"] = self.fold.highs
+            self.structure["swing_lows"] = self.fold.lows
+            self.warmed["breaks"] += len(events)
+            for event in events:
+                self.structure[event.kind] += 1
+                if event.kind == "bos":
+                    self.warmed["bos"] += 1
+        if self.warmed["bars"]:
+            self.log.info(
+                f"warmed {self.warmed['bars']} bars: "
+                f"swing_highs={self.fold.highs} swing_lows={self.fold.lows} "
+                f"breaks={self.warmed['breaks']} bos={self.warmed['bos']}"
+            )
 
     def on_bar(self, bar: Bar) -> None:
         """One closed M15 bar through the fold, and any BOS it produced.

@@ -112,14 +112,37 @@ def build(high, low, close, index: int, resistance: bool, band: np.ndarray) -> Z
     half = min(span * MULT, abs(level) * MAX_PERCENT / 100.0) / 2
     if half <= 0:
         return None
-    zone = Zone(top=level + half, bottom=level - half, index=index, resistance=resistance)
-    # Which side price ended on, and how often it changed its mind.
-    for price in close[index:]:
-        if price > zone.top and not zone.above:
-            zone.above, zone.breaks = True, zone.breaks + 1
-        elif price < zone.bottom and zone.above:
-            zone.above, zone.breaks = False, zone.breaks + 1
-    return zone
+    # **No accumulation here.** This used to walk `close[index:]` - to the last
+    # bar of the series - so `zone.above`/`zone.flipped` was the *terminal*
+    # state and `zone.breaks` the lifetime crossing count. Both were then
+    # attached to every visit of the zone and used as features against the
+    # target `broke` ("closed through the far edge within FORWARD bars"), so
+    # the feature counted the event that is the label plus the labels of every
+    # later visit. Any "flipped zones behave differently" result from this file
+    # or `bjorgum_model.py` before 2026-11-07 is void. `state_at` computes it
+    # as of a visit instead.
+    return Zone(top=level + half, bottom=level - half, index=index, resistance=resistance)
+
+
+def state_at(close, zone: Zone, at: int) -> tuple[bool, int]:
+    """Which side price is on, and how often it has flipped, **as of `at`**.
+
+    Causal by construction: the window ends where the visit begins, so a
+    feature attached to that visit cannot see it resolve.
+    """
+    above = False
+    breaks = 0
+    for price in close[zone.index : max(at, zone.index)]:
+        if price > zone.top and not above:
+            above, breaks = True, breaks + 1
+        elif price < zone.bottom and above:
+            above, breaks = False, breaks + 1
+    return above, breaks
+
+
+def flipped_at(zone: Zone, above: bool) -> bool:
+    """`Zone.flipped` against a state read as of a visit rather than the end."""
+    return zone.resistance != (not above)
 
 
 def merge(zones: list[Zone]) -> list[Zone]:
@@ -212,8 +235,9 @@ def main() -> None:
             + [z for z in (build(high, low, close, i, False, band) for i in lo_p) if z]
         )
         for zone in zones:
-            for n, (_, broke, _) in enumerate(visits_and_outcomes(high, low, close, zone), 1):
-                rows[family(feed)].append((n, zone.flipped, zone.breaks, broke))
+            for n, (at, broke, _) in enumerate(visits_and_outcomes(high, low, close, zone), 1):
+                above, breaks = state_at(close, zone, at)
+                rows[family(feed)].append((n, flipped_at(zone, above), breaks, broke))
 
     print(f"interval {interval}, {sum(len(v) for v in rows.values()):,} zone visits\n")
     for fam in ("real market", "boom/crash", "synthetic control"):

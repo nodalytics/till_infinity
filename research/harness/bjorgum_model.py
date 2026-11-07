@@ -40,7 +40,9 @@ from bjorgum import (  # type: ignore[import-not-found]
     MAX_FEEDS,
     atr,
     build,
+    flipped_at,
     merge,
+    state_at,
     pivots,
     visits_and_outcomes,
 )
@@ -100,14 +102,23 @@ def gather(interval: str) -> dict[str, list[tuple[int, dict[str, float], bool]]]
         for zone in zones:
             width = (zone.top - zone.bottom) / max(zone.mid, 1e-9)
             for n, (at, broke, above) in enumerate(visits_and_outcomes(high, low, close, zone), 1):
+                state = state_at(close, zone, at)
                 rows[fam].append(
                     (
                         at,
                         {
                             "visit": float(n),
                             "fresh": 1.0 if n == 1 else 0.0,
-                            "flipped": 1.0 if zone.flipped else 0.0,
-                            "crossings": float(zone.breaks),
+                            # **As of this visit, not as of the last bar.**
+                            # `zone.flipped`/`zone.breaks` were accumulated to
+                            # the end of the series in `build`, so they carried
+                            # the outcome of this visit and of every later one
+                            # into a feature scored against `broke`. The river
+                            # learner below is causal in its updates; that
+                            # cannot save contaminated inputs. See
+                            # `bjorgum.state_at`.
+                            "flipped": 1.0 if flipped_at(zone, state[0]) else 0.0,
+                            "crossings": float(state[1]),
                             "width": width * 1000,
                             "age": float(at - zone.index),
                             "from_above": 1.0 if above else 0.0,

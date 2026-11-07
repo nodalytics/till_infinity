@@ -57,6 +57,7 @@ above it and not inside.
 
 from __future__ import annotations
 
+from datetime import timedelta
 from typing import Any
 
 from nautilus_trader.config import StrategyConfig
@@ -112,6 +113,11 @@ class DeskConfig(StrategyConfig, frozen=True):
     max_spread_vol: float = 0.5
     #: Refuse an entry within this long of the session close, in hours.
     closing_within_hours: float = 0.5
+
+
+#: Seconds between tally lines, matching `StatespaceActor`'s cadence so a
+#: reader comparing the two is comparing like with like.
+TALLY_EVERY = 300.0
 
 
 class Desk(NautilusStrategy):
@@ -180,6 +186,34 @@ class Desk(NautilusStrategy):
         # rather than somewhere a reader has to go looking for it.
         subscribe(self, PROPOSALS, self.on_data)
         self.log.info(f"{self._cfg.rule} on {self._cfg.bar_type}, proposals on {PROPOSALS}")
+        # **Say what this desk is doing while it runs, not only when it stops.**
+        # `taken`, `refused` and `passed_over` were logged in `on_stop` alone,
+        # so on 2026-11-07 sixty-four desks ran nine hours and the only way to
+        # learn whether a single swing had been confirmed was to stop the node.
+        # The diagnosis that followed needed exactly this line. It reports and
+        # never acts - a quiet desk is a legitimate state, not a fault.
+        self.clock.set_timer(
+            name=f"desk-tally-{self._cfg.rule}-{self._cfg.instrument_id}",
+            interval=timedelta(seconds=TALLY_EVERY),
+            callback=lambda _event: self._say_tally(),
+        )
+
+    def _say_tally(self) -> None:
+        """One line: what was taken, what was refused, and what ate the rest."""
+        gates = dict(sorted(self.passed_over.items()))
+        self.log.info(
+            f"desk: taken={self.taken} refused={self.refused} "
+            f"gates={gates or {}}{self._tally_extra()}"
+        )
+
+    def _tally_extra(self) -> str:
+        """What a rule adds to the tally beyond the desk's own counters.
+
+        Empty here. `Structure` overrides it with the fold's state, which is
+        what distinguishes "no setups" from "no swings yet" - different
+        failures that a trade count of zero cannot tell apart.
+        """
+        return ""
 
     def on_stop(self) -> None:
         """Say what it did, because a strategy that stops silently leaves no
