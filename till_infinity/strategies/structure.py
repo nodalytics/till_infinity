@@ -453,7 +453,7 @@ class Structure:
         #: Warm events are counted apart from live ones, so a fold warmed by
         #: replay and a fold filled by the market can be told apart in the
         #: tally. A port is judged on these before it is judged on any money.
-        self.warmed: dict[str, int] = {"bars": 0, "breaks": 0, "bos": 0}
+        self.warmed: dict[str, int] = {"bars": 0, "breaks": 0, "bos": 0, "choch": 0}
         super().on_start()
         if self.profile.warm_bars_request > 0:
             # Asked as a span of this bar type rather than a date, so the same
@@ -502,11 +502,21 @@ class Structure:
         two a side before a break can be labelled, so this is the number that
         reads a cold fold at a glance.
         """
+        #: **Live events apart from warm ones.** `structure['bos']` pools both,
+        #: so a desk whose only breaks came from the 1,250 history bars read
+        #: `bos=3 taken=0` - which looks like three setups ignored and is
+        #: actually three *historical* setups and no live one. Warm breaks
+        #: never reach `on_data` by design, so pooling them makes the tally
+        #: say the opposite of what happened. Asked on the live desk within
+        #: twenty minutes of shipping it.
+        live_bos = self.structure["bos"] - self.warmed["bos"]
+        live_choch = self.structure["choch"] - self.warmed.get("choch", 0)
         return (
             f" bars={self.structure['bars']}"
             f" warm={self.warmed['bars']}"
             f" swings={self.fold.highs}/{self.fold.lows}"
-            f" bos={self.structure['bos']} choch={self.structure['choch']}"
+            f" bos={live_bos}+{self.warmed['bos']}w"
+            f" choch={live_choch}+{self.warmed.get('choch', 0)}w"
         )
 
     def _bar_seconds(self) -> float:
@@ -554,8 +564,9 @@ class Structure:
             self.warmed["breaks"] += len(events)
             for event in events:
                 self.structure[event.kind] += 1
-                if event.kind == "bos":
-                    self.warmed["bos"] += 1
+                # Every kind, not just `bos`: the tally subtracts warm from
+                # pooled, and a kind counted on one side only reads as live.
+                self.warmed[event.kind] = self.warmed.get(event.kind, 0) + 1
         # **No log line here.** Nautilus delivers a `request_bars` response one
         # bar per call, not as a batch, so logging the running total once per
         # call wrote "warmed 1 bars", "warmed 2 bars" ... up to the request

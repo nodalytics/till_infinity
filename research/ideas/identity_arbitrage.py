@@ -61,6 +61,10 @@ DELAYS = tuple(int(d) for d in os.environ.get("DELAYS", "0,1,2,3").split(","))
 HORIZONS = tuple(int(h) for h in os.environ.get("HORIZONS", "1,3,6,24").split(","))
 #: Entry threshold, pre-specified from the aggregate's peak rather than swept.
 ENTRY = float(os.environ.get("ENTRY", "3.0"))
+#: Minimum gap between entries, as a multiple of the horizon. 0 keeps every
+#: qualifying bar, which is the published behaviour; 1.0 makes the forward
+#: windows non-overlapping.
+GAP = float(os.environ.get("GAP", "0"))
 #: Null repetitions.
 REPS = int(os.environ.get("REPS", "200"))
 SEED = 20261013
@@ -146,6 +150,24 @@ def readings(legs, names, *, delay: int, break_link=None):
             if break_link is not None:
                 forward = break_link(seen, forward)
             wide = np.abs(seen) > ENTRY
+            # **De-overlapping, off by default.** Every qualifying bar is an
+            # entry, and a horizon of 96 bars means a run above the threshold
+            # produces dozens of trades sharing almost the same forward window.
+            # That does not bias the mean but it destroys independence: an
+            # `n` of 208 at `h = 96` can be two episodes wearing 208 rows'
+            # clothing. This repository has the failure twice - a direction AUC
+            # of 0.79 that read 0.51 de-overlapped, and a 0.6365 touch rate
+            # that read 0.5092 - so `GAP` thins entries to one per `GAP *
+            # horizon` bars and the edge is re-read against it.
+            if GAP > 0.0:
+                need = max(1, int(GAP * horizon))
+                thinned = np.zeros_like(wide)
+                last = -need
+                for i in np.flatnonzero(wide):
+                    if i - last >= need:
+                        thinned[i] = True
+                        last = i
+                wide = thinned
             if wide.sum() < 25:
                 continue
             earned = direction * -np.sign(seen[wide]) * forward[wide]

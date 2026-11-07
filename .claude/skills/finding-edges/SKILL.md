@@ -118,6 +118,21 @@ survived BH as profitable** while five survived as losers.
 **A discovery / confirmation split.** Fix a date, find on one side, confirm on
 the other. A tail picked out of many cells looks good by chance.
 
+**But a split that disagrees is not automatically a refutation.** The operator's
+standing instruction, 2026-11-07: *"for the regime check I think it is necessary
+but not important, given strategies and findings are meant to be regime specific
+sometimes - it might not work across regimes every time."* Demanding that an
+edge hold in every period rejects things that work for understandable reasons,
+and a mechanism that only operates in one regime is still a mechanism.
+
+So run the split, and report it as **information rather than as a verdict**. The
+question a disagreement raises is not "is this real" but **"which half are we in
+now, and is there something observable that says so"** - which turns a pass/fail
+into a gating condition, and a gating condition is more useful than a rejection.
+What is *not* acceptable is deploying across a disagreement without naming it:
+a rule that pays in one regime and loses in the other, run blind, is a bet on
+the regime and not on the edge, and it should be sized as one.
+
 **Block bootstrap when the rows are not independent.** Regime labels persist for
 hours and trades cluster in days, so an ordinary standard error is far too
 narrow. Resample whole days.

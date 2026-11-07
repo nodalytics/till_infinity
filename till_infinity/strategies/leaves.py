@@ -64,6 +64,7 @@ from .entries import (
     RestingEntryConfig,
 )
 from .exits import ExitMechanism, ManagedExit, VenueExit
+from .identity import IdentityEdge
 from .profile import Profile
 from .structure import StructureEdge
 from .surprise import SurpriseArrival, SurpriseEdge, SurpriseResting
@@ -191,6 +192,10 @@ LEAVES: dict[tuple[str, str], type[Desk]] = {
     ("bands", "edge"): BandsEdge,
     ("bands", "resting"): BandsResting,
     ("bands", "arrival"): BandsArrival,
+    # **One entry, deliberately.** The measurement enters at the bar's close
+    # that produced the residual, so a rest at a named price and a wait for an
+    # arrival are both a different rule than the one that was measured.
+    ("identity-arb", "edge"): IdentityEdge,
     ("zones", "edge"): ZonesEdge,
     ("zones", "resting"): ZonesResting,
     ("zones", "arrival"): ZonesArrival,
