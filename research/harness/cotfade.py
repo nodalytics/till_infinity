@@ -98,7 +98,9 @@ def atr(bars: dict[str, np.ndarray], n: int = ATR_N) -> np.ndarray:
     return out
 
 
-def scores(feed: str) -> tuple[np.ndarray, np.ndarray]:
+def scores(
+    feed: str, change_weeks: int = CHANGE_WEEKS, trailing: int = TRAILING
+) -> tuple[np.ndarray, np.ndarray]:
     """Usable dates and the score at each, for one market.
 
     The scale window **ends at t-1**: a standard deviation including t would
@@ -108,10 +110,10 @@ def scores(feed: str) -> tuple[np.ndarray, np.ndarray]:
     dates, share = load_cot(feed)
     signed = share * direction(PAIRS[feed].lower())
     change = np.full(len(signed), np.nan)
-    change[CHANGE_WEEKS:] = signed[CHANGE_WEEKS:] - signed[:-CHANGE_WEEKS]
+    change[change_weeks:] = signed[change_weeks:] - signed[:-change_weeks]
     score = np.full(len(signed), np.nan)
-    for t in range(CHANGE_WEEKS + TRAILING, len(signed)):
-        window = change[t - TRAILING : t]
+    for t in range(change_weeks + trailing, len(signed)):
+        window = change[t - trailing : t]
         sd = np.nanstd(window)
         if sd > 0.0:
             score[t] = change[t] / sd
@@ -126,6 +128,9 @@ def trades(
     score: np.ndarray,
     *,
     sides: np.ndarray | None = None,
+    hold_weeks: int = HOLD_WEEKS,
+    threshold: float = THRESHOLD,
+    risk: np.ndarray | None = None,
 ) -> list[dict]:
     """One trade per firing, skipping any firing while a position is open.
 
@@ -133,13 +138,15 @@ def trades(
     keep every entry date and hold identical and change only the bet.
     """
     time, close = bars["time"], bars["close"]
-    risk = 2.0 * atr(bars)
-    hold = HOLD_WEEKS * 7 * 86400.0
+    # Precomputed by the sweep, which would otherwise rebuild a 4,000-bar ATR
+    # for every one of 2,400 cell-instruments.
+    risk = 2.0 * atr(bars) if risk is None else risk
+    hold = hold_weeks * 7 * 86400.0
     out: list[dict] = []
     free_at = -math.inf
     for t in range(len(score)):
         value = score[t]
-        if not np.isfinite(value) or abs(value) < THRESHOLD:
+        if not np.isfinite(value) or abs(value) < threshold:
             continue
         if usable[t] < free_at:
             continue
@@ -161,7 +168,9 @@ def trades(
     return out
 
 
-def unconditional(bars: dict[str, np.ndarray]) -> float:
+def unconditional(
+    bars: dict[str, np.ndarray], hold_weeks: int = HOLD_WEEKS, risk: np.ndarray | None = None
+) -> float:
     """What a LONG position earns, in R, averaged over every possible entry.
 
     The exact drift correction this study needs. `always-long` says what the
@@ -174,8 +183,8 @@ def unconditional(bars: dict[str, np.ndarray]) -> float:
     `sign-flip` reading +0.021 next to `always-long` reading +0.116 means.
     """
     time, close = bars["time"], bars["close"]
-    risk = 2.0 * atr(bars)
-    hold = HOLD_WEEKS * 7 * 86400.0
+    risk = 2.0 * atr(bars) if risk is None else risk
+    hold = hold_weeks * 7 * 86400.0
     got = []
     for i in range(len(time)):
         if not np.isfinite(risk[i]) or risk[i] <= 0.0:
