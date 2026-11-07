@@ -190,6 +190,41 @@ class Bridge:
     async def symbol_info(self, symbol: str) -> dict[str, Any]:
         return (await self.get(f"/symbols/info/{symbol}")) or {}
 
+    async def calc_profit(
+        self, action: str, symbol: str, volume: float, price_open: float, price_close: float
+    ) -> float:
+        """What the broker says a move is worth, in the **account** currency.
+
+        `order_calc_profit` - the function the terminal computes P&L with. It
+        is the only reading that says what `trade_tick_value`'s unit actually
+        is without opening a position: two readings of that field disagreed,
+        one of them sizes a yen CFD 158x larger than the other, and
+        `strategies/sizes.spec_of` would not guess between them. This asks the
+        broker instead, and the answer comes back in the currency the account
+        is held in.
+
+        Nothing is traded, selected or changed - `order_calc_profit` is
+        arithmetic - but the terminal does `symbol_select` the symbol first,
+        so a name it cannot select is a 400 and reaches the caller as a
+        `BridgeError` rather than a quiet zero.
+
+        **The parameter names are the route's own.** FastAPI drops a query
+        parameter the endpoint does not declare, so a misspelling would not
+        raise - it would return the route's defaults with a 200, which is how
+        `num_bars` silently capped every backfill at 100 bars.
+        """
+        raw = await self.get(
+            "/orders/calc/profit",
+            action=action,
+            symbol=symbol,
+            volume=volume,
+            price_open=price_open,
+            price_close=price_close,
+        )
+        if isinstance(raw, dict):
+            raw = raw.get("profit")
+        return float(raw or 0.0)
+
     async def bars(self, symbol: str, timeframe: str, count: int, start: int = 0) -> list[dict]:
         """Bars by position back from now, newest last. `start=0` is the forming bar.
 

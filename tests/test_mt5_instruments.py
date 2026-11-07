@@ -27,6 +27,7 @@ from nautilus_trader.model.identifiers import InstrumentId, Symbol, Venue
 from nautilus_trader.model.instruments import Cfd, CurrencyPair
 
 from till_infinity.adapters.mt5.providers import (
+    CALC_SPAN,
     CFDINDEX,
     MT5InstrumentProvider,
     asset_class,
@@ -122,6 +123,94 @@ def one(symbol: str):
     provider = MT5InstrumentProvider(FakeTransport(), VENUE)
     asyncio.run(provider.load_async(InstrumentId(Symbol(symbol), VENUE)))
     return provider.find(InstrumentId(Symbol(symbol), VENUE))
+
+
+# ------------------------------------------- what the broker says a tick is worth
+
+
+GERMANY40: dict[str, dict] = {
+    "Germany 40": {
+        "digits": 2,
+        "volume_step": 0.01,
+        "volume_min": 0.01,
+        "currency_profit": "EUR",
+        "trade_calc_mode": 2,
+        "path": "CFD\\Indices\\Germany 40",
+        "trade_contract_size": 1,
+        "trade_tick_size": 0.01,
+        "trade_tick_value_loss": 0.01,
+        "ask": 24_000.0,
+    }
+}
+
+
+class Calculating(FakeTransport):
+    """A transport that can answer `order_calc_profit`, as the live one can."""
+
+    def __init__(self, profit: float = 11.14) -> None:
+        super().__init__(GERMANY40)
+        self.profit = profit
+        self.asked: list[tuple] = []
+
+    async def calc_profit(
+        self, action: str, symbol: str, volume: float, price_open: float, price_close: float
+    ) -> float:
+        self.asked.append((action, symbol, volume, price_open, price_close))
+        return self.profit
+
+
+def _germany(transport) -> tuple:
+    provider = MT5InstrumentProvider(transport, VENUE)
+    asyncio.run(provider.load_async(InstrumentId(Symbol("Germany 40"), VENUE)))
+    return provider.find(InstrumentId(Symbol("Germany 40"), VENUE))
+
+
+def test_the_tick_value_is_taken_from_the_brokers_own_calculation():
+    """**The reading that ends the 158x ambiguity, asked once per instrument.**
+
+    `trade_tick_value` could be the quote currency unconverted or the deposit
+    currency already, and `sizes.spec_of` would not guess - one reading sizes a
+    yen CFD 158x larger than the other. `order_calc_profit` is the arithmetic
+    the broker settles with and answers in the account's currency, so it is
+    the realised-P&L observation `docs/venue.md` was waiting for, minus the
+    position.
+
+    Asked over a wide move and divided back down: one tick is rounded to the
+    cent on most instruments, so a one-tick question comes back quantised to
+    uselessness or to zero.
+
+    11.14 over 1000 ticks is 0.01114 - the EUR figure measured on 2026-11-07
+    against a stated 0.01, which oversizes by 1.11x.
+    """
+    transport = Calculating(profit=11.14)
+    found = _germany(transport)
+
+    assert found.info["calc_tick_value"] == pytest.approx(11.14 / CALC_SPAN)
+    action, symbol, volume, opened, closed = transport.asked[0]
+    assert (action, symbol, volume) == ("BUY", "Germany 40", 1.0)
+    assert closed - opened == pytest.approx(CALC_SPAN * 0.01), "the span is in the venue's ticks"
+
+
+def test_a_calculation_the_transport_cannot_do_leaves_the_instrument_alone():
+    """The question is asked once per instrument at load and can fail - a name
+    the terminal will not select is a 400, and a transport that cannot
+    calculate at all raises `AttributeError`.
+
+    Either has to leave the instrument exactly as it was rather than drop it:
+    an unanswered question means sizing keeps the stated value, which is how
+    the desk already behaves, while a dropped instrument is a feed that goes
+    quiet for a reason nothing records.
+    """
+
+    class Refusing(Calculating):
+        async def calc_profit(self, *args: object, **kwargs: object) -> float:
+            raise RuntimeError("Failed to calculate profit")
+
+    found = _germany(Refusing())
+
+    assert found is not None, "a failed calculation must not lose the instrument"
+    assert "calc_tick_value" not in found.info
+    assert found.info["trade_tick_value_loss"] == 0.01, "the stated value is untouched"
 
 
 # ---------------------------------------------------------------- the open bug

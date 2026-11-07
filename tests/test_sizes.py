@@ -222,6 +222,52 @@ def test_a_tick_value_its_own_contract_size_contradicts_is_refused():
     assert sizes.spec_of(ngas).tick_value == pytest.approx(0.001)
 
 
+def test_the_brokers_own_profit_calculation_beats_the_stated_tick_value():
+    """**It ends the ambiguity this function's docstring describes, without a
+    trade.** Two readings of `trade_tick_value` were open: that it is the quote
+    currency unconverted, or that it is already the deposit currency. The doc
+    said it "needs a realised P&L observation, not another read" -
+    `order_calc_profit` is neither. It is the arithmetic the broker *settles*
+    with, answered in the account currency, so it is the observation without
+    the position.
+
+    The value here is EUR-quoted: stated 0.01 against a true 0.01114, which
+    oversizes by 1.11x. That is the direction that matters - an oversized
+    instrument risks more than the budget said, while an undersized one merely
+    reads as a dead rule.
+    """
+    instrument = pair("Germany 40", trade_tick_value_loss=0.01, calc_tick_value=0.01114)
+    assert sizes.spec_of(instrument).tick_value == pytest.approx(0.01114)
+
+
+def test_a_calculated_value_the_stated_one_contradicts_is_refused_not_adopted():
+    """**Japan 225, the 158x case.** A yen-quoted CFD states 0.01 where the
+    converted truth is 0.0000631, and position size is inversely proportional
+    to the tick value - so adopting the calculated figure would size it 158x
+    *larger* on one endpoint's word.
+
+    A gap that wide means one of the two numbers means something nobody has
+    confirmed, and only one of the two possible mistakes can empty an account.
+    So this refuses, exactly as `_contradicts` refuses NGAS: the calculation is
+    trusted to *correct* a value, never to multiply one by a factor no trade
+    has yet shown. Leaving it refused also loses nothing real - at 1/158 of
+    intent the instrument was never trading.
+    """
+    instrument = pair("Japan 225", trade_tick_value_loss=0.01, calc_tick_value=0.0000631)
+    found = sized(instrument=instrument)
+    assert isinstance(found, Refusal)
+    assert found.gate == "unsized"
+
+
+def test_without_a_calculation_the_stated_value_stands():
+    """The venue is asked once per instrument at load and the answer can fail -
+    a symbol the terminal will not select, a bridge restart mid-load. That has
+    to leave sizing exactly as it was rather than refuse the whole book, which
+    is why the calculated figure is an *addition* to `info` and not a
+    replacement for the stated one."""
+    assert sizes.spec_of(pair(trade_tick_value_loss=0.9)).tick_value == pytest.approx(0.9)
+
+
 def test_a_stated_value_a_conversion_explains_is_kept():
     """USDJPY as the terminal really states it: tick 0.001 on a 100,000 contract
     is 100 JPY, and the stated 0.6308 is that figure converted at 158.53. The

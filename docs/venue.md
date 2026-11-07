@@ -246,11 +246,39 @@ AUDCAD, EURAUD, AUDNZD and EURCAD rather than the two cheapest: EURJPY (0.036)
 and AUDJPY (0.037) are the cheapest crosses on the book **and** the worst
 choices, being JPY-quoted.
 
-**None of this is fixed.** `spec_of` still trusts the stated value, deliberately:
-converting on the wrong reading of what the figure means would size Japan 225
-**158x larger**, and only one of those two errors can empty an account. It
-waits on a realised-P&L observation - open a minimum position, note the price
-move, read back the `profit` the broker reports.
+### Fixed by asking the broker, 2026-11-07
+
+The paragraph that stood here said this waited on a realised-P&L observation -
+open a minimum position, note the move, read back the `profit`. It does not,
+because the terminal will do that arithmetic without the position:
+`order_calc_profit` is the function it *settles* P&L with, and it answers in
+the account's currency. The bridge has served it at
+`GET /api/v1/orders/calc/profit` all along and nothing called it.
+
+So `providers.py` asks once per instrument at load - one lot, a `CALC_SPAN` of
+1000 ticks, divided back down - and puts the answer on `info` as
+`calc_tick_value`. `spec_of` then prefers it to the stated figure. This is not
+"another read": nothing is inferred from a field whose unit is in question.
+
+**It corrects a value and never multiplies one.** A calculated figure the
+stated one contradicts by more than `CONTRADICTION` refuses the instrument
+rather than adopting it, which is the same answer `_contradicts` gives NGAS.
+That splits the table above exactly: EUR, GBP, CHF, CAD, AUD and NZD are
+1.11x to 1.7x and get corrected - the three oversized ones being the whole
+point - while JPY at 158x is refused. Refusing Japan 225 loses nothing real,
+because at 1/158 of intent it was never trading; and a 158x gap means one of
+the two numbers means something nobody has confirmed, so sizing a position on
+it would be the one mistake that can empty an account.
+
+Nor does it overturn a refusal `tick x contract` already made: NGAS stays
+refused whatever the calculation says, because that gap is between two of the
+venue's own fields and is not this reading's to settle.
+
+**What to read in the startup log.** Every instrument where the two differ by
+more than 1% logs a warning naming both and the ratio. A ratio near 1.0 says
+the stated figure was already in the deposit currency; a ratio that *is* the
+instrument's FX rate says it was not - which is the table above, confirmed or
+refuted per instrument, on every start.
 
 ## Every cross costs little, and one is untradeable
 
