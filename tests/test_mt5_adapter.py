@@ -53,6 +53,38 @@ class TestTheBarTimestampMovesToTheClose:
             assert seconds > 0, spec
             assert _timeframe(bar_type(f"{spec}-LAST-EXTERNAL")) == (name, seconds)
 
+    def test_every_interval_a_deploy_can_configure_is_one_this_client_can_ask_for(self):
+        """**The two vocabularies must not drift.**
+
+        `node/desks.SPECS` turns `TRADING_INTERVALS=3m` into the Nautilus
+        spec `3-MINUTE`, and this client turns that spec into the bridge's
+        `M3`. They are separate tables, and `proxy.TIMEFRAMES`'s own comment
+        says a second vocabulary is "a second place for a timeframe to be
+        wrong".
+
+        Without this, adding an interval to one table alone is not a failure
+        at startup - the desks are built and the bar subscription raises
+        later, per instrument, which reads as a venue problem rather than a
+        configuration one.
+        """
+        from till_infinity.node.desks import SPECS
+
+        for interval, spec in SPECS.items():
+            assert spec in TIMEFRAMES, (
+                f"TRADING_INTERVALS={interval} maps to {spec}, which data.py cannot ask "
+                f"the bridge for. It serves {sorted(TIMEFRAMES)}."
+            )
+
+    def test_the_in_process_transport_speaks_every_timeframe_the_client_does(self):
+        """`Proxy` is the other transport and reaches MT5 directly, so a
+        timeframe this client resolves to `M3` has to exist in its table too -
+        otherwise the bridge path works and the proxy path raises on the same
+        configuration."""
+        from till_infinity.adapters.mt5.proxy import TIMEFRAMES as PROXY
+
+        for spec, (name, _seconds) in TIMEFRAMES.items():
+            assert name in PROXY, f"{spec} resolves to {name}, which Proxy cannot name"
+
     def test_an_unserved_timeframe_is_refused_rather_than_guessed(self):
         with pytest.raises(ValueError, match="no MT5 timeframe"):
             _timeframe(bar_type("1-SECOND-LAST-EXTERNAL"))

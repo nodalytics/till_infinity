@@ -500,9 +500,14 @@ def test_a_partial_close_sends_the_volume_it_was_given():
 
 
 def test_a_timeframe_this_venue_does_not_serve_refuses():
+    """`M7` rather than `M3`, which this used to use: M3 became a timeframe a
+    deploy can configure, so the example of an unservable one had to be an
+    interval MT5 genuinely has no constant for. The gap this guards is a
+    `TRADING_INTERVALS` typo reaching the venue as a silent default rather
+    than a refusal."""
     made, _ = proxy()
     with pytest.raises(ProxyError, match="unknown timeframe"):
-        asyncio.run(made.bars("EURUSD", "M3", count=10))
+        asyncio.run(made.bars("EURUSD", "M7", count=10))
 
 
 def test_a_timeframe_resolves_to_the_modules_own_constant():

@@ -226,6 +226,7 @@ def intervals() -> tuple[str, ...]:
 #: How an interval is written as a Nautilus bar specification.
 SPECS: dict[str, str] = {
     "1m": "1-MINUTE",
+    "3m": "3-MINUTE",
     "5m": "5-MINUTE",
     "15m": "15-MINUTE",
     "30m": "30-MINUTE",
