@@ -54,6 +54,10 @@ from .transport import connect
 #: whose time is not strictly after the last one.
 TIMEFRAMES: dict[str, tuple[str, float]] = {
     "1-MINUTE": ("M1", 60.0),
+    # MT5 serves M2, M3, M4, M6, M10, M12 and M20 as well; only the ones a
+    # deploy can name in `node/desks.SPECS` are listed, and a test asserts the
+    # two tables agree so neither can gain an interval the other lacks.
+    "3-MINUTE": ("M3", 180.0),
     "5-MINUTE": ("M5", 300.0),
     "15-MINUTE": ("M15", 900.0),
     "30-MINUTE": ("M30", 1800.0),

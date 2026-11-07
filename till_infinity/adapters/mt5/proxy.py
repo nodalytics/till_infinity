@@ -93,6 +93,7 @@ TUNNELLED = "TRADING_RPYC_TUNNELLED"
 #: be a second place for a timeframe to be wrong.
 TIMEFRAMES: dict[str, str] = {
     "M1": "TIMEFRAME_M1",
+    "M3": "TIMEFRAME_M3",
     "M5": "TIMEFRAME_M5",
     "M15": "TIMEFRAME_M15",
     "M30": "TIMEFRAME_M30",
