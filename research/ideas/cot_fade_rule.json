@@ -1,0 +1,177 @@
+{
+  "name": "cot-fade",
+  "registered": "2026-11-07",
+  "registered_before_any_real_data_run": true,
+
+  "claim": "Conditional on a 4-week change in non-commercial net positioning beyond 1.5 trailing standard deviations, the subsequent 4-week return of the corresponding USD pair is negative in the direction speculators moved - a tail-conditional fade, held for four weeks with no stop.",
+
+  "distinct_from": {
+    "positioning.md": "measured lead CORRELATIONS between positioning and return, all inside the noise band. A correlation is a linear unconditional statistic; this is a conditional mean in the |z| > 1.5 tail, which a correlation near zero does not exclude and does not imply.",
+    "impulse-vol.md": "conditioned on a PRICE impulse. This conditions on an exogenous, reported quantity that is not a function of price, which is the one family on this desk where an outside series has beaten persistence before (implied.md, VIX).",
+    "directional-questions.md": "carried positioning only inside a 57-92 signal ensemble at 1h-20d. This is the single rule at its own horizon with its own threshold, which an ensemble weight cannot represent."
+  },
+
+  "data": {
+    "cot": {
+      "source": "CFTC Socrata 6dca-aqww, Legacy report, non-commercial",
+      "fetched_by": "research/harness/cotfetch.py",
+      "rows": 11058,
+      "markets": 8,
+      "span": "xau 1986-01-15..2026-11-03, eur/jpy/cad/chf 2000-08-29.., gbp 2004-01-06.., nzd 2003-11-11..",
+      "series_note": "Legacy non-commercial, NOT the leveraged-funds series that adapters/news/sources/cot.py reads from the disaggregated file. Different traders; a test of one is not a test of the other."
+    },
+    "prices": {
+      "source": "the MT5 bridge, daily bars",
+      "reach": "to be recorded by the runner per instrument; rates/range is known to page back to about 2015, so the usable panel is roughly 11 years and NOT the COT span",
+      "consequence": "the 156-week trailing window costs the first three years of whatever price history exists, so n is bounded well below the COT row count and will be reported per instrument"
+    },
+    "sign_mapping": {
+      "via": "till_infinity.adapters.news.sources.cot.direction",
+      "inverted": ["usdjpy", "usdcad", "usdchf"],
+      "reason": "CME futures are quoted as the foreign currency in dollars, so a long JAPANESE YEN future is short USDJPY. Getting this backwards produces a signal of exactly the right size pointing exactly the wrong way.",
+      "rule": "signed_net_share = net_share * direction(pair); positive always means long our feed"
+    }
+  },
+
+  "signal": {
+    "weekly": true,
+    "net_share": "(noncomm_long - noncomm_short) / open_interest_all, then signed by direction(pair)",
+    "change": "signed_net_share[t] - signed_net_share[t-4]",
+    "scale": "standard deviation of that same 4-week change over the trailing 156 weeks, ending at t-1",
+    "score": "change / scale",
+    "trailing_only": "the scale window ends at t-1. A full-sample standard deviation would label the past with the future, which is the defect impulse-vol.md records as a global-quantile leak."
+  },
+
+  "publication_lag": {
+    "report_dated": "Tuesday",
+    "actually_published": "the following Friday afternoon",
+    "usable_from": "the Wednesday 8 days after the report Tuesday",
+    "reason": "the spec's own lag, and it is more conservative than the real publication date by five days. Keeping the spec's lag rather than the true one costs power and cannot create a look-ahead."
+  },
+
+  "trade": {
+    "direction": "-sign(score): score > +1.5 sells our feed, score < -1.5 buys it",
+    "threshold": 1.5,
+    "entry": "the Wednesday bar at or after the usable date",
+    "hold_weeks": 4,
+    "stop": "none",
+    "target": "none",
+    "one_position_per_instrument": true,
+    "overlap": "a new signal while a position is open is skipped, not stacked. This is what keeps the 4-week hold from overlapping itself; overlapping outcome windows are the defect that turned a direction AUC of 0.79 into 0.51 elsewhere in this repo."
+  },
+
+  "risk_unit": {
+    "R": "2 x daily ATR(20) at entry, in price",
+    "measured_in": "R per trade, so a 28-day hold on a 2-ATR unit"
+  },
+
+  "costs": {
+    "spread": "the per-instrument measured round trip. No spread is invented for a feed that has none; such a feed is reported gross and labelled.",
+    "swap": "NOT APPLIED, and this is the study's largest known weakness. Historical swap is not available - only the terminal's current rates - and a 2000-2026 backtest priced off 2026 carry would be wrong by the entire history of rate differentials. Reported GROSS of swap.",
+    "carry_confound": "a 4-week FX hold is substantially carry, and speculators crowd into high-carry currencies, so the signal may be correlated with the carry sign. The runner must report the correlation between -sign(score) and the sign of the interest differential proxy (the pair's own drift over the sample). A positive result is NOT tradeable until re-measured with real swap."
+  },
+
+  "primary_cell": {
+    "threshold": 1.5,
+    "change_weeks": 4,
+    "hold_weeks": 4,
+    "trailing_weeks": 156,
+    "declared": "this exact cell is the one the claim is judged on. Everything else is secondary and carries a Benjamini-Hochberg correction."
+  },
+
+  "secondary_cells": {
+    "threshold": [1.0, 1.25, 1.5, 1.75, 2.0],
+    "change_weeks": [2, 4, 8, 13],
+    "hold_weeks": [2, 4, 8, 13],
+    "trailing_weeks": [104, 156, 208],
+    "count": 300,
+    "times_instruments": 2400,
+    "correction": "Benjamini-Hochberg over all cells actually examined, reported as a count and not as a selected winner"
+  },
+
+  "statistic": {
+    "primary": "mean R per trade at the primary cell, per instrument AND pooled",
+    "error": "day-block bootstrap, resampling whole calendar weeks, because a 4-week hold makes adjacent trades dependent and an ordinary standard error is far too narrow",
+    "also_reported": ["n per instrument", "standard error", "win rate", "profit factor", "the sign agreement across instruments"],
+    "no_barrier_test": "there is no stop, so there is no P(>= N R) against 1/(1+N) to report. The statistic is a conditional mean in risk units."
+  },
+
+  "pass_conditions_all_required": [
+    "pooled mean R > 0 with the week-block bootstrap lower bound above 0",
+    "the sign agrees on at least 6 of 8 instruments, because a pooled median here once agreed with a claim every subgroup refuted",
+    "beats the hardest null arm below, per instrument, on at least 6 of 8",
+    "survives Benjamini-Hochberg among the cells examined",
+    "the primary cell holds on the confirmation half, having been declared before the run"
+  ],
+
+  "declared_in_advance": "n below about 100 trades makes the prior noise and will be reported as such rather than as a result. The figure this rule arrives with - +1.87R on 7 trades - is below that bar by two orders of magnitude, and reproducing it is not a goal: reproducing the baseline on the full panel is.",
+
+  "nulls": [
+    {
+      "arm": "shuffled-score",
+      "what": "permute the score series within instrument, keeping its distribution and destroying its timing",
+      "catches": "a result that is really the threshold's duty cycle rather than its timing"
+    },
+    {
+      "arm": "sign-flip",
+      "what": "randomise the trade direction, keeping every entry date and hold",
+      "catches": "a result that is really the hold's drift. On a book with one dollar factor this is the arm most likely to fire."
+    },
+    {
+      "arm": "geometry-matched placebo",
+      "what": "the same entry dates and the same 4-week holds, direction from a coin",
+      "catches": "how much of the R is the trade's geometry rather than the signal - the arm that makes 'accepting geometry' falsifiable rather than a slogan"
+    },
+    {
+      "arm": "random-wednesday",
+      "what": "the same number of trades per instrument on randomly chosen Wednesdays, same duty cycle",
+      "catches": "the duty-cycle effect: on a net-negative book any rule that trades less reads better"
+    },
+    {
+      "arm": "stale-score",
+      "what": "the score from 8 weeks earlier, same dates and holds",
+      "catches": "a signal whose timing carries nothing. This arm is what exposed smc_bos_c_L50: 8-bar-stale signals read -0.519R against the rule's -0.533R."
+    },
+    {
+      "arm": "independent placebo instrument",
+      "what": "the same scores traded on a Deriv volatility index, which no CFTC report describes",
+      "catches": "leakage in the harness. It must read nothing; a control that MUST come back empty catches what a control that should come back smaller does not."
+    }
+  ],
+
+  "power": {
+    "plan": "plant a drift of known size conditional on the signal, on a GBM with the panel's own volatility and calendar, and sweep its strength over 0.00, 0.05, 0.10, 0.20, 0.40 R per trade.",
+    "report": "the strength at which the test sees the effect on 80% of cells, and the zero cell's false-positive rate against the claimed 0.05.",
+    "why": "a null is not reportable without it. The planted-drift sweep is also the only honest way to say whether an effect large enough to pay the round trip would have been visible at this n."
+  },
+
+  "split": {
+    "discovery_ends": "2019-12-31",
+    "confirmation_begins": "2020-01-01",
+    "note": "the split is reported as INFORMATION, not as a verdict: a mechanism that only operates in one regime is still a mechanism, and the question a disagreement raises is which half we are in now and whether anything observable says so. Deploying across a disagreement without naming it is a bet on the regime, not on the edge."
+  },
+
+  "deviations_from_the_supplied_spec": [
+    {
+      "spec": "entry and exit at Wednesday 18:00 UTC at the H1 open",
+      "run_as": "the Wednesday daily bar",
+      "why": "no H1 history of this length exists on the lab, and pulling 11 years of H1 for 8 instruments from the bridge would load the transport the live desk trades through. Over a 28-day hold on a 2-ATR risk unit the intraday entry point is immaterial, and that claim is itself checkable: if the primary cell passes, re-run at H1 over the window where H1 exists and report both."
+    },
+    {
+      "spec": "swap is included",
+      "run_as": "gross of swap",
+      "why": "historical swap is not obtainable; see costs.swap. This is recorded as a limit on the conclusion, not worked around."
+    },
+    {
+      "spec": "speculators' (non-commercial) net position",
+      "run_as": "exactly that - Legacy non-commercial",
+      "why": "no deviation, but noted because the production adapter reads a different series and a reader will assume they are the same."
+    }
+  ],
+
+  "known_limits": [
+    "Eight instruments all quoted against the USD, and linear-algebra.md establishes the book has ONE factor and it is the dollar, carrying 45.6% of variance. Eight simultaneous positions are therefore far fewer than eight independent bets, and the pooled standard error overstates the evidence however it is bootstrapped. The sign-agreement condition and the per-instrument table are there for this reason.",
+    "No stop means the R distribution is unbounded on both sides and a single 4-week move can carry a cell.",
+    "The usable price panel is roughly a third of the COT span."
+  ]
+}
