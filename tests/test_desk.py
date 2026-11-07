@@ -221,6 +221,66 @@ def test_a_signal_for_an_untraded_instrument_is_counted_not_refused():
     engine.dispose()
 
 
+def test_a_proposal_about_another_feed_places_nothing():
+    """`PROPOSALS` is one topic and all thirty desks subscribe to it.
+
+    `Surprise.wants` checked the payload's feed against its *allowlist* and
+    nothing checked it was **this** desk's feed, while `place` always sizes
+    the desk's own instrument. So on 2026-11-07 at 12:30:38 one proposal -
+    `surprise 5.66 on btcusd` - became BUY brackets on USDCAD, EURUSD,
+    USDJPY, USDCHF, Wall Street 30, US SP 500 and US Tech 100 inside 119ms,
+    seven desks each logging `btcusd` beside its own prices. EURUSD and
+    USDCHF were both bought, which is the same exposure twice in opposite
+    directions.
+
+    Driven through `on_data` rather than `consider` because the bug was that
+    an order got *placed*: a gate that returns the right verdict and still
+    reaches the venue would pass a `consider`-only test.
+    """
+    engine, strategy = engine_with(config(), build=_Deciding)
+    engine.trader.start()
+    # A quote good enough that the desk's own feed would be placed, so what
+    # the guard refuses is the feed and not the tick.
+    strategy.cache.add_quote_tick(quote(1.09995, 1.10005))
+    # Stubbed because `trader.start()` alone leaves the portfolio with no
+    # account, and a desk with no equity refuses at `unsized` - which would
+    # make this pass with the gate absent. See the sibling test below.
+    strategy._equity = lambda: 1_000_000.0
+    sent: list[object] = []
+    strategy.submit_order_list = sent.append
+
+    strategy.on_data({"feed": "btcusd"})
+
+    assert sent == [], "a proposal about btcusd placed an order on EUR/USD"
+    assert strategy.passed_over == {"(desk):other-feed": 1}
+    assert strategy.refused == 0, "another feed's proposal was never ours to decline"
+    assert strategy.taken == 0
+    engine.dispose()
+
+
+def test_a_proposal_about_this_desks_own_feed_is_still_placed():
+    """The positive control for the gate above.
+
+    A guard that compared the wrong pair of names - `feed_of` is
+    `symbol.lower()` with the separator dropped, the producer's is
+    `feeds.get(symbol, symbol.lower())` - would block every proposal and read
+    as a quiet desk, which is the failure this file's `no-quote` test was
+    written for.
+    """
+    engine, strategy = engine_with(config(), build=_Deciding)
+    engine.trader.start()
+    strategy.cache.add_quote_tick(quote(1.09995, 1.10005))
+    strategy._equity = lambda: 1_000_000.0
+    sent: list[object] = []
+    strategy.submit_order_list = sent.append
+
+    strategy.on_data({"feed": "eurusd"})
+
+    assert len(sent) == 1, f"the desk's own feed was blocked: {strategy.passed_over}"
+    assert strategy.taken == 1
+    engine.dispose()
+
+
 def test_a_missing_quote_is_a_refusal_with_its_gate():
     """The misleading silence `Trader` recorded: an instrument the desk *does*
     trade, refused for a reason nothing recorded."""
