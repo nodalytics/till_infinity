@@ -97,8 +97,45 @@ class SurpriseProfile(Profile):
     target_r: ClassVar[float] = 2.0
     #: The feeds it is allowed on, because `TRADING_SYMBOLS` is global and
     #: naming the strategy would otherwise put it on every one of them.
+    #:
+    #: **Crypto is admitted on a measurement, not on hope.** Replaying the
+    #: production fold over 3,941 BTCUSD readouts, `|surprise| >= TRIGGER`
+    #: fires on **2.11%** of bars - 83 of them, max 11.43, q99 at 3.49 -
+    #: against **1.80%** on the FX and index feeds. Crypto is *more* likely to
+    #: clear the trigger than the majors it was measured on, so it needs
+    #: nothing but admission.
+    #:
+    #: **The Deriv synthetics are deliberately still absent.** Over 4,725
+    #: readouts on the `Volatility N (1s)` family, `|surprise|` never reached
+    #: **2.5**, let alone the trigger: max 2.242. The fold's surprise is a
+    #: standardised innovation and these are a known-generator process with a
+    #: well-calibrated one-step predictive and thin tails, so the trigger sits
+    #: above their entire observed support. Admitting them would add desks that
+    #: cannot fire, which is the state 26 of 32 desks were in before this
+    #: comment existed. Opening them is a **separate** decision needing a
+    #: per-family trigger - gate on the residual deque's empirical quantile at
+    #: a target rate rather than on a fixed sigma - and the rate-matched number
+    #: to carry into that work is **1.446 on the synthetics is 3.0 on a real
+    #: market**. That is a measurement with a planted-effect power check and a
+    #: placebo arm, not a constant to edit, and `Volatility N (1s)` is one of
+    #: this repository's own structure controls.
+    #:
+    #: Override with `SURPRISE_FEEDS`, comma-separated, for a sweep that wants
+    #: a different scope without a code change. Empty means this default.
     feeds: ClassVar[frozenset[str]] = frozenset(
-        {"eurusd", "gbpusd", "usdjpy", "audusd", "usdcad", "xauusd"}
+        {
+            # Measured: the majors and gold.
+            "eurusd",
+            "gbpusd",
+            "usdjpy",
+            "audusd",
+            "usdcad",
+            "xauusd",
+            # Measured 2026-11-07: 2.11% of bars clear the trigger.
+            "btcusd",
+            "ethusd",
+            "bnbusd",
+        }
     )
 
 
@@ -123,7 +160,35 @@ class Surprise:
         """
         if str(payload.get("shape") or "") != self.profile.shape:
             return False
-        return str(payload.get("feed") or "").lower() in self.profile.feeds
+        return str(payload.get("feed") or "").lower() in self._allowed()
+
+    def _allowed(self) -> frozenset[str]:
+        """`SURPRISE_FEEDS` if set, else the profile's measured default.
+
+        Read per call rather than cached, so a sweep can change scope without
+        a restart and a reader can see what the desk is actually using.
+        """
+        import os
+
+        raw = os.environ.get("SURPRISE_FEEDS") or ""
+        named = frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
+        return named or self.profile.feeds
+
+    def on_start(self) -> None:
+        """Say once if this desk can never trade.
+
+        **A rule that is not allowed on its feed and a feed that is quiet read
+        identically in a log.** On 2026-11-07 twenty-six of thirty-two desks
+        were inert by construction and nothing said so, and establishing that
+        took an afternoon.
+        """
+        super().on_start()
+        feed = self._feed_name()
+        if feed not in self._allowed():
+            self.log.warning(
+                f"statespace-surprise is not allowed on {feed}; "
+                f"this desk can never trade. Allowed: {sorted(self._allowed())}"
+            )
 
     def _spread_limit(self) -> float:
         """The share of the risk a round trip may cost, as configured.
