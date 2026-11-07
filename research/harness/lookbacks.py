@@ -223,18 +223,32 @@ def one_feed(path: str) -> list[tuple]:
         bid_h, bid_l = bars["high"], bars["low"]
         ask_h, ask_l = bid_h + sp, bid_l + sp
         feats: dict[str, np.ndarray] = {}
-        for span in SPANS:
-            feats.update(features(bars, span))
+        for look in SPANS:
+            feats.update(features(bars, look))
         a14 = atr(bars["high"], bars["low"], bars["close"], 14)
         warm = max(SPANS) * 3
+        #: **The arm's own length, not the real series'.** A block shuffle
+        #: returns `n * BLOCK + 1` bars, up to BLOCK-1 short, so bounding the
+        #: entry loop by `len(close)` indexes past the end of the walk. It
+        #: only crashes for some (length, step) pairs - AUDUSD missed its last
+        #: index by 43 bars and passed - so on other data it would have read
+        #: whatever was adjacent in memory instead of raising.
+        span = len(bars["close"])
+        assert len(a14) == span and len(sp) == span, "arm lengths must agree"
 
         for horizon in HORIZONS:
             for mult in TARGETS:
                 for rwd, rsk in SHAPES:
                     for overlap in (False, True):
+                        #: The overlapped arm exists to measure the inflation,
+                        #: and one horizon shows it. Entries every bar with a
+                        #: 96-bar window is O(n x horizon) and would be most
+                        #: of the runtime for a point already made.
+                        if overlap and horizon != min(HORIZONS):
+                            continue
                         step = 1 if overlap else horizon
                         taken: list[tuple] = []
-                        for i in range(warm, len(close) - horizon - 1, step):
+                        for i in range(warm, span - horizon - 1, step):
                             unit = a14[i] * mult
                             if unit <= 0:
                                 continue
@@ -255,6 +269,11 @@ def one_feed(path: str) -> list[tuple]:
                             np.array([t[1] == "SL" for t in taken], dtype=bool), -rsk, got
                         )
                         #: Volatility quintile at entry - the stratifier.
+                        #: **A whole-sample cut, and legitimate here.** It
+                        #: stratifies both arms of a lift measurement rather
+                        #: than feeding a per-bar prediction: events and
+                        #: non-events share the same bands. The same reading
+                        #: the look-ahead audit gave `searching.strata`.
                         vol = a14[idx] / np.maximum(bars["close"][idx], 1e-12)
                         edges = np.quantile(vol, np.linspace(0, 1, STRATA + 1)[1:-1])
                         bucket = np.digitize(vol, edges)
@@ -325,31 +344,45 @@ def main() -> int:
         n = sum(g[7] for g in got)
         pooled = sum(g[7] * g[10] for g in got) / n
         within = sum(g[7] * g[11] for g in got) / n
-        best.append((abs(within - 0.5), key, pooled, within, len(got)))
+        best.append((abs(within - 0.5), key, pooled, within, len(got), n))
         print(f"{key[0]:>12s} {key[1]:>5s} {key[2]:8d} {pooled:8.3f} {within:8.3f} "
               f"{pooled - within:+7.3f} {len(got):6d}")
 
     # ---- 3. what overlapping the windows is worth, measured not asserted
     print("\n=== overlap inflation: the same feature, entries every bar ===")
-    pair: dict[tuple, dict[bool, float]] = {}
+    #: **Trade-weighted across targets and shapes, like the table above.**
+    #: Keying on (feature, arm, horizon) alone and assigning `r[11]` kept only
+    #: the last cell written, so the levels disagreed with the main table and
+    #: were not comparable to anything. The spaced-vs-overlapped contrast was
+    #: still like-for-like, but a number that cannot be read against its own
+    #: report is not worth printing.
+    pair: dict[tuple, dict[bool, list[tuple[int, float]]]] = {}
     for r in rows:
-        pair.setdefault((r[6], r[1], r[2]), {})[r[5]] = r[11]
-    print(f"{'feature':>12s} {'arm':>5s} {'horizon':>8s} {'spaced':>8s} {'overlapped':>11s}")
+        pair.setdefault((r[6], r[1], r[2]), {}).setdefault(r[5], []).append((r[7], r[11]))
+
+    def weighted(got: list[tuple[int, float]]) -> float:
+        n = sum(w for w, _ in got)
+        return sum(w * v for w, v in got) / n if n else float("nan")
+
+    print(f"{'feature':>12s} {'arm':>5s} {'horizon':>8s} {'spaced':>8s} {'overlapped':>11s} "
+          f"{'cells':>6s}")
     for key in sorted(pair):
         d = pair[key]
         if True in d and False in d:
-            print(f"{key[0]:>12s} {key[1]:>5s} {key[2]:8d} {d[False]:8.3f} {d[True]:11.3f}")
+            print(f"{key[0]:>12s} {key[1]:>5s} {key[2]:8d} {weighted(d[False]):8.3f} "
+                  f"{weighted(d[True]):11.3f} {len(d[False])}/{len(d[True]):<4d}")
 
     # ---- 4. the verdict, stated as a comparison and not a number
     best.sort(reverse=True)
     print("\n=== strongest within-strata readings, real against walk ===")
-    for dist, key, pooled, within, feeds in best[:12]:
+    for _dist, key, _pooled, within, _feeds, trades in best[:12]:
+        other = "walk" if key[1] == "real" else "real"
         mate = next(
-            (w for d, k, p, w, f in best if k == (key[0], "walk" if key[1] == "real" else "real", key[2])),
+            (w for _d, k, _p, w, _f, _n in best if k == (key[0], other, key[2])),
             float("nan"),
         )
         print(f"  {key[0]:>12s} {key[1]:>5s} h{key[2]:<4d} within {within:.3f}  "
-              f"other arm {mate:.3f}")
+              f"{other} {mate:.3f}  ({trades} trades)")
     return 0
 
 
