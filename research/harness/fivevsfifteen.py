@@ -164,9 +164,10 @@ def run(label: str, seconds: float, bars: dict[str, np.ndarray], rng) -> dict:
     for row in taken:
         row["r"] = race(bars, row["i"], row["side"], row["risk"], row["target"], held)
         row["net"] = row["r"] - row["cost_of_risk"]
-        row["coin"] = race(
-            bars, row["i"], int(rng.choice([-1, 1])), row["risk"], row["target"], held
-        ) - row["cost_of_risk"]
+        row["coin"] = (
+            race(bars, row["i"], int(rng.choice([-1, 1])), row["risk"], row["target"], held)
+            - row["cost_of_risk"]
+        )
 
     return {
         "label": label,
@@ -206,8 +207,10 @@ def main() -> int:
         cut[label] = {k: v[keep] for k, v in frame.items()}
 
     share = SurpriseProfile.cost_share
-    print(f"cost gate {share:.0%} of target, spread limit {SPREAD_LIMIT:.0%} of risk, "
-          f"round trip {COST_PX:g} px, hold {HOLD_HOURS:g}h\n")
+    print(
+        f"cost gate {share:.0%} of target, spread limit {SPREAD_LIMIT:.0%} of risk, "
+        f"round trip {COST_PX:g} px, hold {HOLD_HOURS:g}h\n"
+    )
 
     for label, seconds in CLOCKS.items():
         got = run(label, seconds, cut[label], rng)
@@ -228,7 +231,9 @@ def main() -> int:
             f"{np.median(of_risk):.1%} of risk "
             f"({np.mean(of_risk <= SPREAD_LIMIT):.1%} inside {SPREAD_LIMIT:.0%})"
         )
-        affordable = [r for r in taken if r["cost_of_target"] <= share and r["cost_of_risk"] <= SPREAD_LIMIT]
+        affordable = [
+            r for r in taken if r["cost_of_target"] <= share and r["cost_of_risk"] <= SPREAD_LIMIT
+        ]
         report("gross, all proposals", [r["r"] for r in taken], rng)
         report("net, all proposals", [r["net"] for r in taken], rng)
         report("net, gates passed", [r["net"] for r in affordable], rng)
