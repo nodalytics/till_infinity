@@ -72,13 +72,17 @@ def _non_overlapping(rows: np.ndarray, ranking: np.ndarray, take: int) -> list[i
     duty cycle therefore means "up to this share, non-overlapping", and the
     arms are all held to the same rule so the comparison survives it.
     """
+    # **Returns rows, not ranking positions.** The first version returned the
+    # index into `ranking` - the live subset - and the caller used it to index
+    # the full fold, so every arm read the wrong bars and most of them had no
+    # trade at all: the whole table came back NaN.
     picked: list[int] = []
     free = -1
     for position in np.argsort(-ranking):
         row = int(rows[position])
         if row <= free:
             continue
-        picked.append(int(position))
+        picked.append(row)
         free = row + a.HORIZON
         if len(picked) >= take:
             break
