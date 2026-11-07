@@ -15,6 +15,8 @@ protection exists.** The corollary, learned later and more expensively: a
 | [Tick values convert for FX and not for CFDs](#tick-values-convert-for-fx-and-not-for-cfds) | seven live instruments are sized in the wrong currency |
 | [NGAS contradicts its own contract size](#ngas-contradicts-its-own-contract-size) | by a factor of 10,000, in the dangerous direction |
 | [What is quoting when](#what-is-quoting-when) | the book closes in four waves, not one |
+| [What the unconverted tick value costs](#what-the-unconverted-tick-value-costs-by-currency) | 158x on JPY, and the direction decides what is safe to add |
+| [Every cross costs little, and one is untradeable](#every-cross-costs-little-and-one-is-untradeable) | EURNZD round-trips a whole bar range |
 | [Order ids namespace on the last hyphen](#order-ids-namespace-on-the-last-hyphen) | eighteen desks once shared two namespaces |
 | [The comment is 31 characters](#the-comment-is-31-characters) | and the useful half is the tail |
 | [The book is 725 names and 240 quotes](#the-book-is-725-names-and-240-quotes) | naming is inconsistent; most of it is untradeable |
@@ -213,6 +215,93 @@ consumes it**: `trading_at` and `closes_in` have no callers.
 A stale quote is not the same as a refusal. Every instrument above kept
 `trade_mode: 4` while shut, so trade mode cannot be used to detect a closed
 market either.
+
+## What the unconverted tick value costs, by currency
+
+The section above establishes that `trade_tick_value` is the **quote-currency**
+figure on every CFD whose profit currency is not USD, and that `sizes.spec_of`
+trusts it without applying a rate. This is what that is worth per currency,
+measured 2026-11-07 against quotes of that date. Position size is inversely
+proportional to the tick value, so a **stated value below the truth oversizes**:
+
+| profit ccy | rate to USD | stated vs true | size error | direction |
+| --- | --- | --- | --- | --- |
+| **JPY** | 1/158.53 | 0.01 vs 0.0000631 | **158x** | undersized |
+| NZD | ~0.58 | 0.01 vs 0.0058 | 1.7x | undersized |
+| AUD | 0.6863 | 0.01 vs 0.00686 | 1.46x | undersized |
+| CAD | 1/1.4130 | 0.01 vs 0.00708 | 1.41x | undersized |
+| CHF | 1/0.8207 | 0.01 vs 0.0122 | 1.22x | **oversized** |
+| GBP | 1.3347 | 0.01 vs 0.0133 | 1.33x | **oversized** |
+| EUR | 1.1136 | 0.01 vs 0.01114 | 1.11x | **oversized** |
+| USD | 1.0 | agrees | - | correct |
+
+**The direction decides what is safe to add.** An undersized instrument trades
+too little and reads as a dead rule; an oversized one risks more than the
+budget said. So a JPY cross is not dangerous, it is *pointless* - it would
+trade about 1/158 of intent - while a GBP or CHF cross risks a quarter more
+than intended.
+
+This is why the four crosses chosen for `identity-arb` on 2026-11-07 are
+AUDCAD, EURAUD, AUDNZD and EURCAD rather than the two cheapest: EURJPY (0.036)
+and AUDJPY (0.037) are the cheapest crosses on the book **and** the worst
+choices, being JPY-quoted.
+
+**None of this is fixed.** `spec_of` still trusts the stated value, deliberately:
+converting on the wrong reading of what the figure means would size Japan 225
+**158x larger**, and only one of those two errors can empty an account. It
+waits on a realised-P&L observation - open a minimum position, note the price
+move, read back the `profit` the broker reports.
+
+## Every cross costs little, and one is untradeable
+
+Spread over bar range, 96 M15 bars, 2026-11-07. The same measurement
+`.secrets/instruments.md` records for the live book, and the screen that has
+now twice stopped a bad instrument being added.
+
+| cross | median | | cross | median |
+| --- | --- | --- | --- | --- |
+| EURJPY | 0.036 | | EURCAD | 0.072 |
+| AUDJPY | 0.037 | | GBPCHF | 0.082 |
+| AUDCAD | 0.038 | | AUDCHF | 0.084 |
+| NZDJPY | 0.049 | | EURCHF | 0.086 |
+| GBPJPY | 0.051 | | GBPCAD | 0.091 |
+| EURAUD | 0.055 | | EURGBP | 0.100 |
+| CADJPY | 0.058 | | CADCHF | 0.120 |
+| AUDNZD | 0.058 | | CHFJPY | 0.122 |
+| GBPAUD | 0.060 | | NZDCAD | 0.143 |
+| | | | NZDCHF | 0.164 |
+| | | | GBPNZD | 0.175 |
+| | | | **EURNZD** | **1.071** |
+
+**EURNZD round-trips for more than a whole bar range** - 1.071 median, 1.415 at
+p75 - and is the only cross outside the 0.036-0.175 band. It also carries
+`trade_stops_level` 40 where every other cross carries 20, and a 150-point
+median spread at M1. Excluded.
+
+All 21 crosses are `volume_min` 0.01, `trade_mode` 4 and `trade_exemode` 2, and
+all pass the contract-size guard.
+
+### And the crypto, screened the same day
+
+| symbol | median | verdict |
+| --- | --- | --- |
+| **BTCUSD** | **0.010** | cheapest on the book after US Tech 100 (0.008) |
+| XRPUSD | 0.037 | cheap, but `volume_min` is **500 lots** |
+| BNBUSD | 0.042 | added |
+| ETHUSD | 0.065 | added |
+| SOLUSD | 0.143 | dear - worse than Hong Kong 50 |
+| **LTCUSD** | **1.154** | **untradeable** |
+| **ADAUSD** | **1.055** | **untradeable** |
+
+LTCUSD and ADAUSD cost **more than a full bar range** to round trip, three
+times beyond the 0.40 the cost file calls untradeable. And the `.conv`
+variants - `BTCUSD.conv`, `ETHUSD.conv`, `LTCUSD.conv` - report
+`trade_mode` **absent**, so they are currency-*conversion* symbols and not
+tradeable instruments, however identical their spread figures look.
+
+Crypto quotes through the weekend: all ten read a fresh tick at 08:30 UTC on a
+Saturday, which is what makes BTCUSD, ETHUSD and BNBUSD worth holding beside
+the Deriv synthetics.
 
 ## Specs worth having to hand
 

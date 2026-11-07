@@ -186,6 +186,48 @@ Two things follow for sizing:
 Nothing heavier than a read should run alongside it at this size. `till-infinity prices prune` - a second Python process importing the whole
 application - killed the container outright.
 
+### The desk ceiling, and how to compute the next one
+
+`desks.ceiling()` is `int(min(cores_seen, quota) * TRADING_DESKS_PER_CORE)`, and
+on this instance `cores_seen` is 2 against a **1.8-core quota** - so the
+multiplier is 1.8 and not 2. `sched_getaffinity` reports `--cpuset-cpus` and
+never `--cpus`, which is why the quota has to be read from `cpu.max` rather
+than inferred from the core count.
+
+**Desks wanted is `symbols x strategies x intervals`**, and `desks.build`
+truncates with a hard `wanted[:cap]` - the overflow is dropped silently and
+takes existing desks with it, because the clip falls at the tail of a list the
+caller did not order for this purpose.
+
+The arithmetic as it has actually moved, each row a real deploy:
+
+| date | symbols | rules | wanted | per core | ceiling | clipped |
+| --- | --- | --- | --- | --- | --- | --- |
+| 2026-11-06 | 23 | 2 | 46 | 26 | 46 | 0, and **no headroom** |
+| 2026-11-07 | 32 | 2 | 64 | 40 | 72 | 0 |
+| 2026-11-07 | 35 | 2 | 70 | 40 | 72 | 0 |
+| 2026-11-07 | 40 | 3 | **120** | **70** | **126** | 0 |
+
+**A third rule is what makes this bite.** Adding `identity-arb` multiplied the
+desk count by 1.5 at a stroke: 40 symbols by 3 rules is 120 desks where 72 was
+the ceiling, so `TRADING_DESKS_PER_CORE` had to go 40 to 70 in the same change.
+Raising the symbol list alone is linear; adding a rule is not.
+
+**What justifies the raise, measured rather than assumed.** At 35 symbols and
+64 desks the container held **210 MiB of a 2.61 GiB cap - 7.85%** - and trading
+peaked at 13% of the CPU quota once the health probe stopped being the dominant
+load. Cache is the term that scales with the feed list, at `bar_capacity` 10,000
+plus `tick_capacity` 10,000 per feed, which is 4.82 MiB a feed: five more
+symbols is about **24 MiB**, taking the resident size to roughly 234 MiB, or 9%.
+
+**And the desk count is not the feed count.** `identity-arb` only takes a desk
+on a cross, so 36 of its 40 desks decline at start - they subscribe to feeds the
+other rules already carry, so they cost desk objects and subscriptions rather
+than cache. A rule that can only run on a subset still gets built for every
+symbol, because `desks.build` pairs every symbol with every rule and no per-rule
+symbol filter exists. The declining desks now say so once at start, which is
+the only reason that is visible rather than indistinguishable from a quiet feed.
+
 Databases and model state live on a mounted volume. Without one they go when
 the container does, and for online models that means starting cold - no learned
 distributions, no levels, no touch history.
