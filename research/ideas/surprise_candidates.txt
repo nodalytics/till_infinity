@@ -1,0 +1,33 @@
+# Instruments live on the desk but NOT on `SurpriseProfile.feeds`, to be cost
+# screened against the rule's own geometry before any is admitted.
+#
+# The gate is `cost <= cost_share * target_r * stop_vol * vol`, so an
+# instrument passes on its spread-to-volatility ratio rather than on its
+# spread. BNBUSD is kept in the list as a known failure: it was admitted on a
+# trigger measurement, read 18.0% of target against a 10% gate, and was
+# removed on 2026-11-08. A screen that does not reproduce that is wrong.
+#
+# Names carry spaces, which is why this is a file: `lab.sh run` passes env
+# values through an unquoted `$*` and `SYMBOLS=US SP 500` splits.
+AUDCAD
+AUDNZD
+Australia 200
+BNBUSD
+EURAUD
+EURCAD
+Europe 50
+France 40
+Germany 40
+Hong Kong 50
+Japan 225
+NZDUSD
+UK 100
+UK Brent Oil
+US Oil
+US SP 500
+US Tech 100
+USDCHF
+Wall Street 30
+XAGUSD
+XCUUSD
+XPTUSD

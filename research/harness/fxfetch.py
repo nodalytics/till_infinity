@@ -63,8 +63,9 @@ def wanted(listed: set[str]) -> list[str]:
                 continue
             trio = []
             for x, y in ((a, "USD"), (b, "USD"), (a, b)):
-                trio.append(f"{x}{y}" if f"{x}{y}" in pairs else
-                            (f"{y}{x}" if f"{y}{x}" in pairs else None))
+                trio.append(
+                    f"{x}{y}" if f"{x}{y}" in pairs else (f"{y}{x}" if f"{y}{x}" in pairs else None)
+                )
             if all(trio):
                 legs.update(trio)
     return sorted(legs)
@@ -81,7 +82,19 @@ def main() -> int:
     #: `wanted` cannot produce it. Names not listed by the venue are printed
     #: and skipped rather than silently dropped: a panel that is quietly one
     #: instrument short still produces a table.
-    named = [s.strip() for s in os.environ.get("SYMBOLS", "").split(",") if s.strip()]
+    # `SYMBOLS_FILE` exists because `lab.sh run` passes env values through an
+    # unquoted `$*`, so `SYMBOLS=US SP 500` splits and the job dies before its
+    # log is created. Most of this venue's index and energy names contain a
+    # space, so a file is the only way to ask for them.
+    listed_file = os.environ.get("SYMBOLS_FILE", "")
+    if listed_file:
+        named = [
+            line.strip()
+            for line in Path(listed_file).read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        ]
+    else:
+        named = [s.strip() for s in os.environ.get("SYMBOLS", "").split(",") if s.strip()]
     if named:
         legs = [s for s in named if s in listed]
         absent = [s for s in named if s not in listed]
@@ -111,8 +124,10 @@ def main() -> int:
         ts = np.array(
             [datetime.fromisoformat(str(b["time"])).timestamp() for b in bars], dtype=np.float64
         )
-        cols = {k: np.array([float(b.get(k) or 0.0) for b in bars]) for k in
-                ("open", "high", "low", "close", "spread")}
+        cols = {
+            k: np.array([float(b.get(k) or 0.0) for b in bars])
+            for k in ("open", "high", "low", "close", "spread")
+        }
         vol = np.array([float(b.get("tick_volume") or 0.0) for b in bars])
         #: **The label, not the bridge's code.** `relationship_screen` globs
         #: `*.<FRAME>.npz` with FRAME like `1h`, while the bridge wants `H1`.
@@ -121,8 +136,10 @@ def main() -> int:
         label = os.environ.get("LABEL", TF)
         np.savez_compressed(OUT / f"{name}.{label}.npz", time=ts, volume=vol, **cols)
         span = (ts[-1] - ts[0]) / 86400.0
-        print(f"  {name:<9} {len(bars):6d} bars  {span:6.1f} days  "
-              f"median spread {np.median(cols['spread']):.0f} pts")
+        print(
+            f"  {name:<9} {len(bars):6d} bars  {span:6.1f} days  "
+            f"median spread {np.median(cols['spread']):.0f} pts"
+        )
         done += 1
         time.sleep(PAUSE)
     print(f"\n{done} of {len(legs)} written")

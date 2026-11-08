@@ -51,7 +51,26 @@ from till_infinity.strategies.surprise import SurpriseProfile  # noqa: E402
 
 DATA = Path.home() / "till_infinity" / "data" / "btc"
 SECONDS = {"1m": 60.0, "3m": 180.0, "5m": 300.0, "15m": 900.0, "30m": 1800.0, "1h": 3600.0}
-SYMBOLS = tuple(s.strip() for s in os.environ.get("SYMBOLS", "BTCUSD").split(",") if s.strip())
+
+
+def _symbols() -> tuple[str, ...]:
+    """`SYMBOLS_FILE` first, then `SYMBOLS`, then BTCUSD.
+
+    A file because this venue's index and energy names contain spaces and
+    `lab.sh run` passes env values through an unquoted `$*`, so
+    `SYMBOLS=US SP 500` splits and the job dies before its log exists.
+    """
+    path = os.environ.get("SYMBOLS_FILE", "")
+    if path:
+        return tuple(
+            line.strip()
+            for line in Path(path).read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        )
+    return tuple(s.strip() for s in os.environ.get("SYMBOLS", "BTCUSD").split(",") if s.strip())
+
+
+SYMBOLS = _symbols()
 CLOCKS = {
     label: SECONDS[label]
     for label in (s.strip() for s in os.environ.get("CLOCKS", "5m,15m").split(","))
@@ -302,6 +321,24 @@ def one(
     report("  net, all proposals", [r["net"] for r in taken], rng)
     report("  net, gates passed", [r["net"] for r in affordable], rng)
     report("  coin twin, all", [r["coin"] for r in taken], rng)
+
+    # ──── statespace-long and statespace-short, which are this same signal ────
+    #
+    # `LongSide`/`ShortSide` consume the *same* proposals and act on one side
+    # only, so they are this proposal set split by sign rather than a new
+    # rule. The trap is that a one-sided rule collects the instrument's own
+    # drift: `always` is every proposal's date taken on that side regardless
+    # of what the signal said, which is the baseline the split has to beat.
+    for side, name in ((1, "statespace-long"), (-1, "statespace-short")):
+        mine = [r for r in taken if r["side"] == side]
+        if len(mine) < 8:
+            continue
+        forced = [
+            race(bars, r["i"], side, r["risk"], r["target"], got["held"]) - r["cost_of_risk"]
+            for r in taken
+        ]
+        report(f"  {name}, net", [r["net"] for r in mine], rng)
+        report(f"    always {'long' if side > 0 else 'short'}", forced, rng)
     # **Matched to the same rows.** The gates select on cost, not on signal, so
     # a coin measured over every proposal is not the null for a subset chosen
     # by affordability - the cheap trades are a different population and the
