@@ -62,7 +62,21 @@ main = probe.main
 HEARTBEAT = 30.0
 
 
-def startup_alert(reading: dict[str, Any]) -> dict[str, Any] | None:
+#: Seconds after the heartbeat starts before it will announce.
+#:
+#: **Measured, not guessed.** On 2026-11-08 the heartbeat registered at
+#: 18:49:09 and announced on its first write; the notifier logged "notifying on
+#: alerts" at 18:49:53. The alert was published 44 seconds before anything was
+#: subscribed to `ALERTS`, so it vanished and the one-shot latch stopped it
+#: retrying - the notifier read `0 sent` and nothing said why.
+#:
+#: Three minutes rather than one: being late costs a late message, being early
+#: costs the message, and the subscriber's own start depends on a venue
+#: handshake whose duration this actor cannot see.
+ANNOUNCE_AFTER = 180.0
+
+
+def startup_alert(reading: dict[str, Any], elapsed: float) -> dict[str, Any] | None:
     """One alert when the node is **fully** up, or `None` while it is not.
 
     A free function for the reason `tally_reading` is one: the wording is the
@@ -88,6 +102,11 @@ def startup_alert(reading: dict[str, Any]) -> dict[str, Any] | None:
     `--version` healthcheck reported for three hours over a desk that could
     not trade.
     """
+    if elapsed < ANNOUNCE_AFTER:
+        # Not yet. A producer that beats its own subscriber publishes into
+        # nothing, which is the inverse of the "consumer with no producer"
+        # failure this topic has already hidden three times.
+        return None
     if not reading.get("running"):
         return None
     if not reading.get("venue_connected"):
@@ -149,6 +168,10 @@ class Heartbeat(Actor):
         #: it exists to prove the alert path on a deploy, and a repeat every
         #: heartbeat would be the log flood this desk has already produced once.
         self._announced = False
+        #: When this actor started, so the announcement can wait for the
+        #: notifier to subscribe. Set in `on_start`, because `__init__` runs
+        #: before the node has a clock.
+        self._began = 0.0
         #: `None` means the venue has not said. Not `False`: "never asked" and
         #: "the terminal is refusing orders" are different facts and the file
         #: has to be able to say which.
@@ -157,6 +180,9 @@ class Heartbeat(Actor):
         self._can_trade_cause: str = ""
 
     def on_start(self) -> None:
+        # Stamped first, so `ANNOUNCE_AFTER` is measured from the moment this
+        # actor started rather than from whenever its first write happened.
+        self._began = self._now()
         # **The venue's trading flag arrives on the bus, because an `Actor`
         # cannot read it.** This actor has the bus, the cache, the clock and
         # the portfolio and no transport; the execution client holds the
@@ -192,6 +218,23 @@ class Heartbeat(Actor):
             self._failed += 1
             self.log.warning(f"status: could not write {self._path}: {exc}")
 
+    def _elapsed(self) -> float:
+        """Seconds since this actor started, on the node's own clock.
+
+        `time.time()` would be wrong in a backtest, where the node's clock is
+        in another decade - the same trap `Filter` falls into and that
+        `_wanted` passes `when=` to avoid.
+        """
+        if not self._began:
+            return 0.0
+        return max(0.0, self._now() - self._began)
+
+    def _now(self) -> float:
+        try:
+            return float(self.clock.timestamp())
+        except Exception:
+            return 0.0
+
     def _announce(self, reading: dict[str, Any]) -> None:
         """Publish the startup alert the first time the node is fully up.
 
@@ -200,7 +243,7 @@ class Heartbeat(Actor):
         """
         if self._announced:
             return
-        payload = startup_alert(reading)
+        payload = startup_alert(reading, elapsed=self._elapsed())
         if payload is None:
             return
         self._announced = True
