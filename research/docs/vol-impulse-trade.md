@@ -141,7 +141,9 @@ claim and the rule itself are the same object.
 | XAUUSD | 276,423 | 2015-01-02 | 256,279 | 0.109 | 1.640 | 16 points |
 
 A smearing factor of 1.59 to 1.69 is not cosmetic: without it the forecast is
-the geometric mean of `|r|` and the trigger fires about 60% too often.
+the geometric mean of `|r|`, which is 1.6 times too small, so the rule's stated
+3.0 trigger would be an effective **1.9** - a different rule, with nothing in a
+diff that looks like one.
 
 | instrument | judged bars | impulses | % of bars | in a squeeze | % of impulses | % of bars |
 |---|---|---|---|---|---|---|
@@ -400,8 +402,9 @@ desk:
    which fired first.
 4. **A HAR fitted on `log|r|` and exponentiated without a smearing factor
    forecasts the geometric mean.** The factor is 1.59-1.69 here, so the
-   uncorrected version fires about 60% too often - a silent change to the rule's
-   event rate with nothing in the diff that looks like one.
+   uncorrected forecast is 1.6 times too small and the rule's stated 3.0 trigger
+   becomes an effective **1.9** - a change to the event rate with nothing in a
+   diff that looks like one.
 5. **The rule's warm-up is 12,000 bars and the production catalogue holds about
    7,300.** 750 four-hour bins is 125 calendar days. A backtest over
    `node/corpus.py`'s catalogue produces **zero** signals by construction, and

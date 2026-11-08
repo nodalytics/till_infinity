@@ -183,8 +183,9 @@ class Har:
 #:
 #: Fitted on 270,969 to 271,717 bars per feed (2015-01-02 to 2026-02-01), R2 on
 #: `log|r|` of 0.109 to 0.143. The smearing factor runs 1.59 to 1.69; without it
-#: the forecast is the geometric mean of `|r|` and the trigger fires about 60%
-#: too often. A feed whose entry is absent cannot trade - `FEEDS` below - and
+#: the forecast is the geometric mean of `|r|`, which is 1.6 times too small,
+#: so a trigger of 3.0 would be an effective 1.9 and the rule would be a
+#: different one. A feed whose entry is absent cannot trade - `FEEDS` below - and
 #: absent is not zero.
 HAR: dict[str, Har] = {
     "eurusd": Har(

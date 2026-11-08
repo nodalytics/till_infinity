@@ -708,7 +708,7 @@ def test_the_shipped_models_cover_the_five_markets_and_forecast_a_live_scale():
     `research/docs/vol-impulse-trade.md` holds them - but the three things an
     edited or re-pasted row could get wrong without raising: a feed going
     missing, a smearing factor dropped (which makes the forecast the geometric
-    mean of `|r|` and the trigger fire about 60% too often), and a forecast off
+    mean of `|r|`, so a 3.0 trigger becomes an effective 1.9), and a forecast off
     by an order of magnitude, which would move the firing rate without moving
     anything a reader would look at.
     """
