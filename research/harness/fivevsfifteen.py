@@ -35,7 +35,10 @@ likely one.
 
 from __future__ import annotations
 
+import json
+import os
 import sys
+import urllib.request as request
 from pathlib import Path
 
 import numpy as np
@@ -47,13 +50,21 @@ from till_infinity.statespace.proposing import proposal_for  # noqa: E402
 from till_infinity.strategies.surprise import SurpriseProfile  # noqa: E402
 
 DATA = Path.home() / "till_infinity" / "data" / "btc"
-SYMBOL = "BTCUSD"
-FEED = "btcusd"
-CLOCKS = {"5m": 300.0, "15m": 900.0}
+SECONDS = {"1m": 60.0, "3m": 180.0, "5m": 300.0, "15m": 900.0, "30m": 1800.0, "1h": 3600.0}
+SYMBOLS = tuple(s.strip() for s in os.environ.get("SYMBOLS", "BTCUSD").split(",") if s.strip())
+CLOCKS = {
+    label: SECONDS[label]
+    for label in (s.strip() for s in os.environ.get("CLOCKS", "5m,15m").split(","))
+    if label in SECONDS
+}
 HOLD_HOURS = 24.0
-#: The terminal's quoted round trip, from `btccost.py` 2026-11-07. The per-bar
-#: spread column is the one this repository measured as unusable as a level.
-COST_PX = 18.86
+#: Fallback round trips in price, from `btccost.py` 2026-11-07, used only when
+#: the bridge will not answer. **Per symbol, because this is the whole point:**
+#: ETHUSD's round trip is 1.58 px against BTCUSD's 18.86, and costing one with
+#: the other's number would invent the result. The per-bar `spread` column is
+#: not used - this repository measured it as unusable as a level, understating
+#: the terminal by 2.7x on ETHUSD.
+FALLBACK_PX = {"BTCUSD": 18.86, "ETHUSD": 1.58}
 #: The share of the risk a round trip may cost. `Settings`' own default; read
 #: here as a literal because this runs without a node to ask.
 SPREAD_LIMIT = 0.16
@@ -61,8 +72,30 @@ SEED = 20261107
 DRAWS = 2000
 
 
-def load(label: str) -> dict[str, np.ndarray]:
-    with np.load(DATA / f"{SYMBOL}.{label}.npz") as data:
+def quoted(symbol: str) -> float:
+    """The terminal's own round trip, or the recorded fallback.
+
+    Asked per symbol rather than assumed: the whole question here is whether a
+    crypto's spread is affordable against its own volatility.
+    """
+    base = os.environ.get("BRIDGE", "http://localhost:8000") + "/api/v1"
+    try:
+        key = (Path.home() / ".mt5key").read_text().strip()
+        req = request.Request(  # noqa: S310
+            f"{base}/symbols/info/{symbol}", headers={"X-API-Key": key}
+        )
+        with request.urlopen(req, timeout=30) as response:  # noqa: S310
+            spec = json.loads(response.read().decode())
+        bid, ask = float(spec.get("bid") or 0.0), float(spec.get("ask") or 0.0)
+        if ask > bid:
+            return ask - bid
+    except Exception:  # noqa: BLE001
+        pass
+    return float(FALLBACK_PX.get(symbol, float("nan")))
+
+
+def load(symbol: str, label: str) -> dict[str, np.ndarray]:
+    with np.load(DATA / f"{symbol}.{label}.npz") as data:
         return {k: data[k] for k in ("time", "open", "high", "low", "close")}
 
 
@@ -99,7 +132,9 @@ def race(
     return side * (close[last] - entry) / risk
 
 
-def run(label: str, seconds: float, bars: dict[str, np.ndarray], rng) -> dict:
+def run(
+    feed: str, label: str, seconds: float, bars: dict[str, np.ndarray], cost_px: float, rng
+) -> dict:
     # **The scope has to be set, and the first run of this proved it.**
     # `config.DEFAULT_INTERVALS` is `("1m", "5m")`, so a default `Engine()`
     # folded every 5m bar and rejected all 16,731 fifteen-minute ones as
@@ -112,7 +147,7 @@ def run(label: str, seconds: float, bars: dict[str, np.ndarray], rng) -> dict:
     folded = 0
     for i in range(len(bars["close"])):
         payload = {
-            "feed": FEED,
+            "feed": feed,
             "interval": label,
             "closed": True,
             "time": float(bars["time"][i]),
@@ -147,8 +182,8 @@ def run(label: str, seconds: float, bars: dict[str, np.ndarray], rng) -> dict:
                 "side": side,
                 "risk": risk,
                 "target": target,
-                "cost_of_target": COST_PX / target,
-                "cost_of_risk": COST_PX / risk,
+                "cost_of_target": cost_px / target,
+                "cost_of_risk": cost_px / risk,
                 "surprise": float(features.get("surprise") or 0.0),
             }
         )
@@ -198,54 +233,80 @@ def report(name: str, values: list[float], rng) -> None:
 
 def main() -> int:
     rng = np.random.default_rng(SEED)
-    frames = {label: load(label) for label in CLOCKS}
-    start, end = common_window(frames)
-    print(f"common window {(end - start) / 86400.0:.1f} days\n")
-    cut = {}
-    for label, frame in frames.items():
-        keep = (frame["time"] >= start) & (frame["time"] <= end)
-        cut[label] = {k: v[keep] for k, v in frame.items()}
-
     share = SurpriseProfile.cost_share
     print(
         f"cost gate {share:.0%} of target, spread limit {SPREAD_LIMIT:.0%} of risk, "
-        f"round trip {COST_PX:g} px, hold {HOLD_HOURS:g}h\n"
+        f"hold {HOLD_HOURS:g}h\n"
     )
-
-    for label, seconds in CLOCKS.items():
-        got = run(label, seconds, cut[label], rng)
-        taken = got["taken"]
-        print(
-            f"=== {label} ===  {got['bars']} bars, {got['folded']} readouts, "
-            f"{got['proposals']} proposals, {len(taken)} non-overlapping, hold {got['held']} bars"
-        )
-        print(f"    engine tally: {got['tally']}")
-        if not taken:
-            print("    nothing fired\n")
+    for symbol in SYMBOLS:
+        cost_px = quoted(symbol)
+        frames = {}
+        for label in CLOCKS:
+            try:
+                frames[label] = load(symbol, label)
+            except FileNotFoundError:
+                print(f"{symbol} {label}: no file")
+        if not frames:
             continue
-        of_target = np.asarray([r["cost_of_target"] for r in taken])
-        of_risk = np.asarray([r["cost_of_risk"] for r in taken])
+        start, end = common_window(frames)
         print(
-            f"    cost: median {np.median(of_target):.1%} of target "
-            f"({np.mean(of_target <= share):.1%} inside {share:.0%}), "
-            f"{np.median(of_risk):.1%} of risk "
-            f"({np.mean(of_risk <= SPREAD_LIMIT):.1%} inside {SPREAD_LIMIT:.0%})"
+            f"##### {symbol} #####  round trip {cost_px:.4g} px, "
+            f"common window {(end - start) / 86400.0:.1f} days"
         )
-        affordable = [
-            r for r in taken if r["cost_of_target"] <= share and r["cost_of_risk"] <= SPREAD_LIMIT
-        ]
-        report("gross, all proposals", [r["r"] for r in taken], rng)
-        report("net, all proposals", [r["net"] for r in taken], rng)
-        report("net, gates passed", [r["net"] for r in affordable], rng)
-        report("coin twin, net", [r["coin"] for r in taken], rng)
+        for label, seconds in CLOCKS.items():
+            if label not in frames:
+                continue
+            keep = (frames[label]["time"] >= start) & (frames[label]["time"] <= end)
+            bars = {k: v[keep] for k, v in frames[label].items()}
+            one(symbol.lower(), label, seconds, bars, cost_px, share, rng)
         print()
-
     print(
-        "Break-even on a 1:2 race is 1/3 before cost. The comparison that matters is\n"
-        "`net, gates passed` between the clocks: a 5m cell that fires more often and\n"
-        "nets less is a different rule, not a faster one."
+        "Break-even on a 1:2 race is 1/3 before cost. A crypto whose median round trip is\n"
+        "a quarter of its target cannot clear a 10% gate however good the signal is."
     )
     return 0
+
+
+def one(
+    feed: str,
+    label: str,
+    seconds: float,
+    bars: dict[str, np.ndarray],
+    cost_px: float,
+    share: float,
+    rng,
+) -> None:
+    """One instrument at one clock: what fired, what it cost, what it paid."""
+    got = run(feed, label, seconds, bars, cost_px, rng)
+    taken = got["taken"]
+    print(
+        f"  === {label} ===  {got['bars']} bars, {got['folded']} readouts, "
+        f"{got['proposals']} proposals, {len(taken)} non-overlapping, hold {got['held']} bars"
+    )
+    print(f"      engine tally: {got['tally']}")
+    if not taken:
+        print("      nothing fired")
+        return
+    of_target = np.asarray([r["cost_of_target"] for r in taken])
+    of_risk = np.asarray([r["cost_of_risk"] for r in taken])
+    print(
+        f"      cost: median {np.median(of_target):.1%} of target "
+        f"({np.mean(of_target <= share):.1%} inside {share:.0%}), "
+        f"{np.median(of_risk):.1%} of risk "
+        f"({np.mean(of_risk <= SPREAD_LIMIT):.1%} inside {SPREAD_LIMIT:.0%})"
+    )
+    affordable = [
+        r for r in taken if r["cost_of_target"] <= share and r["cost_of_risk"] <= SPREAD_LIMIT
+    ]
+    report("  gross, all proposals", [r["r"] for r in taken], rng)
+    report("  net, all proposals", [r["net"] for r in taken], rng)
+    report("  net, gates passed", [r["net"] for r in affordable], rng)
+    report("  coin twin, all", [r["coin"] for r in taken], rng)
+    # **Matched to the same rows.** The gates select on cost, not on signal, so
+    # a coin measured over every proposal is not the null for a subset chosen
+    # by affordability - the cheap trades are a different population and the
+    # comparison has to hold that constant.
+    report("  coin twin, gates passed", [r["coin"] for r in affordable], rng)
 
 
 if __name__ == "__main__":
