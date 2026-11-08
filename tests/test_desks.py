@@ -867,3 +867,28 @@ def test_a_venue_qualified_tag_is_also_unique(monkeypatch):
         for symbol in ("EURUSD", "GBPUSD", "US500")
     }
     assert len(seats) == 3, f"venue-qualified desks share a namespace: {sorted(seats)}"
+
+
+def test_statespace_long_cannot_be_enabled_because_it_adds_nothing_to_its_own_side():
+    """**A rule whose selection does not beat taking every one of its own
+    dates on that side has no selection.**
+
+    Measured 2026-11-08 over 521 days at 15m on BTCUSD and ETHUSD, driving
+    the production fold and `proposal_for`. `always` is each proposal's date
+    taken long regardless of what the signal said:
+
+                     signal   always   signal adds
+        BTC          -0.127   -0.099      -0.028
+        ETH          -0.208   -0.223      +0.015
+
+    Its only live record agrees: -145.89, improved to -58.90 by a trail
+    setting and still negative.
+
+    Removed from `LEAVES` rather than deleted, so `desks.build` refuses it by
+    name instead of a deploy silently getting a smaller desk set - which is
+    the failure that table's own docstring exists for. `statespace-short` is
+    kept: it beat the same baseline on 2 of 2.
+    """
+    assert "statespace-long" not in desks.RULES
+    assert "statespace-short" in desks.RULES, "the short side was not refuted and stays enableable"
+    assert "statespace-surprise" in desks.RULES
