@@ -132,9 +132,24 @@ class SurpriseProfile(Profile):
             "usdcad",
             "xauusd",
             # Measured 2026-11-07: 2.11% of bars clear the trigger.
+            #
+            # **`bnbusd` was admitted here and removed on 2026-11-08**, which
+            # is the distinction worth keeping: clearing the trigger is not
+            # clearing the **cost gate**. The admission above measured only the
+            # trigger. Costed over 521 days at 15m, each crypto against its own
+            # quoted round trip:
+            #
+            #   BTCUSD   4.4% of target,  84% inside the 10% gate, net -0.050
+            #   ETHUSD   7.2% of target,  69% inside,              net -0.128
+            #   BNBUSD  18.0% of target,  20% inside,              net -0.504
+            #
+            # Four of five BNBUSD proposals cannot be taken and the rest lose,
+            # and it accounts for 18 hours of live refusals reading `27% of
+            # target (limit 10%), 55% of risk` - weekend spreads at about
+            # double the median. Nothing about its signal; its spread is too
+            # large against its own volatility.
             "btcusd",
             "ethusd",
-            "bnbusd",
         }
     )
 
