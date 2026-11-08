@@ -198,13 +198,31 @@ class Desk(NautilusStrategy):
             callback=lambda _event: self._say_tally(),
         )
 
-    def _say_tally(self) -> None:
-        """One line: what was taken, what was refused, and what ate the rest."""
+    def _tally_line(self) -> str:
+        """The tally as a string, so a test can read it.
+
+        Separated from the logging because Nautilus's `Logger` is a Cython
+        object whose `info` is read-only and cannot be stubbed, so a test of
+        the *content* has to be given something that returns it.
+        """
         gates = dict(sorted(self.passed_over.items()))
-        self.log.info(
-            f"desk: taken={self.taken} refused={self.refused} "
+        return (
+            f"desk {self._feed_name()}: taken={self.taken} refused={self.refused} "
             f"gates={gates or {}}{self._tally_extra()}"
         )
+
+    def _say_tally(self) -> None:
+        """One line: which desk, what was taken, what was refused, and what ate
+        the rest.
+
+        **The feed is on it because two diagnoses this weekend turned on not
+        having it.** One class serves thirty instruments, so
+        `gates={'statespace-surprise:cost': 1}` named no instrument: the cost
+        readings of 2026-11-08 had to be attributed by re-running the rule
+        offline on every crypto and matching the numbers, and a later one could
+        not be attributed at all.
+        """
+        self.log.info(self._tally_line())
 
     def _tally_extra(self) -> str:
         """What a rule adds to the tally beyond the desk's own counters.
