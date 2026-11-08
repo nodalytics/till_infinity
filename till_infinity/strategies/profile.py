@@ -864,6 +864,22 @@ class Profile:
     #: thesis is duration.
     stale_exempt: ClassVar[bool] = False
 
+    #: Whether a protective stop order is sent for this strategy's trades.
+    #:
+    #: **The default is the only safe one and `False` is a statement about the
+    #: rule, not a setting.** A rule whose exit is a clock alone - no stop, no
+    #: target - still needs a distance, because a size is a budget divided by
+    #: one, so `Intent.stop` on such a rule is a *sizing* distance and nothing
+    #: defends it. Without this flag the only way to express that was a stop of
+    #: zero, which `sizes.size` refuses as unsized: the rule would have been
+    #: deployable only with a stop it does not have, and a stop at 1R changes
+    #: the hit rate and makes the better-looking number.
+    #:
+    #: `volimpulse.py` is the rule that needed it. `EdgeEntry` reads it, and
+    #: `tests/test_vol_impulse.py` pins both branches - a desk that declares
+    #: `False` sends one order and the default still sends two.
+    protective_stop: ClassVar[bool] = True
+
     #: Rest the entry only when the rejection wick is at least this share of
     #: its bar's range. Zero keeps `pullback_fraction` unconditional.
     #:

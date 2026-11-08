@@ -68,6 +68,7 @@ from .identity import IdentityEdge
 from .profile import Profile
 from .structure import StructureEdge
 from .surprise import SurpriseArrival, SurpriseEdge, SurpriseResting
+from .volimpulse import VolImpulseEdge
 from .zones import ZonesArrival, ZonesEdge, ZonesResting
 
 # --------------------------------------------------- the statespace side leaves
@@ -212,6 +213,16 @@ LEAVES: dict[tuple[str, str], type[Desk]] = {
     ("zones", "edge"): ZonesEdge,
     ("zones", "resting"): ZonesResting,
     ("zones", "arrival"): ZonesArrival,
+    # **One entry, deliberately, and registered without being enabled.**
+    # `VI_M15_imp_H4sq` says "enter at the next 1-minute open", so a rest at a
+    # named price and a wait for an arrival are both a different rule; listed
+    # for the edge alone, `desks.build` refuses the other two by name.
+    #
+    # It is in no default and in no `TRADING_STRATEGIES` anywhere. Registering
+    # it is what makes `TRADING_STRATEGIES=vol-impulse` measurable at all -
+    # `desks.build` refuses an unregistered name - and the measurement that
+    # would license enabling it is `research/docs/vol-impulse-trade.md`.
+    ("vol-impulse", "edge"): VolImpulseEdge,
 }
 
 #: The rules a deployment may name in `TRADING_STRATEGIES`.
@@ -291,5 +302,6 @@ __all__ = [
     "StatespaceShortProfile",
     "StatespaceShortResting",
     "StructureEdge",
+    "VolImpulseEdge",
     "leaf",
 ]
