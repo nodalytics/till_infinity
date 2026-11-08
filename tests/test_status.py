@@ -486,3 +486,55 @@ def test_the_writer_still_exposes_the_reader():
     assert status.healthy is probe.healthy
     assert status.STALE_AFTER == probe.STALE_AFTER
     assert status.DEFAULT_PATH == probe.DEFAULT_PATH
+
+
+# ------------------------------------------------- the one-shot startup alert
+
+
+def test_a_fully_up_node_announces_itself_once():
+    """**A notification path that has never delivered is indistinguishable from
+    one that works.**
+
+    On 2026-11-08, hours before the desk's first expected fill, the notifier
+    tally read `0 sent, 1 dropped` and had never sent anything on that
+    deploy - so whether the Telegram token was valid was unknown, and the
+    first message ever attempted would have been the fill alert itself.
+
+    Announcing on start makes every deploy prove the path while somebody is
+    watching. `critical` because the shape filter and the hourly cap are
+    bypassed only for urgent alerts, and `NOTIFY_SHAPES` is set in production
+    to a list this shape is not on - so any other level would be dropped by
+    the very filter this message exists to test.
+    """
+    got = status.startup_alert(
+        {"running": True, "venue_connected": True, "strategies": 90, "armed": True}
+    )
+    assert got is not None
+    assert got["level"] == "critical"
+    assert "90" in got["title"] + got["body"]
+    assert got["fields"]["shape"] == "desk"
+
+
+def test_a_node_that_is_not_up_yet_announces_nothing():
+    """Absent is not zero. A node with no strategies, or a venue that has not
+    answered, is still starting - announcing then would make the message mean
+    "the process exists", which is what the old `--version` healthcheck
+    reported for three hours over a desk that was not trading."""
+    assert (
+        status.startup_alert(
+            {"running": True, "venue_connected": True, "strategies": 0, "armed": True}
+        )
+        is None
+    )
+    assert (
+        status.startup_alert(
+            {"running": True, "venue_connected": False, "strategies": 90, "armed": True}
+        )
+        is None
+    )
+    assert (
+        status.startup_alert(
+            {"running": False, "venue_connected": True, "strategies": 90, "armed": True}
+        )
+        is None
+    )

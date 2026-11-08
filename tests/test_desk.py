@@ -281,6 +281,29 @@ def test_a_proposal_about_this_desks_own_feed_is_still_placed():
     engine.dispose()
 
 
+def test_the_tally_names_its_own_feed():
+    """**Two diagnoses this weekend turned on not knowing which desk spoke.**
+
+    The tally is logged by `SurpriseEdge`, which is one class shared by thirty
+    instruments, so a line reading `gates={'statespace-surprise:cost': 1}`
+    could be any of them. On 2026-11-08 the cost readings `15% of target` and
+    `27% of target` had to be attributed by re-running the rule offline on
+    every crypto and matching the numbers, and a later `21%/42%` reading could
+    not be attributed at all.
+
+    One word on a line that is already at INFO removes that.
+    """
+    engine, strategy = engine_with(config())
+    engine.trader.start()
+
+    line = strategy._tally_line()
+
+    assert "eurusd" in line, line
+    assert "taken=" in line, line
+    assert "gates=" in line, line
+    engine.dispose()
+
+
 def test_a_missing_quote_is_a_refusal_with_its_gate():
     """The misleading silence `Trader` recorded: an instrument the desk *does*
     trade, refused for a reason nothing recorded."""

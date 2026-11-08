@@ -125,7 +125,9 @@ class NotifierConfig(ActorConfig, frozen=True):
     #: beside the filter's own, which is two answers to one question - and the
     #: dict had no bound, so a node running for a month held every alert title
     #: it had ever sent.
-    dedupe_seconds: float = 300.0
+    #: `None` keeps whatever `NOTIFY_COOLDOWN_S` set, which is the behaviour a
+    #: deploy expects from a variable it wrote. A number overrides it.
+    dedupe_seconds: float | None = None
     #: Consecutive alerts where **no** channel accepted delivery before the
     #: actor degrades. Three rather than one: `send_one` already retries a
     #: transient failure, so one undelivered alert is a provider having a bad
@@ -141,6 +143,7 @@ class Notifier(Actor):
         self._cfg = config
         self._sent = 0
         self._dropped = 0
+        self._silent: dict[str, int] = {}
         self._failed: dict[str, int] = {}
         #: Alerts in a row that reached nobody. Drives `degrade`/`resume`.
         self._undelivered = 0
@@ -175,7 +178,14 @@ class Notifier(Actor):
         # shape and instrument gates, and those gates silently discarded every
         # trading alarm this desk raised until 2026-09-12.
         if self._filter is None:  # `on_load` may have restored one already
-            self._filter = replace(Filter.from_env(), cooldown=self._cfg.dedupe_seconds)
+            # **`None` means "keep what the environment said".** This used to
+            # pass `dedupe_seconds` unconditionally, so `NOTIFY_COOLDOWN_S`
+            # was read by `Filter.from_env` and then overwritten by this
+            # default - the log announced "one per 5m" while till.env asked
+            # for 900s, and the variable was set and silently not in force.
+            built = Filter.from_env()
+            gap = self._cfg.dedupe_seconds
+            self._filter = built if gap is None else replace(built, cooldown=gap)
         self.log.info(f"notifications: accepting {self._filter.describe()}")
         for topic in self._cfg.topics:
             # `topics.subscribe` is `msgbus.subscribe`. The first version
@@ -446,13 +456,29 @@ class Notifier(Actor):
                 # nearest true thing and beats an empty string.
                 source=message.source or topic,
             )
-            self._record(self._emit(message))
+            self._record(self._emit(message), message)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
             self._note(type(exc).__name__, str(exc))
 
-    def _record(self, deliveries: list[Delivery]) -> None:
+    def _quiet(self, kind: str, detail: str) -> None:
+        """Say a *drop* once, loudly, without counting it as a failure.
+
+        Separate from `_note` because that increments `_undelivered` and drives
+        `degrade`, and an alert nothing wanted is not a path that is down.
+
+        **Why this exists:** on 2026-11-08 the tally read `0 sent, 1 dropped`
+        for hours and the reason was logged at debug only, so with a fill
+        expected that night there was no way to tell a filtered alert from a
+        broken Telegram token. The same shape of silence cost two diagnoses
+        the same weekend.
+        """
+        self._silent[kind] = self._silent.get(kind, 0) + 1
+        if self._silent[kind] in (1, 10, 100) or self._silent[kind] % 100 == 0:
+            self.log.warning(f"notifications: {self._silent[kind]} dropped by {kind}: {detail}")
+
+    def _record(self, deliveries: list[Delivery], message: object = None) -> None:
         """Count what the fan-out actually achieved.
 
         **It used to count the attempt.** `_emit` discarded `notify`'s return
@@ -463,8 +489,15 @@ class Notifier(Actor):
         if not deliveries:
             # No channel is configured, or none takes this level. A desk with
             # no Telegram set up is deliberately quiet rather than broken, so
-            # this is a drop and not a failure.
+            # this is a drop and not a failure - but it is said out loud once,
+            # because a desk expecting a fill cannot tell that from a dead
+            # token.
             self._dropped += 1
+            self._quiet(
+                "no-destination",
+                f"level={getattr(message, 'level', '?')} source={getattr(message, 'source', '?')}"
+                " - no channel accepted it: either none is configured or none takes this level",
+            )
             return
         if any(d.ok for d in deliveries):
             self._sent += 1
