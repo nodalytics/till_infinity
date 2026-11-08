@@ -501,6 +501,7 @@ def run(
     start_hour: int = 0,
     protected: bool = False,
     model: Har | None = PLAIN,
+    built: type | None = None,
 ) -> TinyEdge:
     """One engine, one desk, the planted feed. Nothing is driven by hand.
 
@@ -536,8 +537,8 @@ def run(
         )
         engine.add_instrument(INSTRUMENT)
         engine.add_data(feed(mids, spread, start_hour=start_hour))
-        built = ProtectedEdge if protected else TinyEdge
-        strategy = built(EdgeEntryConfig(instrument_id=INSTRUMENT.id, bar_type=composite()))
+        desk = built or (ProtectedEdge if protected else TinyEdge)
+        strategy = desk(EdgeEntryConfig(instrument_id=INSTRUMENT.id, bar_type=composite()))
         engine.add_strategy(strategy)
         engine.run()
         return strategy
@@ -546,6 +547,33 @@ def run(
             module.HAR.pop("xauusd", None)
         else:
             module.HAR["xauusd"] = previous
+
+
+class WarmProfile(TinyProfile):
+    """A positive warm request, so an arm that asks can be told from one that does not.
+
+    Thirty-two rather than the shipped 12,100: the number under test is whether
+    the request is issued at all, and asking for the real one here would make a
+    suite pull it.
+    """
+
+    warm_bars_request: ClassVar[int] = 32
+
+
+class RecordingEdge(Tiny, ManagedExit, EdgeEntry):
+    """Records the history `on_start` asks for instead of asking for it."""
+
+    profile: ClassVar[WarmProfile] = WarmProfile.__new__(WarmProfile)
+
+    def on_start(self) -> None:
+        self.asked: list[int] = []
+        super().on_start()
+
+    def request_bars(self, *args, **kwargs) -> None:
+        self.asked.append(int(kwargs.get("limit") or 0))
+
+    def request_aggregated_bars(self, *args, **kwargs) -> None:
+        self.asked.append(int(kwargs.get("limit") or 0))
 
 
 def orders_of(strategy: TinyEdge) -> list:
@@ -687,6 +715,20 @@ def test_a_feed_with_no_frozen_model_fires_nothing_and_says_which_branch():
     assert strategy.taken == 0
     assert strategy.fold.counts["fired"] == 0
     assert strategy.fold.counts["cold-har"] == strategy.fold.counts["bars"] - 1
+
+
+def test_a_desk_with_no_frozen_model_asks_for_no_history():
+    """The warm request is not local and thirty of them at once broke ten.
+
+    On 2026-11-08 at 21:43:44 every desk on the node asked for its 12,100 bars
+    in the same instant - about 363,000 through the one transport the live desk
+    trades through - and ten requests failed, every one on a thin FX cross.
+    Twenty-five of the thirty had no frozen model, so no answer could have
+    produced a signal whatever came back. The second assertion is the control:
+    a desk that *can* fire must still warm, or this gate refuses everything.
+    """
+    assert run(model=None, built=RecordingEdge).asked == []
+    assert run(built=RecordingEdge).asked == [32]
 
 
 def test_the_rule_declines_a_reading_that_is_not_its_own():

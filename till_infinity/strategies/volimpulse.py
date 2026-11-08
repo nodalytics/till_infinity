@@ -583,7 +583,8 @@ class VolImpulse:
         `Surprise.on_start` gives: a rule that is not allowed on its feed and a
         feed that is quiet read identically in a log, and on 2026-11-07
         twenty-six of thirty-two desks were inert by construction with nothing
-        saying so.
+        saying so. **Such a desk also requests no history**, for the reason the
+        guard before the request records.
         """
         feed = self._feed_name()
         self.fold = Fold(
@@ -607,7 +608,8 @@ class VolImpulse:
         #: states and a trade count of zero does not tell them apart.
         self.warmed: dict[str, int] = {"bars": 0, "fired": 0}
         super().on_start()
-        if feed not in self.profile.feeds or HAR.get(feed) is None:
+        inert = feed not in self.profile.feeds or HAR.get(feed) is None
+        if inert:
             self.log.warning(
                 f"{self.profile.description} has no frozen HAR for {feed}; this desk "
                 f"can never fire. Modelled: {sorted(self.profile.feeds)}"
@@ -621,7 +623,14 @@ class VolImpulse:
                 f"{self.profile.description} is an M15 rule and this desk is on "
                 f"{self._cfg.bar_type}: every lag and the hold are in bars of that clock."
             )
-        if self.profile.warm_bars_request <= 0:
+        if inert or self.profile.warm_bars_request <= 0:
+            # **A desk that can never fire must not ask for 12,100 bars.**
+            # The request is not free and it is not local: thirty desks asked
+            # at once on 2026-11-08 at 21:43:44 - about 363,000 bars through
+            # the one transport the live desk trades through - and ten of those
+            # requests failed, every one of them on a thin FX cross. Twenty-five
+            # of the thirty had no frozen HAR, so the bars they were waiting on
+            # could not have produced a signal whatever came back.
             return
         span = timedelta(seconds=self._bar_seconds() * self.profile.warm_bars_request)
         start = self.clock.utc_now() - span
