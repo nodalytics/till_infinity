@@ -838,6 +838,14 @@ class ExitMechanism:
         held = self.exits.held(position_id)
         if held is None:
             return
+        if not self._protects():
+            # **The rule says its `Intent.stop` is a sizing distance.** Counted
+            # rather than silent, because a desk holding an unprotected
+            # position is a thing an operator has to be able to see on the
+            # tally - see `Profile.protective_stop`, and `volimpulse.py`, whose
+            # exit is a bar clock and nothing else.
+            self._count("(exit):unprotected")
+            return
         if self._guards():
             return  # the entry bracketed it, and two stops is not two policies
         instrument = self.cache.instrument(self._cfg.instrument_id)

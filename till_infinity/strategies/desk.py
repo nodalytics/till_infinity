@@ -642,6 +642,23 @@ class Desk(NautilusStrategy):
     def _count(self, key: str) -> None:
         self.passed_over[key] = self.passed_over.get(key, 0) + 1
 
+    def _protects(self) -> bool:
+        """Whether this desk's rule wants a stop order at `Intent.stop` at all.
+
+        **A rule that exits on a clock alone still has to be sized**, and a
+        size is a budget divided by a distance, so `Intent.stop` on such a rule
+        is a sizing distance with nothing defending it - see
+        `Profile.protective_stop`, where the reason is written.
+
+        Here on `Desk` and not on the entry, because two paths put a stop at
+        the venue - `EdgeEntry` brackets or attaches one after the fill, and
+        `ExitMechanism._attach` covers a position that reached one unbracketed
+        - and a flag honoured by one of them is a rule that trades differently
+        depending on which path ran first. True for every rule that does not
+        say otherwise, and True where a desk carries no profile at all.
+        """
+        return bool(getattr(getattr(self, "profile", None), "protective_stop", True))
+
     # ----------------------------------------------------------- the handlers
 
     def on_bar(self, bar: Bar) -> None:

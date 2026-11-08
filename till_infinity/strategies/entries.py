@@ -96,7 +96,7 @@ class EdgeEntry(Desk):
             return
 
         side = _side(intent.side)
-        if self._edge.bracket and intent.stop > 0.0 and intent.target > 0.0:
+        if self._edge.bracket and self._protects() and intent.stop > 0.0 and intent.target > 0.0:
             order_list = self.order_factory.bracket(
                 instrument_id=instrument.id,
                 order_side=side,
@@ -137,7 +137,7 @@ class EdgeEntry(Desk):
         """
         pending = getattr(self, "_pending", {})
         intent = pending.pop(getattr(event, "client_order_id", None), None)
-        if intent is None or intent.stop <= 0.0:
+        if intent is None or intent.stop <= 0.0 or not self._protects():
             return
         instrument = self.cache.instrument(self._cfg.instrument_id)
         if instrument is None:
