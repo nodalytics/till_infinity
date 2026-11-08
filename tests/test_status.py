@@ -507,7 +507,8 @@ def test_a_fully_up_node_announces_itself_once():
     the very filter this message exists to test.
     """
     got = status.startup_alert(
-        {"running": True, "venue_connected": True, "strategies": 90, "armed": True}
+        {"running": True, "venue_connected": True, "strategies": 90, "armed": True},
+        elapsed=status.ANNOUNCE_AFTER,
     )
     assert got is not None
     assert got["level"] == "critical"
@@ -522,19 +523,42 @@ def test_a_node_that_is_not_up_yet_announces_nothing():
     reported for three hours over a desk that was not trading."""
     assert (
         status.startup_alert(
-            {"running": True, "venue_connected": True, "strategies": 0, "armed": True}
+            {"running": True, "venue_connected": True, "strategies": 0, "armed": True},
+            elapsed=status.ANNOUNCE_AFTER,
         )
         is None
     )
     assert (
         status.startup_alert(
-            {"running": True, "venue_connected": False, "strategies": 90, "armed": True}
+            {"running": True, "venue_connected": False, "strategies": 90, "armed": True},
+            elapsed=status.ANNOUNCE_AFTER,
         )
         is None
     )
     assert (
         status.startup_alert(
-            {"running": False, "venue_connected": True, "strategies": 90, "armed": True}
+            {"running": False, "venue_connected": True, "strategies": 90, "armed": True},
+            elapsed=status.ANNOUNCE_AFTER,
         )
         is None
     )
+
+
+def test_the_announcement_waits_for_the_notifier_to_subscribe():
+    """**A one-shot alert published before its subscriber exists is lost.**
+
+    Measured on the live desk, 2026-11-08. The heartbeat registered at
+    18:49:09 and its `on_start` wrote immediately, so the announcement went
+    out then - while the notifier logged "notifying on alerts" at **18:49:53**,
+    44 seconds later. The alert reached a topic with no subscriber, vanished,
+    and `_announced` stopped it retrying: the notifier reported `0 sent` and
+    nothing in the log said why.
+
+    So it waits. The window is generous rather than tight, because being late
+    costs a late message and being early costs the message entirely.
+    """
+    up = {"running": True, "venue_connected": True, "strategies": 90, "armed": True}
+    assert status.startup_alert(up, elapsed=0.0) is None
+    assert status.startup_alert(up, elapsed=status.ANNOUNCE_AFTER - 1.0) is None
+    assert status.startup_alert(up, elapsed=status.ANNOUNCE_AFTER) is not None
+    assert status.ANNOUNCE_AFTER >= 60.0, "44s was the observed gap; leave real margin"
