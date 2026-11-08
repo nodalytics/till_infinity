@@ -177,9 +177,22 @@ LEAVES: dict[tuple[str, str], type[Desk]] = {
     ("statespace-surprise", "edge"): SurpriseEdge,
     ("statespace-surprise", "resting"): SurpriseResting,
     ("statespace-surprise", "arrival"): SurpriseArrival,
-    ("statespace-long", "edge"): StatespaceLongEdge,
-    ("statespace-long", "resting"): StatespaceLongResting,
-    ("statespace-long", "arrival"): StatespaceLongArrival,
+    # **`statespace-long` is deliberately absent, measured 2026-11-08.** Over
+    # 521 days at 15m on BTCUSD and ETHUSD, driving the production fold, its
+    # selection does not beat taking every one of its own dates long -
+    # signal -0.127 against an always-long -0.099 on BTC, and -0.208 against
+    # -0.223 on ETH, so it adds -0.028 and +0.015. A rule whose selection
+    # cannot beat its own side has no selection. Its one live record agrees:
+    # -145.89, improved to -58.90 by a trail setting and still negative.
+    #
+    # The classes stay importable and the name stays in
+    # `strategies/config.py`, which records why a slot is never reused. Absent
+    # from here, `desks.build` refuses it by name rather than a deploy
+    # quietly getting a smaller desk set - the failure this table exists for.
+    #
+    # `statespace-short` is kept. It beat the same baseline on 2 of 2, by
+    # +0.212 and +0.108, and although it lands near zero in absolute terms
+    # (+0.038 and -0.041, both intervals through zero) it was not refuted.
     ("statespace-short", "edge"): StatespaceShortEdge,
     ("statespace-short", "resting"): StatespaceShortResting,
     ("statespace-short", "arrival"): StatespaceShortArrival,
