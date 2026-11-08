@@ -24,9 +24,27 @@ from pathlib import Path
 
 import numpy as np
 
-DATA = Path.home() / "till_infinity" / "data" / "btc"
+DATA = Path(os.environ.get("DATA", str(Path.home() / "till_infinity" / "data" / "btc")))
 BASE = os.environ.get("BRIDGE", "http://localhost:8000") + "/api/v1"
-CLOCKS = [1, 5, 10, 15, 30, 60]
+#: 2 and 3 are here because the question is about 1-5 minutes and the gap
+#: between 1 and 5 is exactly where the answer changes.
+CLOCKS = [1, 2, 3, 5, 10, 15, 30, 60]
+
+
+def _symbols() -> tuple[str, ...]:
+    """`SYMBOLS_FILE` first, because this venue's synthetic names carry
+    spaces and `lab.sh run` splits env values on whitespace."""
+    path = os.environ.get("SYMBOLS_FILE", "")
+    if path:
+        return tuple(
+            line.strip()
+            for line in Path(path).read_text().splitlines()
+            if line.strip() and not line.startswith("#")
+        )
+    return ("BTCUSD", "ETHUSD")
+
+
+SYMBOLS = _symbols()
 ATR_N = 14
 LIMIT = 0.16
 STOPS = [1.0, 2.0, 3.0]
@@ -68,7 +86,7 @@ def atr(bars: dict[str, np.ndarray], n: int) -> float:
 
 
 def main() -> int:
-    for symbol in ("BTCUSD", "ETHUSD"):
+    for symbol in SYMBOLS:
         path = DATA / f"{symbol}.1m.npz"
         if not path.exists():
             print(f"{symbol}: no M1 file")

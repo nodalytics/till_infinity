@@ -1,0 +1,26 @@
+# Deriv synthetics for the moving-average study, chosen by what the generator
+# is documented to contain rather than by name.
+#
+# PLANTED ASYMMETRY - where a trend rule could work by construction:
+#   Boom/Crash drift slowly one way and spike the other, so direction is
+#   engineered into them. An earlier study on this desk recorded Boom/Crash
+#   "gained more than any traded class".
+#   Drift Switch alternates drift regimes, which is a planted trend.
+Boom 500 Index
+Boom 1000 Index
+Crash 500 Index
+Crash 1000 Index
+Drift Switch Index 10
+Drift Switch Index 20
+Drift Switch Index 30
+#
+# RANGE BY CONSTRUCTION - a breakout detector should find these:
+Range Break 100 Index
+Range Break 200 Index
+#
+# CONTROLS THAT MUST READ NOTHING - constant volatility, no drift, symmetric
+# steps. A moving average that earns here is a harness bug, not an edge.
+Volatility 25 Index
+Volatility 75 Index
+Step Index
+Jump 75 Index

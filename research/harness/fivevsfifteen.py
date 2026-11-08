@@ -49,7 +49,7 @@ from till_infinity.statespace.engine import Engine  # noqa: E402
 from till_infinity.statespace.proposing import proposal_for  # noqa: E402
 from till_infinity.strategies.surprise import SurpriseProfile  # noqa: E402
 
-DATA = Path.home() / "till_infinity" / "data" / "btc"
+DATA = Path(os.environ.get("DATA", str(Path.home() / "till_infinity" / "data" / "btc")))
 SECONDS = {"1m": 60.0, "3m": 180.0, "5m": 300.0, "15m": 900.0, "30m": 1800.0, "1h": 3600.0}
 
 

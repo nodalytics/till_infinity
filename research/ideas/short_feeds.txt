@@ -1,0 +1,10 @@
+# The six feeds `statespace-short` is actually allowed on, from
+# `statespace.deciding.ShortProfile.feeds`. Crypto is NOT on this list, so the
+# BTCUSD/ETHUSD evidence used to justify keeping the rule was measured on
+# instruments it cannot trade.
+AUDUSD
+EURUSD
+GBPUSD
+USDCAD
+USDJPY
+XAUUSD

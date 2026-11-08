@@ -1,0 +1,30 @@
+# Panel for the 1-5 minute cost screen, across the three families the question
+# names. The screen decides which family can support a fast trade at all,
+# before any impulse, trend or cycle detector is worth modelling: cost in R is
+# `cost_px / stop` and is set by the stop, so a short clock raises it in
+# proportion as the stop tightens.
+#
+# FX and gold - the six `statespace-short` is allowed on, plus the pair with
+# the widest measured 15m cost.
+EURUSD
+GBPUSD
+USDJPY
+AUDUSD
+USDCAD
+USDCHF
+XAUUSD
+# Crypto - already screened at 1m (BTC 0.465R, ETH 0.913R at a one-ATR stop);
+# carried so the three families sit in one table.
+BTCUSD
+ETHUSD
+# Synthetics, plain. Constant volatility and no planted drift.
+Volatility 25 Index
+Volatility 75 Index
+Step Index
+Jump 75 Index
+# Synthetics, the 1-second variants. A tick every second rather than every two,
+# so a 1-minute bar holds about 60 ticks instead of 30 - the family most likely
+# to support a fast clock if any does.
+Volatility 25 (1s) Index
+Volatility 75 (1s) Index
+Volatility 100 (1s) Index
