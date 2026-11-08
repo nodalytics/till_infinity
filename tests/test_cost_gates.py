@@ -157,6 +157,34 @@ def test_the_rule_still_refuses_the_dearest_round_trips_on_the_target():
     assert verdict.gate == "cost"
 
 
+def test_bnbusd_is_not_on_the_allowlist_because_it_cannot_afford_the_gate():
+    """**Clearing the trigger is not the same as clearing the cost gate**, and
+    this is the instrument that proves it.
+
+    `bnbusd` was admitted on 2026-11-07 with the other two cryptos, on a
+    measurement that 2.11% of BTCUSD bars clear `|surprise| >= TRIGGER` against
+    1.80% on the majors. That measurement was about the *trigger* and said
+    nothing about cost. Measured 2026-11-08 over 521 days at 15m, each crypto
+    costed at its own quoted round trip:
+
+        BTCUSD   4.4% of target,  84% inside the 10% gate, net -0.050
+        ETHUSD   7.2% of target,  69% inside,              net -0.128
+        BNBUSD  18.0% of target,  20% inside,              net -0.504
+
+    So four of five BNBUSD proposals cannot be taken at all and the rest lose.
+    It also explains 18 hours of live refusals reading `27% of target (limit
+    10%), 55% of risk (limit 16%)` - weekend spreads at roughly double the
+    median.
+
+    The test names the reason because the trigger evidence still argues for
+    admission: anyone re-reading that comment would re-add it.
+    """
+    assert "bnbusd" not in SurpriseProfile.feeds
+    # The control: the two that can afford it are still there, so this is not
+    # a test that would pass on an empty allowlist.
+    assert {"btcusd", "ethusd"} <= SurpriseProfile.feeds
+
+
 def test_the_tally_carries_the_cost_arithmetic_whichever_gate_bound():
     """**One line at INFO would have saved a whole diagnosis.**
 
