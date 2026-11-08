@@ -46,7 +46,7 @@ from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import ActorConfig
 
 from till_infinity.node import probe
-from till_infinity.utils.topics import VENUE_TRADING
+from till_infinity.utils.topics import ALERTS, VENUE_TRADING, alert, publish
 
 #: The reader lives in `probe`, which imports the standard library and nothing
 #: else, because this module imports a Nautilus `Actor` and the `HEALTHCHECK`
@@ -60,6 +60,55 @@ main = probe.main
 
 #: How often the node refreshes it.
 HEARTBEAT = 30.0
+
+
+def startup_alert(reading: dict[str, Any]) -> dict[str, Any] | None:
+    """One alert when the node is **fully** up, or `None` while it is not.
+
+    A free function for the reason `tally_reading` is one: the wording is the
+    diagnostic, and `log` and `msgbus` are read-only on the Cython `Actor`, so
+    the decision has to be testable on its own.
+
+    **Why the desk announces itself.** On 2026-11-08, hours before the first
+    fill this desk ever expected, the notifier tally read `0 sent, 1 dropped`
+    and nothing had been delivered on that deploy. Whether the Telegram token
+    was even valid was unknown, and the first message ever attempted would
+    have been the fill alert. Announcing on start makes every deploy prove the
+    path while somebody is watching, which is the only time a broken path is
+    cheap to find.
+
+    **`critical`, deliberately.** `Filter` bypasses the shape list and the
+    hourly cap only for urgent alerts, and production sets `NOTIFY_SHAPES` to a
+    list that does not contain `desk` - so at any other level this message
+    would be dropped by the very filter it exists to test. A silent alarm path
+    is an alarm condition.
+
+    Fully up means the node is running, the venue has answered, and strategies
+    are registered. A process that merely exists is what the retired
+    `--version` healthcheck reported for three hours over a desk that could
+    not trade.
+    """
+    if not reading.get("running"):
+        return None
+    if not reading.get("venue_connected"):
+        return None
+    strategies = int(reading.get("strategies") or 0)
+    if strategies <= 0:
+        return None
+    armed = bool(reading.get("armed"))
+    return alert(
+        shape="desk",
+        level="critical",
+        source="desk",
+        title=f"desk up: {strategies} strategies, {'armed' if armed else 'NOT armed'}",
+        body=(
+            f"venue connected, {strategies} strategies registered, "
+            f"armed={armed}. This message also proves the alert path works - "
+            f"if you are reading it, a fill will reach you too."
+        ),
+        strategies=str(strategies),
+        armed=str(armed).lower(),
+    )
 
 
 class HeartbeatConfig(ActorConfig, frozen=True):
@@ -96,6 +145,10 @@ class Heartbeat(Actor):
         self._path = Path(config.path)
         self._wrote = 0
         self._failed = 0
+        #: Whether the one-shot "desk up" alert has gone out. One per process:
+        #: it exists to prove the alert path on a deploy, and a repeat every
+        #: heartbeat would be the log flood this desk has already produced once.
+        self._announced = False
         #: `None` means the venue has not said. Not `False`: "never asked" and
         #: "the terminal is refusing orders" are different facts and the file
         #: has to be able to say which.
@@ -129,13 +182,35 @@ class Heartbeat(Actor):
     def _write(self, running: bool = True) -> None:
         try:
             self._path.parent.mkdir(parents=True, exist_ok=True)
-            self._path.write_text(json.dumps(self.reading(running=running), indent=2))
+            reading = self.reading(running=running)
+            self._path.write_text(json.dumps(reading, indent=2))
             self._wrote += 1
+            self._announce(reading)
         except OSError as exc:
             # Counted and said once per failure, never raised: a node must not
             # come down because it could not describe itself.
             self._failed += 1
             self.log.warning(f"status: could not write {self._path}: {exc}")
+
+    def _announce(self, reading: dict[str, Any]) -> None:
+        """Publish the startup alert the first time the node is fully up.
+
+        After the write rather than before it, so the status file a person can
+        read and the message they receive cannot disagree.
+        """
+        if self._announced:
+            return
+        payload = startup_alert(reading)
+        if payload is None:
+            return
+        self._announced = True
+        try:
+            publish(self, ALERTS, payload)
+        except Exception as exc:
+            # A heartbeat that cannot announce must still beat: this writes the
+            # status file the healthcheck reads, and failing here would take
+            # the container down over a notification.
+            self.log.warning(f"status: could not announce startup: {type(exc).__name__}: {exc}")
 
     def reading(self, running: bool = True) -> dict[str, Any]:
         """The claims, each with its source.
