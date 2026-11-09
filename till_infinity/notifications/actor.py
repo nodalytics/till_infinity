@@ -375,13 +375,50 @@ class Notifier(Actor):
         the executor.
         """
         if not str(payload.get("title") or "").strip():
+            self._quiet("no title", "an alert with no title has nothing to deliver")
             return False
-        if self._level(payload) < self._cfg.minimum_level:
+        if self._level(payload) < self._cfg.minimum_level and not self._unfiltered(payload):
+            # **Said out loud, because this drop was silent and cost a
+            # diagnosis.** `_quiet` was written on 2026-11-08 for exactly this
+            # shape of failure and was never wired into the two returns here,
+            # so on 2026-11-09 the first fill this desk ever took moved the
+            # tally to `1 sent, 3 dropped` with no reason anywhere.
+            self._quiet(
+                "below the minimum level",
+                f"{self._level(payload)} < {self._cfg.minimum_level} and "
+                f"{self._shape(payload)!r} is not a shape the floor skips",
+            )
             return False
         # Interest, repeats and the hourly ceiling, on the clock the node is
         # running on: `Filter` falls back to `time.time()`, which in a
         # backtest is the wrong decade and makes every alert the first one.
         return self._filter is None or self._filter.accept(payload, when=self._clock_seconds())
+
+    def _shape(self, payload: dict[str, Any]) -> str:
+        """The payload's shape, by the filter's own derivation.
+
+        Through `Filter.key` rather than reading `fields["shape"]` here: the
+        key falls back to the **source** when a payload carries no shape, and
+        a second derivation that did not would disagree on exactly the alerts
+        trading publishes - which is the off-by-a-word that discarded every
+        trading alarm this desk raised before 2026-09-12.
+        """
+        if self._filter is not None:
+            return self._filter.key(payload)[0].lower()
+        fields = payload.get("fields") or {}
+        source = str(payload.get("source") or "").split("/")[0]
+        return str(fields.get("shape") or source).lower()
+
+    def _unfiltered(self, payload: dict[str, Any]) -> bool:
+        """Whether the minimum level simply does not apply to this shape.
+
+        A trade is not a reading: `minimum_level` is a volume control for a
+        bus that carries a notice per touched bar, and there are a handful of
+        trades a day. See `filters.UNFILTERED`.
+        """
+        from .filters import UNFILTERED
+
+        return self._shape(payload) in UNFILTERED
 
     def _level(self, payload: dict[str, Any]) -> int:
         """The payload's level as a number.

@@ -552,9 +552,7 @@ def test_the_fold_covers_only_the_feeds_a_consuming_rule_allows(monkeypatch, loo
     from till_infinity.strategies import leaves
     from till_infinity.strategies.sizes import feed_of_symbol
 
-    allowed = live._consumers_allow(
-        tuple(r for r in desks.rules() if r.startswith("statespace"))
-    )
+    allowed = live._consumers_allow(tuple(r for r in desks.rules() if r.startswith("statespace")))
     assert allowed, "the consuming rule has no allowlist, so this test pins nothing"
 
     every = {feed_of_symbol(s) for venue in live._wanted() for s in desks.symbols(venue)}
@@ -577,8 +575,10 @@ def test_the_fold_covers_only_the_feeds_a_consuming_rule_allows(monkeypatch, loo
     # The classes are consulted for every entry, because a deploy may run
     # `resting` or `arrival` and they need not agree with `edge`.
     for entry in ("edge", "resting", "arrival"):
-        feeds = getattr(getattr(leaves.leaf("statespace-surprise", entry), "profile", None), "feeds", None)
-        assert feeds and {str(f).lower() for f in feeds} <= allowed
+        profile = getattr(leaves.leaf("statespace-surprise", entry), "profile", None)
+        feeds = getattr(profile, "feeds", None)
+        assert feeds, f"{entry} names no allowlist, so the union would miss it"
+        assert {str(f).lower() for f in feeds} <= allowed
 
 
 def test_a_rule_whose_allowlist_misses_every_symbol_still_gets_a_fold(monkeypatch, loop):

@@ -1066,6 +1066,79 @@ def test_a_denied_order_is_announced_separately_from_a_rejection():
     assert sent[0]["fields"]["event"] == "denied"
 
 
+def test_a_fill_survives_the_minimum_level_and_a_level_call_does_not():
+    """**The desk could report failing to trade and not trading.**
+
+    `on_order_rejected` and `on_order_denied` publish at `warning` and
+    arrived. `on_position_opened` names no level, so `_announce` defaults it to
+    `info`, which is under the notifier's `minimum_level = WARNING`. On
+    2026-11-09 the first fill this desk ever took - BTCUSD BUY 0.10 at
+    74,649.207, ticket 5830761681 - was published, dropped, and the tally moved
+    from `1 sent, 1 dropped` to `1 sent, 3 dropped` with nothing saying why.
+
+    `minimum_level` is a volume control and its own docstring gives the reason:
+    "the bus carries a notice per touched bar". That is an argument about
+    readings. A trade is not a reading, so `UNFILTERED` exempts the shape - the
+    same argument `UNCAPPED` already makes about the hourly budget.
+
+    The second half is the control, and it is the point: a `statespace` level
+    call at `info` must **still** be dropped. Without it this test cannot tell
+    "a fill is exempt" from "the floor was removed", and removing the floor is
+    how the channel becomes something nobody reads.
+    """
+    from till_infinity.notifications.actor import WARNING, Notifier, NotifierConfig
+    from till_infinity.utils.topics import alert
+
+    opened = alert(
+        shape="trade",
+        source="trading",
+        level="info",
+        title="btcusd long opened",
+        body="0.10 at 74649.207",
+        event="opened",
+        feed="btcusd",
+    )
+    reading = alert(
+        shape="statespace",
+        source="statespace",
+        level="info",
+        title="btcusd touched a level",
+        body="a notice per touched bar, which is what the floor is for",
+        feed="btcusd",
+    )
+
+    said: list[tuple[str, str]] = []
+
+    class Recording(Notifier):
+        """`_quiet` recorded rather than logged.
+
+        `Actor.log` is a read-only Cython attribute and cannot be stubbed on an
+        instance, so the override is on the one method that writes to it. What
+        is asserted below is that a drop *produces a reason at all* - the real
+        `_quiet` was written for that and was never wired into this gate.
+        """
+
+        def _quiet(self, kind: str, detail: str) -> None:
+            said.append((kind, detail))
+            self._silent[kind] = self._silent.get(kind, 0) + 1
+
+    # Built without `__init__` on purpose: what is under test is the gate, and
+    # constructing a real `Actor` needs a node.
+    actor = Recording.__new__(Recording)
+    actor._cfg = NotifierConfig()
+    actor._filter = None
+    actor._silent = {}
+    assert actor._cfg.minimum_level == WARNING, "the floor moved; this test pins the exemption"
+
+    assert actor._wanted(opened) is True, "a fill was dropped under the level floor again"
+    assert actor._wanted(reading) is False, "the floor was removed rather than scoped"
+    # The drop says why. `_quiet` was written for this and was not wired in,
+    # so the fill's drop left no reason anywhere at all.
+    assert any("minimum level" in kind for kind in actor._silent), actor._silent
+    assert said, "the drop was counted and still said nothing"
+    assert "statespace" in said[-1][1], said[-1]
+
+
 def test_an_announced_refusal_survives_the_notifier_and_becomes_a_message():
     """The whole chain in one assertion: published, past the filter, and built
     into the Notification a destination is handed.
