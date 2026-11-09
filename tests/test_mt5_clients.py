@@ -65,7 +65,6 @@ from nautilus_trader.model.events import (
     OrderFilled,
     OrderModifyRejected,
     OrderRejected,
-    OrderSubmitted,
     OrderUpdated,
 )
 from nautilus_trader.model.identifiers import (
@@ -2196,6 +2195,41 @@ class TestSubmittingAnOrder:
         assert not rig.events(OrderFilled)
         assert not rig.events(OrderAccepted)
 
+    async def test_a_bridge_error_on_the_submit_is_a_rejection_that_names_the_status(self):
+        """13 orders died as `reason='UNKNOWN'` because this exception escaped.
+
+        `_send` raises `BridgeError` with the status code and the body. Letting
+        it propagate left Nautilus's own wrapper, which logs the *command* and
+        not the exception, so the only trace was `Error on 'submit_order:
+        SubmitOrder(...)'`. The engine then polled five times for an
+        `OrderStatusReport`, got none, and invented
+        `OrderRejected(reason='UNKNOWN')` itself. On 2026-11-08/09 that is
+        every order this desk had ever sent: 13 submitted, 0 accepted, 0
+        filled, three rule classes, nine instruments, one adapter fault.
+
+        The status code is asserted because it is the whole diagnostic value: a
+        422 is the body's shape, a 500 is the terminal, and without it the
+        alert cannot tell them apart.
+        """
+        rig = make_exec(FakeBridge(order=BridgeError("POST /trading/order -> 422: sl required")))
+        await rig.client._submit_order(_submit(rig, _market()))
+        rejected = rig.events(OrderRejected)
+        assert len(rejected) == 1
+        assert "422" in rejected[0].reason
+        assert not rig.events(OrderAccepted)
+        assert not rig.events(OrderFilled)
+
+    async def test_a_bracket_refused_by_the_bridge_rejects_every_leg(self):
+        """A bracket is one request, so its stop and target share the entry's fate.
+
+        The control for the test above: a leg left `INITIALIZED` is the engine
+        waiting forever on a venue that was never told about it.
+        """
+        rig = make_exec(FakeBridge(order=BridgeError("POST /trading/order -> 500: terminal")))
+        await rig.client._submit_order_list(_submit_list(rig, _bracket()))
+        assert len(rig.events(OrderRejected)) == 3
+        assert all("500" in event.reason for event in rig.events(OrderRejected))
+
     async def test_the_rejection_names_the_brokers_comment(self):
         rig = make_exec(FakeBridge(order=REJECTION))
         await rig.client._submit_order(_submit(rig, _market()))
@@ -2223,17 +2257,43 @@ class TestSubmittingAnOrder:
         assert not rig.events(OrderAccepted)
         assert not rig.events(OrderFilled)
 
-    async def test_a_bridge_that_raises_propagates_to_the_framework(self):
-        """The base `create_task` wrapper logs it; the order stays SUBMITTED.
+    async def test_nothing_on_the_submit_path_reaches_the_framework_unnamed(self):
+        """**Replaces a test that asserted the opposite**, deliberately.
 
-        Asserted so nobody mistakes the silence for handling. See the report:
-        nothing here ever generates a rejection for a transport failure.
+        `test_a_bridge_that_raises_propagates_to_the_framework` pinned the old
+        behaviour with the words "asserted so nobody mistakes the silence for
+        handling... nothing here ever generates a rejection for a transport
+        failure". It was recording the gap, not defending it, and on
+        2026-11-09 that gap was every order the desk had sent.
+
+        The reason is the exception's type and message, because `UNKNOWN` is
+        the engine's word for "the client said nothing" and an exception can
+        always say something. Three raisers are swept rather than one: a
+        failure resolving the instrument and a failure reading the symbol's
+        filling mode both happen *before* the submitted event, where the order
+        would otherwise sit `INITIALIZED` with nothing said at all.
         """
         rig = make_exec(FakeBridge(order=BridgeError("POST -> 500")))
-        with pytest.raises(BridgeError):
-            await rig.client._submit_order(_submit(rig, _market()))
-        assert rig.events(OrderSubmitted)
-        assert not rig.events(OrderRejected)
+        await rig.client._submit_order(_submit(rig, _market()))
+        rejected = rig.events(OrderRejected)
+        assert len(rejected) == 1
+        assert "500" in rejected[0].reason
+
+        # **Any exception, not only the transport's.** The narrow catch around
+        # the send would leave a failure in the instrument lookup or the
+        # filling-mode read sitting `INITIALIZED` with nothing said, which is
+        # worse than a rejection: the engine has no event to resolve at all.
+        async def boom(*_args: Any, **_kwargs: Any) -> None:
+            raise RuntimeError("the instrument could not be resolved")
+
+        rig = make_exec()
+        rig.client._place = boom
+        await rig.client._submit_order(_submit(rig, _market()))
+        rejected = rig.events(OrderRejected)
+        assert len(rejected) == 1, "an unexpected exception told the engine nothing"
+        assert rejected[0].reason not in ("", "UNKNOWN"), "the last resort is still a reason"
+        assert "RuntimeError" in rejected[0].reason
+        assert "could not be resolved" in rejected[0].reason
 
     async def test_a_filled_market_order_is_accepted_then_filled(self):
         raw = {

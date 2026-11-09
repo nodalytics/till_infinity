@@ -973,6 +973,76 @@ def test_a_refused_order_is_announced():
     assert sent[0]["level"] == "warning", "a refusal is not an info line"
 
 
+def _rejected(instrument=None, reason: str = "UNKNOWN"):
+    return type(
+        "Rejected",
+        (),
+        {
+            "instrument_id": (instrument or EURUSD).id,
+            "position_id": None,
+            "client_order_id": None,
+            "reason": reason,
+        },
+    )()
+
+
+def test_a_refusal_names_the_side_the_desk_proposed():
+    """`eurcad rejected / reason UNKNOWN` does not say which way it wanted to go.
+
+    Asked for after the alert arrived on 2026-11-09 and could not be acted on:
+    a refusal is a decision the desk reached, and the decision is a direction.
+    Read off the `Intent` rather than the order, because an exit sells a long -
+    so an order side names the position only for an entry, and `short` about a
+    refused exit on a long would be exactly backwards.
+    """
+    from till_infinity.domain.models import Intent, Side
+    from till_infinity.utils import topics
+
+    strategy, _ = run(SurpriseEdge, feed=quotes(count=20))
+    strategy._intended = Intent(
+        feed="eurusd",
+        symbol="EURUSD",
+        side=Side.SELL,
+        volume=0.1,
+        entry=1.08,
+        stop=1.09,
+        target=1.06,
+    )
+    seen: list[dict] = []
+    topics.subscribe(strategy, topics.ALERTS, seen.append)
+
+    strategy.on_order_rejected(_rejected())
+
+    sent = [p for p in seen if (p.get("fields") or {}).get("shape") == "trade"]
+    assert len(sent) == 1
+    assert sent[0]["fields"]["side"] == "short", "a SELL intent is a short position"
+    assert "short" in sent[0]["title"], f"the title still hides the side: {sent[0]['title']}"
+    assert "rejected" in sent[0]["title"], "the side must not displace the event"
+
+
+def test_a_refusal_with_no_intent_behind_it_still_announces_without_a_side():
+    """The control. Without it "it names the side" cannot be told from "it
+    refuses to announce anything it cannot label", and a refusal that reaches
+    nobody is the defect `test_a_refused_order_is_announced` exists for.
+
+    A rejection can arrive with no intent in hand - reconciliation refusing an
+    order this process did not place is the real case - and it is still news.
+    """
+    from till_infinity.utils import topics
+
+    strategy, _ = run(SurpriseEdge, feed=quotes(count=20))
+    strategy._intended = None
+    seen: list[dict] = []
+    topics.subscribe(strategy, topics.ALERTS, seen.append)
+
+    strategy.on_order_rejected(_rejected())
+
+    sent = [p for p in seen if (p.get("fields") or {}).get("shape") == "trade"]
+    assert len(sent) == 1, "a refusal it could not label told nobody"
+    assert "side" not in sent[0]["fields"], "a side was invented from nothing"
+    assert sent[0]["title"].endswith("rejected")
+
+
 def test_a_denied_order_is_announced_separately_from_a_rejection():
     """The cause differs and so does the remedy: a denial is this process's
     own risk engine or a duplicate and names a defect here, where a rejection
