@@ -2373,6 +2373,83 @@ class TestSubmittingAnOrder:
         assert not rig.bridge.called("order")
         assert "not supported" in rig.events(OrderRejected)[0].reason
 
+    async def test_a_reduce_only_stop_becomes_the_positions_stop(self):
+        """**The fallback that could never land, and it left a position naked.**
+
+        `EdgeEntry` brackets where it can and otherwise sends a bare market
+        order, attaching the stop on the fill as a reduce-only `STOP_MARKET` -
+        the path whose own docstring says a poll "has a window in which a
+        filled position has no stop, and that window is exactly when a fast
+        move would find it". This client refused that order as an unsupported
+        type, so `protective_stop = True` was a claim the venue path could not
+        honour.
+
+        Measured on 2026-11-09: BTCUSD short 0.1 from a bare entry sat at
+        `sl 0.0 tp 0.0` carrying this desk's magic. MT5 has no separate stop
+        order - a stop is a field on the position - which is the translation
+        `_place` already performs for a bracket's legs.
+        """
+        terminal = Terminal(positions=[_held(sl=0.0, tp=1.0900)])
+        rig = make_exec(terminal.bridge)
+        order = _factory().stop_market(
+            EURUSD_ID,
+            OrderSide.SELL,
+            Quantity.from_str("0.50"),
+            Price.from_str("1.07000"),
+            reduce_only=True,
+        )
+        await rig.client._submit_order(_submit(rig, order))
+
+        assert not rig.bridge.called("order"), "a stop must not be sent as an order"
+        assert terminal.positions[0]["sl"] == pytest.approx(1.07000), "the stop did not land"
+        # **The target is carried through, not cleared.** `/positions/modify`
+        # sets both fields at once, so passing 0 would drop a target the
+        # position is already holding.
+        assert terminal.positions[0]["tp"] == pytest.approx(1.0900)
+        accepted = rig.events(OrderAccepted)
+        assert len(accepted) == 1, f"{rig.events(OrderRejected)}"
+        # `<ticket>-SL`, the same id a bracket leg gets, so a later trail
+        # resolves to the position rather than to a non-existent order.
+        assert str(accepted[0].venue_order_id) == "55-SL"
+        assert rig.client._ticket(accepted[0].venue_order_id) == 55
+
+    async def test_a_reduce_only_stop_with_no_position_is_rejected_not_ignored(self):
+        """This process believes it holds something the broker does not.
+
+        The one thing worse than an unprotected position is an unprotected
+        position reported as protected, so this is a rejection the strategy
+        sees rather than a quiet no-op.
+        """
+        rig = make_exec(Terminal(positions=[]).bridge)
+        order = _factory().stop_market(
+            EURUSD_ID,
+            OrderSide.SELL,
+            Quantity.from_str("0.50"),
+            Price.from_str("1.07000"),
+            reduce_only=True,
+        )
+        await rig.client._submit_order(_submit(rig, order))
+        assert not rig.events(OrderAccepted)
+        assert "no open EURUSD position" in rig.events(OrderRejected)[0].reason
+
+    async def test_a_stop_that_is_not_reduce_only_is_still_refused(self):
+        """**The control, and it is what keeps the change scoped.**
+
+        A stop that is not `reduce_only` is somebody asking for an entry this
+        client cannot express, not protection for a position it holds. Without
+        this, "a reduce-only stop is handled" cannot be told from "every stop
+        is quietly turned into a position modify" - which would set a stop on
+        an unrelated position on the same symbol.
+        """
+        terminal = Terminal(positions=[_held(sl=0.0)])
+        rig = make_exec(terminal.bridge)
+        order = _factory().stop_market(
+            EURUSD_ID, OrderSide.BUY, Quantity.from_str("0.50"), Price.from_str("1.09")
+        )
+        await rig.client._submit_order(_submit(rig, order))
+        assert "not supported" in rig.events(OrderRejected)[0].reason
+        assert terminal.positions[0]["sl"] == pytest.approx(0.0), "it modified a position anyway"
+
     async def test_a_stop_and_target_the_strategy_attached_are_passed_through(self):
         rig = make_exec(FakeBridge(order=REJECTION))
         command = SubmitOrder(
