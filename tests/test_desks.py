@@ -521,6 +521,91 @@ def test_the_default_configuration_gets_the_fold_it_consumes(monkeypatch, loop):
         node.dispose()
 
 
+def test_the_fold_covers_only_the_feeds_a_consuming_rule_allows(monkeypatch, loop):
+    """**A reading nobody may trade is worse than no reading.**
+
+    With `STATESPACE_BARS` unset the fold was built on every desk symbol,
+    while `statespace-surprise` carries an eight-feed allowlist. On 2026-11-09
+    that published a proposal for `australia 200`: every desk declined it,
+    the owning one as `statespace-surprise:unwanted`, so the signal was
+    computed, published and discarded. The fold is a Kalman update per feed
+    per bar, and an unactionable proposal reads on the bus exactly like one
+    refused on its merits.
+
+    Asserted against the allowlist read off the rule rather than a literal
+    list, because the allowlist is a trading decision and a copy here is a
+    copy that goes stale - which is the defect this change removes, not one
+    to reintroduce in a test.
+    """
+    monkeypatch.delenv("STATESPACE_BARS", raising=False)
+    monkeypatch.delenv("TRADING_STRATEGIES", raising=False)
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+    # **Named here because the default test symbols are all allowed**, so the
+    # narrowing would be unobservable and the assertion vacuous - the test's
+    # own guard below says so rather than passing quietly. `Australia 200` is
+    # the feed whose discarded proposal prompted the change, space and all:
+    # its name is exactly the shape that two feed derivations once disagreed
+    # about, so it pins the derivation as well as the narrowing.
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD,XAUUSD,Australia 200,AUDNZD")
+
+    from till_infinity.node import desks, live
+    from till_infinity.strategies import leaves
+    from till_infinity.strategies.sizes import feed_of_symbol
+
+    allowed = live._consumers_allow(tuple(r for r in desks.rules() if r.startswith("statespace")))
+    assert allowed, "the consuming rule has no allowlist, so this test pins nothing"
+
+    every = {feed_of_symbol(s) for venue in live._wanted() for s in desks.symbols(venue)}
+    outside = every - allowed
+    assert outside, (
+        "every deployed symbol is already allowed, so a narrowing cannot be "
+        "observed here - check what this should pin now"
+    )
+
+    node = live.build()
+    try:
+        actor = next(a for a in node.trader.actors() if str(a.id) == "StatespaceActor")
+        folded = {feed_of_symbol(str(b).split(".")[0]) for b in actor._cfg.bar_types}
+        assert folded <= allowed, f"folding feeds no rule can trade: {sorted(folded - allowed)}"
+        assert folded & allowed, "the fold is empty, which is a consumer with no producer"
+        assert not folded & outside, f"these were dropped and are still folded: {sorted(outside)}"
+    finally:
+        node.dispose()
+
+    # The classes are consulted for every entry, because a deploy may run
+    # `resting` or `arrival` and they need not agree with `edge`.
+    for entry in ("edge", "resting", "arrival"):
+        profile = getattr(leaves.leaf("statespace-surprise", entry), "profile", None)
+        feeds = getattr(profile, "feeds", None)
+        assert feeds, f"{entry} names no allowlist, so the union would miss it"
+        assert {str(f).lower() for f in feeds} <= allowed
+
+
+def test_a_rule_whose_allowlist_misses_every_symbol_still_gets_a_fold(monkeypatch, loop):
+    """**The control, and it is the more expensive failure.**
+
+    If an allowlist that overlaps nothing produced an empty fold, the node
+    would come up healthy with a consumer and no producer - which is exactly
+    the state `test_the_default_configuration_gets_the_fold_it_consumes` was
+    written for, reached by a different route. A misconfiguration should be
+    visible, not silent, so no overlap falls back to every symbol.
+    """
+    monkeypatch.delenv("STATESPACE_BARS", raising=False)
+    monkeypatch.delenv("TRADING_STRATEGIES", raising=False)
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+
+    from till_infinity.node import live
+
+    monkeypatch.setattr(live, "_consumers_allow", lambda rules: frozenset({"nothing-trades-this"}))
+
+    node = live.build()
+    try:
+        actor = next(a for a in node.trader.actors() if str(a.id) == "StatespaceActor")
+        assert actor._cfg.bar_types, "an empty fold is a consumer with no producer"
+    finally:
+        node.dispose()
+
+
 def test_statespace_is_only_added_when_it_is_configured(monkeypatch, loop):
     """An actor subscribed to nothing is a fold that never runs pretending to
     be a model that does.

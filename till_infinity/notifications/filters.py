@@ -78,6 +78,27 @@ def _names(raw: str) -> frozenset[str]:
 #: list of shapes cannot hold one.
 UNCAPPED: frozenset[str] = frozenset({"trade"})
 
+#: Shapes the **minimum level** does not apply to.
+#:
+#: `minimum_level` is `WARNING` and its reason is volume: "an alert per event
+#: is an alert nobody reads. The bus carries a notice per touched bar." That is
+#: an argument about *readings*. A trade is not a reading - there are a handful
+#: a day and each one is a thing that happened to real money.
+#:
+#: **Measured on 2026-11-09.** `exits.on_order_rejected` and `on_order_denied`
+#: publish at `warning` and arrived; `on_position_opened` names no level, so
+#: `_announce` defaults it to `info`, which is below the floor. The first fill
+#: this desk ever took - BTCUSD BUY 0.10 at 74,649.207, ticket 5830761681 -
+#: was published, dropped, and the tally moved from `1 sent, 1 dropped` to
+#: `1 sent, 3 dropped` with nothing saying why. So the desk could report that
+#: it had **failed** to trade and not that it had traded, which is exactly
+#: backwards for the one event somebody is waiting for.
+#:
+#: Separate from `UNCAPPED` although both currently hold `trade`: one answers
+#: "may this spend the hourly budget", the other "is this important enough to
+#: send at all", and a future shape may well want one and not the other.
+UNFILTERED: frozenset[str] = frozenset({"trade"})
+
 
 @dataclass(slots=True)
 class Filter:
