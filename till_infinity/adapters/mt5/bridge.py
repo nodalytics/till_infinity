@@ -56,6 +56,22 @@ STREAM_BACKLOG = 1024
 STREAM_HEARTBEAT = 20
 
 
+#: The longest comment this terminal will accept on an order. **Measured, not
+#: read off a reference.** Every order this desk ever sent carried 31
+#: characters and every one was refused with
+#: `Invalid "comment" argument`, mt5_code -2 - the Python package refusing the
+#: request before it became an order, which is why no retcode and no deal ever
+#: appeared. Swept against the live terminal on 2026-11-09 at volume 0, where
+#: the answer flips to `Invalid volume` as soon as the comment is acceptable:
+#: 31 and 30 refused, 28, 25 and 20 accepted. 28 is the largest proven value;
+#: 29 was not tested, and guessing one character for a longer label is not
+#: worth re-opening the fault that hid for two days.
+#:
+#: Kept here rather than in `execution`, because the truncation that has to be
+#: right is the one on the wire.
+COMMENT_MAX = 28
+
+
 class BridgeError(RuntimeError):
     """The bridge answered, and the answer was a refusal."""
 
@@ -463,7 +479,7 @@ class Bridge:
             "volume": float(body.get("volume") or 0.0),
             "sl": float(body.get("sl") or 0.0),
             "deviation": int(body.get("deviation") or 20),
-            "comment": str(body.get("comment") or "")[:31],
+            "comment": str(body.get("comment") or "")[-COMMENT_MAX:],
             "magic": int(body.get("magic") or 0),
             # FOK, not IOC: every symbol on this account reports `filling_mode`
             # 1 (FOK only) and IOC returns `10030` on every order. The caller
@@ -520,12 +536,18 @@ class Bridge:
         except ValueError:
             raise BridgeError(detail) from None
         code = int(payload.get("code") or 0)
-        if code <= 0:
+        if code == 0:
             raise BridgeError(detail)
-        return {
-            "success": False,
-            "result": {"retcode": code, "comment": str(payload.get("error") or "")},
-        }
+        # **The terminal's own words, not the envelope.** `mt5_msg` is the
+        # message the terminal produced - `Invalid "comment" argument` - while
+        # `error` wraps it in the bridge's narration, and the raw body is JSON
+        # that ends up in a push notification a person reads on a phone.
+        # `mt5_msg` says `Success` on a refusal the bridge itself formed, so it
+        # is used only when it carries something.
+        said = str(payload.get("mt5_msg") or "").strip()
+        if not said or said.lower() == "success":
+            said = str(payload.get("error") or "").strip()
+        return {"success": False, "result": {"retcode": code, "comment": said}}
 
     async def modify_order(self, ticket: int, price: float) -> dict[str, Any]:
         """Move a **resting order**, which is not the same call as a stop move.

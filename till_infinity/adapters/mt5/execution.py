@@ -45,6 +45,7 @@ from nautilus_trader.model.identifiers import (
 from nautilus_trader.model.objects import AccountBalance, Currency, Money, Price, Quantity
 
 from ...utils.topics import VENUE_TRADING
+from .bridge import COMMENT_MAX
 from .config import MT5ExecClientConfig
 from .providers import MT5InstrumentProvider
 from .redact import redact
@@ -112,9 +113,13 @@ _TAKEN = (PLACED, DONE)
 
 
 def _comment(client_order_id: Any) -> str:
-    """The client order id as MT5 will store it: the **last** 31 characters.
+    """The client order id as MT5 will store it, tail first.
 
-    MT5 truncates a comment at 31 characters, and the discriminating part of a
+    **The length is `bridge.COMMENT_MAX` and not a number repeated here**, for
+    the reason this function exists at all: 31 was wrong, every order carried
+    it, and every order was refused. One owner for the limit, on the wire.
+
+    The discriminating part of a
     Nautilus client order id is its tail - `...-001-EURUSD_E270-3` names the
     trader, the desk and the counter, while the head is a timestamp the
     terminal already records against the deal. Taking the first 31 was
@@ -128,7 +133,7 @@ def _comment(client_order_id: Any) -> str:
     tell two desks apart is no use to the person reading the terminal, which
     is the only reason it is sent.
     """
-    return str(client_order_id)[-31:]
+    return str(client_order_id)[-COMMENT_MAX:]
 
 
 class _Refusal(Exception):  # noqa: N818 - a control-flow signal, not an error to catch widely
