@@ -15,7 +15,17 @@ from pathlib import Path
 
 import httpx
 
+from research.harness import deribit_recorder
 from research.harness.deribit_recorder import read_surface_safe, sweep, writer
+
+#: The recorder's own file, taken off the import rather than built from a path.
+#: It was `Path("research/harness/deribit_recorder.py")`, relative to the
+#: **working directory**, so the test passed from the repository root and from
+#: nowhere else: run on the lab, where the venv sits one level above the synced
+#: tree, it failed on a missing file and read as a regression on a clean tree.
+#: Anchoring on `__file__` also makes the property hold of the module that
+#: actually loaded rather than of whatever sits at that path.
+SOURCE = Path(deribit_recorder.__file__)
 
 INSTRUMENTS = [
     {
@@ -125,8 +135,8 @@ def test_there_is_no_private_endpoint_anywhere_in_this_file():
     failed on the docstring that documents the property - which would have left
     only two ways out, both bad: delete the documentation, or delete the test.
     """
-    source = Path("research/harness/deribit_recorder.py").read_text()
-    tree = ast.parse(source)
+    source = SOURCE.read_text()
+    tree = ast.parse(source, filename=str(SOURCE))
     # Bare string statements are docstrings and comments; everything else is a
     # value the code actually uses.
     docstrings = {
