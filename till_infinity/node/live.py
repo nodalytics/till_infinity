@@ -508,18 +508,36 @@ def _statespace() -> list[Actor]:
     bars = named
     if not bars and wanted:
         interval = desks.intervals()[0]
-        bars = tuple(
-            str(desks.bar_type(symbol, venue, interval))
-            for venue in _wanted()
-            for symbol in desks.symbols(venue)
-        )
+        allowed = _consumers_allow(wanted)
+        every = tuple((symbol, venue) for venue in _wanted() for symbol in desks.symbols(venue))
+        # **Fold what something can actually trade.** With no allowlist to
+        # consult this folded every desk symbol, and on 2026-11-09 that meant
+        # a reading published for `australia 200` which `statespace-surprise`
+        # is not permitted to trade: every desk declined it as `unwanted`, so
+        # the signal was computed, published and discarded. The fold is not
+        # free - it is a Kalman update per feed per bar - and an unactionable
+        # proposal is worse than none, because it reads on the bus exactly
+        # like one that was refused on its merits.
+        #
+        # An empty intersection falls back to everything rather than folding
+        # nothing: a rule whose allowlist does not overlap the deployed
+        # symbols is a misconfiguration to be seen, and a silent empty fold is
+        # how `statespace-surprise` sat inert for days with the node healthy.
+        from ..strategies.sizes import feed_of_symbol
+
+        keep = tuple((s, v) for s, v in every if feed_of_symbol(s) in allowed)
+        used = keep if (keep and allowed) else every
+        bars = tuple(str(desks.bar_type(symbol, venue, interval)) for symbol, venue in used)
         if bars:
             log.warning(
                 "STATESPACE_BARS is unset and %s consume statespace.proposals, so "
-                "the fold is built on the desks' own %d bar type(s). Nothing else "
-                "publishes that topic: without it those desks cannot trade.",
+                "the fold is built on %d of the desks' %d bar type(s) - the feeds "
+                "those rules allow%s. Nothing else publishes that topic: without "
+                "it those desks cannot trade.",
                 "/".join(wanted),
                 len(bars),
+                len(every),
+                "" if used is keep else " (no overlap, so all of them)",
             )
     if not bars:
         return []
@@ -531,6 +549,33 @@ def _statespace() -> list[Actor]:
             )
         )
     ]
+
+
+def _consumers_allow(rules: tuple[str, ...]) -> frozenset[str]:
+    """The union of the feed allowlists of the rules that consume a proposal.
+
+    Read off the strategy classes rather than restated here, for the reason
+    `leaves` exists: the allowlist is a trading decision that lives with the
+    rule, and a second copy in the node is a copy that goes stale. Every entry
+    of a rule is consulted, because a deploy may run `resting` or `arrival`
+    rather than `edge` and they need not agree.
+
+    A rule with no `feeds` constrains nothing and contributes nothing, which
+    is why the caller treats an empty union as "no allowlist to apply".
+    """
+    from ..strategies import leaves
+
+    allowed: set[str] = set()
+    for rule in rules:
+        for entry in ("edge", "resting", "arrival"):
+            try:
+                cls = leaves.leaf(rule, entry)
+            except Exception:  # a rule need not offer every entry
+                continue
+            feeds = getattr(getattr(cls, "profile", None), "feeds", None)
+            if feeds:
+                allowed.update(str(f).lower() for f in feeds)
+    return frozenset(allowed)
 
 
 def check() -> int:

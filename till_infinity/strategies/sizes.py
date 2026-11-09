@@ -124,7 +124,19 @@ def feed_of(instrument_id: InstrumentId) -> str:
     multiplier read the same either way. The disagreement is real but it is
     only about the naming of instruments the legs table does not carry.
     """
-    return instrument_id.symbol.value.lower().replace("/", "")
+    return feed_of_symbol(instrument_id.symbol.value)
+
+
+def feed_of_symbol(symbol: str) -> str:
+    """The same derivation, from a bare symbol string.
+
+    Split out because the node has to ask the question before any instrument
+    exists: `live._statespace` decides which bar types to fold from
+    `desks.symbols()`, which are strings. Sharing the one function is the
+    point - a second copy would be a third spelling of a feed name, and the
+    docstring above is a record of what two spellings already cost.
+    """
+    return symbol.lower().replace("/", "")
 
 
 def book_of(positions: Iterable[Position]) -> tuple[tuple[str, int], ...]:
