@@ -81,6 +81,11 @@ PLACED = 10008
 #: one order's rejection reason - which is how it stayed invisible: a desk
 #: reading per-order rejections sees twelve unrelated refusals, not one cause.
 AUTOTRADING_OFF = 10027
+
+#: How long a rejection reason may be. Applied in `_reject`, **after**
+#: `_scrub`, so no caller can shorten a string before the key has been taken
+#: out of it - see that docstring.
+REASON_MAX = 200
 #: `SYMBOL_FILLING_*` bits mapped to the bridge's own spelling, in the order to
 #: prefer when a symbol accepts more than one.
 #:
@@ -628,11 +633,20 @@ class MT5ExecutionClient(LiveExecutionClient):
     # `GenerateOrderStatusReport`, awaits `generate_order_status_report` above
     # and sends what comes back. Overriding it here called the wrong name.
     def _reject(self, order: Any, reason: str) -> None:
+        """Reject with a bounded reason, **redacted before it is shortened**.
+
+        The order of those two matters and the callers must not have to
+        remember it. `_scrub` removes the API key by matching it, so cutting
+        the text first can split the key across the boundary, leave the
+        pattern unmatchable and put the first half of a credential into an
+        event that is logged and published. Shortening after redaction can
+        only ever remove characters from an already-safe string.
+        """
         self.generate_order_rejected(
             strategy_id=order.strategy_id,
             instrument_id=order.instrument_id,
             client_order_id=order.client_order_id,
-            reason=self._scrub(reason),
+            reason=self._scrub(reason)[:REASON_MAX],
             ts_event=self._clock.timestamp_ns(),
         )
 
@@ -715,7 +729,7 @@ class MT5ExecutionClient(LiveExecutionClient):
         self._log.error(f"submit failed: {type(exc).__name__}: {exc}")
         self._reject_all(
             tuple(o for o in orders if not getattr(o, "is_closed", False)),
-            f"{type(exc).__name__}: {exc}"[:200],
+            f"{type(exc).__name__}: {exc}",
         )
 
     async def _submit_order(self, command: Any) -> None:
@@ -859,7 +873,7 @@ class MT5ExecutionClient(LiveExecutionClient):
             # classes and nine instruments - a single adapter fault wearing
             # the costume of thirteen unrelated venue refusals.
             self._log.error(f"{order.client_order_id}: the bridge refused the order: {exc}")
-            self._reject_all(together, f"bridge: {exc}"[:200])
+            self._reject_all(together, f"bridge: {exc}")
             return
         result = raw.get("result") or {}
         trade = raw.get("trade") or {}
@@ -1011,7 +1025,7 @@ class MT5ExecutionClient(LiveExecutionClient):
                 None,
             )
         except Exception as exc:
-            self._reject(order, f"cannot read the terminal's book: {exc}"[:200])
+            self._reject(order, f"cannot read the terminal's book: {exc}")
             return True
         if held is None:
             self._reject(order, f"no open {symbol} position of this desk's to put a stop on")

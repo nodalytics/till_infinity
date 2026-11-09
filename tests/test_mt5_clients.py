@@ -2373,6 +2373,45 @@ class TestSubmittingAnOrder:
         assert not rig.bridge.called("order")
         assert "not supported" in rig.events(OrderRejected)[0].reason
 
+    async def test_a_rejection_reason_is_redacted_before_it_is_shortened(self):
+        """**Cutting the text first can split the key and defeat the redaction.**
+
+        `_scrub` removes the API key by matching it, so a reason truncated
+        before scrubbing can leave the pattern unmatchable and put the first
+        half of a credential into an event that is logged and published. The
+        key is placed so that the 200-character bound falls *inside* it, which
+        is the only arrangement that tells the two orderings apart.
+        """
+        key = "sk-" + "K" * 40
+        # The 200-character bound must fall **inside** the key, which is the
+        # only arrangement that tells the two orderings apart. The first
+        # version of this test padded too far, so the cut landed before the
+        # key began and both orderings passed - a test that could not fail
+        # for its own reason. The padding is computed and the straddle is
+        # asserted, so a change to the prefix cannot quietly undo it.
+        prefix = "cannot read the terminal's book: "
+        starts_at = 190
+        padding = "x" * (starts_at - len(prefix))
+        assert len(prefix + padding) == starts_at
+        assert starts_at < 200 < starts_at + len(key), "the bound no longer splits the key"
+
+        rig = make_exec(FakeBridge(positions=BridgeError(padding + key + "trailing")), api_key=key)
+        order = _factory().stop_market(
+            EURUSD_ID,
+            OrderSide.SELL,
+            Quantity.from_str("0.50"),
+            Price.from_str("1.07000"),
+            reduce_only=True,
+        )
+        assert rig.client._cfg.api_key == key, "the rig must use the key under test"
+        await rig.client._submit_order(_submit(rig, order))
+
+        reason = rig.events(OrderRejected)[0].reason
+        assert len(reason) <= 200, f"the bound was lost: {len(reason)}"
+        # Not just the whole key: any run of it long enough to be useful.
+        assert key not in reason
+        assert key[:8] not in reason, f"a fragment of the key survived: {reason!r}"
+
     async def test_a_reduce_only_stop_becomes_the_positions_stop(self):
         """**The fallback that could never land, and it left a position naked.**
 
