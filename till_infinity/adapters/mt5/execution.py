@@ -689,10 +689,37 @@ class MT5ExecutionClient(LiveExecutionClient):
         ]
         return found[-1] if found else None
 
+    def _fault(self, orders: tuple, exc: BaseException) -> None:
+        """Reject what is still open, naming the exception. **The last resort.**
+
+        Nothing below this may reach Nautilus's `create_task` wrapper, because
+        that wrapper logs the *command* and not the exception: the whole trace
+        of a failed submit was `Error on 'submit_order: SubmitOrder(...)'`, the
+        engine then polled five times for an `OrderStatusReport` that was never
+        coming, and resolved the order itself as
+        `OrderRejected(reason='UNKNOWN')`.
+
+        `UNKNOWN` is the engine's word for "this client said nothing", so it is
+        only ever correct when nothing *can* be said. An exception can always
+        say its type and its message, so this names those instead.
+
+        Only orders that are still open are rejected: `_place` rejects on the
+        paths it knows about, and rejecting an order twice is an invalid state
+        transition that would raise from inside the handler for the error.
+        """
+        self._log.error(f"submit failed: {type(exc).__name__}: {exc}")
+        self._reject_all(
+            tuple(o for o in orders if not getattr(o, "is_closed", False)),
+            f"{type(exc).__name__}: {exc}"[:200],
+        )
+
     async def _submit_order(self, command: Any) -> None:
         """One order, with any stop or target the command carries."""
         params = getattr(command, "params", None) or {}
-        await self._place(command.order, sl=params.get("sl"), tp=params.get("tp"))
+        try:
+            await self._place(command.order, sl=params.get("sl"), tp=params.get("tp"))
+        except Exception as exc:
+            self._fault((command.order,), exc)
 
     async def _submit_order_list(self, command: Any) -> None:
         """A bracket, as the one MT5 order a bracket is here.
@@ -719,6 +746,20 @@ class MT5ExecutionClient(LiveExecutionClient):
         `STOP_MARKET` and `LIMIT` are what the orders are.
         """
         orders = tuple(command.order_list.orders)
+        try:
+            await self._place_bracket(orders)
+        except Exception as exc:
+            self._fault(orders, exc)
+
+    async def _place_bracket(self, orders: tuple) -> None:
+        """The bracket proper. Separate so `_submit_order_list` can guard it.
+
+        **Not named `_submit_*`.** Every `_submit_...` on this class is a
+        Nautilus hook, and `test_every_hook_shaped_method_exists_on_the_
+        framework_base` refuses a private method shaped like one that the base
+        does not declare - which is how an override that the framework never
+        calls gets noticed instead of silently never running.
+        """
         entry = next((o for o in orders if o.parent_order_id is None), None)
         if entry is None:
             self._reject_all(orders, "no entry in the list: every order names a parent")
@@ -796,7 +837,28 @@ class MT5ExecutionClient(LiveExecutionClient):
                 client_order_id=leg.client_order_id,
                 ts_event=self._clock.timestamp_ns(),
             )
-        raw = await self._bridge.order(body)
+        try:
+            raw = await self._bridge.order(body)
+        except Exception as exc:
+            # **An exception here is a rejection, and it has to be said out
+            # loud.** `_send` raises `BridgeError` carrying the status code
+            # and the first 200 characters of the body - the one piece of
+            # evidence that distinguishes a 422 on the body's shape from a 500
+            # in the terminal from a lost connection. Letting it propagate
+            # gave Nautilus's own wrapper, which logs the *command* and not
+            # the exception, so the whole trace was
+            # `Error on 'submit_order: SubmitOrder(...)'` with no cause.
+            #
+            # The engine then polled for an `OrderStatusReport` five times,
+            # got nothing, and resolved the order itself as
+            # `OrderRejected(reason='UNKNOWN')`. On 2026-11-08/09 that is what
+            # all 13 of this desk's first orders looked like: 13 submitted, 0
+            # accepted, 0 filled, every reason `UNKNOWN`, across three rule
+            # classes and nine instruments - a single adapter fault wearing
+            # the costume of thirteen unrelated venue refusals.
+            self._log.error(f"{order.client_order_id}: the bridge refused the order: {exc}")
+            self._reject_all(together, f"bridge: {exc}"[:200])
+            return
         result = raw.get("result") or {}
         trade = raw.get("trade") or {}
         retcode = _retcode(raw)

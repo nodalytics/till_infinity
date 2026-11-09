@@ -674,9 +674,12 @@ class ExitMechanism:
             from ..utils.topics import alert
 
             instrument = str(getattr(event, "instrument_id", ""))
+            side = self._announced_side(event)
+            if side and extra.get("side") is None:
+                extra["side"] = side
             payload = alert(
                 shape="trade",
-                title=f"{self._feed_name()} {what}",
+                title=f"{self._feed_name()} {side} {what}".replace("  ", " ").strip(),
                 body=", ".join(
                     f"{k} {v}" for k, v in extra.items() if v is not None and k != "level"
                 ),
@@ -692,6 +695,32 @@ class ExitMechanism:
             topics.publish(self, topics.ALERTS, payload)
         except Exception as exc:  # pragma: no cover - defensive
             self.log.warning(f"could not announce the {what}: {exc}")
+
+    def _announced_side(self, event: Any) -> str:
+        """`long` or `short` for the position this order was meant to make, or "".
+
+        **Read off the `Intent`, not the order.** An exit sells a long, so an
+        order side names the position's direction only for an entry, and a
+        rejection alert saying `short` about a refused exit on a long would be
+        exactly backwards. The intent is what the desk proposed, which is what
+        a person reading `eurcad rejected` wants to know.
+
+        Looked up the way `on_order_filled` looks one up: an entry that can
+        have several orders out at once keys them by `client_order_id`, and the
+        last accepted intent is right where it keeps no map, because `Desk`
+        refuses a proposal on an instrument anything already holds.
+        """
+        order_id = getattr(event, "client_order_id", None)
+        intent = None
+        for book in (getattr(self, "_waiting", None), getattr(self, "_pending", None)):
+            if isinstance(book, dict) and order_id in book:
+                intent = book[order_id]
+                break
+        intent = intent or getattr(self, "_intended", None)
+        side = getattr(intent, "side", None)
+        if side is None:
+            return ""
+        return "long" if str(getattr(side, "value", side)).lower() == "buy" else "short"
 
     def on_order_rejected(self, event: Any) -> None:
         """Say so when the venue refuses an order.
