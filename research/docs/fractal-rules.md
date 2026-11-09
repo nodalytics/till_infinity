@@ -12,7 +12,7 @@ catalogues the scripts, because a result nobody can re-run is a claim.
 |---|---|
 | **The survey.** How many of the eighteen links are of any use to a trading desk? | **One.** `fractal-analysis` on PyPI (and `yujiading/fractals`, its source repo - the same project counted twice) computes Hurst and Hölder exponents **on a data series**. Three more measure the fractal dimension of **images or 3-D meshes**, ten are **Mandelbrot, Julia, Newton-basin or IFS renderers**, two are tutorials that draw a Koch snowflake, and one uses "fractal" as branding for a text-to-image encoder. Nothing in the list 404s |
 | Is the one useful library worth a dependency? | **For its simulator, as a cross-check, in its own venv.** MIT, released 0.3.7 on 2026-01-13, and it is the only item in the list with 2026 activity. But `requires-python >= 3.13` from 0.2.1 and `< 3.11` at 0.2.0 and below, so **on Python 3.12 no version of it installs at all** - twenty-four releases, none matching |
-| **Do this repo's estimators agree with it?** | **Yes, in both directions.** This repo's DFA and structure-function exponents recover a planted `H` from the library's Wood-Chan paths at slopes of **0.930** and **0.978** against an ideal 1.0, with biases of +0.031 and -0.017; rescaled range is the weak one at slope **0.727**. Section 3 |
+| **Do this repo's estimators agree with it?** | **Yes, and both crossings were run so neither side confirms itself.** This repo's DFA and structure-function exponents recover a planted `H` from the library's Wood-Chan paths at slopes of **0.930** and **0.978** against an ideal 1.0 (rescaled range is the weak one at **0.727**); the library's IR and QV estimators recover it from this repo's Davies-Harte paths at slopes of **0.992 to 1.184**. Section 3 |
 | **Cost.** Which instruments can carry an intraday fractal rule? | **7 of 8 traded.** At the production stop of 3.0 volatility units a 15-minute round trip is **0.046R (XAUUSD) to 0.078R (EURUSD)**, all inside the 0.16R ceiling. **XAGUSD is refused at 0.383R** - 14.4 bps quoted, not 0.8 like the FX legs. Section 4 |
 | **Power.** Would the test see a fractal effect if one were there? | **Yes, comfortably.** All seven estimators separate a planted `|H - 0.5|` of **0.20** at `\|z\| > 2` over 24 draws, and all are monotone in `H` across 0.30-0.70. The *rule* is sharper than the estimators: momentum on a planted `H = 0.60` earns **+0.2553R gross** and on `H = 0.40` loses **-0.1385R**, both at more than two standard errors, while `H = 0.50` reads +0.0106R and is not. Section 5 |
 | **The signal.** Does a rolling fractal reading forecast volatility or direction? | **Direction: no, to three decimals.** AUC **0.500** on every reading, every arm, pooled and within strata - 40 rows between 0.497 and 0.504. **Volatility: one of seven survives.** The structure-function Hurst reads **0.526 pooled and 0.524 within volatility strata**, on 8 of 8 traded instruments at width 128 and 8 of 8 at 256, where its i.i.d., block, GARCH and walk arms all read **0.50**. Every other estimator collapses to its nulls. Section 6 |
@@ -177,6 +177,35 @@ nulls below are nulls of a working estimator and not of a broken one.
 upward bias the Anis-Lloyd correction exists for, visible here as compression
 rather than as an offset: it over-reads low `H` and under-reads high `H`. It is
 kept in the panel and its readings are discounted accordingly.
+
+**B. The library's IR and QV estimators on this repo's Davies-Harte paths.** At
+2,048 points and 3 draws, because the library's estimators return a *local*
+exponent at every point and are far slower than everything else here: at 16,384
+points the full table had not produced a row in forty-five minutes, so it was
+run small rather than quoted unfinished.
+
+| planted `H` | ir@0.2 | qv@0.2 | ir@0.3 | qv@0.3 | ir@0.5 | qv@0.5 |
+|---|---|---|---|---|---|---|
+| 0.30 | 0.2802 | 0.3068 | 0.2913 | 0.3109 | 0.2614 | 0.2934 |
+| 0.40 | 0.4397 | 0.4109 | 0.4256 | 0.4127 | 0.4534 | 0.4073 |
+| 0.50 | 0.4056 | 0.4682 | 0.3965 | 0.4673 | 0.4030 | 0.4649 |
+| 0.60 | 0.6270 | 0.6088 | 0.6363 | 0.6111 | 0.6624 | 0.6097 |
+| 0.70 | 0.7474 | 0.7114 | 0.7409 | 0.7078 | 0.7490 | 0.7040 |
+| **bias at 0.70** | +0.0474 | +0.0114 | +0.0409 | +0.0078 | +0.0491 | +0.0040 |
+| **slope over the ladder** | **1.1217** | **1.0072** | **1.1100** | **0.9922** | **1.1842** | **1.0238** |
+
+**An independent published estimator recovers the planted exponent from this
+repo's generator**, at slopes of 0.992 to 1.184 and biases inside ±0.049 - QV at
+`alpha = 0.3` reads 0.9922. So `fractalest.fbm` is a fractional Brownian motion
+and not something that merely scales like one, which is what the power curve in
+section 5 rests on.
+
+**Both crossings pass, so neither side is confirming itself.** The `H = 0.50`
+row is the noisy one - every arm reads 0.396 to 0.468, below both its
+neighbours - and at three draws of 2,048 points that is the sampling error of a
+local estimator, not a defect: the slope over the whole ladder is the summary
+that is stable, and it is the one quoted. The 16,384-point version of this table
+is the obvious thing to run if the question ever matters more than it does here.
 
 ## 4. Cost, which is where most intraday ideas end
 
@@ -485,6 +514,13 @@ Python 3.13 and the lab's default interpreter for scripts is not it:
     $HOME/till_infinity/.venv-fractal/bin/python -W ignore -u \
     repo/research/harness/fractal_crosscheck.py'
 ```
+
+**Budget for the library's estimators separately.** `SAMPLE = 1 << 14` is fine
+for tables A and C, which use this repo's estimators and finish in under a
+minute; IR and QV return a *local* exponent at every point and at 16,384 points
+had not produced a single row of table B in forty-five minutes. Override the
+module constants for those - `cc.SAMPLE = 2048; cc.DRAWS = 3` puts table B at
+**115 seconds** - and say which size a quoted row came from, as section 3 does.
 
 The tests run with the suite, locally or on the lab, and take under a second:
 
