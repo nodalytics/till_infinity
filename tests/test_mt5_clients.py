@@ -3332,6 +3332,78 @@ def _wired(handler) -> Bridge:
 class TestTheBridgeSpeaksTheWireProtocol:
     """What actually crosses the network, for the writes that move money."""
 
+    async def test_a_refused_order_is_read_out_of_the_400_it_arrives_as(self):
+        """**The fault that rejected every order this desk ever sent.**
+
+        Measured against the live terminal on 2026-11-09: a refusal is HTTP
+        400 with the retcode in the body, not a 200 carrying one. `_send`
+        raises at or above 400, so the refusal reached `_place` as a
+        `BridgeError` and the broker's own words were thrown away.
+
+        Asserting the comment and not just the code, because the comment is
+        what reaches a person in the alert.
+        """
+        bridge = _wired(
+            lambda request: httpx.Response(
+                400,
+                json={
+                    "error": "Order failed: Invalid volume",
+                    "code": 10014,
+                    "mt5_code": 1,
+                    "mt5_msg": "Success",
+                },
+            )
+        )
+        raw = await bridge.order({"symbol": "EURUSD", "order_type": "BUY", "volume": 0.0})
+        assert raw["success"] is False
+        assert raw["result"]["retcode"] == 10014
+        assert raw["result"]["comment"] == "Order failed: Invalid volume"
+
+    async def test_autotrading_off_arrives_as_a_400_and_is_still_a_retcode(self):
+        """10027 is the one refusal that means *the desk cannot trade at all*.
+
+        `_place` publishes the venue-down flag on `AUTOTRADING_OFF` so the
+        heartbeat stops reporting a desk that is fine. With refusals arriving
+        as exceptions that branch could never run, which is exactly the
+        failure `two trade_allowed flags` was written for: four health signals
+        green over a terminal that would accept nothing.
+        """
+        bridge = _wired(
+            lambda request: httpx.Response(
+                400, json={"error": "Autotrading disabled by client terminal", "code": 10027}
+            )
+        )
+        raw = await bridge.order({"symbol": "EURUSD", "order_type": "BUY", "volume": 0.1})
+        assert raw["result"]["retcode"] == 10027
+
+    async def test_a_4xx_with_no_retcode_still_raises(self):
+        """The control, and it is the point of the whole change.
+
+        Without it, "a 400 is a rejection" would turn a bad key or a missing
+        route into "the broker refused this trade" - a broken deployment
+        reported as an ordinary bad trade, which is the fail-open this
+        transport removed from `_send` once already.
+        """
+        for response in (
+            httpx.Response(401, json={"detail": "Not authenticated"}),
+            httpx.Response(404, text="no such route"),
+            httpx.Response(500, text="traceback"),
+        ):
+            bridge = _wired(lambda request, r=response: r)
+            with pytest.raises(BridgeError):
+                await bridge.order({"symbol": "EURUSD", "order_type": "BUY", "volume": 0.1})
+
+    async def test_an_accepted_order_still_comes_back_whole(self):
+        """The other control: the success path is untouched by the 400 reading."""
+        bridge = _wired(
+            lambda request: httpx.Response(
+                200, json={"success": True, "result": {"retcode": 10009, "order": 55}}
+            )
+        )
+        raw = await bridge.order({"symbol": "EURUSD", "order_type": "BUY", "volume": 0.1})
+        assert raw["success"] is True
+        assert raw["result"]["order"] == 55
+
     async def test_calc_profit_names_the_parameters_the_route_declares(self):
         """**The reading that settles what a tick is worth, without a trade.**
 

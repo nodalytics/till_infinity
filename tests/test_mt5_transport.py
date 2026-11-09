@@ -29,7 +29,8 @@ from till_infinity.adapters.mt5 import (
     Streaming,
     Transport,
 )
-from till_infinity.adapters.mt5.bridge import Bridge
+from till_infinity.adapters.mt5.bridge import COMMENT_MAX, Bridge
+from till_infinity.adapters.mt5.execution import _comment
 from till_infinity.adapters.mt5.proxy import (
     TUNNELLED,
     Proxy,
@@ -612,7 +613,11 @@ def test_a_market_order_goes_to_the_market_route_and_carries_a_stop():
     sent: list[tuple] = []
 
     class Routed(Bridge):
-        async def post(self, route, body):
+        # **`_order_post`, not `post`.** A refusal is a 400 carrying the
+        # retcode, and `post` discards the status, so the order path reads the
+        # response one layer down. The route and the body asserted below are
+        # unchanged by that.
+        async def _order_post(self, route, body):
             sent.append((route, body))
             return {"success": True, "result": {"retcode": 10009, "order": 1}}
 
@@ -628,6 +633,67 @@ def test_a_market_order_goes_to_the_market_route_and_carries_a_stop():
     assert "price" not in body
 
 
+def test_no_comment_reaches_the_wire_longer_than_the_terminal_accepts():
+    """**This is the test that was missing, and 13 orders died for it.**
+
+    Every order this desk sent carried a 31-character comment and every one
+    came back `Invalid "comment" argument`, mt5_code -2 - the Python package
+    refusing the request before it became an order, so there was no retcode,
+    no deal and nothing in the terminal. Swept against the live terminal on
+    2026-11-09 at volume 0: 31 and 30 refused, 28 and below accepted.
+
+    The longest realistic id is asserted, not a short one: the ids that failed
+    in production are long because the tag carries the symbol, and a test
+    using `O-1` would pass against any limit at all. `Australia 200` is here
+    because it is the feed whose refusal finally named the cause, and its
+    symbol has a space in it - so this also pins that a space is not what the
+    terminal objected to.
+    """
+    # **The measured ceiling, as a literal.** Comparing against `COMMENT_MAX`
+    # would be tautological: the first version of this test did, and passed
+    # with the constant set back to the 31 that refused every order.
+    measured = 28
+    assert measured >= COMMENT_MAX, (
+        f"COMMENT_MAX is {COMMENT_MAX}; the terminal refused 30 and 31 on 2026-11-09"
+    )
+
+    sent: list[tuple] = []
+
+    class Routed(Bridge):
+        async def _order_post(self, route, body):
+            sent.append((route, body))
+            return {"success": True, "result": {"retcode": 10009, "order": 1}}
+
+    for client_order_id in (
+        "O-20261109-164500-001-Australia 200_E580-1",
+        "O-20261109-151608-001-USDCHF_E580-1",
+        "O-20261105-230145-001-EURUSD_E270-3",
+    ):
+        asyncio.run(
+            Routed("http://x").order(
+                {
+                    "symbol": "EURUSD",
+                    "order_type": "BUY",
+                    "volume": 0.1,
+                    "comment": _comment(client_order_id),
+                }
+            )
+        )
+        comment = sent[-1][1]["comment"]
+        assert len(comment) <= measured, f"{client_order_id!r} sent {len(comment)} characters"
+        # The tail, because the head is a timestamp the terminal already
+        # records and the tail is what tells two desks apart.
+        assert comment == client_order_id[-COMMENT_MAX:]
+
+    # The control: a comment short enough already is not padded or mangled.
+    asyncio.run(
+        Routed("http://x").order(
+            {"symbol": "EURUSD", "order_type": "BUY", "volume": 0.1, "comment": "O-1"}
+        )
+    )
+    assert sent[-1][1]["comment"] == "O-1"
+
+
 def test_a_limit_order_goes_to_the_pending_route():
     """`POST /trading/order` validates `order_type` against `^(BUY|SELL)$` and
     its handler calls `send_market_order`, which takes no price at all - so a
@@ -636,7 +702,7 @@ def test_a_limit_order_goes_to_the_pending_route():
     sent: list[tuple] = []
 
     class Routed(Bridge):
-        async def post(self, route, body):
+        async def _order_post(self, route, body):
             sent.append((route, body))
             return {"success": True, "result": {"retcode": 10008, "order": 2}}
 
