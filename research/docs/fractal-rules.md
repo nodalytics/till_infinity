@@ -528,30 +528,52 @@ The tests run with the suite, locally or on the lab, and take under a second:
 uv run pytest tests/test_fractal_estimators.py -q
 ```
 
-**The suite, for a reviewer who was not in the room.** Run on the lab from inside
-the synced tree, `$HOME/till_infinity/.venv/bin/python -m pytest tests -q`:
+**The suite, for a reviewer who was not in the room.** Run on the lab with
+`$HOME/till_infinity/.venv/bin/python -m pytest tests -q`, in a tree **rsynced
+from this worktree and checksum-verified file by file against the commit**, which
+is `9d411450` - this branch's two commits merged with `main` at `de363bdc`:
 
-| | passed | skipped | deselected |
-|---|---|---|---|
-| this branch's tree **without** `test_fractal_estimators.py` | **3,035** | 7 | 12 |
-| `test_fractal_estimators.py` alone | **21** | 0 | 0 |
-| **this branch, whole suite** | **3,056** | 7 | 12 |
+| | passed | skipped | deselected | failed |
+|---|---|---|---|---|
+| the same tree **without** `test_fractal_estimators.py` | **3,023** | 7 | 12 | **0** |
+| `test_fractal_estimators.py` alone | **21** | 0 | 0 | **0** |
+| **this branch, whole suite** | **3,044** | 7 | 12 | **0** |
 
-3,035 + 21 = 3,056, so every added test is accounted for and nothing else moved.
-**The baseline is 3,035 and not the 3,022 quoted to me**, because the tree this
-ran in was copied from the main checkout after another session had already added
-thirteen tests of its own; the difference is not this branch's and the
-without-my-file row is the number to compare against.
+3,023 + 21 = 3,044, so every added test is accounted for and nothing else moved.
 
-**Two notes on getting code onto the lab**, both of which cost a run here.
-`lab.sh exec 'cat > file'` **does not forward stdin**: all three files arrived
-**empty**, with the md5 of an empty file, and `lab.sh run` would have printed
-"launched" over them. And `lab.sh sync` is `rsync --delete`, so any *other*
-session's sync removes a file pushed by hand - which is what happened on the
-second attempt, with the run dying on `No such file or directory`. Files are
-therefore pushed base64-encoded inside the command string and **verified by md5
-against the local copy** before anything is launched, into a private
-`repo-fractal` tree that a sync does not touch.
+**The baseline is 3,023, not the 3,022 quoted to me**, because `main` advanced by
+two merges while this ran (#347 and #348); the without-my-file row is the number
+to compare against and it was measured in the same tree, in the same run, as the
+whole-suite row. An earlier attempt measured 3,035 against a tree *copied* from
+the main checkout rather than rsynced from the worktree, which had picked up
+another session's thirteen tests - the reason the verification below is
+file-by-file rather than a glance at the total.
+
+**Three notes on getting code onto the lab**, each of which cost a run here.
+
+1. **`lab.sh exec 'cat > file'` does not forward stdin.** All three files
+   arrived **empty**, carrying the md5 of an empty file, and `lab.sh run` would
+   have printed "launched" over them.
+2. **`lab.sh sync` is `rsync --delete` from the main checkout**, so any *other*
+   session's sync removes a file pushed by hand. That is what killed the second
+   attempt, with the run dying on `No such file or directory` after an md5 had
+   already confirmed the file was there.
+3. **A worktree's commit cannot be tested by `lab.sh sync` at all**, because the
+   sync's source is the main checkout and not the worktree. Running the suite in
+   a tree *copied* from that checkout gave a baseline of 3,035 against an
+   expected 3,022, because the checkout carried another session's thirteen
+   tests - a baseline that is not this branch's and not reproducible. The fix is
+   to rsync the worktree itself into a private tree the sync does not touch, and
+   then **checksum the files that define the commit** - the new ones *and* the
+   ones a merge brought in - before believing the count. Done that way the
+   baseline came back 3,023, which is `main` plus the two merges that landed
+   during this study and nothing else.
+
+So a single file is pushed base64-encoded inside the command string and
+**verified by md5 against the local copy** before anything is launched, and a
+whole tree is rsynced from the worktree with `--delete` into `repo-fractal`.
+Exclude `.venv*` and `.claude/worktrees` from that rsync: they are 2.0G and 1.3G
+here and a sync carrying them runs past ten minutes.
 
 ### How to read the output, and what the gates are
 
