@@ -82,6 +82,36 @@ def settings() -> TradingNodeConfig:
         exec_engine=LiveExecEngineConfig(
             reconciliation=True,
             inflight_check_interval_ms=2_000,
+            # **Without this the desk does not notice that the broker closed a
+            # position.** `reconciliation=True` reconciles at startup and
+            # `inflight_check_interval_ms` watches orders this process is still
+            # waiting on; neither re-reads the book afterwards, and the engine
+            # said so on every boot: `continuous reconciliation with intervals:
+            # inflight=2000ms, consistency=Nones, position=Nones`.
+            #
+            # Measured on 2026-11-09, the first day this desk ever filled. It
+            # opened BTCUSD long at 19:00:26; the broker's own stop closed it at
+            # **19:01:55** for +3.18; the desk went on trailing that stop at
+            # 19:06, logging an error per attempt because the ticket was
+            # "neither a resting order nor an open position"; and it did not
+            # emit `PositionClosed` until **19:20:27** - eighteen and a half
+            # minutes believing it held a position it did not, which is also
+            # eighteen minutes in which a new signal would have been refused as
+            # a duplicate.
+            #
+            # 60s, the conservative end of Nautilus's recommended 30-60: every
+            # check is a `/positions/` read against a single Wine-hosted
+            # terminal that the same box serves quotes from, and the thing this
+            # catches resolves in minutes, not seconds.
+            position_check_interval_secs=60.0,
+            # **`open_check_interval_secs` is deliberately left unset.** It
+            # polls the venue for orders the cache thinks are open, and this
+            # venue has none of the kind: MT5 carries a stop and a target as
+            # *fields on the position*, so the adapter reports a bracket's legs
+            # against the entry's ticket with an `-SL`/`-TP` suffix. Asking the
+            # venue about those would be asking after orders that by design do
+            # not exist, and the check resolves what it cannot find - so it
+            # would cancel this desk's protective legs for being absent.
         ),
         # **One client pair per venue, in one kernel.** Nautilus keys its
         # clients by name and runs them side by side with one cache and one

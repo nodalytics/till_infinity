@@ -81,6 +81,11 @@ PLACED = 10008
 #: one order's rejection reason - which is how it stayed invisible: a desk
 #: reading per-order rejections sees twelve unrelated refusals, not one cause.
 AUTOTRADING_OFF = 10027
+
+#: How long a rejection reason may be. Applied in `_reject`, **after**
+#: `_scrub`, so no caller can shorten a string before the key has been taken
+#: out of it - see that docstring.
+REASON_MAX = 200
 #: `SYMBOL_FILLING_*` bits mapped to the bridge's own spelling, in the order to
 #: prefer when a symbol accepts more than one.
 #:
@@ -628,11 +633,20 @@ class MT5ExecutionClient(LiveExecutionClient):
     # `GenerateOrderStatusReport`, awaits `generate_order_status_report` above
     # and sends what comes back. Overriding it here called the wrong name.
     def _reject(self, order: Any, reason: str) -> None:
+        """Reject with a bounded reason, **redacted before it is shortened**.
+
+        The order of those two matters and the callers must not have to
+        remember it. `_scrub` removes the API key by matching it, so cutting
+        the text first can split the key across the boundary, leave the
+        pattern unmatchable and put the first half of a credential into an
+        event that is logged and published. Shortening after redaction can
+        only ever remove characters from an already-safe string.
+        """
         self.generate_order_rejected(
             strategy_id=order.strategy_id,
             instrument_id=order.instrument_id,
             client_order_id=order.client_order_id,
-            reason=self._scrub(reason),
+            reason=self._scrub(reason)[:REASON_MAX],
             ts_event=self._clock.timestamp_ns(),
         )
 
@@ -715,7 +729,7 @@ class MT5ExecutionClient(LiveExecutionClient):
         self._log.error(f"submit failed: {type(exc).__name__}: {exc}")
         self._reject_all(
             tuple(o for o in orders if not getattr(o, "is_closed", False)),
-            f"{type(exc).__name__}: {exc}"[:200],
+            f"{type(exc).__name__}: {exc}",
         )
 
     async def _submit_order(self, command: Any) -> None:
@@ -807,10 +821,7 @@ class MT5ExecutionClient(LiveExecutionClient):
         together = (order, *also)
         # Only the two shapes this client can express. A stop order has no
         # `price`, so `has_price` was False and it went out as a market order.
-        if order.order_type not in (OrderType.MARKET, OrderType.LIMIT):
-            self._reject_all(
-                together, f"{order.order_type.name} orders are not supported on MT5 here"
-            )
+        if await self._unsendable(order, together):
             return
         instrument = await self._instrument(order.instrument_id)
         if instrument is None:
@@ -862,7 +873,7 @@ class MT5ExecutionClient(LiveExecutionClient):
             # classes and nine instruments - a single adapter fault wearing
             # the costume of thirteen unrelated venue refusals.
             self._log.error(f"{order.client_order_id}: the bridge refused the order: {exc}")
-            self._reject_all(together, f"bridge: {exc}"[:200])
+            self._reject_all(together, f"bridge: {exc}")
             return
         result = raw.get("result") or {}
         trade = raw.get("trade") or {}
@@ -936,6 +947,114 @@ class MT5ExecutionClient(LiveExecutionClient):
             if price <= 0 or qty <= 0:
                 return
         self._fill(order, instrument, ticket=ticket, trade_id=deal or ticket, qty=qty, px=price)
+
+    async def _unsendable(self, order: Any, together: tuple) -> bool:
+        """Whether this order cannot go to the terminal as an order of its own.
+
+        Split out for the reason `_report_legs` was: `_place` sits on the
+        branch and return limits, and this is a decision worth finding on its
+        own rather than a line inside a longer function.
+
+        Only the two shapes this client can express go to the terminal. A
+        reduce-only stop is handled instead of refused - see `_attach_stop`.
+        """
+        if order.order_type in (OrderType.MARKET, OrderType.LIMIT):
+            return False
+        if await self._attach_stop(order):
+            return True
+        self._reject_all(together, f"{order.order_type.name} orders are not supported on MT5 here")
+        return True
+
+    async def _attach_stop(self, order: Any) -> bool:
+        """A standalone reduce-only stop is **this position's stop**, not an order.
+
+        Returns whether it was handled, so `_place` can go on refusing every
+        other order type.
+
+        **The bug this closes left a live position naked.** `EdgeEntry` sends a
+        bracket where it can and otherwise a bare market order, attaching the
+        stop on the fill as a reduce-only `STOP_MARKET` - the fallback whose
+        own docstring says a poll "has a window in which a filled position has
+        no stop, and that window is exactly when a fast move would find it".
+        This client refused that order outright as an unsupported type, so the
+        fallback could never land and `SurpriseProfile.protective_stop = True`
+        was a claim the venue path could not honour.
+
+        Measured on 2026-11-09: BTCUSD short 0.1 opened at 19:20:27 from a bare
+        entry and sat at `sl 0.0 tp 0.0` with this desk's magic. The same shape
+        is already recorded against ticket 5828118661, open 90 minutes naked,
+        whose cause `_report_legs` records as still open - this is a cause.
+
+        MT5 has no separate stop order: a stop is a field on the position, set
+        by `/positions/modify`, which is exactly the translation `_place`
+        already performs for a bracket's legs. So the stop is put on the
+        position and the order is accepted against `<ticket>-SL` - the same id
+        a bracket leg gets, so `_modify_order` can trail it afterwards and
+        `_ticket` resolves it to the position.
+
+        A `reduce_only` stop with no position to reduce is **rejected, not
+        ignored**: it means this process believes it holds something the broker
+        does not, and the one thing worse than an unprotected position is an
+        unprotected position reported as protected.
+        """
+        if order.order_type != OrderType.STOP_MARKET or not bool(
+            getattr(order, "is_reduce_only", False)
+        ):
+            return False
+        trigger = float(getattr(order, "trigger_price", 0.0) or 0.0)
+        if trigger <= 0.0:
+            return False
+        instrument = await self._instrument(order.instrument_id)
+        if instrument is None:
+            return False
+
+        self.generate_order_submitted(
+            strategy_id=order.strategy_id,
+            instrument_id=order.instrument_id,
+            client_order_id=order.client_order_id,
+            ts_event=self._clock.timestamp_ns(),
+        )
+        symbol = order.instrument_id.symbol.value
+        try:
+            held = next(
+                (
+                    row
+                    for row in await self._bridge.positions()
+                    if self._ours(row) and str(row.get("symbol")) == symbol
+                ),
+                None,
+            )
+        except Exception as exc:
+            self._reject(order, f"cannot read the terminal's book: {exc}")
+            return True
+        if held is None:
+            self._reject(order, f"no open {symbol} position of this desk's to put a stop on")
+            return True
+
+        ticket = int(held.get("ticket") or 0)
+        if not ticket:
+            self._reject(order, f"the open {symbol} position carries no ticket")
+            return True
+        # The target is carried through unchanged. `/positions/modify` sets
+        # both fields at once, so passing 0 would clear a target the position
+        # is already holding.
+        target = float(held.get("tp") or 0.0)
+        naked, why = await self._protect(
+            ticket, sl=trigger, tp=target or None, instrument=instrument
+        )
+        if "sl" in naked:
+            self._log.error(f"{order.client_order_id}: {why}")
+            self._reject(order, why)
+            return True
+        self.generate_order_accepted(
+            strategy_id=order.strategy_id,
+            instrument_id=order.instrument_id,
+            client_order_id=order.client_order_id,
+            venue_order_id=VenueOrderId(f"{ticket}-SL"),
+            ts_event=self._clock.timestamp_ns(),
+        )
+        self._log.info(f"{order.client_order_id}: stop {trigger} set on position {ticket}")
+        return True
 
     async def _report_legs(
         self,
