@@ -54,6 +54,7 @@ from nautilus_trader.model.data import Bar
 
 from ..domain.models import Intent, Refusal, Side
 from ..indicators.levels import BjorgumLevels, PivotSource, Sided
+from .crossing import side_of
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .exits import ManagedExit
 from .profile import Profile
@@ -349,41 +350,22 @@ class Zones:
     def _side(self, zone: Any, *, was: bool, now: bool, close: float) -> int:
         """Which way this zone reads on this bar: +1, -1 or 0.
 
-        **Every mode in `MODES` is dispatched here by name, and an unhandled
-        one raises.** The first version branched on `reject` and let everything
-        else fall through to the `break` arm, so `retest` and `flip` were
-        accepted, validated, and ran as `break` while reporting cells under
-        their own names - a configuration that produces numbers for a rule that
-        never ran, which is the one defect this session has found seven of.
+        **The scoring is `crossing.side_of` and is shared**, because an order
+        block, a displacement origin and a Bjorgum key level are one hypothesis
+        with several nominators - `delivering.md` puts the four names in a
+        table - so a reading taken here and a reading taken by
+        `strategies/origins.py` have to be the same function or they are not
+        comparable. What stays with this rule is the *nomination*: which prices
+        are zones at all.
         """
-        mode = self.tuning.mode
-        left = was and not now
-        outside = not was and not now
-        up = close > zone.top
-        down = close < zone.bottom
-        # The side a zone's own role points to: a resistance that breaks,
-        # breaks upward.
-        with_role = +1 if zone.resistance else -1
-
-        if mode == "reject":
-            # Left the zone back the way it came. The zone held: reversal.
-            return -with_role if left and (down if zone.resistance else up) else 0
-        if mode == "break":
-            # Closed through from outside. The zone failed: continuation.
-            return with_role if outside and (up if zone.resistance else down) else 0
-        if mode == "retest":
-            # Already broken, price back inside, now leaving on the break
-            # side. Continuation. Leaving the other way is the retest
-            # *failing*, which is a different trade and not this one.
-            if not (zone.flipped and left):
-                return 0
-            return with_role if (up if zone.resistance else down) else 0
-        if mode == "flip":
-            # The bar the role changes on. Read against `self.flipped` because
-            # a role change is an **edge** and `Zone.flipped` is a state that
-            # stays true - firing on the state would re-propose every bar.
-            return 0 if (not zone.flipped or self.flipped.get(zone.at)) else with_role
-        raise ValueError(f"{mode!r} is in MODES and has no branch here")
+        return side_of(
+            zone,
+            self.tuning.mode,
+            was=was,
+            now=now,
+            close=close,
+            seen=bool(self.flipped.get(zone.at)),
+        )
 
     def _payload(self, side: int, zone: Any, bar: Bar) -> dict[str, Any]:
         """The crossing as the payload `Desk.consider` reads."""
