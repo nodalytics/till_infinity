@@ -130,7 +130,10 @@ the delay does to the hit rate, the reward or the refusal rate. So `mean R0 =
 0` *is* the fair-rate null and it needs no simulation.
 
 It does need a calibration, and the calibration is why the **level** is never
-quoted as a result here. A 1-ATR stop against a 96-bar mark has a median of
+quoted as a result here. (The table below is the `main` run's 31 15-minute
+series; the sub-step sweep two sections down is `MODE=calib`, which runs only
+the eight eleven-year series, so the two universes are not the same and their
+levels are not comparable with each other either.) A 1-ATR stop against a 96-bar mark has a median of
 exactly **-1.000** and a positive mean: a short string of very large winners
 against a wall of stop-outs, so the sample mean is badly conditioned and any
 settlement bias rides on top of it. Measured with **random anchors**, where the
@@ -190,11 +193,22 @@ looked like the cause and was not:
   a 15-minute ATR of a few, a fifth of an R inside one 96-bar hold. `ET_DEMEAN`
   removes it and is on by default. It moved the bridge arm from +0.1219 to
   +0.1144, so it was **not** the cause of that arm's bias.
-- **Refining the path does not fix the level either.** The bridge's k=0 reading
-  across 15, 30, 60, 120 and 240 sub-steps a bar is +0.1734, +0.1686, +0.1222,
-  +0.1164, +0.1144 - it falls and then stops, so what remains is not the stop's
-  overshoot. It is the conditioning of the mean itself, which is the whole
-  argument for the paired statistic.
+- **Refining the path does not fix the level either, and the residual's cause
+  is not identified.** On the eight eleven-year series (`MODE=calib`) the
+  bridge's k=0 reading across 15, 30, 60, 120 and 240 sub-steps a bar is
+  +0.1734, +0.1686, +0.1222, +0.1164, +0.1144 - it falls and
+  then stops, so about 0.06R of it was the stop's overshoot and the remaining
+  +0.11R is something else. Three candidates were ruled out by measurement
+  rather than argument: drift (`ET_DEMEAN`, worth 0.0075), path discreteness
+  (the sweep above) and the detector (random anchors read the same as BOS
+  signals read +0.0899 and +0.1253 on the same 31 series). What is left is a mean over a payoff whose
+  median is exactly -1.000, whose winners are a short heavy tail, and whose
+  stop sits closer in units of a bar's own step on a bridge than on a real
+  series - 0.74 of trades stopped against 0.65. **No level in this study is
+  read as a result for that reason**, which is the whole argument for the
+  paired statistic; `ET_STOPMULT` is in the harness as the handle that varies
+  the stop's width while holding the signal fixed, for whoever wants to take
+  it further.
 
 ## `smc-bos-causal` at 15m: 7,128 trades, 31 real markets, 2015 to 2026
 
