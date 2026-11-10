@@ -1,10 +1,10 @@
-# Confluence: four frameworks name 98% of all prices, and a walk gets the same answer
+# Confluence: four frameworks name 98% of all prices, and `k` is a proxy for the bar's width
 
 **Measured 2026-11-10** on the lab with
 [`confluence_levels.py`](../ideas/confluence_levels.py) and
 [`test_confluence_levels.py`](../ideas/test_confluence_levels.py). 50
 instruments, 162 instrument-interval series, **6,276,645 bars** at 15m, 1h, 4h
-and 1d, 1.06 million de-overlapped observations.
+and 1d, 1,067,861 de-overlapped observations.
 
 The runs behind this document wrote to `~/conf/out/<mode>` on the lab -
 `overlap.csv`, `cells.csv`, `obs.npz`, `power.csv`, `sweep.csv`,
@@ -32,7 +32,8 @@ named by none?
 | **Is a confluence rare?** | **No, and this is the result worth reading first.** A price drawn at a matched arrival is named by at least one of the four frameworks **97.82% of the time** (3,259,135 of 3,331,801 draws), and **67.63%** of named first touches carry `k >= 2`. Confluence is the *modal* state of the price axis, not a selection from it |
 | **Are the four frameworks four objects?** | **Partly.** Pairwise agreement over each pair's union is **0.3098** (fib-swing), **0.3058** (fib-gann), **0.2174** (gann-swing) and **0.059-0.063** for every pair involving the round grid. So the three history-driven frameworks share a fifth to a third of their levels and the round grid is nearly independent of all three - but they are dense enough (0.156 to 1.595 levels per volatility unit) that co-location needs no agreement to occur |
 | **Does the hold rate rise with `k`?** | **Yes, and so does a walk's, by the same amount.** Traded instruments, `k >= 2` against `k = 1`, paired on days: real **+0.0142 +- 0.0022** [+0.0100, +0.0184] on 153,526 against 80,003 resolved observations; a driftless Brownian-bridge walk through the identical detectors reads **+0.0140 +- 0.0022** and a GARCH(1,1)-t(5) bridge reads **+0.0167 +- 0.0021** - *more* than the market. **Real minus walk is +0.0002 +- 0.0029** |
-| **Does the comparison hold up across the parameters?** | **No, and this is the study's sharpest caveat.** Over nine configurations the **market's** gap is stable at **+0.0097 to +0.0191** and always positive, while the **walk's** runs **-0.0144 to +0.0491**, cleanly monotone in how dense the level book is. So the excess crosses zero inside the swept range - **+0.0269** at the sparsest tolerance, **-0.0314** at the densest - and an effect cannot change sign with the tolerance that defines "the same price". The null is not inert, so the excess is **not identified**; the pre-registered cell is where the two arms happen to coincide |
+| **Does the comparison hold up across the parameters?** | **No, and this is the study's sharpest caveat.** Over **sixteen configurations** the **market's** gap is stable at **+0.0097 to +0.0191** and always positive, while the **walk's** runs **-0.0144 to +0.0491**, cleanly monotone in how dense the level book is. So the excess crosses zero inside the swept range - **+0.0269** at the sparsest tolerance, **-0.0314** at the densest - and an effect cannot change sign with the tolerance that defines "the same price". The null is not inert, so the excess is **not identified**; the pre-registered cell is where the two arms happen to coincide |
+| **Is there a recency reading that survives?** | **No, and it was refuted on a prediction written before the run.** Three points on the level-life axis went the hypothesis' way, so `MODE=lifesweep` stated the prediction - the market's gap keeps rising as the life shortens, the walk's keeps falling, monotonically - and ran seven. **The market's gap turns over**, peaking at a life of 150 and falling back at 100 and 50, flat overall in a band from +0.0123 to +0.0184 with two turning points; the walk's is monotone across **0.0295** of hold rate, tracking the level density step for step. Three points looked like a mechanism; seven are a constant minus a ramp |
 | **What is `k` actually measuring?** | **The width of the bar the arrival printed in.** The mean arrival-bar range over the *lagged* volatility unit is **1.202** at `k = 1` and **1.446** at `k >= 2`, and the hold rate is dominated by that width rather than by `k`: it falls from **0.5420 to 0.3792** across width quintiles on the market and from **0.6076 to 0.1995** on the walk, because the race's barriers are set from the lagged unit and in a bar that is wide for its regime both are close. **Within width quintiles the real gap is +0.0263 and the walk's is +0.0211** - a difference of about +0.005 where the pooled figures differ by +0.0238 - so the one configuration with a positive excess is a composition effect in the null arm |
 | **Does any cell survive multiplicity?** | **3 of 131**, and none is among the ten largest gaps, so all three are small gaps on large samples. 93 cells are nominally positive where chance gives 65 and 16 have a lower bound above zero where chance gives about 3 - which is what a mechanical effect present in every cell looks like, since the walk arm has it too |
 | **Is the outcome distribution bimodal?** | **No, and it is the opposite shape.** Excess kurtosis of the next-20-bar return is **+8.94 / +8.43 / +8.33** at `k = 1 / 2 / 3` - fat-tailed and unimodal, where bimodality requires it to be *negative*. Sarle's coefficient reads **0.087-0.096** against the 0.5556 flag. The two-component mixture beats one Gaussian by a huge margin (dBIC 11,379-13,286) and its fitted means are **0.10-0.12** pooled standard deviations apart: it is a **scale** mixture, which is a fat tail, not a location mixture, which is what two outcomes would be |
@@ -278,12 +279,25 @@ separation either way.
 
 **131 instrument-interval cells, 93 nominally positive** (chance gives 65),
 **16 with a lower bound above zero** (chance gives about 3), **3 surviving
-Benjamini-Hochberg** - and none of the three is among the ten largest gaps, so
-all three are small gaps on large samples rather than the eye-catching cells.
-The excess of nominally positive cells is what a mechanical effect present in
-every cell produces, and the walk arm has it too. The largest gaps are the
-smallest samples: `AUDCAD/1h` at +0.2021 +- 0.0687 on 169 against 77
-observations, `EURAUD/1h` at +0.1474 +- 0.0676 on 159 against 80.
+Benjamini-Hochberg**. None of the three is among the ten largest gaps - those
+are the smallest samples, `AUDCAD/1h` at +0.2021 +- 0.0687 on 169 against 77
+observations and `EURAUD/1h` at +0.1474 +- 0.0676 on 159 against 80 - and the
+three that survive are 15-minute cells with ten thousand observations each:
+
+| cell | gap | p | n k>=2 / k=1 |
+|---|---|---|---|
+| **`Volatility 75 Index`/15m** | **+0.0324 +- 0.0088** | 2.5e-04 | 9,791 / 5,194 |
+| `EURUSD`/15m | +0.0272 +- 0.0081 | 8.1e-04 | 10,457 / 5,501 |
+| `AUDUSD`/15m | +0.0272 +- 0.0082 | 9.8e-04 | 10,515 / 5,530 |
+
+**The largest of the three is `Volatility 75 Index`**, which is one of the two
+instruments carried precisely because they must read nothing: a generated
+process with constant volatility and a published generator, where no
+participant computes anything and no order rests anywhere.
+`carry-an-independent-placebo-pair` says to carry two of them in every
+relationship harness because they caught two leaks in one run, and this is a
+third. A multiplicity-surviving cell in the arm that cannot have the property
+is the clearest possible statement about what the other two are.
 
 ### The controls
 
@@ -733,6 +747,44 @@ output takes the market's `k` gap from +0.0142 to **+0.0102**. If confluence
 carried information that density was diluting, making it selective would raise
 the market's gap. It lowers it, and only the null moves far.
 
+### The level-life axis, with the prediction stated before the run
+
+The tolerance disqualifies itself - an effect cannot depend on what counts as
+"the same price" - but the **level life** is different in kind. It is how long
+a level stays in the book, which is the closest thing in this harness to *how
+long anybody is still watching*, and the first sweep's three points went the
+right way for the hypothesis: the market's gap rose as the life shortened
+(+0.0097, +0.0156, +0.0191 at 1500, 500 and 150) while the walk's fell
+(+0.0279, +0.0170, +0.0022). So `MODE=lifesweep` was written with the
+prediction in its docstring **before it ran**: *if it is recency, the market's
+gap keeps rising as the life shortens and the walk's keeps falling,
+monotonically, through 50 and 100 bars. If either series turns over, it is
+neither.*
+
+| level life | share `k >= 2` | `gann` density | real gap | walk gap | excess |
+|---|---|---|---|---|---|
+| 50 | 0.239 | 0.412 | +0.0131 +- 0.0025 | -0.0008 +- 0.0025 | +0.0139 [+0.0071, +0.0217] |
+| 100 | 0.363 | 0.683 | +0.0155 +- 0.0023 | -0.0026 +- 0.0023 | +0.0181 [+0.0123, +0.0237] |
+| 150 | 0.447 | 0.883 | **+0.0184 +- 0.0022** | +0.0024 +- 0.0021 | +0.0160 [+0.0099, +0.0231] |
+| 300 | 0.588 | 1.280 | +0.0123 +- 0.0021 | +0.0050 +- 0.0022 | +0.0073 [+0.0011, +0.0131] |
+| 500 | 0.676 | 1.595 | +0.0142 +- 0.0021 | +0.0166 +- 0.0022 | -0.0024 [-0.0085, +0.0040] |
+| 1000 | 0.764 | 1.976 | +0.0131 +- 0.0022 | +0.0246 +- 0.0024 | -0.0115 [-0.0176, -0.0056] |
+| 1500 | 0.798 | 2.172 | +0.0131 +- 0.0023 | +0.0287 +- 0.0022 | -0.0156 [-0.0219, -0.0094] |
+
+**The prediction fails on the half that mattered.** The market's gap **turns
+over**: it peaks at a life of 150 and comes *back down* to +0.0155 at 100 and
++0.0131 at 50, where recency says it should keep climbing. Over the whole axis
+it is flat - seven values in a band from +0.0123 to +0.0184, mean +0.0142,
+with no trend and two turning points - while the **walk's is monotone across
+0.0295 of hold rate**, from -0.0026 at a life of 100 to +0.0287 at 1500,
+tracking the `gann` density (0.41 to 2.17) step for step.
+
+So the excess is monotone decreasing in the level life and crosses zero at a
+life of about 450 **entirely because the walk's gap is**, and the one reading
+that would have made the three-point pattern a recency effect is refuted on a
+prediction written down before the data was seen. Three points looked like a
+mechanism; seven points are a constant minus a ramp.
+
 ### The three configurations side by side
 
 | configuration | share `k >= 2` | mean width k=1 / k>=2 | real gap | walk gap | pooled excess | **excess within width quintiles** |
@@ -748,6 +800,12 @@ is no longer configuration-dependent, and it is at or below the smallest lift
 this pipeline can resolve - the label plant puts the blind spot at 0.0058 in
 the difference of differences - so it is reported as a bound rather than as an
 effect.
+
+And the quantity that is stable across **all sixteen configurations run** -
+nine in the sweep, seven on the life axis, plus the sparse rules and the tight
+tolerance - is the market's own `k` gap: **+0.0097 to +0.0191**, mean about
++0.014, never negative and never twice its smallest value. What moves by six
+times that range is the null.
 
 ## Cost
 
@@ -784,22 +842,30 @@ The part of it that is not the walk's is +0.0002 +- 0.0029 in hold rate, or
 2. **Confluence does not raise the hold rate beyond a walk at the
    pre-registered tolerance.** The gap is +0.0142 +- 0.0022 on the market,
    +0.0140 +- 0.0022 on a driftless Brownian-bridge walk through the same
-   detectors and +0.0167 +- 0.0021 on a GARCH bridge, so the market is between
-   its two nulls. The qualifier is load-bearing - see the sweep - and the
-   mechanism is the arrival bar's width.
-3. **The bimodality claim is refuted in the direction it was stated.** The
-   next-20-bar return at a `k >= 2` arrival has excess kurtosis +8.4, Sarle
-   0.092 against a 0.5556 flag, and a two-component mixture separated by 0.12
+   detectors and +0.0167 +- 0.0021 on a GARCH bridge, so the market sits
+   between its two nulls. Of 131 instrument-interval cells 3 survive
+   Benjamini-Hochberg and the largest of the three is `Volatility 75 Index`,
+   a generated process that cannot have the property.
+3. **The excess over a walk is not identified at any configuration**, and
+   where it is positive it is a composition effect in the arrival bar's width:
+   pooled +0.0002, +0.0238 and +0.0280 across three configurations, +0.0031,
+   +0.0052 and +0.0071 within width quintiles.
+4. **The recency reading is refuted on a pre-stated prediction.** The market's
+   `k` gap does not rise as the level life shortens; it turns over at 150 bars
+   and is flat across seven lives, while the walk's is monotone across 0.0295.
+5. **The bimodality claim is refuted in the direction it was stated.** The
+   next-20-bar return at a `k >= 2` arrival has excess kurtosis +8.54, Sarle
+   0.091 against a 0.5556 flag, and a two-component mixture separated by 0.113
    standard deviations: one sharp mode with fat tails, not two outcomes.
-4. **There is no stop cascade attributable to confluence.** Continuation after
-   a break is 0.5241-0.5264 at every `k`, below the matched placebo's 0.5465,
+6. **There is no stop cascade attributable to confluence.** Continuation after
+   a break is 0.5237-0.5294 at every `k`, below the matched placebo's 0.5448,
    and realised volatility and excursion after a break are flat in `k`.
-5. **The Square of 9 adds nothing, and that is a check rather than a result.**
+7. **The Square of 9 adds nothing, and that is a check rather than a result.**
    It gains +0.0162 +- 0.0028 from company, which is the size the other three
    gain (+0.0239, +0.0143, +0.0099). A framework with no mechanism behaving
    like the ones with mechanisms is the signature of an effect that belongs to
    the construction.
-6. **A double bottom is not a better swing level**: 0.5173 +- 0.0088 on 3,273
+8. **A double bottom is not a better swing level**: 0.5173 +- 0.0088 on 3,273
    arrivals, flat against the swing framework's own rate.
 
 ## What is unmeasurable
@@ -841,13 +907,14 @@ sweep behaves as it does.**
    (`no-order-flow-and-no-real-volume`). A confluence count is a proxy for *how
    many frameworks a harness can compute*, and the two part company as soon as
    the frameworks are dense - which they are, by their own rules.
-3. **The excess over a walk away from the pre-registered tolerance**, because
-   the walk's own `k` gap is not stable there and the excess is a difference of
-   two numbers only one of which is a market measurement. See the sweep: the
-   market's gap moves from +0.0124 to +0.0177 across a fivefold change in
-   tolerance while the walk's moves from -0.0144 to +0.0491, so the excess
-   flips sign. A difference of differences is only as good as the stability of
-   the null it subtracts.
+3. **The excess over a walk, at any configuration**, because the walk's own
+   `k` gap is not stable and the excess is a difference of two numbers only one
+   of which is a market measurement. Across sixteen configurations the market's
+   gap moves from +0.0097 to +0.0191 while the walk's moves from -0.0144 to
+   +0.0491, so the excess flips sign. A difference of differences is only as
+   good as the stability of the null it subtracts, and what this study can
+   report is a **bound**: within width quintiles the residual is +0.003 to
+   +0.007, against a resolvable floor of 0.0058.
 4. **The level of any hold rate**, for the construction reason above. Only
    differences between arms are quotable.
 5. **Whether a *human* reading of "confluence" - a handful of levels a person
@@ -895,6 +962,23 @@ sweep behaves as it does.**
   same wall from the other side - its clear arm was 7-9% of anchors, and "a
   clear path is a regime of its own" - so the placebo is read beside the walk
   and never instead of it.
+* **The dedupe scan width was fixed at one bucket** while the bucket grid is
+  the tolerance at the *median* unit, so on a series whose volatility spans an
+  order of magnitude a late row's tolerance is several buckets wide and the
+  scan silently stopped de-duplicating in the violent regime with the most
+  levels. Measured at 1h: **-0.9 to -1.9%** of rows on EURUSD (unit range
+  3.9x), **-2.4 to -4.3%** on BTCUSD (5.0x) and **-4.5 to -8.4%** on XAUUSD
+  (25.1x). It changes the level counts and densities only - `k` comes from
+  `Book.names`, which searches a price window with the bar's own tolerance and
+  never consults the grid - and the main panel was re-run with the fix, which
+  moved the headline from +0.0156 to +0.0142 against a walk's +0.0154 to
+  +0.0140 and changed no verdict. The power and tolerance sweeps were taken
+  before it.
+* **`cells.csv` carried the ten printed cells, not all of them**, so the three
+  Benjamini-Hochberg survivors were counted in a summary line and absent from
+  the file - which is the one row anybody would want to audit. Fixed, and the
+  report now also prints any survivor outside the top ten. The survivors are
+  named above *because* of the fix.
 * **120 duplicate bars** were dropped across 162 series by the unconditional
   timestamp de-duplication. The guard stays: a duplicate bar doubles a
   detector's firing rate in silence.
@@ -910,15 +994,27 @@ sweep behaves as it does.**
 ./.secrets/lab.sh run research/ideas/confluence_levels.py MODE=calibrate
 ./.secrets/lab.sh run research/ideas/confluence_levels.py MODE=power
 ./.secrets/lab.sh run research/ideas/confluence_levels.py MODE=sweep
+./.secrets/lab.sh run research/ideas/confluence_levels.py MODE=lifesweep
 ./.secrets/lab.sh run research/ideas/confluence_levels.py MODE=cost
 MODE=report uv run python research/ideas/confluence_levels.py
 MODE=smoke  uv run python research/ideas/confluence_levels.py
 uv run pytest research/ideas/test_confluence_levels.py
 ```
 
+and the two configurations this document reports beside the base one:
+
+```
+# the tight tolerance, where the excess over a walk is largest
+MODE=run TOL_VOL=0.10
+# the sparse rules, where a confluence is rare
+MODE=run ARMS=real,walkpath TOL_VOL=0.15 LIFE=150 MIN_LEG_VOL=4.0 \
+    FIB_RATIOS=0.618,0.786 GANN_DEGREES=45,90
+```
+
 `MODE=run` writes `$OUT/obs.npz` (every observation as columns),
-`$OUT/cells.csv` (every statistic quoted above) and `$OUT/overlap.csv`.
-`MODE=report` re-prints every table from `obs.npz` without recomputing the
-panel. The harness was staged **outside** `~/till_infinity/repo` and verified by
-checksum on both sides, because `lab.sh sync` rsyncs with `--delete` and a
-concurrent agent removes an untracked harness from under a running job.
+`$OUT/cells.csv` (every statistic quoted above, one row per cell) and
+`$OUT/overlap.csv`. `MODE=report` re-prints every table from `obs.npz` without
+recomputing the panel. The harness was staged **outside** `~/till_infinity/repo`
+and verified by checksum on both sides, because `lab.sh sync` rsyncs with
+`--delete` and a concurrent agent removes an untracked harness from under a
+running job.
