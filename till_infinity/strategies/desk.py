@@ -71,7 +71,7 @@ from ..utils.topics import PROPOSALS, subscribe
 from . import sizes
 from .config import Settings
 from .counterfactual import Counterfactual, Resolved
-from .timeframes import Frames
+from .timeframes import Frames, seconds_of
 
 
 class DeskConfig(StrategyConfig, frozen=True):
@@ -163,6 +163,58 @@ class Desk(NautilusStrategy):
 
     # ----------------------------------------------------------- the lifecycle
 
+    @property
+    def interval(self) -> str:
+        """The clock this desk actually trades, read off its own `bar_type`.
+
+        **Not `profile.interval`, which is the clock the rule was *measured*
+        on.** Those were the same thing for as long as the node built every
+        desk on `intervals()[0]`; once a rule fans out over `15m,1h,4h` the
+        ClassVar is right for one of the four desks and wrong for three, and it
+        is not a label - `Intent.interval` drives `scaling.by_interval`, and
+        `domain/models.py` converts a hold through `SECONDS` with it. A 4h desk
+        reporting `15m` would be sized by the wrong weight and would compute a
+        span sixteen times too short, with every number still printing.
+
+        Empty when the bar type is not a time clock, which is what `SECONDS`
+        and `by_interval` already treat as "no interval" rather than guessing.
+        """
+        from ..utils.intervals import SECONDS
+
+        span = seconds_of(self._cfg.bar_type)
+        if span <= 0.0:
+            return ""
+        return next((name for name, secs in SECONDS.items() if secs == span), "")
+
+    def _say_clock(self) -> None:
+        """Say so when this desk trades a clock its rule was not measured on.
+
+        **The one thing this repository's CLAUDE.md puts above everything
+        else** is that the thing that measured an idea and the thing that
+        trades it are the same thing. Fanning a rule over `15m,1h,4h` breaks
+        that by construction for three desks of four, and the break is
+        otherwise invisible: the desk starts, subscribes, warms and proposes,
+        and nothing it logs mentions a clock at all.
+
+        So it reports and never refuses. A slower clock is a legitimate thing
+        to run - `bjorgum.md` measured this desk's zone findings at 15m, 1h and
+        4h and the strongest cell on the book is at 4h - but it is a different
+        experiment from the one the rule's own numbers came from, and a reader
+        of the log should not have to infer that from the bar type.
+        """
+        # `getattr` on `self` and not on `self.profile`: `profile` is declared
+        # by each rule's mixin rather than by this base, so a desk composed
+        # without one - every entry-mechanism test double - has no attribute
+        # to read and this ran before the first bar of all of them.
+        measured = str(getattr(getattr(self, "profile", None), "interval", "") or "")
+        traded = self.interval
+        if measured and traded and traded != measured:
+            self.log.warning(
+                f"{self._cfg.rule} is specified and measured on {measured} and this "
+                f"desk trades {traded}: a different experiment, not a slower view of "
+                f"the same one. Sizing and holds follow {traded}."
+            )
+
     def on_start(self) -> None:
         """Build the rule, register the detectors, then subscribe.
 
@@ -170,6 +222,7 @@ class Desk(NautilusStrategy):
         bar. The two orders are indistinguishable on a live feed and differ in
         a backtest, which delivers the first bar immediately.
         """
+        self._say_clock()
         self._register()
         self.subscribe_bars(self._cfg.bar_type)
         for frame in self._cfg.context_bar_types:

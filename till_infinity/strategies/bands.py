@@ -636,7 +636,7 @@ class Bands:
         return {
             "feed": self._feed_name(),
             "shape": self.profile.shape,
-            "interval": self.profile.interval,
+            "interval": self.interval or self.profile.interval,
             "direction": side,
             "features": {
                 # `ma_atr` with `ma_close` as its anchor, **not** `vol_bps`:
@@ -705,7 +705,7 @@ class Bands:
                 f"{self.tuning.kind} {self.tuning.mode} "
                 f"{'up' if side is Side.BUY else 'down'} on {feed}"
             ),
-            interval=self.profile.interval,
+            interval=self.interval or self.profile.interval,
             features={str(k): float(v) for k, v in features.items()},
             hold=0.0,
         )

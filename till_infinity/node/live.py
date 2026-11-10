@@ -537,7 +537,6 @@ def _statespace() -> list[Actor]:
     wanted = tuple(rule for rule in desks.rules() if rule.startswith("statespace"))
     bars = named
     if not bars and wanted:
-        interval = desks.intervals()[0]
         allowed = _consumers_allow(wanted)
         every = tuple((symbol, venue) for venue in _wanted() for symbol in desks.symbols(venue))
         # **Fold what something can actually trade.** With no allowlist to
@@ -557,7 +556,16 @@ def _statespace() -> list[Actor]:
 
         keep = tuple((s, v) for s, v in every if feed_of_symbol(s) in allowed)
         used = keep if (keep and allowed) else every
-        bars = tuple(str(desks.bar_type(symbol, venue, interval)) for symbol, venue in used)
+        # **Every interval the desks trade, not the first.** The fold is keyed
+        # by feed *and* interval, so a 4h desk reading a 15m proposal is not a
+        # slower view of the same state - it is a different estimate, and with
+        # only `intervals()[0]` folded it would be subscribed to a topic
+        # nothing published for its clock.
+        bars = tuple(
+            str(desks.bar_type(symbol, venue, interval))
+            for symbol, venue in used
+            for interval in desks.intervals()
+        )
         if bars:
             log.warning(
                 "STATESPACE_BARS is unset and %s consume statespace.proposals, so "
@@ -566,7 +574,10 @@ def _statespace() -> list[Actor]:
                 "it those desks cannot trade.",
                 "/".join(wanted),
                 len(bars),
-                len(every),
+                # Both counts over bar *types*, so the ratio means what it
+                # says. `every` is symbol-venue pairs, so narrowing 30 feeds
+                # to 8 on four intervals is "32 of 120" and not "32 of 30".
+                len(every) * len(desks.intervals()),
                 "" if used is keep else " (no overlap, so all of them)",
             )
     if not bars:

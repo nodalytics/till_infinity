@@ -753,7 +753,7 @@ class VolImpulse:
         return {
             "feed": self._feed_name(),
             "shape": self.profile.shape,
-            "interval": self.profile.interval,
+            "interval": self.interval or self.profile.interval,
             "direction": found.side.sign,
             "features": {
                 # Named for the rule, so a later score can find them, and
@@ -854,7 +854,7 @@ class VolImpulse:
                 f"{'up' if side is Side.BUY else 'down'} out of a squeeze at "
                 f"rank {_number(features.get('vi_rank')):.3f} on {feed}"
             ),
-            interval=self.profile.interval,
+            interval=self.interval or self.profile.interval,
             features={k: _number(v) for k, v in features.items()}
             | {"vi_risk_px": risk, "vi_spread_px": cost},
             # Step 4 is `hold_signal_bars` and `_clock` runs it, so no seconds

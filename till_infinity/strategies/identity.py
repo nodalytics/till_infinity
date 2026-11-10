@@ -308,7 +308,7 @@ class Identity(Desk):
             {
                 "feed": self._feed_name(),
                 "shape": self.profile.shape,
-                "interval": self.profile.interval,
+                "interval": self.interval or self.profile.interval,
                 #: A rich cross closes by falling, so the side is `-sign(z)`.
                 "direction": -1 if z > 0 else 1,
                 "features": {
@@ -365,7 +365,7 @@ class Identity(Desk):
             entry=entry,
             stop=stop,
             features={k: _number(v) for k, v in features.items()},
-            interval=self.profile.interval,
+            interval=self.interval or self.profile.interval,
         )
 
 
