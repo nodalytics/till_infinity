@@ -4,9 +4,16 @@
 [`confluence_levels.py`](../ideas/confluence_levels.py) and
 [`test_confluence_levels.py`](../ideas/test_confluence_levels.py). 50
 instruments, 162 instrument-interval series, **6,276,645 bars** at 15m, 1h, 4h
-and 1d, 1.06 million de-overlapped observations. Outputs in
-`~/conf/out/{main,calib,power,sweep,cost}` on the lab: `overlap.csv`,
-`cells.csv`, `obs.npz`, `power.csv`, `sweep.csv`, `calibrate.csv`, `cost.csv`.
+and 1d, 1.06 million de-overlapped observations.
+
+The runs behind this document wrote to `~/conf/out/<mode>` on the lab -
+`overlap.csv`, `cells.csv`, `obs.npz`, `power.csv`, `sweep.csv`,
+`lifesweep.csv`, `calibrate.csv`, `cost.csv` - because the harness was staged
+**outside** `~/till_infinity/repo`: `lab.sh sync` rsyncs with `--delete`, so a
+concurrent agent removes an untracked harness from under a running job, and a
+"launched" message is not evidence the code is there. Both copies were verified
+by checksum. A `lab.sh run` of the same harness writes to the default
+`.data/confluence`.
 
 A piece of gold commentary called $3,977 a "high-conviction decision point"
 because a Square-of-9 45 degree angle ($3,971.63), a Fibonacci 62-79% OTE zone
@@ -22,26 +29,26 @@ named by none?
 
 | question | answer |
 |---|---|
-| **Is a confluence rare?** | **No, and this is the result worth reading first.** A price drawn at a matched arrival is named by at least one of the four frameworks **97.96% of the time** (3,404,361 of 3,475,204 draws), and **68.02%** of named first touches carry `k >= 2`. Confluence is the *modal* state of the price axis, not a selection from it |
-| **Are the four frameworks four objects?** | **Partly.** Pairwise agreement over each pair's union is **0.3101** (fib-swing), **0.3098** (fib-gann), **0.2180** (gann-swing) and **0.058-0.062** for every pair involving the round grid. So the three history-driven frameworks share a fifth to a third of their levels and the round grid is nearly independent of all three - but they are dense enough (0.156 to 1.632 levels per volatility unit) that co-location needs no agreement to occur |
-| **Does the hold rate rise with `k`?** | **Yes, and so does a walk's, by the same amount.** Traded instruments, `k >= 2` against `k = 1`, paired on days: real **+0.0156 +- 0.0022** [+0.0113, +0.0197] on 154,053 against 79,677 resolved observations; a driftless Brownian-bridge walk through the identical detectors reads **+0.0154 +- 0.0022**; a GARCH(1,1)-t(5) bridge reads **+0.0139 +- 0.0021**. **Real minus walk is +0.0002 +- 0.0029** [-0.0059, +0.0054]. All four per-framework `real minus walk` intervals contain zero |
+| **Is a confluence rare?** | **No, and this is the result worth reading first.** A price drawn at a matched arrival is named by at least one of the four frameworks **97.82% of the time** (3,259,135 of 3,331,801 draws), and **67.63%** of named first touches carry `k >= 2`. Confluence is the *modal* state of the price axis, not a selection from it |
+| **Are the four frameworks four objects?** | **Partly.** Pairwise agreement over each pair's union is **0.3098** (fib-swing), **0.3058** (fib-gann), **0.2174** (gann-swing) and **0.059-0.063** for every pair involving the round grid. So the three history-driven frameworks share a fifth to a third of their levels and the round grid is nearly independent of all three - but they are dense enough (0.156 to 1.595 levels per volatility unit) that co-location needs no agreement to occur |
+| **Does the hold rate rise with `k`?** | **Yes, and so does a walk's, by the same amount.** Traded instruments, `k >= 2` against `k = 1`, paired on days: real **+0.0142 +- 0.0022** [+0.0100, +0.0184] on 153,526 against 80,003 resolved observations; a driftless Brownian-bridge walk through the identical detectors reads **+0.0140 +- 0.0022** and a GARCH(1,1)-t(5) bridge reads **+0.0167 +- 0.0021** - *more* than the market. **Real minus walk is +0.0002 +- 0.0029** |
 | **Does the comparison hold up across the parameters?** | **No, and this is the study's sharpest caveat.** Over nine configurations the **market's** gap is stable at **+0.0097 to +0.0191** and always positive, while the **walk's** runs **-0.0144 to +0.0491**, cleanly monotone in how dense the level book is. So the excess crosses zero inside the swept range - **+0.0269** at the sparsest tolerance, **-0.0314** at the densest - and an effect cannot change sign with the tolerance that defines "the same price". The null is not inert, so the excess is **not identified**; the pre-registered cell is where the two arms happen to coincide |
-| **Does any cell survive multiplicity?** | **No. 0 of 131** instrument-interval cells survive Benjamini-Hochberg; 95 are nominally positive where chance gives 65, and 15 have a lower bound above zero where chance gives about 3 - which is what a mechanical effect present in every cell looks like, since the walk arm has it too |
+| **What is `k` actually measuring?** | **The width of the bar the arrival printed in.** The mean arrival-bar range over the *lagged* volatility unit is **1.202** at `k = 1` and **1.446** at `k >= 2`, and the hold rate is dominated by that width rather than by `k`: it falls from **0.5420 to 0.3792** across width quintiles on the market and from **0.6076 to 0.1995** on the walk, because the race's barriers are set from the lagged unit and in a bar that is wide for its regime both are close. **Within width quintiles the real gap is +0.0263 and the walk's is +0.0211** - a difference of about +0.005 where the pooled figures differ by +0.0238 - so the one configuration with a positive excess is a composition effect in the null arm |
+| **Does any cell survive multiplicity?** | **3 of 131**, and none is among the ten largest gaps, so all three are small gaps on large samples. 93 cells are nominally positive where chance gives 65 and 16 have a lower bound above zero where chance gives about 3 - which is what a mechanical effect present in every cell looks like, since the walk arm has it too |
 | **Is the outcome distribution bimodal?** | **No, and it is the opposite shape.** Excess kurtosis of the next-20-bar return is **+8.94 / +8.43 / +8.33** at `k = 1 / 2 / 3` - fat-tailed and unimodal, where bimodality requires it to be *negative*. Sarle's coefficient reads **0.087-0.096** against the 0.5556 flag. The two-component mixture beats one Gaussian by a huge margin (dBIC 11,379-13,286) and its fitted means are **0.10-0.12** pooled standard deviations apart: it is a **scale** mixture, which is a fat tail, not a location mixture, which is what two outcomes would be |
 | **Is there a cascade after a break?** | **No.** Conditional on breaking, the move goes another `HOLD_VOL` unit through before returning to the level on **0.5241-0.5264** of breaks at every `k`, against **0.5465** at the matched placebo break and **0.5250-0.5317** on the walk. Realised volatility over the next 20 bars is **0.736-0.753** of a unit, flat in `k`; the excursion is **3.89-3.97** units, flat in `k` |
-| **Does the harness see a level that is really there?** | **Yes, at twenty points.** `Range Break 100/200 Index` - a range by construction - holds on **0.3224 / 0.3216 / 0.3213** of arrivals against its own walk's **0.5228 / 0.5486 / 0.5306**. The detector finds a structure worth **-0.20 to -0.23** there, in the break direction, and **the `k` ladder is flat to three decimal places inside it** |
-| **Does it reproduce a known number?** | **Yes.** The round-number arm alone holds on **0.4797** of 1,059 arrivals against **0.5048** when joined, and the matched placebo holds on **0.5087** - against [`magnet.md`](../../docs/magnet.md)'s 44.9% reached at a level against 49.5% at an arbitrary price the same distance away, and [`focal-points.md`](focal-points.md)'s round-number bounce rate of 51.9% against a 53.1% placebo. Three constructions, three venues, the same sign: a level is not where price turns |
+| **Does the harness see a level that is really there?** | **Yes, at twenty points.** `Range Break 100/200 Index` - a range by construction - holds on **0.3243 / 0.3215 / 0.3199** of arrivals against its own walk's **0.5282 / 0.5590 / 0.5293**. The detector finds a structure worth **-0.20 to -0.24** there, in the break direction, and **the `k` ladder inside it is flat, and if anything slopes the other way** |
+| **Does it reproduce a known number?** | **Yes.** The round-number arm alone holds on **0.4924** of 1,117 arrivals against **0.5023** when joined, and the matched placebo holds on **0.5052** - against [`magnet.md`](../../docs/magnet.md)'s 44.9% reached at a level against 49.5% at an arbitrary price the same distance away, and [`focal-points.md`](focal-points.md)'s round-number bounce rate of 51.9% against a 53.1% placebo. Three constructions, three venues, the same sign: a level is not where price turns |
 | **So is watchedness measurable this way?** | **No, and the reason is the first row.** A confluence count cannot be a measure of how many participants compute a price when the frameworks' own rules name 98% of all prices. What is refuted is this *observable*, not the hypothesis - see [What is unmeasurable](#what-is-unmeasurable) |
 
-**The headline as a rate:** `k >= 2` arrivals hold on **0.5173 +- 0.0014**
-[0.5148, 0.5200] of **154,053** resolved observations on traded instruments
-against **0.5018 +- 0.0019** at `k = 1` on **79,677** - and the same detectors
-on a driftless Brownian-bridge walk read **0.5434 +- 0.0014** [0.5409, 0.5463]
-against **0.5280 +- 0.0017**. The market's ladder is the walk's ladder shifted
-down, and the *excess* of the market's `k` gap over the walk's is
-**+0.0002 +- 0.0029** [-0.0059, +0.0054]. Standard errors are block
-bootstraps over whole UTC days; **0.02-0.03% of races are censored**, so the
-rate is not a reporting artefact of a short horizon.
+**The headline as a rate:** `k >= 2` arrivals hold on **0.5174 +- 0.0014** of
+**153,526** resolved observations on traded instruments against **0.5032 +-
+0.0018** at `k = 1` on **80,003** - and the same detectors on a driftless
+Brownian-bridge walk read **0.5431 +- 0.0013** against **0.5290 +- 0.0019**.
+The market's ladder is the walk's ladder shifted down, and the *excess* of the
+market's `k` gap over the walk's is **+0.0002 +- 0.0029**. Standard errors are
+block bootstraps over whole UTC days; **0.02-0.03% of races are censored**, so
+the rate is not a reporting artefact of a short horizon.
 
 ## Why this was worth running at all
 
@@ -83,7 +90,7 @@ hypothesis would be a bug in the harness.
 **Every pivot is an anchor, not only the latest**, because a practitioner
 redraws the wheel when the swing changes - so the live book is the
 superposition of every anchor inside the last 500 bars. That is most of why
-`gann` is the densest framework of the four at 1.632 levels per volatility
+`gann` is the densest framework of the four at 1.595 levels per volatility
 unit, and it is reported rather than assumed.
 
 **The scale of a Gann wheel is a choice and it is stated.** One 45 degree step
@@ -151,38 +158,38 @@ of the close:
 
 | framework | fires | levels per volatility unit | levels cut |
 |---|---|---|---|
-| `swing` | 0.994 | 0.600 | 254,875 |
-| `fib` | 0.987 | 0.994 | 417,451 |
-| `gann` | 0.995 | **1.632** | 1,885,486 |
-| `round` | 1.000 | 0.156 | analytic |
+| `swing` | 0.994 | 0.593 | 250,010 |
+| `fib` | 0.987 | 0.970 | 401,678 |
+| `gann` | 0.995 | **1.595** | 1,821,447 |
+| `round` | 1.000 | 0.156 | analytic (no rows; it needs no history) |
 
 | pair | share of the pair's union naming one price |
 |---|---|
-| `fib` - `swing` | **0.3101** |
-| `fib` - `gann` | **0.3098** |
-| `gann` - `swing` | **0.2180** |
-| `gann` - `round` | 0.0618 |
-| `round` - `swing` | 0.0592 |
-| `fib` - `round` | 0.0584 |
+| `fib` - `swing` | **0.3098** |
+| `fib` - `gann` | **0.3058** |
+| `gann` - `swing` | **0.2174** |
+| `gann` - `round` | 0.0626 |
+| `round` - `swing` | 0.0593 |
+| `fib` - `round` | 0.0591 |
 
 | `k` of a named price | share of first touches |
 |---|---|
-| 1 | 0.3198 |
+| 1 | 0.3237 |
 | 2 | 0.4450 |
-| 3 | 0.2194 |
-| 4 | 0.0158 |
+| 3 | 0.2157 |
+| 4 | 0.0155 |
 
 **The answer is neither, and that is the finding.** The three history-driven
 frameworks are not one object counted three times - a fifth to a third of their
 union is shared, which is in the range `smc-primitives-overlap-and-are-closed`
 records for detectors assumed to differ, and the round grid is nearly
-independent of all three at 0.058-0.062. But **it does not matter**, because
+independent of all three at 0.059-0.063. But **it does not matter**, because
 they are dense enough that co-location needs no agreement. The Gann wheel alone
-emits 1.63 levels per volatility unit; with a tolerance of 0.25 units a price
+emits 1.60 levels per volatility unit; with a tolerance of 0.25 units a price
 has a wheel rung within reach most of the time whatever else is nearby. The
-placebo draw measures the consequence directly: of 3,475,204 matched arrivals
-at a price inside the bar, **3,404,361 (97.96%) were named by at least one
-framework** and only 70,843 were free. Two thirds of the named ones carry
+placebo draw measures the consequence directly: of 3,331,801 matched arrivals
+at a price inside the bar, **3,259,135 (97.82%) were named by at least one
+framework** and only 72,666 were free. Two thirds of the named ones carry
 `k >= 2`.
 
 So a confluence count at these frameworks' own densities is **not a selective
@@ -197,105 +204,109 @@ Traded instruments (every family except the Deriv synthetics), hold = travels
 
 | arm / bucket | n | hold | block se | 95% | within strata | mean \|displacement\| |
 |---|---|---|---|---|---|---|
-| real / k=1 | 79,677 | 0.5018 | 0.0019 | [0.4981, 0.5054] | 0.5028 | 0.678 |
-| real / k=2 | 83,745 | 0.5130 | 0.0018 | [0.5093, 0.5163] | 0.5133 | 0.586 |
-| real / k>=3 | 70,308 | 0.5226 | 0.0021 | [0.5187, 0.5267] | 0.5229 | 0.722 |
-| **placebo / k=0** | 48,326 | 0.5087 | 0.0024 | [0.5041, 0.5133] | 0.5093 | 0.507 |
-| walkpath / k=1 | 81,524 | 0.5280 | 0.0017 | [0.5245, 0.5314] | 0.5277 | 0.619 |
-| walkpath / k=2 | 82,017 | **0.5462** | 0.0018 | [0.5430, 0.5498] | 0.5455 | 0.578 |
-| walkpath / k>=3 | 62,869 | 0.5396 | 0.0020 | [0.5356, 0.5437] | 0.5392 | 0.693 |
-| garchpath / k=1 | 81,373 | 0.4989 | 0.0017 | [0.4955, 0.5020] | 0.4967 | 0.588 |
-| garchpath / k=2 | 82,887 | 0.5098 | 0.0017 | [0.5064, 0.5128] | 0.5081 | 0.553 |
-| garchpath / k>=3 | 65,682 | 0.5166 | 0.0020 | [0.5124, 0.5203] | 0.5142 | 0.626 |
+| real / k=1 | 80,003 | 0.5032 | 0.0018 | [0.4995, 0.5066] | 0.5043 | 0.672 |
+| real / k=2 | 83,656 | 0.5124 | 0.0020 | [0.5084, 0.5161] | 0.5127 | 0.588 |
+| real / k>=3 | 69,870 | 0.5234 | 0.0020 | [0.5197, 0.5276] | 0.5238 | 0.728 |
+| **placebo / k=0** | 49,751 | 0.5052 | 0.0023 | [0.5007, 0.5100] | 0.5060 | 0.509 |
+| walkpath / k=1 | 81,404 | 0.5290 | 0.0019 | [0.5254, 0.5329] | 0.5285 | 0.622 |
+| walkpath / k=2 | 82,146 | **0.5435** | 0.0017 | [0.5401, 0.5470] | 0.5432 | 0.580 |
+| walkpath / k>=3 | 64,021 | 0.5425 | 0.0019 | [0.5389, 0.5465] | 0.5419 | 0.689 |
+| garchpath / k=1 | 81,329 | 0.4983 | 0.0017 | [0.4951, 0.5017] | 0.4961 | 0.587 |
+| garchpath / k=2 | 82,886 | 0.5138 | 0.0018 | [0.5103, 0.5174] | 0.5119 | 0.554 |
+| garchpath / k>=3 | 65,367 | 0.5165 | 0.0020 | [0.5125, 0.5206] | 0.5140 | 0.629 |
 
-The ladder is monotone on the real arm (0.5018, 0.5130, 0.5226) and on the
-GARCH arm (0.4989, 0.5098, 0.5166); on the walk arm `k >= 3` reads below `k = 2`
-(0.5280, 0.5462, 0.5396), which is the one place the three arms differ in shape
-and is worth about two standard errors.
+The ladder is monotone on the real arm (0.5032, 0.5124, 0.5234), on the GARCH
+arm (0.4983, 0.5138, 0.5165) and on the walk arm (0.5290, 0.5435, 0.5425) -
+three arms, one shape.
 
 | the comparison that decides, `k >= 2` minus `k = 1`, paired on days | gap |
 |---|---|
-| real | **+0.0156 +- 0.0022** [+0.0113, +0.0197] |
-| walkpath | **+0.0154 +- 0.0022** [+0.0110, +0.0196] |
-| garchpath | **+0.0139 +- 0.0021** [+0.0100, +0.0180] |
-| real `k >= 2` against the matched placebo | +0.0087 +- 0.0025 [+0.0040, +0.0138] |
+| real | **+0.0142 +- 0.0022** [+0.0100, +0.0184] |
+| walkpath | **+0.0140 +- 0.0022** [+0.0099, +0.0184] |
+| garchpath | **+0.0167 +- 0.0021** [+0.0124, +0.0207] |
+| real `k >= 2` against the matched placebo | +0.0122 +- 0.0026 [+0.0071, +0.0172] |
 
 and the difference of differences, which is the number the study exists to
 produce - the same days resampled across all four streams at once:
 
 | how much further `k` moves the market than it moves a null | excess |
 |---|---|
-| real minus `walkpath` | **+0.0002 +- 0.0029** [-0.0059, +0.0054] |
-| real minus `garchpath` | **+0.0016 +- 0.0029** [-0.0042, +0.0074] |
+| real minus `walkpath` | **+0.0002 +- 0.0031** [-0.0059, +0.0060] |
+| real minus `garchpath` | **-0.0025 +- 0.0029** [-0.0085, +0.0029] |
 
 **A driftless walk, whose levels nobody computes and at which no order rests,
-gains 0.0154 from confluence where the market gains 0.0156.** The walk arm is
-not a weaker version of the effect; it is the whole effect. The within-strata
-column moves the real figures by at most 0.0010, so it is not the volatility
-regime either.
+gains 0.0140 from confluence where the market gains 0.0142, and a GARCH bridge
+gains more than either at +0.0167.** The walk arm is not a weaker version of
+the effect; it is the whole effect, and the arm that carries this market's
+volatility clustering overshoots it. The within-strata column moves the real
+figures by at most 0.0011, so it is not the volatility regime either.
 
 Per framework, alone against joined by at least one other - the "beyond each
 framework alone" column the question asks for:
 
 | framework | arm | alone | joined | gap | real minus walk |
 |---|---|---|---|---|---|
-| `swing` | real | 0.4984 (8,492) | 0.5188 (96,918) | +0.0204 +- 0.0054 | **+0.0089 +- 0.0076** |
-| | walkpath | 0.5312 (10,319) | 0.5426 (93,556) | +0.0115 +- 0.0052 | |
-| | garchpath | 0.4997 (9,486) | 0.5146 (95,342) | +0.0149 +- 0.0054 | |
-| `fib` | real | 0.5050 (34,003) | 0.5193 (127,225) | +0.0143 +- 0.0032 | **-0.0026 +- 0.0042** |
-| | walkpath | 0.5284 (39,365) | 0.5453 (119,566) | +0.0169 +- 0.0028 | |
-| | garchpath | 0.5001 (38,501) | 0.5133 (122,645) | +0.0132 +- 0.0029 | |
-| `gann` | real | 0.5001 (36,123) | 0.5193 (131,852) | +0.0192 +- 0.0030 | **+0.0036 +- 0.0042** |
-| | walkpath | 0.5260 (29,993) | 0.5416 (112,768) | +0.0156 +- 0.0032 | |
-| | garchpath | 0.4981 (31,486) | 0.5136 (118,559) | +0.0156 +- 0.0032 | |
-| `round` | real | 0.4797 (1,059) | 0.5048 (26,169) | +0.0251 +- 0.0159 | **+0.0222 +- 0.0196** |
-| | walkpath | 0.5349 (1,847) | 0.5378 (30,199) | +0.0029 +- 0.0117 | |
-| | garchpath | 0.4842 (1,900) | 0.5121 (29,988) | +0.0279 +- 0.0121 | |
+| `swing` | real | 0.4956 (8,698) | 0.5195 (96,784) | +0.0239 +- 0.0055 | **+0.0079 +- 0.0078** |
+| | walkpath | 0.5288 (9,997) | 0.5447 (93,999) | +0.0159 +- 0.0052 | |
+| | garchpath | 0.4971 (9,905) | 0.5163 (94,891) | +0.0192 +- 0.0052 | |
+| `fib` | real | 0.5050 (34,183) | 0.5193 (126,477) | +0.0143 +- 0.0031 | **-0.0013 +- 0.0041** |
+| | walkpath | 0.5297 (38,378) | 0.5453 (120,811) | +0.0156 +- 0.0030 | |
+| | garchpath | 0.5024 (38,324) | 0.5169 (122,220) | +0.0145 +- 0.0030 | |
+| `gann` | real | 0.5037 (36,005) | 0.5199 (130,936) | +0.0162 +- 0.0028 | **+0.0017 +- 0.0042** |
+| | walkpath | 0.5271 (31,293) | 0.5415 (115,272) | +0.0144 +- 0.0033 | |
+| | garchpath | 0.4940 (31,544) | 0.5141 (118,636) | +0.0201 +- 0.0031 | |
+| `round` | real | 0.4924 (1,117) | 0.5023 (26,353) | +0.0099 +- 0.0149 | **+0.0266 +- 0.0192** |
+| | walkpath | 0.5513 (1,736) | 0.5346 (29,787) | -0.0167 +- 0.0123 | |
+| | garchpath | 0.4936 (1,556) | 0.5103 (29,851) | +0.0167 +- 0.0123 | |
 
 Every framework gains from company on the market, including the Square of 9 -
-and every framework gains from company on a walk too. **All four `real minus
-walkpath` intervals contain zero**: [-0.0065, +0.0233], [-0.0117, +0.0050],
-[-0.0048, +0.0121] and [-0.0173, +0.0608]. `a-control-is-only-for-a-named-
-property` applies to the Square of 9 row: a framework with no mechanism gaining
-as much as the three with one is the signature of an effect that belongs to the
-construction.
+and every framework gains from company on a walk too, and on a GARCH bridge.
+**All four `real minus walkpath` intervals contain zero**: [-0.0063, +0.0238],
+[-0.0098, +0.0064], [-0.0063, +0.0094] and [-0.0127, +0.0642].
+`a-control-is-only-for-a-named-property` applies to the Square of 9 row: a
+framework with no mechanism gaining as much as the three with one (+0.0162
+against +0.0239, +0.0143 and +0.0099) is the signature of an effect that
+belongs to the construction rather than to any framework's content.
 
 The double bottom, which is the commentary's specific claim about the swing
 level, is measured on its own: a swing level that repeats an earlier one within
-the tolerance holds on **0.5215 +- 0.0082** of 4,017 arrivals against a single
-swing's rate on the remainder - no separation.
+the tolerance holds on **0.5173 +- 0.0088** [0.4994, 0.5345] of 3,273 arrivals,
+against the swing arm's own 0.5195 when joined and 0.4956 when alone - no
+separation either way.
 
 ### The multiplicity table
 
-**131 instrument-interval cells, 95 nominally positive** (chance gives 65),
-**15 with a lower bound above zero** (chance gives about 3), **0 surviving
-Benjamini-Hochberg**. The excess of nominally positive cells is what a
-mechanical effect present in every cell produces, and the walk arm has it too.
-The largest cells are small ones: `AUDCAD/1h` at +0.1973 +- 0.0693 on 169
-against 77 observations, `EURAUD/1h` at +0.1437 +- 0.0640 on 160 against 80.
+**131 instrument-interval cells, 93 nominally positive** (chance gives 65),
+**16 with a lower bound above zero** (chance gives about 3), **3 surviving
+Benjamini-Hochberg** - and none of the three is among the ten largest gaps, so
+all three are small gaps on large samples rather than the eye-catching cells.
+The excess of nominally positive cells is what a mechanical effect present in
+every cell produces, and the walk arm has it too. The largest gaps are the
+smallest samples: `AUDCAD/1h` at +0.2021 +- 0.0687 on 169 against 77
+observations, `EURAUD/1h` at +0.1474 +- 0.0676 on 159 against 80.
 
 ### The controls
 
 | control | arm | k=1 | k=2 | k>=3 |
 |---|---|---|---|---|
-| **`Range Break 100/200`**, the level positive control | real | **0.3224 +- 0.0099** | 0.3216 +- 0.0101 | 0.3213 +- 0.0121 |
-| | walkpath | 0.5228 +- 0.0090 | 0.5486 +- 0.0104 | 0.5306 +- 0.0113 |
-| **`Volatility 25/75`**, the independent placebo pair | real | 0.4866 +- 0.0044 | 0.5030 +- 0.0043 | 0.5131 +- 0.0047 |
-| | walkpath | 0.4800 +- 0.0044 | 0.4949 +- 0.0043 | 0.4901 +- 0.0058 |
+| **`Range Break 100/200`**, the level positive control | real | **0.3243 +- 0.0099** | 0.3215 +- 0.0101 | 0.3199 +- 0.0122 |
+| | walkpath | 0.5282 +- 0.0100 | 0.5590 +- 0.0101 | 0.5293 +- 0.0110 |
+| **`Volatility 25/75`**, the independent placebo pair | real | 0.4828 +- 0.0043 | 0.5022 +- 0.0043 | 0.5147 +- 0.0047 |
+| | walkpath | 0.4789 +- 0.0044 | 0.4914 +- 0.0044 | 0.4974 +- 0.0051 |
 
 `Range Break` is the row that makes the null readable. It is a range by
 construction, its boundaries are levels that exist, and the harness finds them:
-**-0.20 at `k = 1` and -0.23 at `k = 2` against its own walk**, in the *break*
+**-0.20 at `k = 1` and -0.24 at `k = 2` against its own walk**, in the *break*
 direction, which is what a
 process designed to break out of ranges should do. So the detectors are not
 blind - they resolve a real level structure at twenty points - **and the `k`
-ladder inside that structure is flat to three decimal places** (0.3224, 0.3216,
-0.3213). Where levels matter most, confluence still carries nothing.
+ladder inside that structure is flat to three decimal places** (0.3243, 0.3215,
+0.3199). Where levels matter most, confluence still carries nothing.
 
 The placebo pair behaves as the traded book does, which is the second half of
 the same reading: two generated processes with **constant volatility by
-construction** produce a `k` ladder of **+0.0209** (0.4866 at `k = 1` against
-0.5075 pooled at `k >= 2`) where the traded book produces **+0.0155**. A ladder
+construction** produce a `k` ladder of **+0.0250** (0.4828 at `k = 1` against
+0.5078 pooled at `k >= 2`) where the traded book produces **+0.0142**. A ladder
 that is *larger* on a generated process than on the market is not a market
 property.
 
@@ -309,25 +320,25 @@ bimodality means *negative* excess kurtosis, a bimodality coefficient above
 
 | arm / bucket | n | skew | excess kurtosis | Sarle bc | h_crit/sd | Silverman p | dBIC | mixture separation |
 |---|---|---|---|---|---|---|---|---|
-| real / k=1 | 79,699 | -0.209 | **+8.942** | 0.0874 | 1.418 | 0.055 | 12,936 | **0.113** |
-| real / k=2 | 83,764 | -0.219 | **+8.432** | 0.0917 | 3.242 | 0.005 | 13,286 | **0.117** |
-| real / k>=3 | 70,322 | -0.287 | **+8.333** | 0.0955 | 2.234 | 0.005 | 11,379 | **0.103** |
-| placebo / k=0 | 48,331 | +0.033 | +7.450 | 0.0958 | 0.492 | 0.746 | 6,236 | 0.082 |
-| walkpath / k=1 | 81,524 | -0.254 | +7.524 | 0.1011 | 1.923 | 0.005 | 6,874 | 0.192 |
-| walkpath / k=2 | 82,017 | -0.145 | +5.803 | 0.1160 | 1.294 | 0.010 | 6,301 | 0.143 |
-| walkpath / k>=3 | 62,869 | -0.335 | +7.428 | 0.1066 | 2.464 | 0.005 | 5,574 | 0.249 |
-| garchpath / k=1 | 81,373 | -0.039 | +1.136 | 0.2421 | 0.600 | 0.159 | 1,511 | 0.057 |
-| garchpath / k=2 | 82,887 | -0.083 | +1.540 | 0.2218 | 1.328 | 0.005 | 1,833 | 0.072 |
-| garchpath / k>=3 | 65,682 | -0.066 | +1.461 | 0.2251 | 1.651 | 0.005 | 1,389 | 0.054 |
+| real / k=1 | 80,024 | -0.171 | **+9.009** | 0.0857 | 2.526 | 0.005 | 13,124 | **0.103** |
+| real / k=2 | 83,672 | -0.220 | **+8.541** | 0.0909 | 3.342 | 0.005 | 13,184 | **0.113** |
+| real / k>=3 | 69,887 | -0.336 | **+8.535** | 0.0965 | 2.352 | 0.005 | 11,533 | **0.123** |
+| placebo / k=0 | 49,759 | +0.125 | +6.550 | 0.1063 | 0.894 | 0.075 | 5,868 | 0.070 |
+| walkpath / k=1 | 81,404 | -0.162 | +7.529 | 0.0975 | 1.404 | 0.015 | 6,623 | 0.137 |
+| walkpath / k=2 | 82,146 | -0.056 | +7.326 | 0.0971 | 2.410 | 0.005 | 6,864 | 0.106 |
+| walkpath / k>=3 | 64,021 | -0.279 | +7.294 | 0.1047 | 0.896 | 0.139 | 5,575 | 0.251 |
+| garchpath / k=1 | 81,329 | -0.034 | +1.261 | 0.2349 | 0.282 | 0.602 | 1,674 | 0.051 |
+| garchpath / k=2 | 82,886 | -0.067 | +1.202 | 0.2390 | 0.298 | 0.716 | 1,691 | 0.081 |
+| garchpath / k>=3 | 65,367 | -0.009 | +1.874 | 0.2052 | 1.300 | 0.055 | 1,614 | 0.066 |
 
 **Every statistic points the other way.** Excess kurtosis is **positive and
-large** at every `k` - the distribution is a single sharp peak with heavy tails,
-which is the shape this desk measures everywhere and the exact opposite of two
-separated outcomes. Sarle's coefficient is **0.087 to 0.096** against the
-0.5556 flag, and a uniform distribution reads exactly 0.5556. And the mixture
-is the clean answer: two Gaussians beat one by 11,379 to 13,286 BIC points,
-which is enormous, **and their fitted means are 0.10 to 0.12 pooled standard
-deviations apart**. That is a *scale* mixture - one mean, two variances - which
+large** at every `k` - +9.01, +8.54, +8.54 - so the distribution is a single
+sharp peak with heavy tails, which is the shape this desk measures everywhere
+and the exact opposite of two separated outcomes. Sarle's coefficient is
+**0.086 to 0.097** against the 0.5556 flag, and a uniform distribution reads
+exactly 0.5556. And the mixture is the clean answer: two Gaussians beat one by
+11,533 to 13,184 BIC points, which is enormous, **and their fitted means are
+0.10 to 0.12 pooled standard deviations apart**. That is a *scale* mixture - one mean, two variances - which
 is how a two-component fit represents a fat tail, and it is not a *location*
 mixture, which is what "defend or break" would be. The study's own positive
 control pins the distinction: on a planted 50/50 mixture at +-3 sd the same
@@ -338,8 +349,11 @@ below 0.5.
 tests.** The critical-bandwidth test over-rejects on heavy tails - on a
 Student-t(3) it returns p = 0.016 - because a handful of extreme points are
 isolated bumps that only a very wide kernel smooths away. Read across arms it
-says nothing: the walk rejects unimodality at p = 0.005 on all three buckets,
-harder than the market does at `k = 1`.
+says nothing: the walk rejects unimodality at p = 0.005 and 0.015 on two of its
+three buckets, as hard as the market does, while the GARCH bridge - whose
+kurtosis is +1.2 rather than +8.5 - does not reject at all (p = 0.60, 0.72).
+The statistic is tracking the tail weight, which is what a critical bandwidth
+divided by a tail-inflated standard deviation would do.
 
 ## Outcome 3: the cascade
 
@@ -349,21 +363,21 @@ on a martingale is 0.5 by symmetry.
 
 | arm / bucket | n breaks | went on | se | realised / unit | excursion / unit |
 |---|---|---|---|---|---|
-| real / k=1 | 39,698 | 0.5264 | 0.0028 | 0.7518 | 3.9518 |
-| real / k=2 | 40,787 | 0.5241 | 0.0027 | 0.7360 | 3.8853 |
-| real / k>=3 | 33,568 | 0.5261 | 0.0029 | 0.7533 | 3.9661 |
-| **placebo / k=0** | 23,744 | **0.5465** | 0.0034 | 0.7867 | 4.0530 |
-| walkpath / k=1 | 38,478 | 0.5250 | 0.0028 | 0.6666 | 3.6380 |
-| walkpath / k=2 | 37,216 | 0.5280 | 0.0027 | 0.6658 | 3.6346 |
-| walkpath / k>=3 | 28,942 | 0.5317 | 0.0031 | 0.6692 | 3.6721 |
-| garchpath / k=1 | 40,778 | 0.5265 | 0.0025 | 0.6874 | 3.5778 |
-| garchpath / k=2 | 40,631 | 0.5227 | 0.0024 | 0.6821 | 3.5282 |
-| garchpath / k>=3 | 31,750 | 0.5255 | 0.0028 | 0.6881 | 3.5568 |
+| real / k=1 | 39,745 | 0.5294 | 0.0026 | 0.7512 | 3.9502 |
+| real / k=2 | 40,790 | 0.5237 | 0.0029 | 0.7355 | 3.8699 |
+| real / k>=3 | 33,302 | 0.5259 | 0.0028 | 0.7545 | 3.9719 |
+| **placebo / k=0** | 24,615 | **0.5448** | 0.0033 | 0.7786 | 4.0181 |
+| walkpath / k=1 | 38,339 | 0.5288 | 0.0026 | 0.6672 | 3.6425 |
+| walkpath / k=2 | 37,498 | 0.5225 | 0.0027 | 0.6627 | 3.6096 |
+| walkpath / k>=3 | 29,291 | 0.5342 | 0.0030 | 0.6692 | 3.6801 |
+| garchpath / k=1 | 40,799 | 0.5276 | 0.0025 | 0.6836 | 3.5482 |
+| garchpath / k=2 | 40,297 | 0.5264 | 0.0027 | 0.6840 | 3.5589 |
+| garchpath / k>=3 | 31,603 | 0.5230 | 0.0026 | 0.6865 | 3.5624 |
 
 **There is no cascade and `k` is not in it.** Continuation after a break is
-flat across `k` to within a standard error, the walk does it slightly more
-often, and the arm that continues *most* is the **matched placebo break at a
-price no framework names** (0.5465). Realised volatility and excursion are
+flat across `k` to within a standard error on all three arms, and the arm that
+continues *most* is the **matched placebo break at a price no framework names**
+(0.5448). Realised volatility and excursion are
 higher on the market than on either surrogate - 0.75 against 0.67 of a unit, and
 3.9 against 3.6 units - which is this market's own wickiness
 (`how-markets-differ-from-every-simple-process`) and is **flat in `k`**: a
@@ -384,12 +398,12 @@ alone, and adding three more frameworks on top of it does nothing.
 
 | family | hold | se | n |
 |---|---|---|---|
-| fx | 0.5203 | 0.0018 | 82,317 |
-| metal | 0.5205 | 0.0029 | 29,623 |
-| crypto | 0.5118 | 0.0044 | 14,745 |
-| index | 0.5089 | 0.0040 | 22,725 |
-| energy | 0.5042 | 0.0073 | 4,643 |
-| deriv | 0.4788 | 0.0022 | 67,818 |
+| fx | 0.5203 | 0.0018 | 82,129 |
+| metal | 0.5205 | 0.0030 | 29,460 |
+| crypto | 0.5128 | 0.0043 | 14,659 |
+| energy | 0.5084 | 0.0073 | 4,609 |
+| index | 0.5078 | 0.0041 | 22,669 |
+| deriv | 0.4795 | 0.0022 | 67,672 |
 
 The split is real and it is not a gating condition, because the quantity that
 differs between families is the *level* of the rate rather than the `k` ladder,
@@ -430,30 +444,88 @@ differences**, never on the level of one arm.
 
 ## The mechanism, measured rather than argued
 
-Whether the `k` ladder is the arrival's geometry - a `k >= 2` price being
-differently placed inside its bar than a `k = 1` price - is testable directly,
-in quintiles of the arrival's signed displacement from the previous close:
+`k` is not an independent label. Two things about an arrival move with it, and
+both are recorded so the question can be asked rather than argued: **where in
+its bar** the touched price sat, and **how wide that bar was** for its regime.
+
+### What `k` is a proxy for: the arrival bar's width
+
+Quintiles of the arrival bar's range over the **lagged** volatility unit - the
+same unit the race's barriers are set from - at the pre-registered tolerance:
+
+| quintile of bar range / unit | real k=1 | real k>=2 | gap | walk k=1 | walk k>=2 | gap |
+|---|---|---|---|---|---|---|
+| [0.028, 0.806) | 0.5518 | 0.5582 | +0.0063 | 0.6136 | 0.6218 | +0.0082 |
+| [0.806, 1.006) | 0.5463 | 0.5621 | +0.0157 | 0.6395 | 0.6428 | +0.0034 |
+| [1.006, 1.232) | 0.5429 | 0.5523 | +0.0095 | 0.6185 | 0.6280 | +0.0095 |
+| [1.232, 1.615) | 0.5111 | 0.5298 | +0.0187 | 0.5277 | 0.5330 | +0.0053 |
+| [1.615, 113.58) | **0.4144** | 0.4232 | +0.0088 | **0.1975** | 0.2149 | +0.0174 |
+| **equal weight** | | | **+0.0118** | | | **+0.0087** |
+
+and the same table from the tight-tolerance run, where the excess over the walk
+is largest:
+
+| quintile of bar range / unit | real k=1 | real k>=2 | gap | walk k=1 | walk k>=2 | gap |
+|---|---|---|---|---|---|---|
+| [0.043, 0.784) | 0.5420 | 0.5485 | +0.0065 | 0.6076 | 0.6115 | +0.0039 |
+| [0.784, 0.978) | 0.5423 | 0.5601 | +0.0177 | 0.6185 | 0.6387 | +0.0202 |
+| [0.978, 1.193) | 0.5201 | 0.5491 | +0.0290 | 0.6076 | 0.6249 | +0.0172 |
+| [1.193, 1.554) | 0.4935 | 0.5286 | +0.0351 | 0.5139 | 0.5510 | +0.0370 |
+| [1.554, 113.58) | **0.3792** | 0.4222 | +0.0430 | **0.1995** | 0.2267 | +0.0272 |
+| **equal weight** | | | **+0.0263** | | | **+0.0211** |
+
+Three facts, and together they are the mechanism:
+
+1. **The hold rate is dominated by bar width, not by `k`.** It falls from
+   0.5518 to **0.4144** on the market and from 0.6136 to **0.1975** on the walk
+   - a 14-point and a 42-point swing, against a `k` effect of one to two points
+   - because the race's barriers are set from the *lagged* unit, so in a bar
+   that is wide for its regime both barriers are close and whichever the close
+   is nearer to wins.
+2. **`k` is a proxy for that width, and how strong a proxy depends on the
+   tolerance.** At 0.10 the mean width is **1.202** at `k = 1` and **1.446** at
+   `k >= 2` - a tight co-location needs a wide bar - while at 0.25 it is
+   **1.434** against **1.391**, no confound at all. That is the whole reason
+   the sweep is unstable: with a 14-to-42-point gradient, a small change in the
+   width mix moves the pooled `k` gap by more than the gap itself.
+3. **And the excess dissolves when width is held fixed.** At the tight
+   tolerance the pooled figures are real +0.0123 against the walk's
+   **-0.0115**, an excess of **+0.0238 +- 0.0029**; *within* width quintiles
+   they are **+0.0263** against **+0.0211**, a difference of about **+0.005**.
+   At the pre-registered tolerance, within quintiles, **+0.0118** against
+   **+0.0087**, a difference of **+0.003**. Both land where the base cell's
+   difference of differences already was: **+0.0002 +- 0.0031**.
+
+The walk's pooled gap at the tight tolerance is negative only because its
+`k >= 2` arrivals pile into the widest quintile, where its hold rate collapses
+to 0.1975; within quintiles the walk's gap is positive in all five. **So the
+one statistic in this study that could have been read as a finding - a positive
+excess at a tight tolerance - is a composition effect in the null arm, and it
+goes away when the arrival's own geometry is held fixed.**
+
+### The displacement, which is not the mechanism
+
+The other candidate, in quintiles of the signed displacement from the previous
+close:
 
 | quintile of \|displacement\| | real k=1 | real k>=2 | gap | walk k=1 | walk k>=2 | gap |
 |---|---|---|---|---|---|---|
-| [0.000, 0.256) | 0.5074 | 0.5156 | +0.0082 | 0.5251 | 0.5343 | +0.0092 |
-| [0.256, 0.421) | 0.5002 | 0.5159 | +0.0157 | 0.5540 | 0.5731 | +0.0192 |
-| [0.421, 0.604) | 0.5061 | 0.5188 | +0.0127 | 0.5839 | 0.5873 | +0.0034 |
-| [0.604, 0.879) | 0.5045 | 0.5190 | +0.0145 | 0.5633 | 0.5865 | +0.0232 |
-| [0.879, 29.978) | 0.4934 | 0.5176 | +0.0242 | 0.4042 | 0.4294 | +0.0252 |
-| **equal weight** | | | **+0.0151** | | | **+0.0160** |
+| [0.000, 0.257) | 0.5044 | 0.5188 | +0.0144 | 0.5221 | 0.5338 | +0.0117 |
+| [0.257, 0.422) | 0.5018 | 0.5156 | +0.0139 | 0.5624 | 0.5721 | +0.0097 |
+| [0.422, 0.605) | 0.5021 | 0.5157 | +0.0135 | 0.5778 | 0.5910 | +0.0132 |
+| [0.605, 0.880) | 0.5091 | 0.5163 | +0.0072 | 0.5673 | 0.5838 | +0.0165 |
+| [0.880, 29.978) | 0.4998 | 0.5200 | +0.0202 | 0.4073 | 0.4262 | +0.0189 |
+| **equal weight** | | | **+0.0138** | | | **+0.0140** |
 
-The displacement is **not** the mechanism: the gap survives inside every
-quintile and the equal-weight figure (+0.0151) is the pooled one (+0.0156). But
-the walk's gap survives too, at +0.0160, so conditioning on geometry does not
-separate the market from the null either. What the quintiles do show is how
-strongly the *level* of the rate depends on the construction - the walk arm runs
-from 0.58 in the middle quintile to 0.40 in the top one, a 18-point swing driven
-by nothing but where in its bar the touched price sat.
-
-So no *level* in this document is a measurement of a market property, and every
-verdict above rests on a **difference between arms** or a **difference of
-differences**, never on the level of one arm.
+The displacement is **not** the mechanism at the pre-registered tolerance: the
+gap survives inside every quintile and the equal-weight figure (+0.0138) is the
+pooled one (+0.0142), and the walk's survives too at +0.0140. At the tight
+tolerance it does part of the work - the walk's pooled -0.0115 becomes -0.0018
+within displacement quintiles - but not all of it, which is what the width
+table above finishes. What the displacement quintiles do show is how strongly
+the *level* of the rate depends on the construction: the walk arm runs from 0.58
+in the middle quintile to 0.40 in the top one, an 18-point swing driven by
+nothing but where in its bar the touched price sat.
 
 ## Power: where the test goes blind
 
@@ -567,11 +639,115 @@ alone: **the market's `k` gap of +0.010 to +0.019 sits inside the range the same
 detectors produce on a driftless walk**, and there is no configuration at which
 it stably exceeds it. The pre-registered cell is where the two happen to
 coincide; the honest statement is not "the excess is zero" but "the excess is
-not identified, because the null it subtracts is not inert".
+not identified, because the null it subtracts is not inert". The cell with the
+largest positive was then run in full, and its excess dissolves once the
+arrival bar's width is held fixed - below.
 
 `the-placebo-arm-selects-the-null` is the rule that applies: a null arm that
 finds structure of its own - and +0.0491 is structure - is a reason to reject
 the comparison, not to read its residual.
+
+### The tight-tolerance cell run in full, because it is the one positive
+
+The sweep's `tolerance 0.10` cell is where the excess is largest, so it was
+re-run with every arm and every diagnostic rather than left as a line in a grid.
+Tolerance 0.10 makes a confluence selective: `k = 1` is **57.43%** of named
+first touches against 31.98% at the pre-registered tolerance, and `k >= 2` is
+**42.57%** against 68.02%.
+
+| arm / bucket | n | hold | block se | within strata | mean \|displacement\| |
+|---|---|---|---|---|---|
+| real / k=1 | 87,298 | 0.4962 | 0.0017 | 0.4969 | 0.465 |
+| real / k=2 | 83,127 | 0.5032 | 0.0018 | 0.5043 | 0.560 |
+| real / k>=3 | 56,082 | 0.5162 | 0.0023 | 0.5170 | 0.835 |
+| placebo / k=0 | 63,005 | 0.5012 | 0.0020 | 0.5018 | 0.503 |
+| walkpath / k=1 | 87,390 | 0.5436 | 0.0017 | 0.5433 | 0.455 |
+| walkpath / k=2 | 80,810 | 0.5404 | 0.0018 | 0.5399 | 0.565 |
+| walkpath / k>=3 | 49,125 | 0.5183 | 0.0022 | 0.5180 | 0.771 |
+| garchpath / k=1 | 87,703 | 0.5042 | 0.0017 | 0.5033 | 0.449 |
+| garchpath / k=2 | 82,633 | 0.5044 | 0.0017 | 0.5032 | 0.529 |
+| garchpath / k>=3 | 53,816 | 0.5052 | 0.0022 | 0.5028 | 0.665 |
+
+| the gap, `k >= 2` minus `k = 1` | value |
+|---|---|
+| real | **+0.0123 +- 0.0021** [+0.0084, +0.0164] |
+| walkpath | **-0.0115 +- 0.0022** [-0.0156, -0.0072] |
+| garchpath | **+0.0005 +- 0.0022** [-0.0037, +0.0048] |
+| real against the matched placebo | +0.0072 +- 0.0024 [+0.0024, +0.0119] |
+| **real minus walkpath** | **+0.0238 +- 0.0029** [+0.0179, +0.0290] |
+| **real minus garchpath** | **+0.0117 +- 0.0030** [+0.0058, +0.0173] |
+
+**Two things kill it, and both are in the table.**
+
+First, **the two nulls disagree by half the effect**. The walk reads -0.0115 and
+the GARCH bridge reads +0.0005 for the same quantity on the same bars, so the
+"excess" is +0.0238 or +0.0117 depending on which surrogate is the null - and
+the arm carrying more of this market's mechanical properties (clustering, fat
+tails) is the one that leaves less residual. A difference of differences needs
+an identified null, and two nulls a standard error apart from each other but
+twelve points apart in the answer are not one.
+
+Second, **it is a composition effect in the null arm**, which the width table
+in [the mechanism](#what-k-is-a-proxy-for-the-arrival-bars-width) shows
+directly: within quintiles of the arrival bar's width the real gap is +0.0263
+and the walk's is +0.0211, a difference of about +0.005 rather than +0.0238.
+The walk's pooled gap is negative only because its `k >= 2` arrivals pile into
+the widest bars, where its hold rate collapses to 0.1995.
+
+Multiplicity at this tolerance: **142 cells, 92 nominally positive, 18 with a
+lower bound above zero, 2 surviving Benjamini-Hochberg** - and neither survivor
+is among the ten largest gaps, so both are small gaps on large samples. The
+largest cells are the usual small ones: `XPTUSD/4h` at +0.2056 +- 0.0832 on 86
+against 56 observations.
+
+### The sparse configuration: confluence made rare
+
+The study's obvious weakness is density, so the frameworks were re-run with
+their rules **sharpened** rather than their parameters nudged: two Fibonacci
+ratios instead of four (0.618 and 0.786, the OTE zone the commentary names),
+two Gann rungs instead of six (45 and 90 degrees), a minimum leg of 4.0 units
+instead of 2.0, a level life of 150 bars instead of 500 and a tolerance of
+0.15. Densities fall to **0.307 / 0.317 / 0.814 / 0.156** levels per volatility
+unit, and a confluence becomes rare: `k = 1` is **75.50%** of named first
+touches and `k >= 2` is **24.49%**.
+
+| the gap, `k >= 2` minus `k = 1` | value |
+|---|---|
+| real | **+0.0102 +- 0.0023** [+0.0056, +0.0148] |
+| walkpath | **-0.0178 +- 0.0025** [-0.0228, -0.0131] |
+| **real minus walkpath** | **+0.0280 +- 0.0035** [+0.0212, +0.0351] |
+
+Read on its own this is the hypothesis' best case and it looks like a result.
+It is the same composition effect, larger: the mean arrival-bar width is
+**1.300** at `k = 1` and **1.683** at `k >= 2` - the strongest confound of any
+configuration, because a co-location inside 0.15 units from a thinner book
+needs a wider bar still - and within width quintiles the real gap is
+**+0.0312** against the walk's **+0.0241**, a difference of **+0.0071** rather
+than +0.0280. Multiplicity: **135 cells, 81 positive, 14 with a lower bound
+above zero, 1 BH survivor**, and the survivor is `Range Break 100 Index/4h`,
+the positive-control process.
+
+**And the market's own gap is the smallest of any configuration.** Sharpening
+the definition of confluence from 0.25 to 0.15 units and halving the frameworks'
+output takes the market's `k` gap from +0.0142 to **+0.0102**. If confluence
+carried information that density was diluting, making it selective would raise
+the market's gap. It lowers it, and only the null moves far.
+
+### The three configurations side by side
+
+| configuration | share `k >= 2` | mean width k=1 / k>=2 | real gap | walk gap | pooled excess | **excess within width quintiles** |
+|---|---|---|---|---|---|---|
+| **base**, tolerance 0.25 | 0.676 | 1.434 / 1.391 | +0.0142 | +0.0140 | **+0.0002 +- 0.0031** | **+0.0031** |
+| tolerance 0.10 | 0.426 | 1.202 / 1.446 | +0.0123 | -0.0115 | **+0.0238 +- 0.0029** | **+0.0052** |
+| sparse rules, tolerance 0.15 | 0.245 | 1.300 / 1.683 | +0.0102 | -0.0178 | **+0.0280 +- 0.0035** | **+0.0071** |
+
+The last two columns are the study. **The pooled excess ranges over four
+hundred basis points of hold rate and tracks the width confound exactly; the
+excess within width quintiles is +0.003 to +0.007 in all three.** That residual
+is no longer configuration-dependent, and it is at or below the smallest lift
+this pipeline can resolve - the label plant puts the blind spot at 0.0058 in
+the difference of differences - so it is reported as a bound rather than as an
+effect.
 
 ## Cost
 
@@ -606,11 +782,11 @@ The part of it that is not the walk's is +0.0002 +- 0.0029 in hold rate, or
    price and 68.02% of named touches carry `k >= 2`. Any claim that begins "when
    several frameworks agree" is, at this tolerance, a claim about most prices.
 2. **Confluence does not raise the hold rate beyond a walk at the
-   pre-registered tolerance.** The gap is +0.0156 +- 0.0022 on the market and
-   +0.0154 +- 0.0022 on a driftless Brownian-bridge walk through the same
-   detectors, a difference of +0.0002 +- 0.0029. 0 of 131 cells survive
-   Benjamini-Hochberg, and all four per-framework `real minus walk` intervals
-   contain zero. The qualifier is load-bearing - see the sweep.
+   pre-registered tolerance.** The gap is +0.0142 +- 0.0022 on the market,
+   +0.0140 +- 0.0022 on a driftless Brownian-bridge walk through the same
+   detectors and +0.0167 +- 0.0021 on a GARCH bridge, so the market is between
+   its two nulls. The qualifier is load-bearing - see the sweep - and the
+   mechanism is the arrival bar's width.
 3. **The bimodality claim is refuted in the direction it was stated.** The
    next-20-bar return at a `k >= 2` arrival has excess kurtosis +8.4, Sarle
    0.092 against a 0.5556 flag, and a two-component mixture separated by 0.12
@@ -619,37 +795,62 @@ The part of it that is not the walk's is +0.0002 +- 0.0029 in hold rate, or
    a break is 0.5241-0.5264 at every `k`, below the matched placebo's 0.5465,
    and realised volatility and excursion after a break are flat in `k`.
 5. **The Square of 9 adds nothing, and that is a check rather than a result.**
-   It gains +0.0192 +- 0.0030 from company, the second largest of the four,
-   which is the size the other three gain. A framework with no mechanism
-   behaving like the ones with mechanisms is the signature of an effect that
-   belongs to the construction.
-6. **A double bottom is not a better swing level**: 0.5215 +- 0.0082 on 4,017
-   arrivals, flat against a single swing.
+   It gains +0.0162 +- 0.0028 from company, which is the size the other three
+   gain (+0.0239, +0.0143, +0.0099). A framework with no mechanism behaving
+   like the ones with mechanisms is the signature of an effect that belongs to
+   the construction.
+6. **A double bottom is not a better swing level**: 0.5173 +- 0.0088 on 3,273
+   arrivals, flat against the swing framework's own rate.
 
 ## What is unmeasurable
 
-1. **Watchedness itself.** The hypothesis is that liquidity rests where many
-   participants compute the same price. A confluence count is a proxy for *how
+**The first item is the methodological result of the study and it is why the
+sweep behaves as it does.**
+
+1. **Watchedness cannot be separated from its proxy by a surrogate, because a
+   confluence count is a deterministic function of the bars.** Every framework
+   here is a rule applied to the price series, so *any* surrogate that keeps the
+   bars keeps the levels, and any surrogate that changes the bars changes the
+   levels. There is therefore **no null that holds the level book fixed and
+   removes only "many participants compute this price"** - which is exactly the
+   contrast the hypothesis needs. What a surrogate actually varies is the book's
+   **density** and the **arrival geometry**, and that is why the excess over a
+   walk moves with the tolerance and the level life rather than staying put.
+   Two of the arms make this concrete: at the tight tolerance the walk reads
+   -0.0115 and the GARCH bridge reads +0.0005 for the same quantity on the same
+   bars, a disagreement **the size of the effect being claimed**, and the arm
+   that carries more of this market's mechanical properties is the one that
+   leaves less residual. `let-the-shuffled-twin-name-the-mechanical-observables`
+   says to use the highest-powered arm; here the two arms do not agree on what
+   the null is.
+
+   **The null this claim needs is a cross-instrument book, not a surrogate
+   series.** Take instrument A's live levels, express each as a distance from
+   the close in volatility units, and lay that book on instrument B's real bars
+   over the same calendar. The bars are real, so the arrival geometry and the
+   wickiness are real; the book has a real book's density and clustering; and
+   nobody is watching those prices *on B*. That separates "a price four rules
+   compute" from "a price many participants compute", which no surrogate of B's
+   own bars can. This study's matched placebo is the one-level version of it;
+   the full version is a different harness and is the thing to build if anyone
+   reopens this.
+
+2. **Watchedness measured as attention rather than as arithmetic.** How many
+   screens actually draw the line is not visible at this venue: no DOM,
+   `real_volume` is 0 and `tick_volume` is a quote count
+   (`no-order-flow-and-no-real-volume`). A confluence count is a proxy for *how
    many frameworks a harness can compute*, and the two part company as soon as
-   the frameworks are dense - which they are, by their own rules. Measuring
-   watchedness needs a quantity that scales with **attention** rather than with
-   arithmetic: how many screens actually draw the line, which this venue cannot
-   see (no DOM, `real_volume` is 0, `tick_volume` is a quote count - see
-   `no-order-flow-and-no-real-volume`). The nearest observable this desk could
-   build is a **count of distinct frameworks that is density-matched across
-   frameworks and sparse in absolute terms** - one level per framework per
-   several volatility units rather than one per fraction of a unit - and that is
-   a different harness, not a parameter of this one.
-2. **The excess over a walk away from the pre-registered tolerance**, because
+   the frameworks are dense - which they are, by their own rules.
+3. **The excess over a walk away from the pre-registered tolerance**, because
    the walk's own `k` gap is not stable there and the excess is a difference of
    two numbers only one of which is a market measurement. See the sweep: the
    market's gap moves from +0.0124 to +0.0177 across a fivefold change in
    tolerance while the walk's moves from -0.0144 to +0.0491, so the excess
    flips sign. A difference of differences is only as good as the stability of
    the null it subtracts.
-3. **The level of any hold rate**, for the construction reason above. Only
+4. **The level of any hold rate**, for the construction reason above. Only
    differences between arms are quotable.
-4. **Whether a *human* reading of "confluence" - a handful of levels a person
+5. **Whether a *human* reading of "confluence" - a handful of levels a person
    would draw, not every level four rules emit - behaves differently.** Nothing
    here measures a person's chart. It measures what the four published rules
    produce when they are run exhaustively, which is the only version that can be

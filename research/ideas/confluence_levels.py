@@ -2040,13 +2040,20 @@ def report(panel=None) -> None:
     print(f"  {len(pvals)} cells, {sum(1 for v in detail.values() if v[0] > 0)} positive, "
           f"{sum(1 for v in detail.values() if v[2] > 0)} with a lower bound above zero, "
           f"{sum(survivors.values())} BH survivors")
-    for key in sorted(detail, key=lambda k: -detail[k][0])[:10]:
+    # **Every cell goes to the CSV, not only the printed ones.** The first
+    # version wrote the ten largest gaps, so a Benjamini-Hochberg survivor with
+    # a small gap and a large sample - which is the only kind worth having -
+    # was counted in the summary line and absent from the file, and nobody
+    # could audit which cell it was.
+    for key, (gap, se, lo, hi, na, nb) in detail.items():
+        cells.append({"scope": "cell", "arm": "real", "bucket": key, "n": na,
+                      "n_alone": nb, "hold": gap, "se": se, "lo": lo, "hi": hi,
+                      "p": pvals[key], "bh": int(bool(survivors.get(key)))})
+    shown = sorted(detail, key=lambda k: -detail[k][0])[:10]
+    for key in [*shown, *(k for k in detail if survivors.get(k) and k not in shown)]:
         gap, se, lo, hi, na, nb = detail[key]
         print(f"    {key:<32} {gap:+.4f} +- {se:.4f} [{lo:+.4f}, {hi:+.4f}] "
               f"{na}/{nb}{'  BH' if survivors.get(key) else ''}")
-        cells.append({"scope": "cell", "arm": "real", "bucket": key, "n": na,
-                      "hold": gap, "se": se, "lo": lo, "hi": hi,
-                      "bh": int(bool(survivors.get(key)))})
 
     print(f"\n=== 2. bimodality: the next-{SHAPE_N}-bar return, signed by the "
           "arriving side ===")
