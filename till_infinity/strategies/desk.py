@@ -711,6 +711,15 @@ class Desk(NautilusStrategy):
         """
         if not self.settings.volatile_only:
             return None
+        named = self.settings.volatile_rules
+        if named and str(self._cfg.rule).lower() not in named:
+            # **Scoped, because the screen is a scalping filter.** A rule
+            # holding 96 bars - `structure.HOLD_MINUTES // 15`, a full day -
+            # is not scalping, and gating it would restrict it to a universe
+            # its own measurements were never taken on. Empty means every
+            # rule, which is the old behaviour and is documented as rarely
+            # what is wanted.
+            return None
         if not self._admitted:
             return Refusal(
                 gate="no-ranking",
