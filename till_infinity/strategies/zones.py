@@ -390,7 +390,7 @@ class Zones:
         return {
             "feed": self._feed_name(),
             "shape": self.profile.shape,
-            "interval": self.profile.interval,
+            "interval": self.interval or self.profile.interval,
             "direction": side,
             "features": {
                 # `zone_atr` with `zone_close` as its anchor, **not** `vol_bps`:
@@ -458,7 +458,7 @@ class Zones:
                 f"{'resistance' if features.get('zone_resistance') else 'support'} zone "
                 f"{'up' if side is Side.BUY else 'down'} on {feed}"
             ),
-            interval=self.profile.interval,
+            interval=self.interval or self.profile.interval,
             features={str(k): float(v) for k, v in features.items()},
             hold=0.0,
         )

@@ -65,6 +65,7 @@ from __future__ import annotations
 import os
 import re
 import zlib
+from collections.abc import Sequence
 from pathlib import Path
 
 from nautilus_trader.common.actor import Actor
@@ -77,6 +78,7 @@ from till_infinity.adapters.mt5 import MT5
 from till_infinity.strategies.basket import BasketConfig, BasketExit
 from till_infinity.strategies.leaves import ENTRIES, EXITS, RULES, leaf
 from till_infinity.utils.env import symbol_names, whole
+from till_infinity.utils.intervals import SECONDS
 
 from . import sizing
 
@@ -219,8 +221,54 @@ def symbols(venue: str | None = None) -> tuple[str, ...]:
 
 
 def intervals() -> tuple[str, ...]:
-    """The timeframes. `TRADING_INTERVALS`, first one used for the bar type."""
-    return _names(os.environ.get("TRADING_INTERVALS")) or ("15m",)
+    """The timeframes. `TRADING_INTERVALS`, **one desk per name**.
+
+    **Every name is used, and until 2026-11-10 only the first was.** Three call
+    sites read `intervals()[0]` and dropped the rest, so a deploy asking for
+    `15m,30m,1h,4h` got 15m desks and no warning - the "desk set silently
+    smaller than the one asked for" failure this module raises on everywhere
+    else, in the one place it was the module's own doing. Nothing above here
+    noticed, because the variable is plural in its name, plural in
+    `Profile.intervals` and was singular only at the point of use.
+
+    Duplicates are dropped rather than building two identical desks on one bar
+    type: they would collide on `_tag` and Nautilus refuses the second with
+    `Already registered a strategy with ID`.
+    """
+    asked = _names(os.environ.get("TRADING_INTERVALS")) or ("15m",)
+    return tuple(dict.fromkeys(asked))
+
+
+#: The clock every cost here is quoted against. 46 desks at this interval took
+#: the fold to 1.429 of tis's 1.5-core quota, which is the measurement
+#: `PER_CORE` is set from, so it is the natural unit for one desk's cost.
+BASE_INTERVAL = "15m"
+
+
+def cost_of(interval: str) -> float:
+    """What one desk on `interval` costs against `ceiling`, a 15m desk being 1.
+
+    **A desk's recurring cost is a bar close.** `on_bar` runs the detectors,
+    the gates and the proposal; between closes a desk is idle. So a 4h desk
+    does that work **once for every sixteen** a 15m desk does, and charging the
+    two the same is what made the ceiling the wrong meter for a multi-interval
+    deploy: counting desks would clip cheap ones to protect against a cost they
+    do not impose.
+
+    What this does **not** model: per-desk memory, and the quote poller, which
+    is one per *symbol* rather than per desk and is bounded by
+    `TRADING_SYMBOLS` instead of by this. See `PER_CORE`, which says the same
+    thing about where the late-quote cost actually lives.
+
+    An activity clock - `500tick` - has no span, so it is charged **full
+    freight** rather than guessed at: a tick clock can close faster than any
+    time bar, and the conservative reading is the one that cannot quietly
+    overcommit the box.
+    """
+    span = SECONDS.get(interval.strip().lower(), 0.0)
+    if span <= 0.0:
+        return 1.0
+    return SECONDS[BASE_INTERVAL] / span
 
 
 #: How an interval is written as a Nautilus bar specification.
@@ -381,7 +429,7 @@ def build(
     venue: str,
     *,
     budget: sizing.Budget | None = None,
-    limit: int | None = None,
+    limit: float | None = None,
     qualify: bool = False,
 ) -> tuple[list[Strategy], list[str]]:
     """Every (rule, entry, instrument) this node runs, and what it clipped.
@@ -393,10 +441,10 @@ def build(
     4.8 - so the drop is returned rather than logged here.
     """
     taken, clipped = _wanted(venue=venue, budget=budget, limit=limit)
-    interval = intervals()[0]
     chosen = exits()
+    spread = len(intervals()) > 1
     built: list[Strategy] = []
-    for rule, entry, symbol in taken:
+    for rule, entry, symbol, interval in taken:
         # **The composed leaf, not the bare entry.** This built `EdgeEntry`
         # itself until 2026-11-01, with no decision mixin in front of it -
         # and `Desk.decide` raises by design, so every desk this node
@@ -416,21 +464,30 @@ def build(
                     #
                     # Only the tag is set: Nautilus derives `strategy_id` as
                     # `ClassName-tag`, so passing both gives the tag twice.
-                    order_id_tag=_tag(rule, entry, symbol, venue if qualify else None),
+                    order_id_tag=_tag(
+                        rule,
+                        entry,
+                        symbol,
+                        venue if qualify else None,
+                        # `None` on the base clock, so the desks that are
+                        # already running keep the ids their open orders are
+                        # indexed by. See `_tag`.
+                        interval if interval != BASE_INTERVAL else None,
+                    ),
                     instrument_id=InstrumentId.from_str(f"{symbol}.{venue}"),
                     bar_type=bar_type(symbol, venue, interval),
                     rule=rule,
                 )
             )
         )
-    return built, [f"{r}/{e}/{s}" for r, e, s in clipped]
+    return built, [_dropped(desk, spread=spread) for desk in clipped]
 
 
 def _wanted(
     *,
     venue: str | None = None,
     budget: sizing.Budget | None = None,
-    limit: int | None = None,
+    limit: float | None = None,
 ) -> tuple[list[tuple[str, str, str]], list[tuple[str, str, str]]]:
     """The (rule, entry, instrument) triples this machine will carry, and the
     ones it clipped.
@@ -440,16 +497,52 @@ def _wanted(
     looks.
     """
     wanted = [
-        (rule, entry, symbol)
+        (rule, entry, symbol, interval)
         for symbol in symbols(venue)
         for rule in rules()
         for entry in entries()
+        for interval in intervals()
     ]
-    cap = ceiling(budget) if limit is None else limit
-    return wanted[:cap], wanted[cap:]
+    # **Interval innermost, so a clip drops whole symbols and never whole
+    # timeframes.** The budget is spent in order, so whatever nesting this
+    # uses decides what a full box loses. A symbol that is not traded is
+    # visible in the returned list and in the log line; a timeframe missing
+    # from every symbol would look exactly like the `intervals()[0]` bug this
+    # change exists to fix, and would be found the same way - by nobody.
+    cap = float(ceiling(budget)) if limit is None else float(limit)
+    taken: list[tuple[str, str, str, str]] = []
+    spent = 0.0
+    for index, desk in enumerate(wanted):
+        cost = cost_of(desk[3])
+        if spent + cost > cap:
+            return taken, list(wanted[index:])
+        spent += cost
+        taken.append(desk)
+    return taken, []
 
 
-def _tag(rule: str, entry: str, symbol: str, venue: str | None = None) -> str:
+def _dropped(desk: tuple[str, str, str, str], *, spread: bool) -> str:
+    """One clipped desk, as a name an operator can match against their config.
+
+    **The interval appears only where there is more than one**, exactly as
+    `_tag` appends the venue only on a multi-venue deploy. A single-interval
+    deploy's clip list is therefore byte-identical to what it printed before
+    intervals fanned out, which is the property that makes this change
+    reviewable: a log line that moved would have to be read to find out
+    whether anything else did.
+    """
+    rule, entry, symbol, interval = desk
+    name = f"{rule}/{entry}/{symbol}"
+    return f"{name}/{interval}" if spread else name
+
+
+def _tag(
+    rule: str,
+    entry: str,
+    symbol: str,
+    venue: str | None = None,
+    interval: str | None = None,
+) -> str:
     """A short, stable, unique tag for one desk.
 
     Stable so that a restart reclaims its own orders. The tag is not itself
@@ -494,8 +587,31 @@ def _tag(rule: str, entry: str, symbol: str, venue: str | None = None) -> str:
     qualifies them. The condition is the deploy's own config rather than
     anything that varies at runtime, so it is stable across restarts, which is
     the property that actually matters.
+
+    **`interval` is appended for the same reason and on a stricter rule.** One
+    symbol on four timeframes is four desks, and without it they are four desks
+    with one tag: Nautilus refuses the second with `Already registered a
+    strategy with ID`, and the ones it did register share an order-id
+    namespace, which is the duplicate-`OrderListId` denial above with a clock
+    instead of a venue.
+
+    The caller passes `None` for `BASE_INTERVAL` and the name for every other
+    clock, so **a 15m desk keeps the bare tag whatever else is deployed
+    alongside it**. Suffixing by "is there more than one interval" would have
+    been the obvious rule and is the wrong one: moving from `15m` to
+    `15m,1h,4h` would then rename the 15m desk, and the paragraph above is
+    about what renaming a desk with an open book costs. Keyed on the clock
+    itself the decision does not depend on what else is in the list, so adding
+    or removing a timeframe never disturbs the desks already running.
+
+    No hyphen is introduced by either suffix - `get_tag()` reads only the text
+    after the **last** hyphen - because no interval name or venue name contains
+    one. `15m` and `4h` are safe; a name that was not would have to be joined
+    with `_` here just as these are.
     """
     short = f"{symbol}_{entry[:1].upper()}{zlib.crc32(rule.encode()) % 997:03d}"
+    if interval:
+        short = f"{short}_{interval}"
     return f"{short}_{venue}" if venue else short
 
 
@@ -521,16 +637,41 @@ def build_all(
     """
     budget = budget or sizing.measure()
     wanted = names or venues()
-    left = ceiling(budget)
+    left = float(ceiling(budget))
     built: list[Strategy] = []
     dropped: list[str] = []
     for venue in wanted:
         # Qualified by venue only where there is more than one - see `_tag`.
-        some, clipped = build(venue, budget=budget, limit=max(0, left), qualify=len(wanted) > 1)
+        some, clipped = build(venue, budget=budget, limit=max(0.0, left), qualify=len(wanted) > 1)
         built.extend(some)
         dropped.extend(f"{venue}:{name}" for name in clipped)
-        left -= len(some)
+        # **The weight spent, not the number of desks.** A 4h desk costs
+        # `cost_of` 0.0625, so subtracting a count here would charge the second
+        # venue sixteen times what the first one actually used and clip it for
+        # a load nothing is carrying.
+        left -= _spend(some)
     return built, dropped
+
+
+def _spend(built: Sequence[Strategy]) -> float:
+    """What these desks cost against the ceiling, in 15m-desk equivalents.
+
+    Read off each desk's own `bar_type` through `timeframes.seconds_of` rather
+    than recomputed from the interval names: that parser is the one the desks
+    themselves order their clocks with, and it already handles the two shapes a
+    second derivation gets wrong - a composite bar type naming its aggregation
+    source after an `@`, and a symbol containing a hyphen. A bar type it cannot
+    place reads 0.0 and is charged full freight, the same way `cost_of` treats
+    an activity clock.
+    """
+    from till_infinity.strategies.timeframes import seconds_of
+
+    total = 0.0
+    for strategy in built:
+        found = getattr(getattr(strategy, "config", None), "bar_type", None)
+        span = seconds_of(found) if found is not None else 0.0
+        total += SECONDS[BASE_INTERVAL] / span if span > 0.0 else 1.0
+    return total
 
 
 def actors_all(names: tuple[str, ...] | None = None) -> list[Actor]:
@@ -585,7 +726,7 @@ def importable(
     venue: str,
     *,
     budget: sizing.Budget | None = None,
-    limit: int | None = None,
+    limit: float | None = None,
     qualify: bool = False,
 ) -> tuple[list[ImportableStrategyConfig], list[str]]:
     """The same desks, as the importable configs a `BacktestNode` takes.
@@ -604,10 +745,10 @@ def importable(
     the same desks.
     """
     taken, clipped = _wanted(venue=venue, budget=budget, limit=limit)
-    interval = intervals()[0]
     chosen = exits()
+    spread = len(intervals()) > 1
     out: list[ImportableStrategyConfig] = []
-    for rule, entry, symbol in taken:
+    for rule, entry, symbol, interval in taken:
         strategy = leaf(rule, entry, chosen)
         _, config = ENTRIES[entry]
         out.append(
@@ -615,14 +756,23 @@ def importable(
                 strategy_path=f"{strategy.__module__}:{strategy.__name__}",
                 config_path=f"{config.__module__}:{config.__name__}",
                 config={
-                    "order_id_tag": _tag(rule, entry, symbol, venue if qualify else None),
+                    "order_id_tag": _tag(
+                        rule,
+                        entry,
+                        symbol,
+                        venue if qualify else None,
+                        # `None` on the base clock, so the desks that are
+                        # already running keep the ids their open orders are
+                        # indexed by. See `_tag`.
+                        interval if interval != BASE_INTERVAL else None,
+                    ),
                     "instrument_id": f"{symbol}.{venue}",
                     "bar_type": str(bar_type(symbol, venue, interval)),
                     "rule": rule,
                 },
             )
         )
-    return out, [f"{r}/{e}/{s}" for r, e, s in clipped]
+    return out, [_dropped(desk, spread=spread) for desk in clipped]
 
 
 def _scratch_state() -> Path:
@@ -667,8 +817,16 @@ def importable_actors(venue: str, *, fresh: bool = False) -> list[ImportableActo
         )
     ]
     named = _names(os.environ.get("STATESPACE_BARS"))
-    interval = intervals()[0]
-    bars = named or tuple(str(bar_type(symbol, venue, interval)) for symbol in symbols(venue))
+    # **Every configured interval, not the first.** A desk on 4h consumes
+    # proposals keyed by its own clock, so a fold built only on 15m leaves the
+    # slower desks subscribed to a topic nothing publishes for them - the
+    # consumer-with-no-producer shape whose docstring above says it has hidden
+    # this one topic three times, reappearing per interval instead of per rule.
+    bars = named or tuple(
+        str(bar_type(symbol, venue, interval))
+        for symbol in symbols(venue)
+        for interval in intervals()
+    )
     if bars:
         out.append(
             ImportableActorConfig(

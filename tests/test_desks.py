@@ -977,3 +977,180 @@ def test_statespace_long_cannot_be_enabled_because_it_adds_nothing_to_its_own_si
     assert "statespace-long" not in desks.RULES
     assert "statespace-short" in desks.RULES, "the short side was not refuted and stays enableable"
     assert "statespace-surprise" in desks.RULES
+
+
+# ------------------------------------------------- one desk per timeframe
+
+
+def test_every_configured_interval_gets_its_own_desk(monkeypatch):
+    """**`TRADING_INTERVALS` was plural in its name and singular at the point of
+    use.** Three call sites read `intervals()[0]` and dropped the rest, so a
+    deploy asking for `15m,1h,4h` got 15m desks and said nothing - the "set
+    silently smaller than the one asked for" failure this module raises on
+    everywhere else, in the one place it was this module's own doing.
+    """
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD")
+    monkeypatch.setenv("TRADING_INTERVALS", "15m,1h,4h")
+    built, clipped = desks.build("MT5")
+    assert not clipped
+    assert len(built) == 3, "one symbol x one rule x one entry x three clocks"
+    assert {str(s.config.bar_type) for s in built} == {
+        "EURUSD.MT5-15-MINUTE-LAST-EXTERNAL",
+        "EURUSD.MT5-1-HOUR-LAST-EXTERNAL",
+        "EURUSD.MT5-4-HOUR-LAST-EXTERNAL",
+    }
+
+    # The control: one clock still builds exactly one desk, so the three above
+    # are the configuration being read and not a fan-out that always happens.
+    monkeypatch.setenv("TRADING_INTERVALS", "15m")
+    alone, _ = desks.build("MT5")
+    assert [str(s.config.bar_type) for s in alone] == ["EURUSD.MT5-15-MINUTE-LAST-EXTERNAL"]
+
+
+def test_a_repeated_interval_is_one_desk_rather_than_a_collision(monkeypatch):
+    """Two desks on one bar type share a tag, and Nautilus refuses the second
+    with `Already registered a strategy with ID` - so a doubled name in the
+    environment would take the node down rather than build a duplicate."""
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD")
+    monkeypatch.setenv("TRADING_INTERVALS", "15m,4h,15m")
+    assert desks.intervals() == ("15m", "4h")
+    built, _ = desks.build("MT5")
+    assert len(built) == 2
+
+
+def test_the_base_clock_keeps_the_tag_its_open_orders_are_indexed_by(monkeypatch):
+    """**Adding a timeframe must not rename the desks already running.**
+
+    A tag composes the `strategy_id` that the cache indexes every order, fill
+    and position by, so a desk whose tag moves orphans whatever the previous
+    run left open. Suffixing whenever the list has more than one name would
+    have renamed the 15m desk the moment `4h` was added beside it; keyed on the
+    clock itself, the 15m desk's tag does not depend on what else is deployed.
+    """
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD")
+    monkeypatch.setenv("TRADING_INTERVALS", "15m")
+    (alone,), _ = desks.build("MT5")
+    assert "15m" not in alone.order_id_tag
+
+    monkeypatch.setenv("TRADING_INTERVALS", "15m,1h,4h")
+    built, _ = desks.build("MT5")
+    tags = [s.order_id_tag for s in built]
+    assert len(set(tags)) == len(tags), f"two desks on one namespace: {tags}"
+    assert alone.order_id_tag in tags, "the 15m desk was renamed by adding a slower one"
+    assert sorted(t for t in tags if t != alone.order_id_tag) == [
+        f"{alone.order_id_tag}_1h",
+        f"{alone.order_id_tag}_4h",
+    ]
+
+
+def test_a_slower_desk_is_charged_less_than_a_faster_one():
+    """**A desk's recurring cost is a bar close**, and a 4h desk does that work
+    once for every sixteen a 15m desk does. Charging them the same made the
+    ceiling the wrong meter for a multi-interval deploy: it would clip cheap
+    desks to protect against a cost they do not impose."""
+    assert desks.cost_of("15m") == 1.0
+    assert desks.cost_of("1h") == 0.25
+    assert desks.cost_of("4h") == 0.0625
+    # An activity clock has no span, so it is charged full freight rather than
+    # guessed at - a tick clock can close faster than any time bar.
+    assert desks.cost_of("500tick") == 1.0
+
+
+def test_the_ceiling_admits_more_slow_desks_than_fast_ones(monkeypatch):
+    """The ceiling is a budget in 15m-desk equivalents, so the same box carries
+    four 1h desks for the price of one 15m desk. Measured on tis: 46 desks at
+    15m took the fold to 1.429 of a 1.5-core quota, which is where both the
+    number and its unit come from."""
+    monkeypatch.setenv("TRADING_SYMBOLS", " ".join(f"SYM{i}" for i in range(40)))
+
+    monkeypatch.setenv("TRADING_INTERVALS", "15m")
+    fast, _ = desks.build("MT5", limit=4)
+    assert len(fast) == 4, "four 15m desks spend the whole budget"
+
+    monkeypatch.setenv("TRADING_INTERVALS", "1h")
+    slow, _ = desks.build("MT5", limit=4)
+    assert len(slow) == 16, "a 1h desk costs a quarter, so the same budget buys four times as many"
+
+
+def test_a_full_box_drops_whole_symbols_and_never_a_whole_timeframe(monkeypatch):
+    """**Whatever order the fan-out is spent in decides what a full box loses.**
+
+    A symbol that is not traded is visible in the clipped list and in the log
+    line. A timeframe missing from every symbol would look exactly like the
+    `intervals()[0]` bug this change removes, and would be found the same way -
+    by nobody. So the interval is innermost and the clip is a suffix.
+    """
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD,GBPUSD,USDJPY")
+    monkeypatch.setenv("TRADING_INTERVALS", "15m,1h")
+    built, clipped = desks.build("MT5", limit=1.25)
+
+    traded = {str(s.config.instrument_id.symbol) for s in built}
+    assert traded == {"EURUSD"}, "the budget bought one symbol's whole ladder"
+    assert len(built) == 2, "and both of its clocks, not one of them"
+    assert clipped == [
+        "statespace-surprise/edge/GBPUSD/15m",
+        "statespace-surprise/edge/GBPUSD/1h",
+        "statespace-surprise/edge/USDJPY/15m",
+        "statespace-surprise/edge/USDJPY/1h",
+    ]
+
+
+def test_a_single_interval_clip_list_is_unchanged(monkeypatch):
+    """The interval appears in a dropped name only where there is more than one,
+    exactly as `_tag` appends the venue only on a multi-venue deploy. A log line
+    that moved would have to be read to find out whether anything else did."""
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD GBPUSD USDJPY")
+    monkeypatch.setenv("TRADING_INTERVALS", "15m")
+    _, clipped = desks.build("MT5", limit=1)
+    assert clipped == ["statespace-surprise/edge/GBPUSD", "statespace-surprise/edge/USDJPY"]
+
+
+def test_a_desk_reports_the_clock_it_trades_not_the_one_it_was_measured_on(monkeypatch):
+    """**`Intent.interval` is not a label.** It drives `scaling.by_interval` and
+    `domain/models.py` converts a hold through `SECONDS` with it, so a 4h desk
+    reporting its profile's `15m` would be sized by the wrong weight and would
+    compute a span sixteen times too short - with every number still printing.
+    """
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD")
+    monkeypatch.setenv("TRADING_INTERVALS", "15m,4h")
+    # `zones`, because it is one of the four rules that declares the clock it
+    # was measured on. `statespace-surprise` takes its interval off the
+    # proposal instead, so it could not show the two coming apart.
+    monkeypatch.setenv("TRADING_STRATEGIES", "zones")
+    built, _ = desks.build("MT5")
+    found = {desk.interval for desk in built}
+    assert found == {"15m", "4h"}
+    # The profile still carries the clock the rule was *measured* on, which is
+    # the comparison `Desk._say_clock` reports on. It is one value for both
+    # desks, which is exactly why it cannot be the one they trade on.
+    assert {str(desk.profile.interval) for desk in built} == {"15m"}
+
+
+def test_the_fold_covers_every_interval_the_desks_trade(monkeypatch, loop):
+    """**A consumer with no producer, per interval instead of per rule.**
+
+    The fold is keyed by feed *and* interval, so a 4h desk reading a 15m
+    proposal is not a slower view of the same state - it is a different
+    estimate. Built on `intervals()[0]` the slower desks would be subscribed to
+    a topic nothing published for their clock, which is the shape whose own
+    docstring in this module says it has hidden this one topic three times.
+    """
+    monkeypatch.delenv("STATESPACE_BARS", raising=False)
+    monkeypatch.delenv("TRADING_STRATEGIES", raising=False)
+    monkeypatch.setenv("LOG_LEVEL", "ERROR")
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD")
+    monkeypatch.setenv("TRADING_INTERVALS", "15m,4h")
+
+    from till_infinity.node import live
+
+    node = live.build()
+    try:
+        actor = next(a for a in node.trader.actors() if str(a.id) == "StatespaceActor")
+        folded = {str(b) for b in actor._cfg.bar_types}
+    finally:
+        node.dispose()
+
+    assert folded == {
+        "EURUSD.MT5-15-MINUTE-LAST-EXTERNAL",
+        "EURUSD.MT5-4-HOUR-LAST-EXTERNAL",
+    }

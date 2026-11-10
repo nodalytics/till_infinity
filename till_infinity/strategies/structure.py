@@ -637,7 +637,7 @@ class Structure:
         return {
             "feed": self._feed_name(),
             "shape": self.profile.shape,
-            "interval": self.profile.interval,
+            "interval": self.interval or self.profile.interval,
             "direction": event.side.sign,
             "features": {
                 # Named for the rule, so a later score can find them, and
@@ -743,7 +743,7 @@ class Structure:
                 f"{'BOS up' if side is Side.BUY else 'BOS down'} through "
                 f"{_number(features.get('bos_swing')):.5g} on {feed}"
             ),
-            interval=self.profile.interval,
+            interval=self.interval or self.profile.interval,
             features={k: _number(v) for k, v in features.items()}
             | {"bos_stop_spreads": spreads, "bos_stop_atr": reach},
             # Step 7 is `hold_signal_bars` and `_clock` runs it, so no seconds
