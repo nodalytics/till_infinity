@@ -1171,3 +1171,42 @@ def test_an_announced_refusal_survives_the_notifier_and_becomes_a_message():
     assert message.level is Level.WARNING
     assert message.title
     assert message.fields["event"] == "rejected"
+
+
+def test_an_alert_names_the_side_in_words_and_never_as_an_enum_number():
+    """**A live alert read `side 2` under a title that said `short`.**
+
+    `PositionOpened.entry` is an `OrderSide`, which is an int enum on the
+    Cython model, so `str(...)` of it is `"2"` - and the value the caller
+    passed won over the word `_announce` computes. The same shape as
+    `order.order_type` reading `"3"` against `"STOP_MARKET"`.
+
+    Asserted on the payload rather than through a bus: `Strategy.msgbus` is
+    read-only, which is why `_announce` is reached with a stub here.
+    """
+    from types import SimpleNamespace
+
+    from till_infinity.strategies import exits
+
+    sent: list[dict] = []
+    stub = SimpleNamespace(
+        id="ZonesEdge-EURCAD_E637",
+        msgbus=SimpleNamespace(publish=lambda topic, msg: sent.append(msg)),
+        log=SimpleNamespace(warning=lambda *a: None),
+        _feed_name=lambda: "eurcad",
+        _announced_side=lambda event: "short",
+    )
+    event = SimpleNamespace(
+        instrument_id="EURCAD.MT5",
+        position_id="EURCAD.MT5-ZonesEdge-EURCAD_E637",
+        entry=2,  # `OrderSide.SELL`, as the Cython enum stringifies it
+    )
+
+    # The caller still passing the enum through must not be able to win.
+    exits.ManagedExit._announce(stub, "opened", event, side=str(event.entry), quantity="0.26")
+
+    assert sent, "nothing was published"
+    fields = sent[0]["fields"]
+    assert fields["side"] == "short", f"the alert said side {fields['side']!r}"
+    assert "side 2" not in sent[0]["body"], sent[0]["body"]
+    assert sent[0]["title"] == "eurcad short opened"
