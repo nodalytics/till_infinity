@@ -1,23 +1,44 @@
 # The breaker block: 92.6% of order blocks flip, and the flip is a distance-matched placebo
 
-> **Corrected 2026-11-10, before review.** The first version of this document
-> led with a "leak in `node/surrogates.walk_with_bar_geometry`": a surrogate
-> whose bars carry a negative mean `open[i] - close[i-1]`, which paid a
-> long-entry arm +0.12R. **That claim is withdrawn. The market carries the same
-> sawtooth** - negative on **28 of 28** of the broker's own 1h FX stores at a
-> mean of -0.0126 of a bar range - and the identity `close[i] - close[i-1] =
-> (open[i] - close[i-1]) + (close[i] - open[i])` forces it for any series whose
-> bars close above their opens with near-nil drift. I diagnosed the mechanism
-> on a hand-built source with **zero** gap and never measured the market's own,
-> which is the whole failure: a mechanism is not a defect until the thing it is
-> supposed to be absent from has been checked. What survives is better stated
-> as a limit on the method, and is below under
-> [a resting-limit arm is not measurable on bar data](#a-resting-limit-arm-is-not-measurable-on-bar-data).
-> **The refutation never rested on that arm and does not now.** Credit for the
-> correction to the coordinator, who measured the market side first; it is
-> recorded in `walk_with_bar_geometry`'s own docstring and pinned by
-> `test_the_walk_keeps_the_market_s_own_sawtooth_rather_than_removing_it`, and
-> `MODE=gap` reproduces it here so the number is also this study's own.
+> **Withdrawn and then reinstated, both on 2026-11-10, and the round trip is
+> worth more than either reading.** This document led with a "leak in
+> `node/surrogates.walk_with_bar_geometry`": the surrogate places each bar's
+> open inside that bar's own range, independently of the previous close, and a
+> long-entry arm paid **+0.1012R** a trade on it.
+>
+> The claim was withdrawn after the coordinator measured the **mean** gap and
+> found the market carrying the same one - negative on 28 of 28 of the broker's
+> 1h FX stores at -0.0126 of a bar range, which `MODE=gap` reproduces here. The
+> identity `close[i] - close[i-1] = (open[i] - close[i-1]) + (close[i] -
+> open[i])` forces that for any series whose bars close above their opens with
+> near-nil drift.
+>
+> **The mean is the one statistic that cannot see this defect, and the claim is
+> reinstated on the distribution** (`till_infinity/node/surrogates.py`, and
+> `#384`). As a share of the bar range, on the broker's 15m and 1h stores:
+>
+> | | median `|gap|` | bars with no gap | p90 `|gap|` |
+> | --- | ---: | ---: | ---: |
+> | real | **0.0000** | **71 - 79%** | 0.012 - 0.040 |
+> | the surrogate | **0.60 - 0.64** | 0.01 - 0.16% | 1.64 - 1.88 |
+>
+> The market is contiguous on three quarters of its bars and reaches its mean
+> through a minority of session-boundary gaps; the surrogate gaps 0.6 of a
+> range on **every** bar. So the arm does plant a collectable edge for anything
+> that fills on a gap, and the +0.1012R is it.
+>
+> **Both failures were the same failure.** The first version diagnosed a
+> mechanism on a hand-built source with zero gap and never measured the
+> market's; the withdrawal measured the market with a statistic that averages
+> the defect away. A mechanism is not a defect until the thing it should be
+> absent from has been checked, **and not with a statistic that cannot tell
+> them apart**.
+>
+> A second limit stands on its own and is below under
+> [a resting-limit arm is not measurable on bar data](#a-resting-limit-arm-is-not-measurable-on-bar-data):
+> OHLC does not order the high and the low, so any fill inside a bar is the
+> harness choosing an intrabar path. **The refutation never rested on that arm
+> and does not now.**
 
 **Measured 2026-11-10**, pre-registered as shortlist item 1 of
 [`tradingview-survey.md`](tradingview-survey.md) and run to the specification
@@ -590,9 +611,11 @@ screen wants a week of quotes and does not yet have one.
 * **The multiplicity count.** 98 instrument-clock cells, 432 sweep cells, 4
   arms, 5 null series, 2 zone populations. Nothing was selected on; the full grid
   is printed; and 0 cells survive BH on the published population.
-* **One claim in this document was withdrawn before review**, and the banner at
-  the top says which. The numbers that changed when it was withdrawn are the
-  `walk` columns and nothing else.
+* **One claim in this document was withdrawn and then reinstated**, and the
+  banner at the top says which and why. The numbers involved are the `walk`
+  columns and nothing else; the verdict rests on `P(>= 2R)` against its
+  arithmetic rate, on a placebo running through the identical construction, and
+  on per-cell counts, none of which touches a surrogate.
 
 ## Re-running
 

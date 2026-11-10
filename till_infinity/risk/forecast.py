@@ -127,9 +127,19 @@ def band(forecast: float, bars: float = 1.0, *, tau: float = TAU, dof: float = D
     through that bar, and `sqrt` of a fraction would report a band tighter than
     the bar it is measured in.
 
-    **`bars` above one is unmeasured.** The calibration result is a one-bar
-    result; see the module docstring for the 30-against-295-pip arithmetic that
-    makes the difference a decision rather than a detail.
+    **`bars` above one understates, and by how much is now measured.**
+    `research/docs/band-scaling.md`, over 31 instruments at 15m: the multiplier
+    this band would need is 0.950 at two bars - maximum 0.995, so no instrument
+    needs more and the one-bar result reproduces - then 1.062 at ten bars,
+    1.082 at twenty and **1.153 at forty-eight**. A stop is a barrier rather
+    than a terminal distribution, so price ends up closer than `sqrt(q)`
+    suggests and travels further on the way; the variance ratio reads 0.868 at
+    q=48 with a robust `z*` of -2.30 and would have licensed scaling by *less*.
+
+    So `bars > 1` is not shipped: the per-instrument spread at 48 bars is 0.835
+    to 1.395, and one pooled factor would widen the tightest instrument's stop
+    by 38% more than it needs. A multi-bar floor wants a per-instrument factor
+    from that instrument's own history.
     """
     if forecast <= 0.0:
         return 0.0

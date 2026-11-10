@@ -252,19 +252,22 @@ class TestTheClosedRegister:
             null_for("fractal")
 
 
-def test_the_walk_keeps_the_market_s_own_sawtooth_rather_than_removing_it():
-    """**A mean gap of zero would be the defect, not the fix.**
+def test_the_walk_gaps_at_every_bar_where_the_market_is_contiguous():
+    """**The test this replaced asserted the wrong statistic and passed.**
 
-    `close[i] - close[i-1]` is `(open[i] - close[i-1]) + (close[i] - open[i])`,
-    so a series whose bars close above their opens with no close-to-close
-    drift has `mean(gap) = -mean(body)` identically - the market included.
-    Measured over 12 hourly stores, the real mean gap is negative on 10 of 12
-    and the surrogate understates it as often as it overstates it.
+    It pinned the surrogate's *mean* gap as negative, on the argument that the
+    market's is too. Both are -0.012 of a bar range, and the agreement is an
+    accident of `mean(gap) = -mean(body)` holding for any series: the market
+    reaches it through a minority of session-boundary gaps while otherwise
+    being contiguous - median `|gap|` **0.0000** with **71-79% of bars at
+    exactly zero** - and this surrogate reaches it by gapping **0.60-0.64 of a
+    range on every bar**, with p90 at 1.64-1.88 against the market's
+    0.012-0.040.
 
-    This exists because the construction was reported as planting a sawtooth
-    and the proposed fix - opening each bar at the previous close - would set
-    the surrogate's mean gap to exactly zero where the market's is about
-    -0.011 of a bar range. That is a different series, not a corrected one.
+    So this asserts the property that actually matters to a caller: the arm
+    plants a gap at every open, which makes it unusable for anything that
+    fills on one - a resting limit, a stop marked at the open, a gap filter.
+    A study measured its long-entry arm paying +0.1012R a trade on this null.
     """
     import random
     import statistics
@@ -272,29 +275,31 @@ def test_the_walk_keeps_the_market_s_own_sawtooth_rather_than_removing_it():
     from till_infinity.node.surrogates import walk_with_bar_geometry
 
     rng = random.Random(20261110)
-    # Bars that close above their opens, as a drifting market's do, with the
-    # close-to-close step near zero - which is what forces the identity.
+    # Contiguous bars, as a 15m FX series is on about three quarters of bars:
+    # each open *is* the previous close. **The shapes have to vary**, because
+    # the planted gap is what happens when bar A's open-inside-its-range is
+    # applied at a level set by bar B's close - a fixture whose bars all have
+    # the same shape reproduces itself and reads a gap of 0.011.
     bars = []
     close = 100.0
-    for i in range(400):
-        open_ = close - 0.10
-        high = open_ + 0.22 + 0.01 * (i % 3)
-        low = open_ - 0.08
-        close = open_ + 0.10 + 0.002 * ((i % 5) - 2)
+    for _ in range(400):
+        open_ = close
+        close = open_ + rng.gauss(0.0, 0.10)
+        high = max(open_, close) + abs(rng.gauss(0.0, 0.08))
+        low = min(open_, close) - abs(rng.gauss(0.0, 0.08))
         bars.append((open_, high, low, close))
 
-    def sawtooth(series):
-        gaps = [series[i][0] - series[i - 1][3] for i in range(1, len(series))]
-        bodies = [c[3] - c[0] for c in series]
-        return statistics.fmean(gaps), statistics.fmean(bodies)
+    def gaps(series):
+        share = [
+            abs(series[i][0] - series[i - 1][3]) / max(series[i][1] - series[i][2], 1e-12)
+            for i in range(1, len(series))
+        ]
+        return statistics.median(share), sum(1 for x in share if x < 1e-9) / len(share)
 
-    real_gap, real_body = sawtooth(bars)
-    assert real_gap < 0.0, "the fixture is not a market-shaped one"
-    assert real_body > 0.0
+    real_median, real_zero = gaps(bars)
+    assert real_median == 0.0, "the fixture is not a contiguous series"
+    assert real_zero > 0.9
 
-    fake_gap, fake_body = sawtooth(walk_with_bar_geometry(bars, rng=rng))
-    assert fake_gap < 0.0, "the surrogate removed a sawtooth the market has"
-    # Same side and the same order of magnitude, which is the claim. Not
-    # equality: the span and the shape are resampled independently.
-    assert 0.2 < abs(fake_gap / real_gap) < 5.0, (real_gap, fake_gap)
-    assert fake_body > 0.0
+    fake_median, fake_zero = gaps(walk_with_bar_geometry(bars, rng=rng))
+    assert fake_median > 0.3, f"the planted gap is gone at {fake_median:.3f} - check the arm"
+    assert fake_zero < 0.05, "the surrogate is contiguous, which this arm is not"

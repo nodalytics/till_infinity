@@ -52,6 +52,23 @@ So the transition hazard is per hour and it is applied over the displacement's
 **own duration**. A regime that lasts twenty hours lasts twenty hours whether
 the market turned twice inside it or ten times.
 
+## It is refuted as written, and the fix is the observable
+
+Measured in `research/docs/statespace-displacement-sequences.md`: this beats
+the shuffled sequence in 33 of 51 cells and loses 18, every loss at 1h, by
+**0.009 nats a reading** - and the generated markets beat the shuffle too. The
+reason is in the observable rather than in the model. The ratio's headline
+lag-1 correlation of **-0.451** is `-0.500` of arithmetic plus the market: two
+consecutive ratios share a term, which forces `-(1 - r) / 2` for an AR(1) in
+log size with coefficient `r`. Inverting, the market's log-size
+autocorrelation is **+0.098** against its own shuffle's **+0.046** - an excess
+of about **0.05**, which is all there is to find and is what this member
+already found.
+
+So fitting the *level* rather than the ratio is the correction, and the doc's
+"What would make `symmetry.py` work" section has the three changes and what
+they are worth. Nothing under `till_infinity/` imports this module.
+
 ## Its likelihood is not comparable to a price member's
 
 This member observes a ratio, not a price. Its `loglike` is a density over a
