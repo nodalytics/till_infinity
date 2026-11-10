@@ -4097,3 +4097,104 @@ class TestTheUnprotectedSweep:
         await rig.client._disconnect()
         assert rig.client._sweeper is None
         assert rig.client._refresh is None
+
+
+class TestProtectionSurvivesARestart:
+    """A position that goes naked across a restart, which the sweep could not fix.
+
+    **The failure, on 2026-11-10.** A live XAUUSD short ran with `sl 0.0 tp
+    0.0` and the sweep reported "no stop at the broker and no stop order in the
+    cache to copy" every sixty seconds until it was given a stop by hand. The
+    sweep copies the cache's own stop order, and reconciliation rebuilds a
+    position **without** the bracket legs that protected it - so after a
+    restart there is nothing to copy, by construction, and the one repair that
+    cannot be made is the one for a position nobody is watching.
+
+    So the client writes down what the broker confirmed, and the sweep reads it
+    when the cache is empty. The cache stays first: a trailing stop moves
+    there, and a file that overrode it would undo a move the desk had made.
+    """
+
+    @staticmethod
+    def _store(tmp_path, monkeypatch, rows: dict | None = None):
+        import json
+
+        from till_infinity.adapters.mt5 import execution as mod
+
+        path = tmp_path / "protection.json"
+        if rows is not None:
+            path.write_text(json.dumps(rows))
+        monkeypatch.setattr(mod, "PROTECTION_PATH", path)
+        return path
+
+    async def test_a_recorded_stop_repairs_a_position_the_cache_has_forgotten(
+        self, tmp_path, monkeypatch
+    ):
+        """**The case that had to be fixed by hand.** No stop order in the
+        cache, because the process restarted - but the legs are on record."""
+        self._store(tmp_path, monkeypatch, {"77": {"sl": 1.07, "tp": 1.09}})
+        bare = [{"ticket": 77, "symbol": "EURUSD", "sl": 0.0, "tp": 0.0, "magic": MAGIC}]
+        fixed = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 1.09, "magic": MAGIC}]
+        reads = iter((bare, bare, fixed, fixed))
+        rig = make_exec(FakeBridge(positions=lambda: next(reads, fixed)))
+
+        assert await rig.client._repair_unprotected() == 1
+        sent = rig.bridge.called("modify")
+        assert sent, "a position with a recorded stop was left bare"
+        assert float(sent[-1][0][1]) == pytest.approx(1.07)
+        assert float(sent[-1][0][2]) == pytest.approx(1.09)
+
+    async def test_the_cache_wins_over_the_record(self, tmp_path, monkeypatch):
+        """**The control, and the expensive one to get wrong.** A trailing stop
+        moves in the cache; a record written at entry is stale by then, and
+        preferring it would undo a move the desk had decided on."""
+        self._store(tmp_path, monkeypatch, {"77": {"sl": 1.05, "tp": 1.09}})
+        bare = [{"ticket": 77, "symbol": "EURUSD", "sl": 0.0, "tp": 0.0, "magic": MAGIC}]
+        fixed = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 0.0, "magic": MAGIC}]
+        reads = iter((bare, bare, fixed, fixed))
+        rig = make_exec(FakeBridge(positions=lambda: next(reads, fixed)))
+        _open_stop(rig, _factory(), "1.07000")  # the cache's own, moved since entry
+
+        await rig.client._repair_unprotected()
+        sent = rig.bridge.called("modify")
+        assert float(sent[-1][0][1]) == pytest.approx(1.07), "the stale record won"
+
+    async def test_what_is_recorded_is_what_the_broker_confirmed(self, tmp_path, monkeypatch):
+        """Written from `_protect`'s own re-read, not from the request. A
+        retcode of 10009 over a naked position has happened here, so the
+        request is not evidence."""
+        path = self._store(tmp_path, monkeypatch)
+        held = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 1.09, "magic": MAGIC}]
+        rig = make_exec(FakeBridge(positions=lambda: held))
+
+        instrument = await rig.client._instrument(EURUSD_ID)
+        missing, _why = await rig.client._protect(77, sl=1.07, tp=1.09, instrument=instrument)
+        assert missing == frozenset()
+        import json
+
+        assert json.loads(path.read_text())["77"] == {"sl": 1.07, "tp": 1.09}
+
+    async def test_a_closed_ticket_is_forgotten(self, tmp_path, monkeypatch):
+        """Pruned against the broker's open tickets rather than on a timer, so
+        the file cannot grow without bound and cannot carry a closed position's
+        stop into anything."""
+        import json
+
+        path = self._store(
+            tmp_path, monkeypatch, {"77": {"sl": 1.07, "tp": 0.0}, "88": {"sl": 2.0}}
+        )
+        held = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 1.09, "magic": MAGIC}]
+        rig = make_exec(FakeBridge(positions=lambda: held))
+
+        await rig.client._repair_unprotected()
+        assert set(json.loads(path.read_text())) == {"77"}, "a closed ticket was kept"
+
+    async def test_no_file_is_an_empty_record_and_not_an_error(self, tmp_path, monkeypatch):
+        """The sweep must degrade to what it did before this existed, so an
+        absent file reports the naked position rather than failing the pass."""
+        self._store(tmp_path, monkeypatch)
+        bare = [{"ticket": 77, "symbol": "EURUSD", "sl": 0.0, "tp": 0.0, "magic": MAGIC}]
+        rig = make_exec(FakeBridge(positions=lambda: bare))
+
+        assert await rig.client._repair_unprotected() == 0
+        assert rig.bridge.called("modify") == [], "a price was invented"

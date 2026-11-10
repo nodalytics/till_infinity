@@ -17,6 +17,8 @@ from __future__ import annotations
 
 from types import SimpleNamespace
 
+import pytest
+
 from till_infinity.strategies.screening import (
     ScreenConfig,
     VolatileScreen,
@@ -31,7 +33,20 @@ def feed(screen: VolatileScreen, name: str, ranges: list[float], close: float = 
         screen._ranges[name].append(10_000.0 * span / close)
 
 
-def ranked(screen: VolatileScreen) -> dict:
+def _quoting(spreads: dict):
+    """A `quote_tick` answering these bar types, keyed by instrument id."""
+    from nautilus_trader.model.data import BarType
+
+    by_id = {str(BarType.from_str(name).instrument_id): pair for name, pair in spreads.items()}
+
+    def quote_tick(instrument_id):
+        pair = by_id.get(str(instrument_id))
+        return None if pair is None else SimpleNamespace(bid_price=pair[0], ask_price=pair[1])
+
+    return quote_tick
+
+
+def ranked(screen: VolatileScreen, quotes: dict | None = None) -> dict:
     """`_rank` on a stub whose publish and log are recorders."""
     sent: list[tuple[str, object]] = []
     said: list[str] = []
@@ -41,9 +56,16 @@ def ranked(screen: VolatileScreen) -> dict:
         _rankings=0,
         log=SimpleNamespace(info=said.append, warning=said.append),
         msgbus=SimpleNamespace(publish=lambda topic, msg: sent.append((topic, msg))),
+        # **`Actor.cache` is read-only on the Cython base**, like `clock` and
+        # `log`, so the quotes are handed in here rather than set on the
+        # screen. No quotes answers `None`, which is the case the cost half has
+        # to tolerate.
+        cache=SimpleNamespace(quote_tick=_quoting(quotes or {})),
     )
+    stub._costs = lambda names: VolatileScreen._costs(stub, names)
     VolatileScreen._rank(stub)
-    return {"sent": sent, "said": said}
+    payload = dict(sent[-1][1]) if sent else {}
+    return {"sent": sent, "said": said, **payload}
 
 
 # ------------------------------------------------------------- the ranking
@@ -131,20 +153,59 @@ def test_the_payload_reader_refuses_a_shape_it_does_not_know():
 # ---------------------------------------------------------------- the gate
 
 
-def gate(*, on: bool, admitted: list[str], mine: str) -> object:
+def gate(
+    *,
+    on: bool,
+    admitted: list[str],
+    mine: str,
+    rules: tuple[str, ...] = (),
+    rule: str = "zones",
+) -> object:
     """`Desk._volatile_enough` on a stub carrying only what it reads."""
     from till_infinity.strategies.desk import Desk
 
     stub = SimpleNamespace(
-        settings=SimpleNamespace(volatile_only=on),
+        settings=SimpleNamespace(volatile_only=on, volatile_rules=rules),
         _admitted=admitted,
         _cfg=SimpleNamespace(
             bar_type=mine,
+            rule=rule,
             instrument_id=SimpleNamespace(symbol="EURUSD"),
         ),
         _feed_name=lambda: "eurusd",
     )
     return Desk._volatile_enough(stub)
+
+
+def test_the_screen_only_gates_the_rules_it_is_pointed_at():
+    """**The screen is a scalping filter and one live rule is not a scalp.**
+
+    `structure.HOLD_MINUTES // 15` is **96 bars - a full day** against
+    `volimpulse.HOLD_BARS`' 16, so gating `smc-bos-causal` on the volatile
+    subset would restrict a rule to a universe its own numbers were never
+    measured on. With `TRADING_VOLATILE_RULES` naming the scalps, an unnamed
+    rule passes whatever the ranking says.
+    """
+    scalps = ("vol-impulse", "zones")
+
+    # Named and outside the admitted head: refused, which is the point.
+    refusal = gate(on=True, admitted=["X"], mine="Z", rules=scalps, rule="zones")
+    assert refusal is not None, "a named rule outside the head was admitted"
+    assert refusal.gate == "not-volatile"
+
+    # Not named: the ranking is not consulted at all.
+    assert gate(on=True, admitted=["X"], mine="Z", rules=scalps, rule="smc-bos-causal") is None
+    assert gate(on=True, admitted=[], mine="Z", rules=scalps, rule="smc-bos-causal") is None
+
+    # Case-blind, because `TRADING_STRATEGIES` is matched that way too.
+    assert gate(on=True, admitted=["X"], mine="Z", rules=scalps, rule="ZONES") is not None
+
+
+def test_an_empty_rule_list_gates_everything_which_is_the_old_behaviour():
+    """Empty is every rule, so a deployment that set only the master switch
+    behaves as it did before the scoping existed - and the setting's docstring
+    says that is rarely what is wanted."""
+    assert gate(on=True, admitted=["X"], mine="Z", rules=(), rule="smc-bos-causal") is not None
 
 
 def test_off_is_a_true_no_op():
@@ -294,3 +355,98 @@ def test_warming_off_is_a_no_op_rather_than_a_crash():
     if stub._cfg.warm_bars > 0:
         VolatileScreen._warm(stub)
     assert asked == []
+
+
+def test_the_cheapest_share_is_admitted_beside_the_loudest_as_a_union():
+    """**The union is the operator's call and it is the permissive direction.**
+
+    An instrument gets in by moving a lot *or* by being cheap, because the
+    per-trade cost gate still refuses anything that cannot pay - so the screen
+    is the coarse filter and the gate does the fine work.
+
+    The two criteria pull against each other on this book, which is why the
+    cost half is worth having: ranking by range selects for cost too, since the
+    spread here scales with the range. The first live ranking admitted oil,
+    crypto and exotic metals, including `BNBUSD`, which cannot clear its own
+    cost gate at 18% of target against a 10% ceiling.
+    """
+    from till_infinity.strategies.screening import ScreenConfig, VolatileScreen
+
+    loud_cheap = "A.SIM-15-MINUTE-LAST-EXTERNAL"
+    loud_dear = "B.SIM-15-MINUTE-LAST-EXTERNAL"
+    quiet_cheap = "C.SIM-15-MINUTE-LAST-EXTERNAL"
+    quiet_dear = "D.SIM-15-MINUTE-LAST-EXTERNAL"
+
+    screen = VolatileScreen(ScreenConfig(bar_types=(), share=0.5, cost_share=0.5))
+    for name, ranges in (
+        (loud_cheap, [0.9] * 20),
+        (loud_dear, [0.8] * 20),
+        (quiet_cheap, [0.1] * 20),
+        (quiet_dear, [0.2] * 20),
+    ):
+        feed(screen, name, ranges)
+    quotes = {
+        loud_cheap: (99.99, 100.01),
+        loud_dear: (99.5, 100.5),
+        quiet_cheap: (99.99, 100.01),
+        quiet_dear: (99.5, 100.5),
+    }
+
+    sent = ranked(screen, quotes)
+    assert set(sent["loud"]) == {loud_cheap, loud_dear}, sent["loud"]
+    assert set(sent["cheap"]) == {loud_cheap, quiet_cheap}, sent["cheap"]
+    # The union is strictly larger than either half, which is the point of it.
+    assert set(sent["admitted"]) == {loud_cheap, loud_dear, quiet_cheap}
+    assert len(sent["admitted"]) > len(sent["loud"])
+
+
+def test_an_unquoted_instrument_cannot_enter_on_cost():
+    """**A missing cost ranked as free would admit exactly the instruments
+    nothing can be priced on.** It stays eligible on volatility, which is a
+    measurement the screen makes itself."""
+    from till_infinity.strategies.screening import ScreenConfig, VolatileScreen
+
+    loud = "A.SIM-15-MINUTE-LAST-EXTERNAL"
+    quiet = "B.SIM-15-MINUTE-LAST-EXTERNAL"
+    screen = VolatileScreen(ScreenConfig(bar_types=(), share=0.5, cost_share=0.5))
+    feed(screen, loud, [0.9] * 20)
+    feed(screen, quiet, [0.1] * 20)
+    sent = ranked(screen, {})  # no quotes at all
+    assert sent["cheap"] == []
+    assert sent["admitted"] == [loud], "an unquoted instrument entered on cost"
+
+
+def test_the_ratio_is_published_so_a_refusal_can_say_which_axis():
+    """How many round trips wide a bar is - the quantity a scalp needs, free to
+    compute once both numbers are in hand."""
+    from till_infinity.strategies.screening import ScreenConfig, VolatileScreen
+
+    name = "A.SIM-15-MINUTE-LAST-EXTERNAL"
+    screen = VolatileScreen(ScreenConfig(bar_types=(), share=1.0, cost_share=0.0))
+    feed(screen, name, [1.0] * 20)  # 100 bps of range on a close of 100
+    row = ranked(screen, {name: (99.95, 100.05)})["ranked"][0]  # 10 bps round trip
+    assert row["range_bps"] == pytest.approx(100.0)
+    assert row["cost_bps"] == pytest.approx(10.0)
+    assert row["ranges_per_cost"] == pytest.approx(10.0)
+
+
+def test_turning_the_cost_half_off_leaves_the_old_ranking_exactly():
+    """`cost_share=0` is bit-identical to the volatility-only screen, so the
+    change is reversible with a setting rather than a deploy."""
+    from till_infinity.strategies.screening import ScreenConfig, VolatileScreen
+
+    loud = "A.SIM-15-MINUTE-LAST-EXTERNAL"
+    quiet = "B.SIM-15-MINUTE-LAST-EXTERNAL"
+    screen = VolatileScreen(ScreenConfig(bar_types=(), share=0.5, cost_share=0.0))
+    feed(screen, loud, [0.9] * 20)
+    feed(screen, quiet, [0.1] * 20)
+    sent = ranked(screen, {quiet: (99.99, 100.01)})  # the quiet one is cheapest
+    assert sent["cheap"] == []
+    assert sent["admitted"] == [loud]
+
+
+def test_the_default_volatility_share_is_the_top_third():
+    from till_infinity.strategies.screening import ScreenConfig
+
+    assert ScreenConfig().share == pytest.approx(0.3)
+    assert ScreenConfig().cost_share == pytest.approx(0.2)

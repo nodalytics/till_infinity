@@ -702,6 +702,21 @@ class Settings:
     #: book under a rule written for the loud one. Off is a true no-op, because
     #: a gate that silently admits everything reads the same as one that works.
     volatile_only: bool = False
+    #: Which rules the volatility screen gates. `TRADING_VOLATILE_RULES`,
+    #: empty.
+    #:
+    #: **Empty means every rule, and that is rarely what is wanted.** The
+    #: screen exists for scalping - "only the volatile ones" - and a rule whose
+    #: hold is 96 bars is not scalping: `structure.HOLD_MINUTES // 15` is a
+    #: **24-hour** hold against `volimpulse.HOLD_BARS`' 16. Gating the long
+    #: rule restricts it to a universe its own numbers were never measured on,
+    #: which is what `reproduce-the-baseline-before-an-increment` is a warning
+    #: about.
+    #:
+    #: Named rather than derived from the hold, because a hold threshold is a
+    #: constant nobody measured and this is a deployment's own statement about
+    #: which of its rules are scalps.
+    volatile_rules: tuple[str, ...] = ()
 
     #: The net edge, in volatility units, that earns full size. Zero is off.
     #: Measured; see `research/docs/settings.md`.
@@ -1565,6 +1580,7 @@ class Settings:
             agreement_share=_float("TRADING_AGREEMENT_SHARE", 0.0),
             forecast_band=_flag("TRADING_FORECAST_BAND", False),
             volatile_only=_flag("TRADING_VOLATILE_ONLY", False),
+            volatile_rules=_names(_env("TRADING_VOLATILE_RULES")),
             regime_band=_float("TRADING_REGIME_BAND", 0.0),
             regime_floor=_float("TRADING_REGIME_FLOOR", 0.5),
             spike_above=_float("TRADING_SPIKE_ABOVE", 0.0),
