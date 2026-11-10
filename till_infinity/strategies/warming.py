@@ -139,6 +139,9 @@ class WarmFromHistory:
         if not isinstance(getattr(self, "warmed", None), dict):
             self.warmed = {}
         self.warmed.setdefault("bars", 0)
+        #: `(bar type, close stamp)` already folded, so one bar is folded once
+        #: however many times it is delivered. Bounded by the request limit.
+        self._warm_seen: set[tuple[str, int]] = set()
         wanted = int(getattr(self.profile, "warm_bars_request", DEFAULT_WARM_BARS) or 0)
         if wanted <= 0:
             return
@@ -205,9 +208,40 @@ class WarmFromHistory:
         every `TALLY_EVERY` seconds, which is the number anyone wants.
         """
         rows = data if isinstance(data, (list, tuple)) else [data]
+        asked = {str(bar_type) for bar_type in self.warm_bar_types()}
+        seen = getattr(self, "_warm_seen", None)
+        if seen is None:
+            seen = self._warm_seen = set()
         for row in rows:
             if not isinstance(row, Bar):
                 continue
+            spelling = str(row.bar_type)
+            # **A desk is delivered history it never asked for.** Measured on
+            # the live instance on 2026-11-10: a `zones` desk on `bnbusd`
+            # folded 401 bars for a 400-bar request, `btcusd` 651, `audcad`
+            # 617 and `euraud` **1,255** - and euraud has six requesters on
+            # its clock (zones, structure, vol-impulse, and identity-arb's
+            # three legs). So the responses arrive per bar type rather than
+            # per requester, and before this guard every rule folded the
+            # others' history into its own detectors.
+            #
+            # The instrument half is the damaging one: `identity-arb` requests
+            # its *partner* legs, so a desk on EURAUD was folding EURUSD and
+            # AUDUSD closes into one `BjorgumLevels`. Reproduced offline -
+            # interleaving three legs took the ATR from **0.00132 to 0.62083**,
+            # a factor of 470, which makes every zone width and every stop
+            # distance derived from it meaningless.
+            if spelling not in asked:
+                self.warmed["foreign"] = self.warmed.get("foreign", 0) + 1
+                continue
+            # The same bar type can also be requested by several desks, so a
+            # bar of this rule's *own* clock can still arrive more than once.
+            # Keyed on the close stamp, which is what makes a bar that bar.
+            key = (spelling, int(row.ts_event))
+            if key in seen:
+                self.warmed["repeat"] = self.warmed.get("repeat", 0) + 1
+                continue
+            seen.add(key)
             self.warmed["bars"] = self.warmed.get("bars", 0) + 1
             self.warm_bar(row)
 

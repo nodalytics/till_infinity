@@ -21,9 +21,15 @@ def line(counts: dict[str, int], *, zones: int, initialized: bool = True) -> str
     """`Zones._tally_extra` on a stub carrying only what it reads."""
     stub = SimpleNamespace(
         counts=counts,
-        warmed={"bars": counts.get("warm", 0)},
+        warmed={
+            "bars": counts.get("warm", 0),
+            **({"foreign": counts["foreign"]} if "foreign" in counts else {}),
+            **({"repeat": counts["repeat"]} if "repeat" in counts else {}),
+        },
         levels=SimpleNamespace(
             initialized=initialized,
+            bars=counts.get("bars", 0),
+            atr=0.00132,
             zones=[SimpleNamespace(at=i) for i in range(zones)],
         ),
     )
@@ -81,3 +87,32 @@ def test_the_warm_bar_count_is_reported_apart_from_the_live_one():
     got = line({"bars": 400, "warm": 380, "unwarmed": 50, "signals": 0}, zones=18)
     assert "bars=400" in got
     assert "warm=380" in got
+
+
+def test_the_indicators_own_bar_count_and_scale_are_reported():
+    """**The desk's view of the indicator is not the indicator.** On 2026-11-10
+    a live tally read `bars=617 warm=616 unwarmed=617 zones=0` and there was no
+    way to tell an indicator that had been fed nothing from one that had been
+    fed 616 bars and nominated nothing. `fed` is `BjorgumLevels.bars`, its own
+    count, and `atr` is the number every zone width derives from - folding
+    another instrument's bars took it from 0.00132 to 0.62083 in reproduction,
+    a factor of 470, and nothing on the line would have shown it."""
+    got = line({"bars": 617, "warm": 616, "unwarmed": 617, "signals": 0}, zones=0)
+    assert "fed=617" in got
+    assert "atr=0.00132" in got
+
+
+def test_foreign_and_repeated_history_are_reported_only_when_they_happen():
+    """A desk is delivered history it never requested - measured at 3 to 6
+    responses per desk. The guard refuses them; these counters are how a
+    reader sees that it is still happening at all."""
+    quiet = line({"bars": 400, "warm": 400, "unwarmed": 0, "signals": 0}, zones=5)
+    assert "foreign=" not in quiet
+    assert "repeat=" not in quiet
+
+    noisy = line(
+        {"bars": 400, "warm": 400, "unwarmed": 0, "signals": 0, "foreign": 208, "repeat": 416},
+        zones=5,
+    )
+    assert "foreign=208" in noisy
+    assert "repeat=416" in noisy
