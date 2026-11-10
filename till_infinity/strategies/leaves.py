@@ -65,6 +65,14 @@ from .entries import (
 )
 from .exits import ExitMechanism, ManagedExit, VenueExit
 from .identity import IdentityEdge
+from .origins import (
+    OriginsArrival,
+    OriginsEdge,
+    OriginsResting,
+    SmcZonesArrival,
+    SmcZonesEdge,
+    SmcZonesResting,
+)
 from .profile import Profile
 from .structure import StructureEdge
 from .surprise import SurpriseArrival, SurpriseEdge, SurpriseResting
@@ -213,6 +221,30 @@ LEAVES: dict[tuple[str, str], type[Desk]] = {
     ("zones", "edge"): ZonesEdge,
     ("zones", "resting"): ZonesResting,
     ("zones", "arrival"): ZonesArrival,
+    # **One zone, two nominators, and that is the whole reason both are here.**
+    # `indicators/levels.Origin` records that an order block, a displacement
+    # origin and a supply/demand zone are the same candle under three names, so
+    # these two rules differ in what must have happened for a candle to count -
+    # an impulsive chain, or an impulsive chain that also broke structure - and
+    # not in what they then trade. Registering both is what makes the
+    # comparison runnable; `smc-primitives-overlap-and-are-closed` is what
+    # happens when two named primitives turn out to be one event, and the way
+    # to find out is to run them side by side.
+    #
+    # **Registered and in no default.** Neither appears in any
+    # `TRADING_STRATEGIES` anywhere, because the measurement that would license
+    # trading a crossing of these zones does not exist: the *fade* to them is
+    # dead - 0 of 105 cells with a positive lower bound, -0.007R over 2,786
+    # trades at 1h - and the crossing has never been asked. Registering them is
+    # what makes `TRADING_STRATEGIES=displacement-zones` measurable at all,
+    # since `desks.build` refuses an unregistered name. Same footing as
+    # `vol-impulse`, for the same reason.
+    ("displacement-zones", "edge"): OriginsEdge,
+    ("displacement-zones", "resting"): OriginsResting,
+    ("displacement-zones", "arrival"): OriginsArrival,
+    ("smc-zones", "edge"): SmcZonesEdge,
+    ("smc-zones", "resting"): SmcZonesResting,
+    ("smc-zones", "arrival"): SmcZonesArrival,
     # **One entry, deliberately, and registered without being enabled.**
     # `VI_M15_imp_H4sq` says "enter at the next 1-minute open", so a rest at a
     # named price and a wait for an arrival are both a different rule; listed
