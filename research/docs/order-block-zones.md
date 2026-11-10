@@ -163,6 +163,19 @@ the same finding reached independently.
   `setups`. See the correction above.**
 - **A frozen forward test of the flip**, on instruments the rule was never
   developed on - indices, energy, crypto alts, Deriv - and then on new bars.
+  **Partly answered 2026-11-10 by [`breaker-blocks.md`](breaker-blocks.md)**,
+  which gave "flipped" the mechanical definition this study lacked (LuxAlgo's
+  and EmreKb's) and ran it on 30 traded instruments and 13 Deriv families. The
+  published breaker is refuted outright. On **these** zones, re-run with that
+  lifecycle, the flip reads **-0.0635R** [-0.1314, +0.0109] on 1,534 trades and
+  is worse than both its placebo and the fade; at 4h the interval excludes
+  +0.506R on 328 trades, and **at 1d, on 45 trades, it excludes nothing**. So the
+  1d half of the number above is still open, and only new bars or the broker's
+  own daily history will close it - a UTC-day fold of 15m bars from 2015 is too
+  short. Two notes for anyone reading this document's arms: the flip, straight
+  and coin arms here held `MAXHOLD = 300` bars while `real` held `HOLD_DAYS = 5`,
+  which at 1d moves `P(>= 4R)` by **11x**, and LuxAlgo's order block agrees with
+  `ob_zones` on a Jaccard of **0.0027**, so the two are different objects.
 
 ## On the search
 
