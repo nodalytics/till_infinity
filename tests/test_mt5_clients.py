@@ -1494,6 +1494,56 @@ def _limit(side: OrderSide = OrderSide.BUY, price: str = "1.08000") -> Any:
     return _factory().limit(EURUSD_ID, side, Quantity.from_str("0.50"), Price.from_str(price))
 
 
+def _open_stop(rig: Any, factory: Any, price: str, side: Any = None) -> Any:
+    """A stop order the cache reports as **open**, which is the state that matters.
+
+    `Cache.orders_open` is what `_cached_stop` reads, and an order merely added
+    is `INITIALIZED` rather than open - so a test that only added one would
+    assert the sweep finds nothing and pass for the wrong reason. The events
+    are applied in the order Nautilus requires: submitted, then accepted.
+    """
+    from nautilus_trader.test_kit.stubs.events import TestEventStubs
+
+    order = factory.stop_market(
+        EURUSD_ID,
+        side if side is not None else OrderSide.SELL,
+        Quantity.from_str("0.50"),
+        Price.from_str(price),
+    )
+    order.apply(TestEventStubs.order_submitted(order))
+    rig.client._cache.add_order(order, None)
+    order.apply(TestEventStubs.order_accepted(order))
+    # **`add_order` does not index an order as open; `update_order` does.** With
+    # only the add, `order.is_open` reads True while
+    # `Cache.orders_open(instrument_id=...)` returns nothing - so a test that
+    # skipped this would assert the sweep finds no stop and pass for the wrong
+    # reason.
+    rig.client._cache.update_order(order)
+    return order
+
+
+def _open_limit(rig: Any, factory: Any, price: str, side: Any = None) -> Any:
+    """A limit order the cache reports as **open** - a bracket's target leg.
+
+    The same `update_order` step as `_open_stop` and for the same reason: with
+    only the add, `Cache.orders_open` returns nothing and a test would assert
+    the sweep finds no target and pass for the wrong reason.
+    """
+    from nautilus_trader.test_kit.stubs.events import TestEventStubs
+
+    order = factory.limit(
+        EURUSD_ID,
+        side if side is not None else OrderSide.SELL,
+        Quantity.from_str("0.50"),
+        Price.from_str(price),
+    )
+    order.apply(TestEventStubs.order_submitted(order))
+    rig.client._cache.add_order(order, None)
+    order.apply(TestEventStubs.order_accepted(order))
+    rig.client._cache.update_order(order)
+    return order
+
+
 def _bracket(side: OrderSide = OrderSide.BUY, sl: str = "1.07000", tp: str = "1.09000") -> Any:
     """An entry with a stop and a target, as every strategy here submits."""
     return _factory().bracket(
@@ -3879,3 +3929,171 @@ class TestTheBridgeSpeaksTheWireProtocol:
     # property plus two things this copy did not: that the API key reaches the
     # session's headers, and that `session` raises again after a close. The
     # double-close case above is the one part that was only here, so it stays.
+
+
+class TestTheUnprotectedSweep:
+    """A position the broker holds with no stop, whatever the engine believes.
+
+    **The failure this exists for was silent on both sides.** On 2026-11-10 two
+    live positions ran with `sl 0.0 tp 0.0` while every desk-side check passed:
+    `ManagedExit._protects()` was True and `_guards()` reported that the entry
+    had already bracketed them. Nautilus held the legs; MT5 did not. The
+    container's log carried **zero** `closing` lines, so nothing had failed
+    loudly - the two sides simply disagreed, which is the one shape a check
+    reading our own view cannot see.
+
+    `judge-the-desk-on-the-broker-not-the-journal` is the standing rule for
+    which side to believe, and these tests are that rule made executable.
+    """
+
+    async def test_a_bare_position_is_given_the_stop_the_cache_intended(self):
+        """The repair is a copy, never an invention. An open stop order on the
+        instrument is what the rule asked for; putting it on the venue restores
+        the engine's own intention rather than this adapter choosing a price."""
+        # **The second read is the verdict, not the modify's reply.**
+        # `_protect` re-reads the position and compares it against what it
+        # asked for, so a fake that returned the bare row for ever would make
+        # a correct repair look like a failed one.
+        bare = [{"ticket": 77, "symbol": "EURUSD", "sl": 0.0, "tp": 0.0, "magic": MAGIC}]
+        fixed = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 0.0, "magic": MAGIC}]
+        reads = iter((bare, bare, fixed, fixed))
+        rig = make_exec(FakeBridge(positions=lambda: next(reads, fixed)))
+
+        _open_stop(rig, _factory(), "1.07000")
+
+        repaired = await rig.client._repair_unprotected()
+
+        assert repaired == 1
+        sent = rig.bridge.called("modify")
+        assert sent, "a bare position was left bare"
+        assert float(sent[-1][1].get("sl") or sent[-1][0][1]) == pytest.approx(1.07)
+
+    async def test_a_position_the_broker_already_protects_is_left_alone(self):
+        """**The control, and it is the expensive one to get wrong.** `_protect`
+        reads before it writes, so a position already carrying the right prices
+        must not be sent a no-op modify: MT5 refuses one, this bridge answers
+        400, and reading that as a failed stop once rejected the legs of a
+        position the broker was protecting."""
+        held = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 1.09, "magic": MAGIC}]
+        rig = make_exec(FakeBridge(positions=lambda: held))
+
+        assert await rig.client._repair_unprotected() == 0
+        assert rig.bridge.called("modify") == [], "a protected position was modified"
+
+    async def test_another_magic_is_not_touched(self):
+        """`DEFAULT_MAGIC` is what separates this desk's positions from a
+        hand-placed trade on the same terminal. A sweep that repaired everything
+        would put a stop on somebody else's position."""
+        theirs = [{"ticket": 88, "symbol": "EURUSD", "sl": 0.0, "tp": 0.0, "magic": 0}]
+        rig = make_exec(FakeBridge(positions=lambda: theirs))
+
+        assert await rig.client._repair_unprotected() == 0
+        assert rig.bridge.called("modify") == []
+
+    async def test_a_bare_position_with_nothing_to_copy_is_reported_and_not_guessed(self):
+        """A naked position with no cached stop is a **different** fault from a
+        dropped leg, and naming it is what lets an operator tell them apart.
+        Inventing a distance here would be this adapter taking a trading
+        decision, which is not its job."""
+        bare = [{"ticket": 77, "symbol": "EURUSD", "sl": 0.0, "tp": 0.0, "magic": MAGIC}]
+        rig = make_exec(FakeBridge(positions=lambda: bare))
+
+        assert await rig.client._repair_unprotected() == 0
+        assert rig.bridge.called("modify") == [], "a price was invented"
+
+    async def test_a_position_holding_a_stop_and_no_target_is_given_the_cached_target(self):
+        """**The target is swept for the same reason as the stop.** A position
+        whose target leg the venue never received runs to its stop or to a
+        manual close with nothing in front of it, and the engine shows a
+        bracket that is not there."""
+        bare = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 0.0, "magic": MAGIC}]
+        fixed = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 1.09, "magic": MAGIC}]
+        reads = iter((bare, bare, fixed, fixed))
+        rig = make_exec(FakeBridge(positions=lambda: next(reads, fixed)))
+
+        _open_limit(rig, _factory(), "1.09000")
+
+        assert await rig.client._repair_unprotected() == 1
+        sent = rig.bridge.called("modify")
+        assert sent, "a position with no target was left without one"
+        assert float(sent[-1][0][2]) == pytest.approx(1.09)
+
+    async def test_repairing_one_leg_does_not_wipe_the_other(self):
+        """**A modify carries the pair.** Attaching a missing target with
+        `sl 0.0` would take the stop off a position that had one - turning a
+        repair into the exact fault it exists to fix, and doing it to a
+        position that was only half wrong."""
+        bare = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 0.0, "magic": MAGIC}]
+        fixed = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 1.09, "magic": MAGIC}]
+        reads = iter((bare, bare, fixed, fixed))
+        rig = make_exec(FakeBridge(positions=lambda: next(reads, fixed)))
+
+        _open_limit(rig, _factory(), "1.09000")
+        await rig.client._repair_unprotected()
+
+        sent = rig.bridge.called("modify")
+        assert float(sent[-1][0][1]) == pytest.approx(1.07), "the broker's own stop was wiped"
+
+    async def test_a_bare_position_is_given_both_legs_in_one_modify(self):
+        """One write, not two. Two modifies would make the first a position
+        with a stop and no target, which is a state `_protect` would then read
+        back as a shortfall against the second ask."""
+        bare = [{"ticket": 77, "symbol": "EURUSD", "sl": 0.0, "tp": 0.0, "magic": MAGIC}]
+        fixed = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 1.09, "magic": MAGIC}]
+        reads = iter((bare, bare, fixed, fixed))
+        rig = make_exec(FakeBridge(positions=lambda: next(reads, fixed)))
+
+        factory = _factory()
+        _open_stop(rig, factory, "1.07000")
+        _open_limit(rig, factory, "1.09000")
+
+        assert await rig.client._repair_unprotected() == 1
+        sent = rig.bridge.called("modify")
+        assert len(sent) == 1, "the legs went in separate writes"
+        assert float(sent[-1][0][1]) == pytest.approx(1.07)
+        assert float(sent[-1][0][2]) == pytest.approx(1.09)
+
+    async def test_an_unfilled_limit_entry_is_not_installed_as_a_target(self):
+        """**The price a rule wanted in at is the one price that must never
+        become a target.** A limit entry rests on the same side as the position
+        it is building, so the side is what tells the two apart; without that
+        test a desk that enters on a limit would have its own entry price
+        copied onto the position as a profit target the moment a target leg
+        went missing."""
+        bare = [{"ticket": 77, "symbol": "EURUSD", "sl": 1.07, "tp": 0.0, "magic": MAGIC}]
+        rig = make_exec(FakeBridge(positions=lambda: bare))
+
+        # Same side as the position: an entry adding to it, not a target.
+        _open_limit(rig, _factory(), "1.06000", side=OrderSide.BUY)
+
+        assert await rig.client._repair_unprotected() == 0
+        assert rig.bridge.called("modify") == [], "an entry price was installed as a target"
+
+    async def test_two_cached_stops_refuse_to_be_chosen_between(self):
+        """Two stop orders on one instrument is the state `manage.py` says
+        cannot exist - three things can move a stop and exactly one may - so it
+        is a fault in its own right. Picking one would repair a position by
+        guessing which rule owns it, and selecting the "tightest" is not even
+        defined without the position's side."""
+        rig = make_exec()
+        # One factory, because a fresh one restarts its counter and the second
+        # order would collide on `client_order_id`.
+        factory = _factory()
+        for price in ("1.07000", "1.08000"):
+            _open_stop(rig, factory, price)
+
+        found = rig.client._cached_stop(EURUSD_ID, closing=OrderSide.SELL)
+        assert found is None, "it chose between them"
+
+    async def test_the_sweeper_is_cancelled_on_disconnect(self):
+        """A sweeper left running against a closed bridge logs a failed read
+        every minute for the life of the process - and a sweep that is only
+        failing is indistinguishable from one that is finding nothing, which is
+        the state this mechanism exists to make visible."""
+        rig = make_exec()
+        await rig.client._connect()
+        assert getattr(rig.client, "_sweeper", None) is not None
+
+        await rig.client._disconnect()
+        assert rig.client._sweeper is None
+        assert rig.client._refresh is None
