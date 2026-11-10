@@ -769,7 +769,27 @@ def actors(venue: str) -> list[Actor]:
     # a `BasketExit` raise `Already registered an actor with ID BasketExit`.
     # Found by building a two-venue node rather than by reading, which is the
     # argument for building one.
-    return [BasketExit(BasketConfig(venue=venue, component_id=f"BasketExit-{venue}"))]
+    found: list[Actor] = [BasketExit(BasketConfig(venue=venue, component_id=f"BasketExit-{venue}"))]
+    # **Only where a desk would read it.** `Desk._volatile_enough` is off
+    # unless `TRADING_VOLATILE_ONLY` is set, and an unread ranking is a timer
+    # and a bar subscription per instrument for nothing. The reverse case -
+    # the gate on with no screener - refuses every trade, which is why the
+    # gate treats a missing ranking as a refusal and says so rather than
+    # admitting the quiet book.
+    from till_infinity.strategies.config import Settings
+
+    if Settings.from_env().volatile_only:
+        from till_infinity.strategies.screening import ScreenConfig, VolatileScreen
+
+        bars = tuple(
+            str(bar_type(symbol, venue, interval))
+            for interval in intervals()
+            for symbol in symbols_for(venue, interval)
+        )
+        found.append(
+            VolatileScreen(ScreenConfig(bar_types=bars, component_id=f"VolatileScreen-{venue}"))
+        )
+    return found
 
 
 def strategy_name(config: ImportableStrategyConfig) -> str:
