@@ -226,11 +226,11 @@ class OriginProfile(Profile):
     #: six days on 4h - the clock this rule's numbers were measured on. 400
     #: gives the window several turnovers.
     warm_bars_request: ClassVar[int] = 400
-    #: Zero, for the reason `ZoneProfile.warm_fresh_bars` gives: a crossing is
-    #: a transition between two bars rather than an event with a timestamp, so
-    #: a replayed crossing is one this rule has already passed on. The warm
-    #: pass is for the detector, not for the signal.
-    warm_fresh_bars: ClassVar[int] = 0
+    #: One, for the reason `ZoneProfile.warm_fresh_bars` gives at length: the
+    #: replay rebuilds the `inside` book, so a crossing on the last warm bar is
+    #: a transition the market actually made while this desk was starting up.
+    #: Older ones update state and propose nothing.
+    warm_fresh_bars: ClassVar[int] = 1
 
 
 class StructureProfile(OriginProfile):
@@ -280,28 +280,18 @@ class Origins(WarmFromHistory):
         self.start_warming()
 
     def warm_bar(self, bar: Bar) -> None:
-        """Fold one historical bar into both detectors, and never propose.
+        """Replay one historical bar through the same path a live bar takes.
 
-        **`Fold` is fed here too, not only `Displacement`.** `smc-zones` gates
-        on structure, so a warm pass that advanced the zone nominator and left
-        the structure reading cold would make every early live crossing read as
-        `unconfirmed` - a rule refusing itself for ten hours and counting it as
-        a gate rather than as a warm-up.
+        **`Fold` is advanced here too, not only `Displacement`.** `smc-zones`
+        gates on structure, so a warm pass that advanced the zone nominator and
+        left the structure reading cold would make every early live crossing
+        read `unconfirmed` - a rule refusing itself for ten hours and counting
+        it as a gate rather than as a warm-up.
 
-        The `inside` book is built for the same reason `zones.py` builds it: a
-        crossing is the transition between two bars, so leaving it empty would
-        make the first live bar look like a crossing of every zone price
-        happened to be outside.
+        Acts only on a fresh bar; see `OriginProfile.warm_fresh_bars`.
         """
         self.displacement.handle_bar(bar)
-        self.fold.update(float(bar.high), float(bar.low), float(bar.close))
-        self.counts["bars"] += 1
-        if not self.displacement.initialized:
-            self.counts["unwarmed"] += 1
-            return
-        close = float(bar.close)
-        for zone in self._zones(self.displacement.scale):
-            self.inside[zone.at] = zone.bottom <= close <= zone.top
+        self._step(bar, act=self.fresh(bar))
 
     def on_bar(self, bar: Bar) -> None:
         """One closed bar, and any origin crossing it produced.
@@ -312,6 +302,16 @@ class Origins(WarmFromHistory):
         the structure gate sees this bar too rather than the previous one.
         """
         super().on_bar(bar)
+        self._step(bar, act=True)
+
+    def _step(self, bar: Bar, *, act: bool) -> None:
+        """One bar through the crossing book. **One derivation, two callers.**
+
+        `Fold` is updated here and **before** the zones are read, so the
+        structure gate sees this bar rather than the previous one - and it is
+        updated on the warm path too, which is what lets `smc-zones` confirm
+        anything at all in its first ten hours.
+        """
         self.counts["bars"] += 1
         self.fold.update(float(bar.high), float(bar.low), float(bar.close))
         if not self.displacement.initialized:
@@ -332,6 +332,12 @@ class Origins(WarmFromHistory):
             if self.confirms and not self._confirmed(side):
                 self.counts["unconfirmed"] = self.counts.get("unconfirmed", 0) + 1
                 continue
+            if not act:
+                # A crossing this rule was not running for. The side is still
+                # recorded, so an opposing live signal knows what it reverses.
+                self.standing = side
+                self.counts["replayed"] = self.counts.get("replayed", 0) + 1
+                return
             if self.standing != 0 and side == -self.standing:
                 self._leave(side)
             self.standing = side

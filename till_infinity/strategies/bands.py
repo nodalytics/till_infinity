@@ -65,6 +65,7 @@ from ..domain.models import Intent, Refusal, Side
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .exits import ManagedExit
 from .profile import Profile
+from .warming import WarmFromHistory
 
 #: The eight Nautilus averages, by the name an operator writes, mapped to the
 #: `MovingAverageType` member. `VARIABLE_INDEX_DYNAMIC` and `ADAPTIVE` both
@@ -441,12 +442,28 @@ class BandProfile(Profile):
     shape: ClassVar[str] = "bands"
     style: ClassVar[str] = "swing"
     interval: ClassVar[str] = "15m"
+    #: Bars of history to warm both band pairs and the ATR with on start.
+    #:
+    #: **The slow span is the binding number and it is tilted per side.** A
+    #: band reports `initialized` after its own span, and `plausible` refuses a
+    #: reading until it has settled - `VariableIndexDynamicAverage` reports
+    #: initialized while still reading 0.7745 on data near 1.1 - so a cold pair
+    #: spends most of its early run in `implausible` and the tally says so.
+    #: 1,000 covers the longest span any preset asks for several times over.
+    warm_bars_request: ClassVar[int] = 1_000
+    #: A turn on the last warm bar is still actionable.
+    #:
+    #: `standing` is rebuilt by the replay, so by the final bar the previous
+    #: side came from a real previous bar and a cross is the one the market
+    #: made while this desk was starting up. Older crosses only update
+    #: `standing` - see `_step`.
+    warm_fresh_bars: ClassVar[int] = 1
     atr_period: ClassVar[int] = DEFAULT_ATR_PERIOD
     hold_bars: ClassVar[float] = 0.0
     hold_seconds: ClassVar[float] = 0.0
 
 
-class Bands:
+class Bands(WarmFromHistory):
     """The band rule: fold two estimators, signal on a turn, size off an ATR.
 
     A mixin rather than a `Desk` subclass, matching `Structure`: the leaf
@@ -499,6 +516,24 @@ class Bands:
         self.standing: dict[int, int] = {1: 0, -1: 0}
         self.counts: dict[str, int] = {"bars": 0, "turns": 0, "unwarmed": 0}
         super().on_start()
+        # After `super()`, which subscribes: a request issued before the
+        # subscription can have its response delivered to a strategy that is
+        # not yet listening for one.
+        self.start_warming()
+
+    def warm_bar(self, bar: Bar) -> None:
+        """Replay one historical bar through the same path a live bar takes.
+
+        **The ATR is fed by hand.** `register_indicator_for_bars` wires it to
+        the *subscription* and whether Nautilus also feeds it from a
+        `request_bars` response is version-dependent, so a cold ATR behind warm
+        bands would price the first stop off a fallback wearing an ATR's name.
+        The bands are updated inside `_step`, where the read-before-fold order
+        that keeps a band from containing its own trigger lives.
+        """
+        if not self.atr.initialized:
+            self.atr.handle_bar(bar)
+        self._step(bar, act=self.fresh(bar))
 
     def on_bar(self, bar: Bar) -> None:
         """One closed bar into both pairs, and any turn it produced.
@@ -507,6 +542,15 @@ class Bands:
         close is final.
         """
         super().on_bar(bar)
+        self._step(bar, act=True)
+
+    def _step(self, bar: Bar, *, act: bool) -> None:
+        """One bar through both pairs. **One derivation, two callers.**
+
+        The warm path and the live path differ by this boolean and nothing
+        else. Two copies of a crossing rule is how a replayed signal comes to
+        be a slightly different signal from a live one.
+        """
         self.counts["bars"] += 1
         for sign, (fast, slow) in self.bands.items():
             # **Read the band before folding this bar into it.**
@@ -541,6 +585,11 @@ class Bands:
                 self.standing[sign] = side or self.standing[sign]
                 continue
             self.standing[sign] = side
+            if not act:
+                # A cross this rule was not running for. `standing` is updated
+                # above, so an opposing live turn knows what it reverses.
+                self.counts["replayed"] = self.counts.get("replayed", 0) + 1
+                continue
             if side == -sign and self.tuning.exit_turn != "never":
                 self._leave(sign, losers_only=self.tuning.exit_turn == "losers")
             if side != sign:

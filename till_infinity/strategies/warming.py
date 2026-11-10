@@ -112,6 +112,18 @@ class WarmFromHistory:
         """
         raise NotImplementedError
 
+    def warm_bar_types(self) -> list[Any]:
+        """Which bar types to request history for. This desk's own, by default.
+
+        **A rule reading more than one instrument overrides this.**
+        `identity-arb` is a currency triangle: it subscribes two partner legs
+        beside the traded one and its residual needs all three at the same bar,
+        so warming the traded leg alone would leave `_residual` returning None
+        for the whole replay and the rule would look warm while holding no
+        residuals at all.
+        """
+        return [self._cfg.bar_type]
+
     def start_warming(self) -> None:
         """Ask the venue for this desk's own history. Call after `super().on_start()`.
 
@@ -132,6 +144,11 @@ class WarmFromHistory:
             return
         span = timedelta(seconds=self.warm_seconds() * wanted)
         start = self.clock.utc_now() - span
+        for bar_type in self.warm_bar_types():
+            self._request_warm(bar_type, start, wanted)
+
+    def _request_warm(self, bar_type: Any, start: Any, wanted: int) -> None:
+        """One history request, composite or standard."""
         # **A composite bar type cannot be requested.** Nautilus refuses
         # `request_bars` for one outright - "Use a standard bar type with
         # request_bars. Composite bar types can be used with
@@ -140,15 +157,15 @@ class WarmFromHistory:
         # while a backtest may aggregate from an M1 feed. Asking the wrong one
         # raises in `on_start`, which takes the desk down rather than leaving
         # it cold, and it did once.
-        if self._cfg.bar_type.is_composite():
+        if bar_type.is_composite():
             self.request_aggregated_bars(
-                [self._cfg.bar_type],
+                [bar_type],
                 start,
                 limit=wanted,
                 include_external_data=False,
             )
         else:
-            self.request_bars(self._cfg.bar_type, start, limit=wanted)
+            self.request_bars(bar_type, start, limit=wanted)
 
     def warm_seconds(self) -> float:
         """This desk's bar span in seconds."""

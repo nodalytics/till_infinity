@@ -75,6 +75,7 @@ from .desk import Desk
 from .entries import EdgeEntry
 from .exits import ManagedExit
 from .profile import Profile
+from .warming import WarmFromHistory
 
 #: Every complete triangle among the majors, as `(a, b)` - the legs are
 #: resolved against what the venue actually lists, in either orientation.
@@ -139,6 +140,20 @@ class IdentityProfile(Profile):
     entry_z: ClassVar[float] = 3.0
     #: The z's lookback in bars. Five days at M15, as measured.
     window: ClassVar[int] = 480
+    #: Bars of history to warm the residual window with on start.
+    #:
+    #: **This rule had the longest blind window on the desk, by far.** `_step`
+    #: refuses to score until `window // 2` residuals are in hand - 240 bars,
+    #: which is **two and a half days** of 15m - and before that the tally read
+    #: `fired=0` while the desk could not have fired at all. 600 fills the
+    #: window outright, with room for the `cold` and `stale` refusals that eat
+    #: into it.
+    warm_bars_request: ClassVar[int] = 600
+    #: A breach on the last warm bar is still actionable. The z is computed
+    #: from residuals *before* the current one either way, so a replayed breach
+    #: was scored exactly as a live one would have been; what makes the final
+    #: bar special is only that its price has not moved on.
+    warm_fresh_bars: ClassVar[int] = 1
     #: The horizon the edge was measured over, in bars: 24 hours at M15.
     hold_bars: ClassVar[int] = 96
     #: One entry per horizon, so forward windows are disjoint. **Not a knob.**
@@ -154,7 +169,7 @@ class IdentityProfile(Profile):
     stop_spreads: ClassVar[float] = 20.0
 
 
-class Identity(Desk):
+class Identity(WarmFromHistory, Desk):
     """One traded leg, two partner legs, and the arithmetic between them."""
 
     profile: ClassVar[IdentityProfile] = IdentityProfile.__new__(IdentityProfile)
@@ -182,6 +197,11 @@ class Identity(Desk):
             "cold": 0,
         }
         self.trio = self._trio()
+        #: Historical bars from all three legs, held until they can be replayed
+        #: **in timestamp order**. See `_drain` for why buffering is required
+        #: rather than tidy. Set before `super()`, because a request answered
+        #: quickly could reach `warm_bar` before the next statement here.
+        self._warm: list[Bar] = []
         super().on_start()
         if self.trio is None:
             # Said out loud, because a desk that can never trade and a desk
@@ -198,6 +218,7 @@ class Identity(Desk):
             #: spec, same aggregation, so the partner arrives on the same clock.
             frame = BarType.from_str(str(self._cfg.bar_type).replace(traded, name, 1))
             self.subscribe_bars(frame)
+        self.start_warming()
         self.log.info(
             f"identity-arb on {traded}: partners {first} and {second}, "
             f"z>{self.profile.entry_z}, gap {self.profile.gap_bars} bars"
@@ -268,9 +289,55 @@ class Identity(Desk):
 
     # ---------------------------------------------------------------- the bars
 
+    def warm_bar_types(self) -> list[Any]:
+        """All three legs: the residual needs them at the same bar."""
+        if self.trio is None:
+            return [self._cfg.bar_type]
+        traded, first, second = self.trio
+        spelling = str(self._cfg.bar_type)
+        return [self._cfg.bar_type] + [
+            BarType.from_str(spelling.replace(traded, name, 1)) for name in (first, second)
+        ]
+
+    def warm_bar(self, bar: Bar) -> None:
+        """Hold a historical bar. It cannot be scored where it arrives.
+
+        **Three requests and no guarantee about how they interleave.** Nautilus
+        answers each `request_bars` separately and delivers one bar per call,
+        so scoring a bar as it lands would feed this rule a block of one leg
+        and then a block of another - and `_residual` reads the partners'
+        stored closes against `bars_seen`, which is a bar **count**. A
+        leg-at-a-time replay would pair the cross's close with a partner's
+        close from a different time, and either refuse everything as `stale`
+        or, worse, compute a residual from two different moments.
+
+        `difference-before-aligning` is the same failure one level down: align
+        first and difference second, or every gap becomes a fake reading.
+        """
+        self._warm.append(bar)
+
+    def _drain(self) -> None:
+        """Replay the buffered history in timestamp order, then forget it.
+
+        Driven from the first live bar rather than a timer: a `request_bars`
+        response carries no completion signal, and the first live bar is the
+        earliest moment at which every request that was going to answer has.
+        """
+        buffered, self._warm = self._warm, []
+        buffered.sort(key=lambda row: row.ts_event)
+        self.tally["warm"] = self.tally.get("warm", 0) + len(buffered)
+        for row in buffered:
+            self._step(row, act=self.fresh(row))
+
     def on_bar(self, bar: Bar) -> None:
         """A partner close is stored; the traded leg's close is a decision."""
         super().on_bar(bar)
+        if self._warm:
+            self._drain()
+        self._step(bar, act=True)
+
+    def _step(self, bar: Bar, *, act: bool) -> None:
+        """One bar through the triangle. **One derivation, two callers.**"""
         self.bars_seen += 1
         symbol = bar.bar_type.instrument_id.symbol.value.upper()
         if self.trio is None:
@@ -301,6 +368,13 @@ class Identity(Desk):
             return
         if self.bars_seen - self.last_entry < self.profile.gap_bars:
             self.tally["gapped"] += 1
+            return
+        if not act:
+            # A breach this rule was not running for. `last_entry` is still
+            # stamped, so the gap rule counts a replayed breach against the
+            # next live one exactly as it would a live predecessor.
+            self.last_entry = self.bars_seen
+            self.tally["replayed"] = self.tally.get("replayed", 0) + 1
             return
         self.last_entry = self.bars_seen
         self.tally["fired"] += 1

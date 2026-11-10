@@ -151,3 +151,79 @@ def test_a_profile_asking_for_no_history_requests_nothing():
     warm = Warm(0, 900.0, allowed=1)
     warm.start_warming()
     assert warm.warmed == {"bars": 0}
+
+
+# --------------------------------------------- the mixin must not be shadowed
+
+
+def test_every_warming_rule_resolves_the_mixins_handler_and_not_nautilus_no_op():
+    """**Base order decides whether warming happens at all, silently.**
+
+    `Desk` inherits `Actor.on_historical_data`, which is a no-op. So
+    `class Rule(Desk, WarmFromHistory)` resolves the no-op: the requests are
+    issued, the venue answers, every bar is dropped on the floor, and the rule
+    reports healthy while staying exactly as cold as before. `identity-arb` was
+    written that way and this check is what found it - its handler resolved to
+    `Actor` until the bases were swapped to put the mixin first.
+
+    Asserted over every registered rule rather than the ones known to warm, so
+    a rule that gains the mixin later cannot gain it in the wrong position.
+    """
+    from till_infinity.strategies import leaves
+    from till_infinity.strategies.warming import WarmFromHistory
+
+    checked = 0
+    for rule, entry in leaves.LEAVES:
+        cls = leaves.LEAVES[(rule, entry)]
+        if not issubclass(cls, WarmFromHistory):
+            continue
+        checked += 1
+        owner = next(
+            (base.__name__ for base in cls.__mro__ if "on_historical_data" in base.__dict__),
+            None,
+        )
+        assert owner == "WarmFromHistory", (
+            f"{rule}/{entry} resolves on_historical_data to {owner}: its warm "
+            f"requests would be answered and silently discarded. Put "
+            f"WarmFromHistory before Desk in the bases."
+        )
+    assert checked >= 5, f"only {checked} leaves use the mixin - is this test still pinning it?"
+
+
+def test_a_rule_that_reads_one_instrument_asks_for_one_bar_type():
+    """The default, so only a multi-instrument rule overrides it."""
+    warm = Warm(0, 900.0, allowed=1)
+    warm._cfg = SimpleNamespace(bar_type="EURUSD.SIM-15-MINUTE-LAST-EXTERNAL")
+    assert warm.warm_bar_types() == ["EURUSD.SIM-15-MINUTE-LAST-EXTERNAL"]
+
+
+def test_the_triangle_asks_for_all_three_of_its_legs():
+    """`identity-arb`'s residual needs the cross and both partners at the same
+    bar, so warming the traded leg alone would leave `_residual` returning None
+    for the whole replay - the rule would look warm while holding no residuals.
+    """
+    from till_infinity.strategies.identity import Identity
+
+    host = SimpleNamespace(
+        trio=("EURGBP", "EURUSD", "GBPUSD"),
+        _cfg=SimpleNamespace(
+            bar_type=__import__(
+                "nautilus_trader.model.data", fromlist=["BarType"]
+            ).BarType.from_str("EURGBP.SIM-15-MINUTE-LAST-EXTERNAL")
+        ),
+    )
+    found = [str(b) for b in Identity.warm_bar_types(host)]
+    assert found == [
+        "EURGBP.SIM-15-MINUTE-LAST-EXTERNAL",
+        "EURUSD.SIM-15-MINUTE-LAST-EXTERNAL",
+        "GBPUSD.SIM-15-MINUTE-LAST-EXTERNAL",
+    ]
+
+
+def test_a_triangle_with_no_partners_asks_only_for_its_own_leg():
+    """The control: a symbol with no triangle logs that it can never trade, and
+    must not build bar types out of a None."""
+    from till_infinity.strategies.identity import Identity
+
+    host = SimpleNamespace(trio=None, _cfg=SimpleNamespace(bar_type="X"))
+    assert Identity.warm_bar_types(host) == ["X"]

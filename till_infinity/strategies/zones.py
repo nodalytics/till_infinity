@@ -254,15 +254,20 @@ class ZoneProfile(Profile):
     warm_bars_request: ClassVar[int] = 400
     #: A crossing confirmed within this many bars of now may still be acted on.
     #:
-    #: **Zero, deliberately, and this is the difference from `smc-bos-causal`.**
-    #: A zone crossing is read from `self.inside`, which is per-bar state built
-    #: *as* the replay runs, so the first historical bar has no previous bar to
-    #: compare against and every crossing found during a replay is a crossing
-    #: this rule has already decided not to trade once. A break of structure is
-    #: an event with a timestamp; a crossing is a transition between two bars,
-    #: and replaying it would re-proposed every zone the warm window passed
-    #: through. The warm pass is for the *indicator*, not for the signal.
-    warm_fresh_bars: ClassVar[int] = 0
+    #: **One, on the same reasoning as `smc-bos-causal`.** The first version of
+    #: this was 0, on the argument that a crossing is a transition rather than
+    #: an event and so cannot be replayed - but that only holds while the
+    #: replay leaves `inside` empty. `_step` rebuilds it, so by the last warm
+    #: bar `was` came from a real previous bar and the transition is the one the
+    #: market made, minutes ago, while this desk was starting up. Discarding it
+    #: would mean a deploy waits for the next crossing on a rule whose
+    #: indicator needs twelve hours to warm - the blind window this whole
+    #: change exists to close.
+    #:
+    #: Older crossings still only update state: the replay walks through every
+    #: zone the warm window passed, and re-proposing those would place a
+    #: position per zone rather than per signal.
+    warm_fresh_bars: ClassVar[int] = 1
 
 
 class Zones(WarmFromHistory):
@@ -302,28 +307,29 @@ class Zones(WarmFromHistory):
         self.start_warming()
 
     def warm_bar(self, bar: Bar) -> None:
-        """Fold one historical bar into the indicator, and never propose.
+        """Replay one historical bar through the same path a live bar takes.
 
-        **The `inside` book is built here too**, and that is the whole reason
-        this is not simply "feed the indicator". A crossing is the *transition*
-        between two bars, so a replay that updated the indicator and left
-        `inside` empty would make the first live bar look like a crossing of
-        every zone price happened to be outside - a burst of proposals on the
-        first bar after every deploy, each of them a state and not an edge.
+        **The indicator is fed by hand here.** `register_indicator_for_bars`
+        wires it to the *subscription*, and whether Nautilus also feeds it from
+        a `request_bars` response is version-dependent - `structure.py` asserts
+        the same thing about its ATR for the same reason.
 
-        Nothing is proposed: see `ZoneProfile.warm_fresh_bars` for why a
-        replayed crossing is a crossing this rule has already passed on, which
-        is the opposite of the judgement `structure.py` makes about a break.
+        **And the `inside` book is rebuilt, which is the point.** A crossing is
+        the *transition* between two bars, so a replay that advanced the
+        indicator and left `inside` empty would make the first live bar look
+        like a crossing of every zone price happened to be outside - a burst of
+        proposals on the first bar after every deploy, each of them a state and
+        not an edge. Rebuilding it is also what makes a crossing found on the
+        **last** warm bar trustworthy: by then `was` came from a real previous
+        bar, so the transition is the one the market made.
+
+        Acts only on a fresh bar. Everything older updates state and proposes
+        nothing - the replay walks through crossings this rule was not running
+        for, and re-proposing all of them would place a position per zone the
+        warm window happened to pass through.
         """
         self.levels.handle_bar(bar)
-        self.counts["bars"] += 1
-        if not self.levels.initialized:
-            self.counts["unwarmed"] += 1
-            return
-        close = float(bar.close)
-        for zone in self.levels.zones:
-            self.inside[zone.at] = zone.bottom <= close <= zone.top
-            self.flipped[zone.at] = bool(zone.flipped)
+        self._step(bar, act=self.fresh(bar))
 
     def on_bar(self, bar: Bar) -> None:
         """One closed bar, and any zone crossing it produced.
@@ -332,6 +338,16 @@ class Zones(WarmFromHistory):
         `self.levels` is as of this bar's close.
         """
         super().on_bar(bar)
+        self._step(bar, act=True)
+
+    def _step(self, bar: Bar, *, act: bool) -> None:
+        """One bar through the crossing book. **One derivation, two callers.**
+
+        The warm path and the live path differ by this boolean and by nothing
+        else. Two copies of a crossing rule is how a replayed signal comes to
+        be a slightly different signal from a live one, which would make the
+        warm pass a second rule wearing this one's name.
+        """
         self.counts["bars"] += 1
         if not self.levels.initialized:
             self.counts["unwarmed"] += 1
@@ -348,6 +364,12 @@ class Zones(WarmFromHistory):
             self.flipped[zone.at] = bool(zone.flipped)
             if side == 0:
                 continue
+            if not act:
+                # A crossing this rule was not running for. The side is still
+                # recorded, so an opposing live signal knows what it reverses.
+                self.standing = side
+                self.counts["replayed"] = self.counts.get("replayed", 0) + 1
+                return
             if self.tuning.on_opposite == "close" and self.standing != 0 and side == -self.standing:
                 self._leave(side)
             self.standing = side
