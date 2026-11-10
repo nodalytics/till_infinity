@@ -168,10 +168,13 @@ three of the four it does.
 the worse of the stop and the bar's open is the honest reading of a gap on a
 real series. `walk_with_bar_geometry` and `bar_shuffle` draw each bar's open
 *inside that bar's own range*, independently of the previous close, so every
-synthetic bar opens with a fabricated gap. Measured on EURUSD 15m, `|open -
-previous close|` as a share of the bar range, at the median: **0.0000 real,
-0.6481 walk-geometry, 0.6721 bar-shuffle**. The first run of this harness duly
-read **-0.6378R at k=0 on walk-geometry** against a required zero. The headline
+synthetic bar opens with a fabricated gap. Measured on EURUSD 15m against its
+own twins, `|open - previous close|` as a share of the bar range, at the
+median: **0.0000 real, 0.6481 walk-geometry, 0.6721 bar-shuffle** - the means
+are not quoted because zero-range bars put them in the thousands. The first run
+of this harness duly read **-0.6378R at k=0 on walk-geometry** against a
+required zero, which `MODE=leak ET_GAPFILL=1 ET_SUBSTEPS=15 ET_DEMEAN=0`
+reproduces. The headline
 fills at the stop price, which is symmetric across arms; `ET_GAPFILL=1`
 restores the gap reading for a real-bars sensitivity. Underfilling is also the
 safer direction: `smc-bos-reconcile.md` measured the catalogue's own stop fills
@@ -203,9 +206,10 @@ looked like the cause and was not:
   removes it and is on by default. It moved the bridge arm from +0.1219 to
   +0.1144, so it was **not** the cause of that arm's bias.
 - **Refining the path does not fix the level either, and the residual's cause
-  is not identified.** On the eight eleven-year series (`MODE=calib`) the
-  bridge's k=0 reading across 15, 30, 60, 120 and 240 sub-steps a bar is
-  +0.1734, +0.1686, +0.1222, +0.1164, +0.1144 - it falls and
+  is not identified.** On the eight eleven-year series
+  (`MODE=calib ET_SUBGRID=15,30,60,120,240`) the bridge's k=0 reading across
+  15, 30, 60, 120 and 240 sub-steps a bar is +0.1734, +0.1686, +0.1222,
+  +0.1164, +0.1144 - it falls and
   then stops, so about 0.06R of it was the stop's overshoot and the remaining
   +0.11R is something else. Three candidates were ruled out by measurement
   rather than argument: drift (`ET_DEMEAN`, worth 0.0075), path discreteness
@@ -215,8 +219,9 @@ looked like the cause and was not:
   stop sits closer in units of a bar's own step on a bridge than on a real
   series - 0.74 of trades stopped against 0.65. `ET_STOPMULT` is the handle
   that varies that while holding the signal fixed, and it carries **part of it
-  and not all**: tripling the stop takes the same arm's k=0 reading from
-  +0.1144 to **+0.0803** and its stop rate from 0.86 to 0.60. **No level in
+  and not all**: `MODE=calib ET_SUBGRID=240 ET_STOPMULT=3` takes the same arm's
+  k=0 reading from +0.1144 to **+0.0803** and its stop rate from 0.86 to
+  0.60. **No level in
   this study is read as a result**, which is the whole argument for the paired
   statistic.
 
