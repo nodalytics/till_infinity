@@ -10107,63 +10107,32 @@ class TestService:
         A consumer sizes, places a stop, or declines on this. If a direction
         appeared in the payload something would trade on it, and the desk has
         measured that half closed twice.
+
+        **And the keys are the consumer's**, which they were not: the ported
+        actor published `value` and `at` while the one reader of this topic,
+        `strategies/context.Context.observe_width`, takes `log_variance` and
+        `time` and returns early without either. Every payload it ever sent
+        would have been dropped in silence had anything been subscribed, so
+        this asserts the names and not only the absence of a direction.
         """
-        import asyncio
         import json
         import tempfile
 
+        from till_infinity.statespace.actor import payload_for
         from till_infinity.statespace.config import Settings
         from till_infinity.statespace.engine import Engine
-        from till_infinity.statespace.service import Watcher
+        from till_infinity.strategies.context import Context
 
-        # The topic strings, as literals. `topics.DECLARED` was a registry
-        # that let this assert a publisher used a *declared* name; it existed
-        # because the names were "read by a Go service" and had to be spellable
-        # outside Python. There is no Go service and Nautilus owns the bus, so
-        # the registry had one importer per name and no second reader. What is
-        # left to pin is that the name does not drift.
-        from till_infinity.utils.topics import BARS, DISPERSION
+        with tempfile.TemporaryDirectory() as directory:
+            engine = Engine(settings=Settings(state_dir=directory, warm_bars=10))
+            payloads = [
+                payload_for(readout)
+                for bar in self._bars(60)
+                if (readout := engine.observe_bar(bar)) is not None
+            ]
 
-        class Recording:
-            def __init__(self):
-                self.sent = []
-
-            async def publish(self, topic, payload, *, source=""):
-                self.sent.append((topic, payload, source))
-                return 1
-
-        class Message:
-            """A topic and a payload, which is all `Watcher.handle` reads.
-
-            Local because it is a fake, like `Recording` beside it. It came
-            from `till_infinity/carrier.py`, a transport seam that existed to
-            let `bus.py` retire without rewriting five services - and once
-            that was done nothing in the package constructed a `Message` or
-            implemented a `Carrier`, because `statespace/service.py`
-            deliberately declares its own protocol rather than importing one,
-            so the package stays liftable in a single move. `handle` annotates
-            this `Any` and reads both fields with `getattr`.
-            """
-
-            def __init__(self, *, topic, payload):
-                self.topic = topic
-                self.payload = payload
-
-        async def run():
-            with tempfile.TemporaryDirectory() as directory:
-                engine = Engine(settings=Settings(state_dir=directory, warm_bars=10))
-                watcher, bus = Watcher(engine=engine), Recording()
-                for bar in self._bars(60):
-                    await watcher.handle(Message(topic=BARS, payload=bar), bus)
-                # A topic this service does not consume is ignored, not folded.
-                assert await watcher.handle(Message(topic="prices.quotes", payload={}), bus) is None
-                return watcher, bus
-
-        watcher, bus = asyncio.run(run())
-        assert watcher.published == 51
-        topic, payload, source = bus.sent[-1]
-        assert topic == DISPERSION
-        assert source == "statespace"
+        assert len(payloads) == 51, "one reading per bar once warm"
+        payload = payloads[-1]
         assert not [
             key for key in payload if key.lower() in {"side", "direction", "up", "signal", "bias"}
         ]
@@ -10175,6 +10144,13 @@ class TestService:
         # It goes on a bus, so it has to survive the wire.
         assert json.loads(json.dumps(payload)) == payload
 
+        # And the join, which is the half a shape assertion cannot make: the
+        # declared consumer must read it rather than drop it.
+        seen = Context()
+        seen.observe_width(payload)
+        card = seen.width_context(payload["feed"], now=payload["time"] + 10.0)
+        assert card, "the one consumer of this topic dropped the payload"
+
     def test_the_duplicated_topic_names_match_the_bus(self):
         """The package names its topics rather than importing them.
 
@@ -10184,11 +10160,14 @@ class TestService:
         that is not checked is a service subscribed to a topic nobody
         publishes. This is the check.
         """
-        from till_infinity.statespace.service import CONSUMES, TOPIC
-        from till_infinity.utils.topics import BARS, DISPERSION
+        from till_infinity.statespace.actor import StatespaceConfig
+        from till_infinity.utils.topics import DECLARED, DISPERSION
 
-        assert CONSUMES == BARS
-        assert TOPIC == DISPERSION
+        # The actor subscribes to bar types rather than to a topic, so the
+        # consumed half of this pin went with `service.CONSUMES` - what is
+        # left to check is that the published name is the declared one.
+        assert StatespaceConfig().topic == DISPERSION
+        assert DISPERSION in DECLARED
 
     def test_the_service_names_its_one_unmeasured_constant(self):
         """`noise` is assumed, and the file says so rather than hiding it.
@@ -10389,26 +10368,48 @@ class TestASaturatedLeverIsVisible:
         desk.read("gold", "5m", 3_600.0, -16.0, 0.67)
         assert {one.most for one in desk._members[("gold", "5m")].members} == {1e7}
 
-    def test_the_service_line_says_when_a_lever_has_run_out_of_room(self):
+    def test_the_tally_says_when_a_lever_has_run_out_of_room(self):
+        """**A matching loop against its clamp keeps returning numbers.** Every
+        member of a feed-interval can run out of process noise without one log
+        line looking out of the ordinary, which is how a spread three times too
+        small survived at `R = 0.265`. The shipped `R = 0.670` does not reach
+        the clamp, so this line is expected to stay absent - which is the point
+        of having it.
+
+        Driven through the actor's own tally, because `service.Watcher.report`
+        - which this tested until 2026-11-10 - was a line no process printed.
+        """
+        from types import SimpleNamespace
+
+        from till_infinity.statespace.actor import StatespaceActor
         from till_infinity.statespace.config import Settings
         from till_infinity.statespace.engine import Engine
-        from till_infinity.statespace.service import Watcher
 
         engine = Engine(settings=Settings(intervals=("5m",), warm_bars=1))
         engine.desk.read("gold", "5m", 3_600.0, -16.0, 0.67)
-        watcher = Watcher(engine=engine)
+        engine.tally["bars"] = 1
+        engine.tally["readouts"] = 1
+
+        said: list[str] = []
+        stub = SimpleNamespace(
+            _engine=engine,
+            _proposals=0,
+            _notices=SimpleNamespace(sent=0),
+            _warmed=0,
+            log=SimpleNamespace(info=said.append, warning=said.append),
+        )
 
         assert engine.saturated == 0
-        clean = watcher.report(at=1_000_000.0)
-        assert "bars folded" in clean
-        assert "lever" not in clean
+        StatespaceActor._say_tally(stub)
+        assert said, "the tally said nothing at all"
+        assert "lever" not in said[-1], said
 
         for one in engine.desk._members[("gold", "5m")].members:
             one.factor = one.most
         assert engine.saturated == 1
-        said = watcher.report(at=2_000_000.0)
-        assert "lever's stop" in said
-        assert "adapting-strata.md" in said
+        StatespaceActor._say_tally(stub)
+        assert "lever's stop" in said[-1]
+        assert "adapting-strata.md" in said[-1]
 
 
 class TestTheCardSaysHowTheSpreadWasFormed:
@@ -10448,7 +10449,7 @@ class TestTheCardSaysHowTheSpreadWasFormed:
         assert got.spread_saturated is True
 
     def test_the_topic_carries_both(self):
-        from till_infinity.statespace.service import payload_for
+        from till_infinity.statespace.actor import payload_for
 
         payload = payload_for(self._pinned().read("gold", "5m", 3_600.0 * 61, -10.0, 0.01))
         assert payload["spread_rule"]
@@ -10458,8 +10459,8 @@ class TestTheCardSaysHowTheSpreadWasFormed:
         """A key that is almost always false costs a byte on every card and
         says nothing; present means the spread beside it should not be joined
         to this trade's outcome."""
+        from till_infinity.statespace.actor import payload_for
         from till_infinity.statespace.facade import Desk
-        from till_infinity.statespace.service import payload_for
         from till_infinity.strategies.context import Context
 
         quiet = Context()
@@ -10479,20 +10480,16 @@ class TestTheTransitionTopic:
     """`statespace.signals` exists because `statespace.dispersion` is a reading
     on every bar: production runs 207 armed feed-intervals at 1m, so a per-bar
     topic is twelve thousand messages an hour and no consumer can tell which
-    mattered. This fires on a change of state and then stays quiet."""
+    mattered. This fires on a change of state and then stays quiet.
 
-    class Fake:
-        """Anything with `publish` and `subscribe` drives the loop."""
-
-        def __init__(self):
-            self.sent: list[tuple[str, dict]] = []
-
-        async def publish(self, topic, payload, *, source=""):
-            self.sent.append((topic, dict(payload)))
-            return 1
-
-        def subscribe(self, topic, group="default"):  # pragma: no cover
-            raise AssertionError("the watcher subscribes, this test drives it directly")
+    **It had no producer between the Nautilus port and 2026-11-10.** The
+    mechanism lived on `service.Watcher`, which retired with the bus, while
+    `STATESPACE_SIGNALS`, `STATESPACE_SIGNAL_SURPRISE`,
+    `STATESPACE_SIGNAL_WIDTH` and `STATESPACE_SIGNAL_QUIET_HOURS` stayed live
+    in `config.Settings` - four settings an operator could set to no effect.
+    These tests therefore drive `StatespaceActor._notice`, the live publisher,
+    rather than a class nothing constructs.
+    """
 
     @staticmethod
     def _bar(when: float, price: float, width: float):
@@ -10508,89 +10505,96 @@ class TestTheTransitionTopic:
             "closed": True,
         }
 
-    def _run(self, *, quiet_hours: float = 0.0, bars: int = 300, shock_at: int = 200):
-        import asyncio
-        import random
+    def _drive(
+        self,
+        *,
+        quiet_hours: float = 0.0,
+        signals: bool = True,
+        bars: int = 300,
+        shock_at: int = 200,
+    ):
+        """Fold a planted shock and run each readout through the live notice step.
 
+        Returns what reached the bus, the readings those notices were built
+        from, and the actor stub - whose `_notices.sent` is the counter the
+        tally reports.
+
+        The stub is unavoidable rather than convenient: `Actor.msgbus` and
+        `Actor.log` are read-only Cython attributes, so an actor built without
+        a kernel cannot be handed a bus, and `_notice` is called unbound for
+        the same reason `_say_tally` is.
+        """
+        import random
+        from types import SimpleNamespace
+
+        from till_infinity.statespace.actor import StatespaceActor, payload_for
         from till_infinity.statespace.config import Settings
         from till_infinity.statespace.engine import Engine
-        from till_infinity.statespace.service import Watcher
+        from till_infinity.statespace.noticing import Notices
+        from till_infinity.utils import topics
 
-        bus = self.Fake()
-        # `signals` is named rather than inherited: its default went to False on
-        # 2026-10-28 when `agents`, the only consumer, was retired. The notice
-        # mechanism is still here and still tested - what changed is whether a
-        # deployment publishes it to nobody.
-        watcher = Watcher(
-            engine=Engine(
-                settings=Settings(
-                    intervals=("1h",),
-                    warm_bars=5,
-                    signal_quiet_hours=quiet_hours,
-                    signals=True,
-                )
+        engine = Engine(
+            settings=Settings(
+                intervals=("1h",),
+                warm_bars=5,
+                signal_quiet_hours=quiet_hours,
+                # Named rather than inherited: the default went to False on
+                # 2026-10-28 when `agents`, the only consumer, was retired.
+                signals=signals,
             )
         )
-
-        class Msg:
-            def __init__(self, payload):
-                self.topic = "prices.bars"
-                self.payload = payload
+        sent: list[tuple[str, dict]] = []
+        stub = SimpleNamespace(
+            _cfg=SimpleNamespace(signals_topic=topics.STATESPACE_SIGNALS),
+            _notices=Notices(),
+            msgbus=SimpleNamespace(publish=lambda topic, msg: sent.append((topic, dict(msg)))),
+            log=SimpleNamespace(warning=lambda *_: None),
+        )
 
         rng = random.Random(11)
         price = 2_400.0
-
-        async def drive():
-            for i in range(bars):
-                shock = 14.0 if i == shock_at else 1.0
-                step = rng.gauss(0.0, 0.004) * shock
-                await watcher.handle(
-                    Msg(
-                        self._bar(
-                            3_600.0 * (i + 1),
-                            price * (1.0 + step),
-                            abs(rng.gauss(0.0, 0.003)) * shock,
-                        )
-                    ),
-                    bus,
+        readings: list[dict] = []
+        for i in range(bars):
+            shock = 14.0 if i == shock_at else 1.0
+            step = rng.gauss(0.0, 0.004) * shock
+            readout = engine.observe_bar(
+                self._bar(
+                    3_600.0 * (i + 1),
+                    price * (1.0 + step),
+                    abs(rng.gauss(0.0, 0.003)) * shock,
                 )
+            )
+            if readout is None:
+                continue
+            reading = payload_for(readout)
+            readings.append(reading)
+            StatespaceActor._notice(stub, readout, reading, engine.settings)
+        return sent, readings, stub
 
-        asyncio.run(drive())
-        return bus, watcher
+    def test_the_topic_the_actor_publishes_on_is_the_one_the_bus_declares(self):
+        """A producer on an undeclared name publishes into silence, and
+        `topics.publish` raises rather than letting it - so the pin is that
+        the actor's default is the declared string."""
+        from till_infinity.statespace.actor import StatespaceConfig
+        from till_infinity.utils.topics import DECLARED, STATESPACE_SIGNALS
 
-    def test_the_duplicated_topic_name_matches_the_bus(self):
-        """The package cannot import `..bus` - `TestVendoredCusum` asserts it
-        imports nothing outside itself but `shared` - so the name is duplicated
-        and the duplicate is checked here, outside the package."""
-        from till_infinity.statespace.service import NOTICES
-
-        # The duplicate the docstring above describes, pinned against the
-        # string rather than against a registry - see the note in
-        # `test_it_publishes_a_dispersion_reading` for why the registry went.
-        assert NOTICES == "statespace.signals"
+        assert StatespaceConfig().signals_topic == STATESPACE_SIGNALS == "statespace.signals"
+        assert STATESPACE_SIGNALS in DECLARED
 
     def test_it_announces_a_break_and_a_widening_but_not_every_bar(self):
-        from till_infinity.statespace.service import NOTICES
-
-        bus, watcher = self._run()
-        notices = [payload for topic, payload in bus.sent if topic == NOTICES]
-        readings = [topic for topic, _ in bus.sent if topic != NOTICES]
+        sent, readings, stub = self._drive()
+        notices = [payload for _topic, payload in sent]
 
         assert notices, "a planted shock has to produce at least one notice"
         assert len(notices) < len(readings), "a notice per bar would defeat the topic"
         assert {"surprise", "widening"} & {one["kind"] for one in notices}
-        assert watcher.noticed == len(notices)
+        assert stub._notices.sent == len(notices)
 
     def test_the_quiet_period_is_what_keeps_it_rare(self):
         """Same bars, same transitions, one knob."""
-        from till_infinity.statespace.service import NOTICES
-
-        loud, _ = self._run(quiet_hours=0.0)
-        quiet, _ = self._run(quiet_hours=72.0)
-        said = {
-            name: sum(1 for topic, _ in bus.sent if topic == NOTICES)
-            for name, bus in (("loud", loud), ("quiet", quiet))
-        }
+        loud, _, _ = self._drive(quiet_hours=0.0)
+        quiet, _, _ = self._drive(quiet_hours=72.0)
+        said = {"loud": len(loud), "quiet": len(quiet)}
         assert said["quiet"] < said["loud"], said
 
     def test_the_side_never_ships_without_its_significance(self):
@@ -10600,11 +10604,8 @@ class TestTheTransitionTopic:
         sign alone is acting on a measured nothing. The z is omitted when the
         drift's sd is unknown rather than defaulted to zero, because a zero
         there reads as certainty."""
-        from till_infinity.statespace.service import NOTICES
-
-        bus, _ = self._run()
-        notices = [payload for topic, payload in bus.sent if topic == NOTICES]
-        for one in notices:
+        sent, _, _ = self._drive()
+        for _topic, one in sent:
             assert ("variance_side" in one) == ("variance_side_z" in one)
             if "variance_side" in one:
                 assert one["variance_side"] in (-1, 0, 1)
@@ -10614,10 +10615,8 @@ class TestTheTransitionTopic:
         """**This service folds log variance, so a sign is about dispersion,
         not about price.** A field called `side` in an alert would be read as
         the second thing within a day, which is why there is no such field."""
-        from till_infinity.statespace.service import NOTICES
-
-        bus, _ = self._run()
-        for payload in (one for topic, one in bus.sent if topic == NOTICES):
+        sent, _, _ = self._drive()
+        for _topic, payload in sent:
             assert "side" not in payload
             assert "side_z" not in payload
             assert not any(k == "direction" for k in payload)
@@ -10632,11 +10631,8 @@ class TestTheTransitionTopic:
         falls it is likelier to rise - so a reading far from 0.5 here is
         reversion rather than a directional edge, and carries no price content.
         """
-        from till_infinity.statespace.service import NOTICES
-
-        bus, _ = self._run()
-        notices = [one for topic, one in bus.sent if topic == NOTICES]
-        seen = [one["variance_up"] for one in notices if "variance_up" in one]
+        sent, _, _ = self._drive()
+        seen = [one["variance_up"] for _topic, one in sent if "variance_up" in one]
         assert seen, "the chain has to produce a forecast once warm"
         assert all(0.0 < value < 1.0 for value in seen)
 
@@ -10644,40 +10640,17 @@ class TestTheTransitionTopic:
         """The blend hides the disagreement, so the two drifts are published
         separately - and the slope gets its realised volatility beside its
         estimation uncertainty, which is what makes `jerk`'s guess checkable."""
-        from till_infinity.statespace.service import NOTICES
-
-        bus, _ = self._run()
-        one = [payload for topic, payload in bus.sent if topic == NOTICES][-1]
+        sent, readings, _ = self._drive()
+        one = sent[-1][1]
         for name in ("kind", "score", "detail", "drift_free", "drift_revert", "rate", "rate_vol"):
             assert name in one, name
         # A superset of the reading, so a consumer needs only one parser.
-        reading = [payload for topic, payload in bus.sent if topic != NOTICES][-1]
-        assert set(reading) <= set(one)
+        assert set(readings[-1]) <= set(one)
 
     def test_turning_signals_off_leaves_the_readings_alone(self):
-        import asyncio
-
-        from till_infinity.statespace.config import Settings
-        from till_infinity.statespace.engine import Engine
-        from till_infinity.statespace.service import NOTICES, Watcher
-
-        bus = self.Fake()
-        watcher = Watcher(
-            engine=Engine(settings=Settings(intervals=("1h",), warm_bars=1, signals=False))
-        )
-
-        class Msg:
-            def __init__(self, payload):
-                self.topic = "prices.bars"
-                self.payload = payload
-
-        async def drive():
-            for i in range(60):
-                await watcher.handle(Msg(self._bar(3_600.0 * (i + 1), 2_400.0, 0.02)), bus)
-
-        asyncio.run(drive())
-        assert not [topic for topic, _ in bus.sent if topic == NOTICES]
-        assert [topic for topic, _ in bus.sent if topic != NOTICES]
+        sent, readings, _ = self._drive(signals=False, bars=60, shock_at=40)
+        assert not sent
+        assert readings, "the readings are not conditional on the notices"
 
 
 class TestTheAnchoredFairValue:
@@ -10716,8 +10689,8 @@ class TestTheAnchoredFairValue:
     def test_nothing_is_offered_before_the_floor(self):
         """Zero means "not offered" rather than "at fair", which is why the
         payload omits the keys instead of publishing a zero."""
+        from till_infinity.statespace.actor import payload_for
         from till_infinity.statespace.anchored import LEAST
-        from till_infinity.statespace.service import payload_for
 
         _, got = self._run(bars=LEAST - 1)
         assert got.fair_variance == 0.0
@@ -10797,8 +10770,22 @@ class TestTheAlertReadsInPlainWords:
             got = desk.read("gold", "1h", 3_600.0 * (i + 1), level + rng.gauss(0.0, 0.5), 0.67)
         return got
 
+    @classmethod
+    def _both(cls):
+        """The reading's payload and the readout it came from, in that order.
+
+        `notice_for` takes both because it is a *superset* of the reading
+        published on the same bar, and rebuilding the payload inside it would
+        let a notice and its reading disagree about the same bar.
+        """
+        from till_infinity.statespace.actor import payload_for
+
+        got = cls._readout()
+        return payload_for(got), got
+
     def test_no_jargon_reaches_the_line(self):
-        from till_infinity.statespace.service import notice_for
+        from till_infinity.statespace.actor import payload_for
+        from till_infinity.statespace.noticing import notice_for
 
         got = self._readout()
         banned = (
@@ -10821,46 +10808,48 @@ class TestTheAlertReadsInPlainWords:
             ("quieting", -0.55),
             ("saturated", 0.0),
         ):
-            line = str(notice_for(got, kind, score)["detail"]).lower()
+            line = str(notice_for(payload_for(got), got, kind, score)["detail"]).lower()
             for word in banned:
                 assert word not in line, (kind, word, line)
 
     def test_it_never_implies_a_direction_for_the_price(self):
         """The service says how big, never which way. A line containing "up",
         "down", "bullish" or "long" would be acted on as a price call."""
-        from till_infinity.statespace.service import notice_for
+        from till_infinity.statespace.actor import payload_for
+        from till_infinity.statespace.noticing import notice_for
 
         got = self._readout()
         for kind, score in (("surprise", 5.0), ("widening", 0.8), ("quieting", -0.8)):
-            line = str(notice_for(got, kind, score)["detail"]).lower()
+            line = str(notice_for(payload_for(got), got, kind, score)["detail"]).lower()
             for word in (" up", " down", "bullish", "bearish", "long", "short", "buy", "sell"):
                 assert word not in line, (kind, word, line)
 
     def test_an_unreliable_reading_quotes_no_probability(self):
         """Quoting a probability in the same breath as "these readings are
         unreliable" invites the reader to use the probability."""
-        from till_infinity.statespace.service import notice_for
+        from till_infinity.statespace.noticing import notice_for
 
-        line = str(notice_for(self._readout(), "saturated", 0.0)["detail"])
+        line = str(notice_for(*self._both(), "saturated", 0.0)["detail"])
         assert "unreliable" in line
         assert "%" not in line
         assert ";" not in line
 
     def test_the_numbers_are_multiples_and_percentages(self):
-        from till_infinity.statespace.service import notice_for
+        from till_infinity.statespace.actor import payload_for
+        from till_infinity.statespace.noticing import notice_for
 
         got = self._readout()
-        wider = str(notice_for(got, "widening", 0.62)["detail"])
+        wider = str(notice_for(payload_for(got), got, "widening", 0.62)["detail"])
         assert "1.9x wider" in wider
-        narrower = str(notice_for(got, "quieting", -0.55)["detail"])
+        narrower = str(notice_for(payload_for(got), got, "quieting", -0.55)["detail"])
         assert "42% narrower" in narrower
 
     def test_the_technical_fields_are_still_all_there(self):
         """Plain words in the line, every number in the payload - a consumer
         reading the topic loses nothing to the phrasing."""
-        from till_infinity.statespace.service import notice_for
+        from till_infinity.statespace.noticing import notice_for
 
-        payload = notice_for(self._readout(), "surprise", 3.42)
+        payload = notice_for(*self._both(), "surprise", 3.42)
         for name in (
             "kind",
             "score",

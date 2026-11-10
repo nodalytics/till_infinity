@@ -1228,7 +1228,7 @@ merge messages.** This section used to say the fit was blocked on the structures
 outcomes journal recording a raw touch price. It is not, and the old text gave
 itself away by naming the field in the next paragraph. `Episode.to_dict`
 records `entry` - the touch price - alongside `level` and `r_price`, all three
-rounded to **eight decimal places**, and `service.py` journals one of these for
+rounded to **eight decimal places**, and `actor.py` publishes one of these for
 every touch, called or not, under `context={"shape": "episode", ...}`. There are
 **250,412** of them in the journal as of 2026-10-10.
 

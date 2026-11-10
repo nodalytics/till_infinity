@@ -64,11 +64,12 @@ STANDALONE: dict[str, str] = {}
 #: **`bus` left on 2026-10-31 and `carrier` followed it.** `carrier` was the
 #: protocol a service published through, and the seam that let the bus retire
 #: without rewriting five services. Once that was done nothing implemented it:
-#: `statespace/service.py` declares its own `Carrier` rather than importing
-#: one, on purpose, so the package stays liftable in a single move - so the
+#: `statespace/service.py` declared its own `Carrier` rather than importing
+#: one, on purpose, so the package stayed liftable in a single move - so the
 #: shared protocol had no implementor and no consumer, and its `Message` was
 #: constructed only by a test. Retired 2026-11-03, with the fake that
-#: implemented it.
+#: implemented it; the service that declared the protocol followed on
+#: 2026-11-10, its publisher being `statespace/actor.py` now.
 #:
 #: `topics` is the names, which are still the contract because
 #: `shared/contracts/bus/*.json` is keyed on them and a Go service reads the

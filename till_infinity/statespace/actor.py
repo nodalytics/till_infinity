@@ -52,6 +52,8 @@ from nautilus_trader.model.data import Bar, BarType
 
 from till_infinity.utils import topics
 
+from . import cohort, noticing
+
 #: How long a bar's aggregation unit lasts, in seconds.
 #:
 #: **Parsed from the `BarType`, not looked up per venue.** This used to import
@@ -90,7 +92,7 @@ class StatespaceConfig(ActorConfig, frozen=True):
     """What to fold, and where to publish it."""
 
     bar_types: tuple[str, ...] = ()
-    #: The bus topic for a reading. Matches `statespace.service.PROPOSES` so a
+    #: The bus topic for a reading. Taken from `proposing.TOPIC` so a
     #: subscriber written against the old bus keeps working.
     topic: str = "statespace.dispersion"
     #: Map a Nautilus symbol to the feed name `statespace` keys state on, where
@@ -116,6 +118,12 @@ class StatespaceConfig(ActorConfig, frozen=True):
     #: "has never once run in production" while its end-to-end path passed
     #: every test.
     proposals: bool = True
+    #: The transition topic. **Separate from `topic` because of the
+    #: arithmetic**: 207 armed feed-intervals at 1m is twelve thousand
+    #: readings an hour, which is useless to a consumer deciding what to look
+    #: at. A notice fires on a change of state and then stays quiet for
+    #: `signal_quiet_hours`.
+    signals_topic: str = "statespace.signals"
     #: Whether to load the saved fold progress on start. **Live must; a
     #: backtest must not.**
     #:
@@ -226,6 +234,17 @@ class StatespaceActor(Actor):
         self._seconds: dict[str, float] = {}
         #: Proposals published, counted here because the engine cannot see them.
         self._proposals = 0
+        #: Transition state: the width each feed-interval is judged against,
+        #: and when each kind was last said. Held here rather than in the
+        #: engine because it is about what has been *announced*, which is a
+        #: property of this publisher and not of the fold.
+        self._notices = noticing.Notices()
+        #: Cross-instrument pooling. **Unoriented**, because the subject is a
+        #: log-variance rate and volatility carries no sign: `cohort.py` says
+        #: why, and `regime-granularity.md` measured that this is the half of
+        #: the finding that pools - volatility agrees across cohorts at z
+        #: +22.4 and direction does not agree across them at all.
+        self._pool = cohort.Pool()
         #: Historical bars folded on start, reported in the tally so a feed
         #: that warmed from replay can be told from one that waited.
         self._warmed = 0
@@ -239,7 +258,6 @@ class StatespaceActor(Actor):
         # for the same reason - a deleted directory should fail one supervised
         # task rather than the whole node.
         from . import config as ss_config
-        from . import service as ss_service  # noqa: F401 - topic parity
         from .engine import Engine
 
         settings = ss_config.Settings.from_env()
@@ -304,7 +322,23 @@ class StatespaceActor(Actor):
             )
             return
         reading = " ".join(f"{name}={value}" for name, value in sorted(tally.items()))
-        line = f"statespace: {reading} proposals={self._proposals} warmed={self._warmed}"
+        line = (
+            f"statespace: {reading} proposals={self._proposals} "
+            f"notices={self._notices.sent} warmed={self._warmed}"
+        )
+        saturated = getattr(self._engine, "saturated", 0)
+        if saturated:
+            # **The condition that was silent.** A matching loop against its
+            # clamp keeps returning numbers, so every member can run out of
+            # process noise without one line looking out of the ordinary.
+            # `adapting-strata.md` found it by looking and measured a spread
+            # three times too small at `R = 0.265`; the shipped `R = 0.670`
+            # does not reach the clamp, so this is expected to stay absent -
+            # which is the point of having it.
+            line += (
+                f" - {saturated} feed-interval(s) with a member on its lever's "
+                f"stop, so their spread cannot be trusted: see adapting-strata.md"
+            )
         if tally.get("readouts"):
             self.log.info(line)
         else:
@@ -397,12 +431,47 @@ class StatespaceActor(Actor):
         if readout is None:
             return  # out of scope, unwarmed, or no variance - all expected
         self._engine.save()
-        topics.publish(self, self._cfg.topic, _as_dict(readout))
+        reading = payload_for(readout)
+        settings = self._engine.settings
+        if getattr(settings, "cohorts", False):
+            # Nested under one key rather than merged flat: a feed can belong
+            # to two cohorts - USDJPY carries both USD and JPY - so a flat
+            # merge would pick one and drop the other in silence.
+            reading.update(cohort.fields_for(self._pool, readout))
+        topics.publish(self, self._cfg.topic, reading)
+        self._notice(readout, reading, settings)
         proposal = self._propose(readout, payload)
         if proposal is not None:
             self._proposals += 1
             topics.publish(self, self._cfg.proposals_topic, proposal)
             self._announce(proposal)
+
+    def _notice(self, readout: Any, reading: dict[str, Any], settings: Any) -> None:
+        """Publish a transition on `signals_topic`, if this bar is one.
+
+        **Four settings had no reader.** `STATESPACE_SIGNALS`,
+        `STATESPACE_SIGNAL_SURPRISE`, `STATESPACE_SIGNAL_WIDTH` and
+        `STATESPACE_SIGNAL_QUIET_HOURS` stayed live in `config.Settings` while
+        the mechanism that read them retired with `service.Watcher`, so an
+        operator could set any of the four to no effect at all.
+
+        Never raises: this runs inside `on_bar`, for the reason `_announce`
+        gives - an exception here would stop the fold over a message.
+        """
+        if not getattr(settings, "signals", False):
+            return
+        try:
+            change = self._notices.of(readout, settings)
+            if change is None or self._notices.quiet(readout, change[0], settings, at=readout.at):
+                return
+            topics.publish(
+                self,
+                self._cfg.signals_topic,
+                noticing.notice_for(reading, readout, *change),
+            )
+            self._notices.sent += 1
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log.warning(f"could not publish the transition: {exc}")
 
     def _announce(self, proposal: dict[str, Any]) -> None:
         """Publish the proposal to `alerts`, where the notifier can see it.
@@ -697,18 +766,64 @@ def _seconds(bar_type: BarType) -> float:
     return int(parts[0]) * UNIT_SECONDS[parts[1]]
 
 
-def _as_dict(readout: Any) -> dict[str, Any]:
-    """A `Readout` as the payload the `statespace.dispersion` contract declares."""
-    return {
+def payload_for(readout: Any) -> dict[str, Any]:
+    """A `Readout` as the payload the `statespace.dispersion` contract declares.
+
+    **The keys are the consumer's, and this had two of them wrong.** The one
+    reader of this topic is `strategies/context.Context.observe_width`, which
+    takes `log_variance` and `time` and returns early on either being absent -
+    so the ported actor published `value` and `at` and every payload it ever
+    sent would have been dropped at the first `isinstance` check, silently,
+    had anything been subscribed. It carried no `surprise`, no `band` and
+    neither `spread_rule` nor `spread_saturated` either, which are the three
+    things a recorded width is worth having: `Width.banded` is false without a
+    band, and `spread` and `surprise` are **not comparable** across a rule
+    change or a saturated loop, so a join over cards spanning one is a join
+    over two different quantities.
+
+    `walls`, `quantiles` and `absorbs` are this actor's own additions and stay
+    - they are computed either way, and they are the only reading of where the
+    discrete chain thinks the edges are.
+
+    JSON-safe throughout, because it goes on a bus and a `Price` or an `Enum`
+    survives an in-process publish and not a serialised one.
+    """
+    out: dict[str, Any] = {
         "feed": readout.feed,
         "interval": readout.interval,
-        "at": float(readout.at),
-        "value": float(readout.value),
+        "time": float(readout.at),
+        # Log variance, which is the space the members were fitted in. A reader
+        # wanting a standard deviation per bar takes `exp(log_variance / 2)`.
+        "log_variance": float(readout.value),
         "spread": float(readout.spread),
+        "surprise": float(readout.surprise),
         "family": readout.family,
         "absorbs": readout.absorbs,
         "paced": bool(readout.paced),
         "pace_factor": float(readout.pace_factor),
+        "seen": int(readout.seen),
+        "spread_rule": str(readout.spread_rule),
+        "spread_saturated": bool(readout.spread_saturated),
         "walls": [float(w) for w in readout.walls],
         "quantiles": [[float(q), float(v)] for q, v in readout.quantiles],
     }
+    if readout.fair_variance:
+        # **A fair *volatility*, not a fair price** - this folds log variance.
+        # `stretch` is in half-band units, so 1.0 is the band's own edge, and
+        # that is what makes it comparable across feeds.
+        out["fair_variance"] = round(float(readout.fair_variance), 6)
+        out["fair_sd"] = round(float(readout.fair_sd), 6)
+        out["stretch"] = round(float(readout.stretch), 4)
+    interval = readout.covering(0.90)
+    if interval is not None:
+        # The interval the readout will state at its measured coverage, which
+        # is the t-anchored one where it has the residuals and the assumed one
+        # otherwise. `source` says which, so a consumer can refuse an assumed
+        # band without knowing how the choice is made.
+        out["band"] = {
+            "low": float(interval.low),
+            "high": float(interval.high),
+            "coverage": float(interval.coverage),
+            "source": str(interval.source),
+        }
+    return out
