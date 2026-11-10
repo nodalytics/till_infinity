@@ -113,6 +113,21 @@ FILLING_BITS: tuple[tuple[int, str], ...] = ((1, "FOK"), (2, "IOC"), (4, "RETURN
 #: will accept orders". A repeating read also means AutoTrading going off
 #: mid-session is noticed within a minute rather than at the next order.
 ACCOUNT_REFRESH_S = 60.0
+
+#: Seconds between sweeps for a position the broker is holding without a stop.
+#:
+#: **The desk's own view cannot answer this**, which is the whole reason the
+#: sweep exists. On 2026-11-10 two live positions ran with `sl 0.0 tp 0.0`
+#: while `ManagedExit._protects()` passed and `_guards()` reported that the
+#: entry had already bracketed them: Nautilus held the legs, MT5 did not. The
+#: container's log carried **zero** `closing` lines, so nothing had failed
+#: loudly - the two sides simply disagreed, and `judge-the-desk-on-the-broker-
+#: not-the-journal` is the standing rule for which one to believe.
+#:
+#: 60 seconds, matching `position_check_interval_secs`: a sweep slower than
+#: Nautilus's own reconciliation would let a naked position outlive a
+#: divergence the engine had already noticed.
+UNPROTECTED_SWEEP_S = 60.0
 #: Placed or done: the terminal has the request.
 _TAKEN = (PLACED, DONE)
 
@@ -261,6 +276,7 @@ class MT5ExecutionClient(LiveExecutionClient):
         self._publish_account(account)
         await self._check_trading()
         self._refresh = self.create_task(self._refresh_account())
+        self._sweeper = self.create_task(self._sweep_unprotected())
 
     async def _check_trading(self) -> None:
         """Read the terminal's AutoTrading flag and say so, loudly if it is off.
@@ -303,10 +319,16 @@ class MT5ExecutionClient(LiveExecutionClient):
             self._log.warning(f"could not publish the venue trading flag: {exc}")
 
     async def _disconnect(self) -> None:
-        task = getattr(self, "_refresh", None)
-        if task is not None:
-            task.cancel()
-            self._refresh = None
+        # Both loops, because a sweeper left running against a closed bridge
+        # logs a failed read every minute for the life of the process - and a
+        # sweep that is only failing is indistinguishable from one that is
+        # finding nothing, which is the state this whole mechanism exists to
+        # make visible.
+        for name in ("_refresh", "_sweeper"):
+            task = getattr(self, name, None)
+            if task is not None:
+                task.cancel()
+                setattr(self, name, None)
         await self._bridge.close()
 
     async def _refresh_account(self) -> None:
@@ -335,6 +357,177 @@ class MT5ExecutionClient(LiveExecutionClient):
                 raise
             except Exception as exc:  # pragma: no cover - the transport's shapes
                 self._log.warning(f"account refresh failed: {self._scrub(exc)}")
+
+    async def _sweep_unprotected(self) -> None:
+        """Attach the stop the cache intended to any position the broker holds bare.
+
+        **Judged on the broker, never on our own view.** Two live positions ran
+        with `sl 0.0 tp 0.0` on 2026-11-10 while every desk-side check passed:
+        `ManagedExit._protects()` was True and `_guards()` reported the entry
+        had already bracketed them. Nautilus held the legs; MT5 did not. The
+        log carried **zero** `closing` lines, so nothing failed loudly - the
+        two sides disagreed silently, which is the one failure a desk-side
+        check cannot see by construction.
+
+        The stop is **the cache's own**, never a number invented here. An open
+        stop order on the instrument is what the rule asked for, and copying it
+        to the venue is a repair; choosing a distance would be this adapter
+        taking a trading decision, which is not its job. A position with no
+        cached stop to copy is **reported and left alone** - there is nothing
+        to repair and inventing one would be worse than saying so.
+
+        `_protect` reads before it writes, so a position already carrying the
+        right prices is skipped rather than sent a no-op modify that MT5
+        refuses and this bridge answers 400 - the mistake that once read as a
+        protected position's legs being rejected.
+
+        Failures are logged and the loop continues. A dropped read is not a
+        reason to stop sweeping, and a sweep that stopped silently would
+        restore exactly the blindness it exists to remove.
+        """
+        while True:
+            try:
+                await asyncio.sleep(UNPROTECTED_SWEEP_S)
+                await self._repair_unprotected()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:  # pragma: no cover - the transport's shapes
+                self._log.warning(f"unprotected sweep failed: {self._scrub(exc)}")
+
+    async def _repair_unprotected(self) -> int:
+        """One pass over both legs. Returns how many positions were repaired.
+
+        **Each leg is the broker's own price where it holds one.** A modify
+        carries the pair, so attaching a missing stop with `tp 0.0` would take
+        the target off a position that had one - and the target is swept for
+        the same reason as the stop, because a position whose target leg was
+        dropped runs to its stop or to a manual close with nothing in front of
+        it.
+        """
+        repaired = 0
+        for row in await self._bridge.positions():
+            if not self._ours(row):
+                continue  # another strategy's, or a human's
+            at_stop = float(row.get("sl") or 0.0)
+            at_target = float(row.get("tp") or 0.0)
+            if at_stop and at_target:
+                continue
+            ticket = int(row.get("ticket") or 0)
+            symbol = str(row.get("symbol") or "")
+            if not ticket or not symbol:
+                continue
+            instrument_id = InstrumentId(Symbol(symbol), self._venue)
+            # **The legs sit on the closing side, and an entry order does
+            # not.** A resting limit order on the instrument is a target when
+            # it would close this position and an unfilled entry when it would
+            # add to it; copying the second onto the position as a target
+            # would hand it a "target" at the price it was trying to get in at.
+            closing = OrderSide.SELL if int(row.get("type") or 0) % 2 == 0 else OrderSide.BUY
+            wanted = at_stop or self._cached_stop(instrument_id, closing=closing)
+            target = at_target or self._cached_target(instrument_id, closing=closing)
+            if not at_stop and wanted is None:
+                # **Said, not guessed.** A naked position with nothing in the
+                # cache to copy is a different fault from a dropped leg, and
+                # naming it is what lets an operator tell them apart.
+                self._log.error(
+                    f"position {ticket} on {symbol} has no stop at the broker and "
+                    f"no stop order in the cache to copy - it is running "
+                    f"unprotected and this sweep has nothing to repair it with"
+                )
+            if wanted is None and target is None:
+                continue
+            instrument = await self._instrument(instrument_id)
+            if instrument is None:
+                continue
+            missing, why = await self._protect(ticket, sl=wanted, tp=target, instrument=instrument)
+            if missing:
+                self._log.error(
+                    f"position {ticket} on {symbol} is unprotected and the repair "
+                    f"did not land: {why}"
+                )
+                continue
+            given = ", ".join(
+                f"{name} {price}"
+                for name, price, held in (("sl", wanted, at_stop), ("tp", target, at_target))
+                if price is not None and not held
+            )
+            if not given:
+                continue
+            repaired += 1
+            self._log.warning(
+                f"position {ticket} on {symbol} was running without {given} at the "
+                f"broker and has been given the cache's own - the broker and the "
+                f"engine had diverged"
+            )
+        return repaired
+
+    def _cached_stop(self, instrument_id: Any, *, closing: Any) -> Any:
+        """The stop price the engine believes this instrument's position has.
+
+        An open `STOP_MARKET` order on the instrument, which is the leg a
+        bracket leaves behind. `None` when there is not exactly one.
+
+        **Exactly one, and it refuses to choose between several.** Two stop
+        orders on one instrument is the state `manage.py` says must never
+        exist - three things on this desk can move a stop and exactly one may -
+        so it is a fault in its own right, and picking one of them here would
+        repair a position by guessing which rule owns it. Selecting the
+        "tightest" needs the position's side to even be defined, which this
+        would have to read and could get wrong; saying so costs nothing and a
+        wrong stop is worse than a reported one.
+        """
+        # **`order_type` is an int enum, not a name.** `str(order.order_type)`
+        # is `"3"`, so matching the word `STOP_MARKET` in it never fires and
+        # this returned None for every position - the same shape as
+        # `BarSpecification.aggregation` reading `"12"` against `"MINUTE"`,
+        # found in this repo the same day. Compared against the enum.
+        prices = [
+            price
+            for order in self._cache.orders_open(instrument_id=instrument_id)
+            if order.order_type == OrderType.STOP_MARKET
+            and order.side == closing
+            and (price := getattr(order, "trigger_price", None)) is not None
+        ]
+        if len(prices) == 1:
+            return prices[0]
+        if len(prices) > 1:
+            self._log.error(
+                f"{instrument_id.symbol} has {len(prices)} open stop orders in the "
+                f"cache, which `manage.py` says cannot happen - refusing to guess "
+                f"which one protects the position"
+            )
+        return None
+
+    def _cached_target(self, instrument_id: Any, *, closing: Any) -> Any:
+        """The target price the engine believes this instrument's position has.
+
+        The `LIMIT` half of `_cached_stop`: `_place` reads a bracket's target
+        off `child.price` of a `LIMIT` child, so that is the leg to copy.
+        `None` when there is not exactly one, and `None` is also the honest
+        answer for a rule that set no target - there is nothing to repair, and
+        a distance invented here would be this adapter taking a trading
+        decision.
+
+        `closing` is what keeps an unfilled limit **entry** out of this. A
+        desk that enters on a limit leaves a resting order on the same side as
+        the position it is building, and its price is where the rule wanted
+        in - the one price that must never be installed as a target.
+        """
+        prices = [
+            price
+            for order in self._cache.orders_open(instrument_id=instrument_id)
+            if order.order_type == OrderType.LIMIT
+            and order.side == closing
+            and (price := getattr(order, "price", None)) is not None
+        ]
+        if len(prices) == 1:
+            return prices[0]
+        if len(prices) > 1:
+            self._log.error(
+                f"{instrument_id.symbol} has {len(prices)} open limit orders in the "
+                f"cache - refusing to guess which one targets the position"
+            )
+        return None
 
     def _publish_account(self, account: dict) -> None:
         """Put the broker's balances in the cache, which nothing else did.
