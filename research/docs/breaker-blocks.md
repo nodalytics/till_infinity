@@ -34,11 +34,21 @@
 > absent from has been checked, **and not with a statistic that cannot tell
 > them apart**.
 >
+> **So the arm is replaced rather than argued about.** `path` builds each bar as
+> a Brownian bridge pinned to a real step, so the open is the previous close and
+> the high and low are the path's own extremes - and **it reproduces the rate the
+> arithmetic demands, 0.3285 against 0.3333**, where the broken arm reads 0.3022
+> and a continuous-open variant 0.3143. That number is the evidence for the arm:
+> a barrier null that lands on `1/(1+N)` is one that is working, and one that
+> does not is the same statement about what was wrong. Against it the breaker
+> reads **-0.0207R +- 0.0104 below** its own walk.
+>
 > A second limit stands on its own and is below under
-> [a resting-limit arm is not measurable on bar data](#a-resting-limit-arm-is-not-measurable-on-bar-data):
+> [the geometry null plants the trade this study makes](#the-geometry-null-plants-the-trade-this-study-makes-and-what-replaces-it):
 > OHLC does not order the high and the low, so any fill inside a bar is the
-> harness choosing an intrabar path. **The refutation never rested on that arm
-> and does not now.**
+> harness choosing an intrabar path, and `path` makes that choice *coherent*
+> rather than removing it. **The refutation never rested on either arm and does
+> not now.**
 
 **Measured 2026-11-10**, pre-registered as shortlist item 1 of
 [`tradingview-survey.md`](tradingview-survey.md) and run to the specification
@@ -611,7 +621,12 @@ screen wants a week of quotes and does not yet have one.
   why they read 0.31 rather than 0.3333 conditional on resolving; `path`, whose
   extremes are its own path's, reads **0.3282-0.3302**, which is how much of
   that shortfall was the assembly rather than the convention.
-* **One snapshot of cost**, as above.
+* **One snapshot of cost**, as above - and it makes the trade count move. The
+  stop gate refuses a stop inside two round trips and the round trip is the
+  terminal's **live** quote, so the real arm is **23,746 to 23,752** across
+  reruns with the mean cost drifting in the fourth decimal. The figures here are
+  the 2026-11-10 run; a rerun reporting a different `n` is the quote moving, not
+  the detector, which `MODE=smoke`'s two-identical-calls check pins.
 * **The multiplicity count.** 98 instrument-clock cells, 432 sweep cells, 4
   arms, 5 null series, 2 zone populations. Nothing was selected on; the full grid
   is printed; and 0 cells survive BH on the published population.
