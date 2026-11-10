@@ -23,12 +23,12 @@ rule with a hundred times the sample.
 
 The expectation per signal goes the other way. Paired against the same signals
 entered at market, the delay is worth **-0.017R at k=1 falling to -0.047R at
-k=4** on `smc-bos-causal`, with day-block intervals excluding zero at k=2
-through k=5, against a matched random-anchor placebo whose own delay difference
-is **+0.0013R [-0.0081, +0.0101]**. It still loses with reward:risk held
+k=4** on `smc-bos-causal`, with a day-block interval excluding zero at **every
+one of the five lags**, against a matched random-anchor placebo whose own delay
+difference is **+0.0013R [-0.0081, +0.0101]**. It still loses with reward:risk held
 constant, so the exchange is not where the loss hides. And it is
 indistinguishable from waiting at random for the same mean length: the
-random-delay twin reads **-0.037 to -0.048R** against the real confirmation's
+random-delay twin reads **-0.034 to -0.048R** against the real confirmation's
 -0.020 to -0.030R.
 
 **No k beats the fair-rate null on either rule.** Four of five lags beat *no
@@ -43,7 +43,7 @@ per-instrument cells on that rule survive Benjamini-Hochberg.
 | question | answer | kind |
 |---|---|---|
 | does a 1-5 bar lag raise the hit rate? | **yes, and at the fair rate.** 0.504 to 0.653 at 1R, 0.333 to 0.472 at 2R; within 0.025 of `risk/(risk+reward)` at every k and target, and below it in 16 of 22 cells | reading, n 7,128 |
-| does it add **selection** beyond that exchange? | **no.** Every lag's paired difference from k=0 is zero or negative; the three largest are -0.037, -0.045 and -0.047R with intervals excluding zero | **null** |
+| does it add **selection** beyond that exchange? | **no.** Every lag's paired difference from k=0 is zero or negative, and all five fixed lags have an interval excluding zero - -0.017, -0.037, -0.045, -0.047 and -0.041R at k=1 to k=5 | **null** |
 | does the exchange explain all of it? | **no - it is worse than that.** With reward:risk held constant and no refusals at all (`shifted`) the lag still loses, -0.021 to -0.080R | null |
 | is the confirmation distinguishable from waiting at random? | **no.** The random twin at the same mean delay and the same refusal rate reads -0.034 to -0.048R against -0.020 to -0.030R, and **survives BH on 11 per-instrument cells against the real confirmation's 3** | null |
 | does production's `ArrivalEntry` candle witness help? | **it fires almost never at a break price.** 1.7% of signals within one bar, 11.5% within five, and the refusal costs the rule its whole reading: -0.073 to -0.078R a signal | mechanic |
