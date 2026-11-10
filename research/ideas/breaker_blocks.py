@@ -3,7 +3,9 @@
     ./.secrets/lab.sh run research/ideas/breaker_blocks.py MODE=run
     ./.secrets/lab.sh run research/ideas/breaker_blocks.py MODE=power
     ./.secrets/lab.sh run research/ideas/breaker_blocks.py MODE=cost
-    ./.secrets/lab.sh run research/ideas/breaker_blocks.py MODE=run SWEEP=1
+    ./.secrets/lab.sh run research/ideas/breaker_blocks.py MODE=run ZONES=desk
+    ./.secrets/lab.sh run research/ideas/breaker_blocks.py MODE=overlap
+    ./.secrets/lab.sh run research/ideas/breaker_blocks.py MODE=gap
     MODE=smoke uv run python research/ideas/breaker_blocks.py     # seconds, generated bars
 
 `MODE=run` writes `$OUT/trades.csv.gz` (one row per real trade per target),
@@ -42,12 +44,25 @@ it rather than its best cell.
 | `fade` | **with** the original direction, on a retest before it flips | the refuted claim, kept in the run. If both beat the null the finding belongs to the old claim and this harness is wrong |
 | `placebo` | the identical breaker trade at a **prior swing with no order block behind it**, distance-matched, one per real trade | geometry without an order block |
 
-and three null series under every arm, each driven through the identical
+and five null series under every arm, each driven through the identical
 detector on the identical clock: `iid` (Student-t(3) sub-steps, no clustering),
-`garch` (GARCH(1,1)-t(5)) and `geom` (this market's own step distribution and
-bar shapes resampled - `node/surrogates.walk_with_bar_geometry` vectorised).
-**`geom` is the arm to judge on**: `how-markets-differ-from-every-simple-process`
-is why a generated process will not settle a geometry claim.
+`garch` (GARCH(1,1)-t(5)), `shipped`
+(`node/surrogates.walk_with_bar_geometry` as the package writes it),
+`contopen` (the same walk with every bar opening at the previous close) and
+`contdrift` (that, with the realised drift left in).
+
+**Two geometry arms, and `shipped` is the one of record.** A geometry claim
+needs this market's own wickiness rather than a generated process -
+`how-markets-differ-from-every-simple-process`. But a **resting-limit** arm is
+sensitive to how a surrogate assembles the inside of a bar, and the two
+assemblies differ on this trade by **0.171R**. `contopen` exists to measure that
+sensitivity and is **not** a proposed fix to the package: the market carries the
+same open-gap sawtooth the shipped arm does, which
+`walk_with_bar_geometry`'s docstring records and a test pins. So both are
+reported and the verdict rests on the statistics that need no surrogate at all:
+the arithmetic rate, the placebo arm (which runs on the **real** bars through
+the identical construction, so the harness's intrabar assumption cancels), the
+per-cell counts and the sweep. See the write-up's section on why.
 
 ## The settlement, which is where this kind of study leaks
 
@@ -61,11 +76,19 @@ Entries are resting **limit** orders, and the fill bar is settled exactly as
 * when both legs are reachable in one bar the **stop wins**, there being no
   ticks to break the tie.
 
-All three are conservative, so a driftless walk must read at or slightly
-**below** zero and slightly below `1/(1+N)`. `MODE=power` prints that check
-first, and a positive expectancy on a walk is a leak and not a result:
-`a-martingale-cannot-pay`, and the price-action study in this repo paid
-+0.2234R on a walk from the opposite convention.
+All three are conservative, so a surrogate whose closes are a martingale
+should read at or slightly **below** zero and slightly below `1/(1+N)`.
+`MODE=power` prints that check first. One arm does not: the `shipped` geometry
+surrogate pays the long-entry arm **+0.1241R**, and `MODE=gap` is where that is
+run down. It is **not** a bug in that function - the market carries the same
+sawtooth, negative on 28 of 28 of the broker's 1h FX stores at a mean of -0.0126
+of a bar range, and the identity `close[i] - close[i-1] = (open[i] -
+close[i-1]) + (close[i] - open[i])` forces it. It is a statement about what
+bar data can settle: OHLC does not order the high and the low, so filling at a
+limit inside a bar and marking the race from that bar is the harness choosing an
+intrabar path, and an arm built that way moves with the choice. See
+`a-martingale-cannot-pay` for the convention this still gets right, and the
+price-action study for +0.2234R paid on a walk by the opposite convention.
 
 **Every arm holds the same number of bars.** The prior study's `flip`,
 `straight` and `coin` arms ran at `MAXHOLD = 300` while its `real` arm ran at
@@ -642,31 +665,42 @@ def garch_bars(real: dict[str, np.ndarray], seed: int, alpha: float = 0.06,
     return {**got, "ts": real["ts"], "spread": real["spread"]}
 
 
-def legacy_geom_bars(real: dict[str, np.ndarray], seed: int,
-                     demean: bool = False) -> dict[str, np.ndarray]:
-    """`node/surrogates.walk_with_bar_geometry` as the package writes it, vectorised.
+def shipped_geom_bars(real: dict[str, np.ndarray], seed: int) -> dict[str, np.ndarray]:
+    """`node/surrogates.walk_with_bar_geometry`, vectorised faithfully.
 
-    **Kept only to show what it does to a trade, because it pays on a walk.**
-    The construction places every bar's open *inside that bar's own range* at a
-    resampled fraction - `open = low + open_frac * span`, with `close` the walk -
-    so the open is independent of the previous close. In any market whose bars
-    close above their opens on average, `mean((close - open) / span)` is
-    positive, and this construction therefore emits a **down-gap at every open
-    followed by an up-move inside the bar**. A resting limit below the market is
-    filled at the gap and rides the rise.
+    The package's own construction and the null of record for a geometry claim:
+    closes follow a walk on this market's resampled close-to-close steps, and
+    each bar's `span` and its `(open_frac, close_frac)` pair are resampled from
+    the real bars **with independent draws**, as `r.choice(spans)` and
+    `r.choice(shapes)` do there. A first version of this function drew both with
+    one index, which preserved a link the package breaks - so it was not the
+    shipped arm it claimed to be, and the independent draws are the fix.
 
-    Measured on a 60,000-bar series with an up-drift in its bar shapes and its
-    close-to-close steps demeaned: `mean(open[i] - close[i-1]) = -3.9e-04`
-    against `mean(close - open) = +4.0e-04`, exactly offsetting, with the close
-    step at +3.9e-06. Through this harness that paid the long-entry arm
-    **+0.118R a trade on the traded book and +0.184R on the synthetics** - a
-    positive expectancy on a walk, which `a-martingale-cannot-pay` says is
-    impossible. Demeaning the steps changed it by 0.004R, so the drift was never
-    the cause; the bar assembly was.
+    **It is not demeaned, because the package does not demean**, and measured
+    here demeaning moves nothing that matters: the `contdrift` arm reads within
+    0.002R of `contopen` on every arm of this study.
 
-    `geom_bars` is the corrected arm. This one is reported beside it under
-    `legacy` so the size of the correction is visible, which is the discipline
-    `expect-the-correction-to-be-the-size-of-the-effect` asks for.
+    What this construction does to a bar's **open** is the thing to know before
+    reading any limit-entry number off it. The open is placed inside that bar's
+    own range rather than at the previous close, so `mean(open[i] - close[i-1])`
+    is a by-product of the resampled marginals rather than a matched quantity.
+    The identity `close[i] - close[i-1] = (open[i] - close[i-1]) +
+    (close[i] - open[i])` means a series with near-nil close-to-close drift and
+    bars that close above their opens **must** carry a negative mean gap - and
+    the market does: `MODE=gap` reads it as negative on **28 of 28** of the
+    broker's 1h FX stores, mean **-0.0126** of a bar range. So a sawtooth is not
+    an artefact, this file does not call it one, and
+    `walk_with_bar_geometry`'s own docstring and
+    `test_the_walk_keeps_the_market_s_own_sawtooth_rather_than_removing_it` are
+    where that is recorded and pinned.
+
+    How closely the arm matches that gap depends on the clock. At the hourly FX
+    cells it is the **same sign on 5 of 5** and within a factor of 0.46 to 4.43,
+    under- as often as over-stating. The spread grows to 2.4-9.0x at 1d, and on
+    the Deriv synthetics - whose own gap is about zero - it reaches **+0.1280**
+    on Boom 1000 and **-0.1393** on Crash 1000. So it carries the phenomenon
+    without matching its size, which is enough for a statistic that does not
+    read the inside of a bar and not enough for one that does. See `MODE=gap`.
     """
     rng = np.random.default_rng(seed)
     o, h, l, c = real["open"], real["high"], real["low"], real["close"]
@@ -677,39 +711,47 @@ def legacy_geom_bars(real: dict[str, np.ndarray], seed: int,
     of = np.where(good, (o - l) / denom, 0.5)
     cf = np.where(good, (c - l) / denom, 0.5)
     steps = np.diff(c)
-    if demean:
-        steps = steps - steps.mean()
-    pick = rng.integers(0, n, n)
     price = float(c[0]) + np.cumsum(steps[rng.integers(0, len(steps), n)])
-    sp = span[pick]
-    low = price - cf[pick] * sp
+    sp = span[rng.integers(0, n, n)]          # the package's `r.choice(spans)`
+    shape = rng.integers(0, n, n)             # ... and its separate `r.choice(shapes)`
+    low = price - cf[shape] * sp
     return {"ts": real["ts"], "spread": real["spread"], "low": low, "high": low + sp,
-            "open": low + of[pick] * sp, "close": price}
+            "open": low + of[shape] * sp, "close": price}
 
 
-def geom_bars(real: dict[str, np.ndarray], seed: int,
-              demean: bool = True) -> dict[str, np.ndarray]:
-    """A walk with this market's bar geometry, assembled **continuously**.
+def contopen_bars(real: dict[str, np.ndarray], seed: int,
+                  demean: bool = True) -> dict[str, np.ndarray]:
+    """The same walk with every bar **opening at the previous close**.
 
-    The arm a geometry claim has to beat: this market's own step distribution
-    and its own wickiness, with none of its path structure -
-    `how-markets-differ-from-every-simple-process`, where no generated family
-    came within 210 of a market.
+    A second geometry arm, not a correction of the first. It exists because a
+    resting-limit arm is sensitive to how a surrogate assembles the inside of a
+    bar, and carrying two assemblies that differ in exactly that is the only
+    honest way to show how much of a limit-entry reading is the assembly:
+    through this harness the two differ by **0.171R** on the long-entry arm.
 
-    What is kept and what is removed:
+    What it keeps and what it loses, against `shipped_geom_bars`:
 
-    * each bar **opens at the previous close**, so there is no synthetic gap.
-      That one line is the whole difference from `legacy_geom_bars`, which pays
-      +0.118R a trade on a long-entry arm for want of it;
-    * the close-to-close steps are this market's own, resampled i.i.d. and
-      **demeaned** (`demean=False` keeps the realised drift, reported as its own
-      arm because "what the unconditional drift gives through this detector" is
-      worth naming rather than hiding inside a surrogate);
+    * the series is **continuous**, so `mean(open[i] - close[i-1])` is exactly
+      zero. The market's is about -0.003 to -0.011 of a range on FX and about
+      zero on the 24/7 feeds and the synthetics, so this arm is **further** from
+      the market on that quantity than the shipped one is wherever the market
+      carries a gap. **It is not a fix and must not be read as one** - the
+      package's docstring says why opening at the previous close would be a
+      different series rather than a corrected one, and a test pins it. It is
+      carried here only to size how much a limit-entry reading moves with the
+      assembly, which is 0.171R;
+    * a bar's **body is its own close-to-close step**, so the link between a
+      bar's shape and its own move - which the shipped arm breaks - is exact;
     * the two **wicks** are this market's own absolute upper and lower wick
       lengths, resampled as a pair so their dependence travels, and attached
-      outside the body. What this loses is the body-wick correlation - a big
-      body comes with big wicks in a real market and does not here - and that is
-      a reason to read the `iid` and `garch` arms beside it, not instead of it.
+      outside the body. **Body-to-range is therefore not preserved as a
+      marginal here**, where the shipped arm does preserve it (it is a function
+      of the shape pair alone, and that pair travels). A detector that grades a
+      bar by body share is mis-nulled by this arm and better served by the
+      shipped one; one that reads a bar's move against its own shape is the
+      reverse. Neither arm is right for both, which is why both are reported.
+
+    `demean=False` keeps the series' realised drift and is the `contdrift` arm.
     """
     rng = np.random.default_rng(seed)
     o, h, l, c = real["open"], real["high"], real["low"], real["close"]
@@ -729,19 +771,18 @@ def geom_bars(real: dict[str, np.ndarray], seed: int,
             "low": lo, "close": close}
 
 
-def geomdrift_bars(real: dict[str, np.ndarray], seed: int) -> dict[str, np.ndarray]:
-    """`geom_bars` with the series' own realised drift left in - not a null.
+def contdrift_bars(real: dict[str, np.ndarray], seed: int) -> dict[str, np.ndarray]:
+    """`contopen_bars` with the series' own realised drift left in.
 
-    Reported because the gap between this and `geom` is how much of an arm's
-    reading is the market's unconditional drift reaching it through the zone
-    population's long/short imbalance, which is a quantity worth naming rather
-    than hiding inside a surrogate.
+    Kept as its own arm so the claim "the market's unconditional drift reaches
+    none of these arms" is a measurement rather than prose: it reads within
+    0.002R of `contopen` on every arm of this study.
     """
-    return geom_bars(real, seed, demean=False)
+    return contopen_bars(real, seed, demean=False)
 
 
-ARMS = {"iid": iid_bars, "garch": garch_bars, "geom": geom_bars,
-        "geomdrift": geomdrift_bars, "legacy": legacy_geom_bars}
+ARMS = {"iid": iid_bars, "garch": garch_bars, "shipped": shipped_geom_bars,
+        "contopen": contopen_bars, "contdrift": contdrift_bars}
 
 
 # ───────────────────────────────── the run ─────────────────────────────────
@@ -853,6 +894,76 @@ def write(rows: list[dict], name: str) -> None:
     print(f"wrote {OUT / name}  ({len(rows):,} rows)", flush=True)
 
 
+def gap() -> None:
+    """Does the market carry the sawtooth the surrogates are judged on?
+
+    **It does, and this mode exists because this study first claimed it did
+    not.** The first version of the write-up read a surrogate's negative mean
+    `open[i] - close[i-1]` as a defect in
+    `node/surrogates.walk_with_bar_geometry` and "fixed" it by opening each bar
+    at the previous close. The identity
+
+        close[i] - close[i-1] = (open[i] - close[i-1]) + (close[i] - open[i])
+
+    forces the sign: a series whose bars close above their opens on average
+    and whose close-to-close drift is about nil **must** have a negative mean
+    gap, the market included. Measured here, the gap is negative on **28 of
+    28** of the broker's own 1h FX stores at a mean of **-0.0126** of a bar
+    range, with the body positive and the step near zero on every one. So the
+    sawtooth is a property of the book and pinning a surrogate's gap at zero
+    is a change of null, not a correction.
+
+    What the mode also shows is how closely each arm matches it. At the hourly
+    FX cells the shipped construction is the same sign on 5 of 5 and within a
+    factor of 0.46 to 4.43, which is the coordinator's own reading; the spread
+    grows to 2.4-9.0x at 1d and reaches -0.1393 to +0.1280 on the Deriv
+    synthetics, whose own gap is about zero. `contopen_bars` pins it at exactly
+    zero on all 54 cells, which is further from the market wherever the market
+    has a gap. That is the limit the write-up reports in place of the withdrawn
+    defect.
+    """
+    rows = []
+    print("== the broker's own 1h stores, as stored ==")
+    print(f"  {'sym':<22}{'gap/span':>10}{'body/span':>11}{'step/span':>11}{'bars':>9}")
+    for path in sorted((HOME / "seqlab").glob("*.1h.npz")):
+        sym = path.name[: -len(".1h.npz")]
+        with np.load(path) as z:
+            o, h, l, c = (z[k].astype(float) for k in ("open", "high", "low", "close"))
+        span = float(np.mean(h - l))
+        if not span > 0 or len(c) < 2:
+            continue
+        g, b, st = (float(np.mean(o[1:] - c[:-1])) / span, float(np.mean(c - o)) / span,
+                    float(np.mean(np.diff(c))) / span)
+        rows.append({"sym": sym, "iv": "1h", "series": "real", "store": "as-stored",
+                     "gap_span": g, "body_span": b, "step_span": st, "bars": len(c)})
+        print(f"  {sym:<22}{g:>10.4f}{b:>11.4f}{st:>11.4f}{len(c):>9,d}")
+    gaps = np.array([r["gap_span"] for r in rows])
+    if len(gaps):
+        print(f"  negative on {int((gaps < 0).sum())} of {len(gaps)}; "
+              f"mean {gaps.mean():+.4f}, median {np.median(gaps):+.4f}")
+
+    print("\n== the folded series this study trades, and the two geometry arms ==")
+    print(f"  {'sym':<22}{'iv':>3}{'real':>10}{'shipped':>10}{'contopen':>10}  (gap/span)")
+    src = sources()
+    for sym in [s for s in DEEP + SYNTH if s in src]:
+        raw, _d = read(src[sym])
+        for iv in INTERVALS:
+            b = fold(raw, SEC[iv])
+            if len(b["close"]) < MIN_BARS:
+                continue
+            out = {}
+            for name, frame in (("real", b), ("shipped", shipped_geom_bars(b, seed=5)),
+                                ("contopen", contopen_bars(b, seed=5))):
+                span = float(np.mean(frame["high"] - frame["low"]))
+                out[name] = (float(np.mean(frame["open"][1:] - frame["close"][:-1])) / span
+                             if span > 0 else float("nan"))
+                rows.append({"sym": sym, "iv": iv, "series": name, "store": "folded",
+                             "gap_span": out[name], "bars": len(frame["close"])})
+            print(f"  {sym:<22}{iv:>3}{out['real']:>10.4f}{out['shipped']:>10.4f}"
+                  f"{out['contopen']:>10.4f}")
+    write(rows, "gap.csv")
+
+
 def overlap() -> None:
     """Is LuxAlgo's order block the same object as this repo's own?
 
@@ -953,6 +1064,9 @@ def main() -> None:
     if MODE == "overlap":
         overlap()
         return
+    if MODE == "gap":
+        gap()
+        return
     src = sources()
     trips = quotes([s for s in DEEP + WIDE + SYNTH if s in src])
     js = jobs(trips)
@@ -1048,7 +1162,7 @@ def power() -> None:
             b = fold(raw, SEC[iv])
             if len(b["close"]) < MIN_BARS:
                 continue
-            for name in ("real", "iid", "garch", "geom"):  # drift arms add no power information
+            for name in ("real", "iid", "garch", "shipped", "contopen"):
                 frame = b if name == "real" else ARMS[name](b, seed=zlib.crc32(sym.encode()) + 7)
                 unit = atr(frame["high"], frame["low"], frame["close"])
                 for g in grid:
