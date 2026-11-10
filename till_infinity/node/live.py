@@ -566,10 +566,22 @@ def _statespace() -> list[Actor]:
         # the ceiling, so folding 5m for a feed that has no 5m desk would be a
         # Kalman update per bar whose reading nothing can act on - the
         # `australia 200` failure again, one clock down.
+        # **And only the clocks a consuming rule still runs on.** A rule can be
+        # scoped off one clock - `five-minute-surprise-is-a-different-rule` is
+        # why `statespace-surprise` is kept off 5m - and folding an interval
+        # whose only consumer no longer trades it is a Kalman update per bar
+        # producing a reading nothing can act on. That is the `australia 200`
+        # failure a second time: computed, published, and declined by every
+        # desk as `unwanted`.
+        clocks = tuple(
+            interval
+            for interval in desks.intervals()
+            if any(rule in desks.rules_for(interval) for rule in wanted)
+        )
         bars = tuple(
             str(desks.bar_type(symbol, venue, interval))
             for symbol, venue in used
-            for interval in desks.intervals()
+            for interval in clocks
             if symbol in desks.symbols_for(venue, interval)
         )
         if bars:
@@ -583,7 +595,7 @@ def _statespace() -> list[Actor]:
                 # Both counts over bar *types*, so the ratio means what it
                 # says. `every` is symbol-venue pairs, so narrowing 30 feeds
                 # to 8 on four intervals is "32 of 120" and not "32 of 30".
-                len(every) * len(desks.intervals()),
+                len(every) * max(1, len(clocks)),
                 "" if used is keep else " (no overlap, so all of them)",
             )
     if not bars:
