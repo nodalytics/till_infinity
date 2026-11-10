@@ -148,7 +148,16 @@ answer must be zero:
 | `level_shield.garch_bars` | -0.6552 | 0.86 | +0.0421 [+0.0336, +0.0509] |
 
 **Only the real-bars arm is calibrated, and it is calibrated on both the level
-and the paired difference.** So the study reads the paired difference from k=0
+and the paired difference.** The paired difference is not *exactly* zero on
+every null either, and the bound matters: on a Brownian bridge with a stop
+three times as wide the same random anchors read **-0.0040 at k=1, -0.0077 at
+k=3, -0.0092 at k=5 and -0.0119 at `c3`**, each with an interval excluding
+zero. So delaying has a small mechanical cost that depends on the bars and the
+stop width, and on the bars and stop width this study uses it is within
+**[-0.0081, +0.0101]**. The real arm's -0.0448 at k=3 survives the widest of
+those allowances with -0.035 to spare, so the verdict does not turn on it -
+but it is a reason the verdict is stated as "zero or negative" rather than as
+a precise negative number. So the study reads the paired difference from k=0
 on real bars, and the surrogate arms are kept for what they can still say -
 whether a delay difference appears where there is nothing to select, which on
 three of the four it does.
@@ -204,11 +213,12 @@ looked like the cause and was not:
   signals read +0.0899 and +0.1253 on the same 31 series). What is left is a mean over a payoff whose
   median is exactly -1.000, whose winners are a short heavy tail, and whose
   stop sits closer in units of a bar's own step on a bridge than on a real
-  series - 0.74 of trades stopped against 0.65. **No level in this study is
-  read as a result for that reason**, which is the whole argument for the
-  paired statistic; `ET_STOPMULT` is in the harness as the handle that varies
-  the stop's width while holding the signal fixed, for whoever wants to take
-  it further.
+  series - 0.74 of trades stopped against 0.65. `ET_STOPMULT` is the handle
+  that varies that while holding the signal fixed, and it carries **part of it
+  and not all**: tripling the stop takes the same arm's k=0 reading from
+  +0.1144 to **+0.0803** and its stop rate from 0.86 to 0.60. **No level in
+  this study is read as a result**, which is the whole argument for the paired
+  statistic.
 
 ## `smc-bos-causal` at 15m: 7,128 trades, 31 real markets, 2015 to 2026
 
