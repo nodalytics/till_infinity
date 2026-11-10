@@ -165,6 +165,7 @@ from .bars import (
 )
 from .candles import Candles
 from .changepoint import Changepoint, Focus
+from .fuzzy import FuzzyCandles
 from .grouping import Anchor, Group, cluster, common, crowding, modes, nearest, residual
 from .levels import (
     BjorgumLevels,
@@ -241,6 +242,13 @@ BAR_DETECTORS: dict[str, tuple[Callable[..., object], tuple[Reading, ...]]] = {
     # `build_detector` only passes what a constructor takes.
     "pips": (Pips, ()),
     "bjorgum": (BjorgumLevels, ()),
+    # Nautilus grades the shape; the level question is ours. `candles.Candles`
+    # wrote the instruction - "theirs for how big, this for where" - and
+    # `FRAMEWORK`'s own `fuzzy` entry had exactly one reference in the
+    # repository, its registration. No source and no unit: the grades are
+    # ordinals against a rolling window, which is what makes them mean the
+    # same thing on gold as on EURUSD without a scale to get wrong.
+    "fuzzy_candles": (FuzzyCandles, ()),
     # Reads a bar's whole shape, so no source. **An experiment**: the halves
     # are exposed because the direction half is measured closed here and the
     # volatility half is measured large, and a claim on the composite cannot
