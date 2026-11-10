@@ -57,6 +57,7 @@ above it and not inside.
 
 from __future__ import annotations
 
+from dataclasses import replace
 from datetime import timedelta
 from typing import Any
 
@@ -65,7 +66,7 @@ from nautilus_trader.model.data import Bar, BarType, QuoteTick
 from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy as NautilusStrategy
 
-from ..domain.models import Intent, Refusal, SymbolSpec, Tick
+from ..domain.models import Intent, Refusal, Side, SymbolSpec, Tick
 from ..risk import sizing
 from ..utils.topics import PROPOSALS, subscribe
 from . import sizes
@@ -451,6 +452,8 @@ class Desk(NautilusStrategy):
         if isinstance(found, Refusal):
             return self._refuse(found, payload)
 
+        found = self._floor_target(found)
+
         # The broker's own minimum stop distance, checked before the order
         # rather than discovered by its retcode. This fires only where the
         # venue stated a `stops_level` and the geometry is inside it, in which
@@ -461,6 +464,44 @@ class Desk(NautilusStrategy):
             refusal = Refusal(gate="stops-level", detail=breach, feed=found.feed)
             return self._refuse(refusal, payload)
         return found
+
+    def _floor_target(self, intent: Intent) -> Intent:
+        """Give an intent a target where its rule shipped none.
+
+        **Here, and not in any rule's `decide`.** Three live rules set
+        `target=0.0` deliberately and say why in the same words - "a target
+        invented here would be a different rule with better arithmetic" - and
+        `smc-bos-causal` names its exit in the rule itself, where the `time` in
+        `smc_bos_c_L50|M15|N20|time` is a 16-bar clock. Rewriting those would
+        change the thing that was measured. Applying a floor **after** the
+        decision leaves every rule's own code path identical, so the measured
+        baseline is still what runs when the floor is off.
+
+        Ordered before `respects_stops_level` on purpose: a target this
+        supplies is checked against the broker's own minimum distance like any
+        other, rather than being discovered by a retcode.
+
+        `target_floored` goes on the features because the exit has changed. A
+        later study that pooled floored trades with the rule's own stop-or-
+        clock exits would be averaging two different rules, and
+        `pooled-medians-invert-subgroups` is what that costs.
+        """
+        wanted = self.settings.target_r
+        if wanted <= 0 or intent.target:
+            return intent
+        risk = intent.risk
+        if risk <= 0:
+            # No stop to measure against. `sizes.size` has already sized this
+            # from the same distance, so a zero here means the rule gave an
+            # entry equal to its stop and the trade is refused downstream -
+            # inventing a target off a zero risk would put a price on nothing.
+            return intent
+        sign = 1 if intent.side is Side.BUY else -1
+        return replace(
+            intent,
+            target=intent.entry + sign * wanted * risk,
+            features={**intent.features, "target_floored": float(wanted)},
+        )
 
     def _refuse(self, refusal: Refusal, payload: dict[str, Any]) -> Refusal:
         """Count, record and return a desk-level refusal of a wanted trade.
