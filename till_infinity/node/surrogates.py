@@ -485,36 +485,49 @@ def walk_with_bar_geometry(
     bars, kurtosis 47 to 74 and size autocorrelation 0.21, and no simple
     family is closer than 210.
 
-    ## The open is not placed at the previous close, and must not be
+    ## It gaps at every open, and the market does not. Two warnings follow
 
-    Each bar's open sits inside that bar's own range, so the series has a
-    negative mean gap at the open and a positive mean body. That looks like a
-    planted sawtooth - a resting limit below the market fills at the open and
-    rides the bar - and it was reported as one on 2026-11-10 after a limit arm
-    paid +0.1241R a trade here.
+    Each bar's open sits inside that bar's own range, independently of the
+    previous close, so **this series gaps at every single bar**. Measured
+    against the broker's own stores as a share of the bar range:
 
-    **The market has the same sawtooth, and arithmetic says it must.**
-    `close[i] - close[i-1]` is `(open[i] - close[i-1]) + (close[i] - open[i])`,
-    so a market whose bars close above their opens and whose close-to-close
-    drift is nil has `mean(gap) = -mean(body)` identically. Measured over 12
-    hourly stores as a fraction of the mean bar range: the real series' mean
-    gap is **negative on 10 of 12** and reads -0.0187 on AUDCHF against the
-    surrogate's -0.0241, -0.0161 on AUDNZD against the surrogate's **-0.0068**
-    - the surrogate understates it as often as it overstates it, and is
-    materially larger on 3 of 12.
+    | | median `|gap|` | bars with no gap | p90 `|gap|` |
+    | --- | ---: | ---: | ---: |
+    | real, 15m and 1h | **0.0000** | **71 - 79%** | 0.012 - 0.040 |
+    | this surrogate | **0.60 - 0.64** | 0.01 - 0.16% | 1.64 - 1.88 |
 
-    So opening each bar at the previous close makes this *less* like the
-    market, not more: it would set a mean gap of zero where the market's is
-    about -0.011 of a range. What the +0.1241R actually says is that **a
-    resting-limit arm is not measurable on bar data** - OHLC does not order the
-    high and the low, so filling at the open and marking at the close is the
-    harness choosing the intrabar path, and the same arm profits on the real
-    series for the same reason.
+    **An earlier version of this note defended the construction on the mean
+    gap and was wrong.** The means do agree - about -0.012 of a range on both -
+    because `close[i] - close[i-1]` is `(open[i] - close[i-1]) + (close[i] -
+    open[i])`, so any series whose bars close above their opens with nil
+    close-to-close drift has `mean(gap) = -mean(body)` identically. But the
+    market reaches that mean through a *minority* of session-boundary gaps on a
+    series that is otherwise contiguous, and this reaches it by gapping 0.6 of
+    a range on every bar. A mean is the wrong statistic for the question.
 
-    The one real limitation is elsewhere: the shape pair and the span are
-    resampled **independently**, so the correlation between a bar's body and
-    its range is not preserved. A detector that reads body-to-range jointly is
-    therefore judged against a null that has the marginals and not the pair.
+    So:
+
+    * **Never use this arm for anything that fills on a gap** - a resting
+      limit, a stop order marked at the open, a gap filter. A study measured
+      its long-entry arm paying **+0.1012R a trade on this null**, which is
+      the planted gap being collected. For those, build the path: a bar as a
+      bridge of sub-steps pinned to a real step, so `open == previous close`
+      and the extremes are the path's own.
+    * **And never use it as a barrier null**, for a second reason found the
+      same day: the highs and lows are resampled independently of the close
+      path, so a stop fires where the path never went while the clock mark
+      reads the close path as though nothing happened. With random anchors -
+      no detector to blame - that read -0.2055R here against -0.0004R
+      [-0.0245, +0.0241] on real bars.
+
+    What it remains right for is what the docstring above claims: a
+    *topological* claim, where the question is what a detector produces from
+    bar wickiness and a step distribution with no path structure.
+
+    One further limitation: the shape pair and the span are resampled
+    **independently**, so the correlation between a bar's body and its range is
+    not preserved. A detector reading body-to-range jointly is judged against a
+    null that has the marginals and not the pair.
     """
     r = rng or random.Random()
     if len(bars) < 2:
