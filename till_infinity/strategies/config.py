@@ -637,6 +637,27 @@ class Settings:
     #: portfolio one violent instrument can represent. Sizing *up* into calm is
     #: how a book discovers that the calm was the beginning of something.
     volatility_target_bps: float = 0.0
+    #: Give every accepted intent a target at this multiple of its own risk,
+    #: where its rule shipped none. `TRADING_TARGET_R`, off at 0.
+    #:
+    #: **Three live rules ship no target on purpose and say why.**
+    #: `structure.py`, `zones.py` and `origins.py` all set `target=0.0` with
+    #: the same comment - "a target invented here would be a different rule
+    #: with better arithmetic" - and `smc_bos_c_L50|M15|N20|time` names its
+    #: exit in the rule: the `time` is a 16-bar clock, not a price.
+    #:
+    #: So this is a **policy floor and not a correction**: every one of those
+    #: rules was measured on a stop-or-clock exit, and a target changes the
+    #: exit and therefore the expectancy. `a-martingale-cannot-pay` is this
+    #: desk's record of a target making a losing geometry read positive through
+    #: better arithmetic rather than better selection. Off by default so the
+    #: measured baseline is still reachable, and expressed in **R against the
+    #: rule's own stop** rather than as a price, so it scales with whatever
+    #: risk each rule chose instead of imposing a distance on all of them.
+    #:
+    #: Every floored intent carries `target_floored` in its features, so a
+    #: later study can split on it rather than pooling two different exits.
+    target_r: float = 0.0
 
     #: The net edge, in volatility units, that earns full size. Zero is off.
     #: Measured; see `research/docs/settings.md`.
@@ -1496,6 +1517,7 @@ class Settings:
             max_hold_position=_float("TRADING_MAX_HOLD_POSITION_S", 4 * 24 * 3_600.0),
             crowding_share=_float("TRADING_CROWDING_SHARE", 0.0),
             volatility_target_bps=_float("TRADING_VOLATILITY_TARGET_BPS", 0.0),
+            target_r=_float("TRADING_TARGET_R", 0.0),
             regime_band=_float("TRADING_REGIME_BAND", 0.0),
             regime_floor=_float("TRADING_REGIME_FLOOR", 0.5),
             spike_above=_float("TRADING_SPIKE_ABOVE", 0.0),
