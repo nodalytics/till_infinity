@@ -10,6 +10,9 @@ the magic is how this client decides which positions are the desk's at all.
 from __future__ import annotations
 
 import asyncio
+import json
+import os
+from pathlib import Path
 from typing import Any
 
 from nautilus_trader.core.uuid import UUID4
@@ -128,6 +131,17 @@ ACCOUNT_REFRESH_S = 60.0
 #: Nautilus's own reconciliation would let a naked position outlive a
 #: divergence the engine had already noticed.
 UNPROTECTED_SWEEP_S = 60.0
+
+#: Where the legs the broker confirmed are written down, so a restart can still
+#: repair them. Beside the status file, which is on the image's volume.
+#:
+#: **The sweep could not repair a position that went naked across a restart.**
+#: It copies the cache's own stop order, and reconciliation rebuilds positions
+#: without the bracket legs that protected them - so on 2026-11-10 a live
+#: XAUUSD short reported "no stop at the broker and no stop order in the cache
+#: to copy" every sixty seconds and had to be given a stop by hand. The cache
+#: is still the first source; this is the fallback that outlives the process.
+PROTECTION_PATH = Path(os.environ.get("TILL_PROTECTION_PATH") or "/app/.data/protection.json")
 #: Placed or done: the terminal has the request.
 _TAKEN = (PLACED, DONE)
 
@@ -405,7 +419,9 @@ class MT5ExecutionClient(LiveExecutionClient):
         it.
         """
         repaired = 0
-        for row in await self._bridge.positions():
+        rows = await self._bridge.positions()
+        self._forget({int(row.get("ticket") or 0) for row in rows})
+        for row in rows:
             if not self._ours(row):
                 continue  # another strategy's, or a human's
             at_stop = float(row.get("sl") or 0.0)
@@ -425,14 +441,26 @@ class MT5ExecutionClient(LiveExecutionClient):
             closing = OrderSide.SELL if int(row.get("type") or 0) % 2 == 0 else OrderSide.BUY
             wanted = at_stop or self._cached_stop(instrument_id, closing=closing)
             target = at_target or self._cached_target(instrument_id, closing=closing)
+            if wanted is None or target is None:
+                # **The cache first, this second.** The cache is live truth and
+                # a trailing stop moves in it; this file is what outlives the
+                # process. Reconciliation rebuilds a position without the
+                # bracket legs that protected it, so after a restart the cache
+                # has nothing to copy and only the record does.
+                recorded = self._protections().get(str(ticket)) or {}
+                if wanted is None:
+                    wanted = float(recorded.get("sl") or 0.0) or None
+                if target is None:
+                    target = float(recorded.get("tp") or 0.0) or None
             if not at_stop and wanted is None:
                 # **Said, not guessed.** A naked position with nothing in the
                 # cache to copy is a different fault from a dropped leg, and
                 # naming it is what lets an operator tell them apart.
                 self._log.error(
                     f"position {ticket} on {symbol} has no stop at the broker and "
-                    f"no stop order in the cache to copy - it is running "
-                    f"unprotected and this sweep has nothing to repair it with"
+                    f"no stop order in the cache and none on record to copy - "
+                    f"it is running unprotected and this sweep has nothing to "
+                    f"repair it with"
                 )
             if wanted is None and target is None:
                 continue
@@ -528,6 +556,59 @@ class MT5ExecutionClient(LiveExecutionClient):
                 f"cache - refusing to guess which one targets the position"
             )
         return None
+
+    def _remember(self, ticket: int, stop: float, target: float) -> None:
+        """Write down legs the **broker confirmed**, keyed by its own ticket.
+
+        Called from `_protect` after it has re-read the position, so what is
+        recorded is what the venue holds and not what was asked for - the
+        distinction that `_report_legs` exists to make, since a retcode of
+        10009 over a naked position has happened here.
+
+        Atomic, because a crash between truncate and write would leave the
+        fallback empty exactly when it is needed. Never raises: a desk that
+        cannot write this file still trades, and a lost record degrades the
+        sweep to what it did before this existed.
+        """
+        if not ticket or stop <= 0.0:
+            return  # nothing worth remembering, and a zero is not a stop
+        try:
+            held = self._protections()
+            held[str(int(ticket))] = {"sl": float(stop), "tp": float(target or 0.0)}
+            PROTECTION_PATH.parent.mkdir(parents=True, exist_ok=True)
+            temp = PROTECTION_PATH.with_suffix(".tmp")
+            temp.write_text(json.dumps(held))
+            temp.replace(PROTECTION_PATH)
+        except Exception as exc:  # pragma: no cover - a full or read-only disk
+            self._log.warning(f"could not record protection for {ticket}: {self._scrub(exc)}")
+
+    def _protections(self) -> dict[str, dict]:
+        """The recorded legs. An unreadable or absent file is an empty one."""
+        try:
+            found = json.loads(PROTECTION_PATH.read_text())
+        except Exception:
+            return {}
+        return found if isinstance(found, dict) else {}
+
+    def _forget(self, live: set[int]) -> None:
+        """Drop records for tickets the broker no longer holds.
+
+        **Pruned against the open positions rather than on a timer**, so the
+        file cannot grow without bound and cannot carry a closed ticket's stop
+        into anything. Called from the sweep, which has just read the
+        positions anyway.
+        """
+        held = self._protections()
+        keep = {name: row for name, row in held.items() if int(name) in live}
+        if len(keep) == len(held):
+            return
+        try:
+            PROTECTION_PATH.parent.mkdir(parents=True, exist_ok=True)
+            temp = PROTECTION_PATH.with_suffix(".tmp")
+            temp.write_text(json.dumps(keep))
+            temp.replace(PROTECTION_PATH)
+        except Exception as exc:  # pragma: no cover
+            self._log.warning(f"could not prune the protection record: {self._scrub(exc)}")
 
     def _publish_account(self, account: dict) -> None:
         """Put the broker's balances in the cache, which nothing else did.
@@ -1350,6 +1431,7 @@ class MT5ExecutionClient(LiveExecutionClient):
 
         held = await self._held(ticket)
         if held is not None and not self._shortfall(held, stop, target, digits):
+            self._remember(ticket, stop, target)
             return frozenset(), ""
 
         refused = ""
@@ -1369,6 +1451,7 @@ class MT5ExecutionClient(LiveExecutionClient):
             return frozenset(), ""
         missing = self._shortfall(held, stop, target, digits)
         if not missing:
+            self._remember(ticket, stop, target)
             return frozenset(), ""
         asked = ", ".join(f"{f} {a}" for f, a in (("sl", stop), ("tp", target)) if a)
         holds = ", ".join(f"{f} {held.get(f) or 0.0}" for f in ("sl", "tp"))
