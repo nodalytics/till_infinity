@@ -23,12 +23,12 @@ rule with a hundred times the sample.
 
 The expectation per signal goes the other way. Paired against the same signals
 entered at market, the delay is worth **-0.017R at k=1 falling to -0.047R at
-k=4** on `smc-bos-causal`, with day-block intervals excluding zero at k=2
-through k=5, against a matched random-anchor placebo whose own delay difference
-is **+0.0013R [-0.0081, +0.0101]**. It still loses with reward:risk held
-constant, so the exchange is not where the loss hides. And it is
-indistinguishable from waiting at random for the same mean length: the
-random-delay twin reads **-0.037 to -0.048R** against the real confirmation's
+k=4** on `smc-bos-causal`, with a day-block interval excluding zero at **every
+one of the five lags**, against a matched random-anchor placebo whose own
+delay difference is **+0.0013R [-0.0081, +0.0101]**. It still loses with
+reward:risk held constant, so the exchange is not where the loss hides. And it
+is indistinguishable from waiting at random for the same mean length: the
+random-delay twin reads **-0.034 to -0.048R** against the real confirmation's
 -0.020 to -0.030R.
 
 **No k beats the fair-rate null on either rule.** Four of five lags beat *no
@@ -43,7 +43,7 @@ per-instrument cells on that rule survive Benjamini-Hochberg.
 | question | answer | kind |
 |---|---|---|
 | does a 1-5 bar lag raise the hit rate? | **yes, and at the fair rate.** 0.504 to 0.653 at 1R, 0.333 to 0.472 at 2R; within 0.025 of `risk/(risk+reward)` at every k and target, and below it in 16 of 22 cells | reading, n 7,128 |
-| does it add **selection** beyond that exchange? | **no.** Every lag's paired difference from k=0 is zero or negative; the three largest are -0.037, -0.045 and -0.047R with intervals excluding zero | **null** |
+| does it add **selection** beyond that exchange? | **no.** Every lag's paired difference from k=0 is zero or negative, and all five fixed lags have an interval excluding zero - -0.017, -0.037, -0.045, -0.047 and -0.041R at k=1 to k=5 | **null** |
 | does the exchange explain all of it? | **no - it is worse than that.** With reward:risk held constant and no refusals at all (`shifted`) the lag still loses, -0.021 to -0.080R | null |
 | is the confirmation distinguishable from waiting at random? | **no.** The random twin at the same mean delay and the same refusal rate reads -0.034 to -0.048R against -0.020 to -0.030R, and **survives BH on 11 per-instrument cells against the real confirmation's 3** | null |
 | does production's `ArrivalEntry` candle witness help? | **it fires almost never at a break price.** 1.7% of signals within one bar, 11.5% within five, and the refusal costs the rule its whole reading: -0.073 to -0.078R a signal | mechanic |
@@ -51,7 +51,7 @@ per-instrument cells on that rule survive Benjamini-Hochberg.
 | does `smc-bos-causal` exit on a 16-bar clock? | **no, 96.** 16 is `vol-impulse`'s. A 5-bar lag eats 5.2% of one hold and 31.3% of the other | mechanic |
 | what does the delay cost to execute? | **nothing measurable.** `N20` pins cost in R to 1/20 by construction, and the measured 0.049 is flat across k to three decimals - a later entry moves the entry, not the stop distance it is divided by | reading |
 | can `walk_with_bar_geometry` null a barrier race? | **no.** Random anchors on it read **-0.2055R** where optional stopping requires zero; the same anchors on real bars read **-0.0004R** | **defect** |
-| where does the test go blind? | it detects a planted conditional continuation at 2.0 volatility units over a 96-bar hold and not at 1.0; the measured interval excludes anything above about **0.2 units** | power |
+| where does the test go blind? | it detects a planted conditional continuation at 2.0 volatility units over a 96-bar hold and not at 1.0; the measured interval excludes anything above **0.24 to 0.41 units**, depending on which arm's zero is the baseline | power |
 | readable at 1d? | **no.** 128 trades, mean +1.44R, interval [+0.28, +2.83], median -1.000 | unmeasurable |
 
 ## What was run
@@ -133,11 +133,11 @@ It does need a calibration, and the calibration is why the **level** is never
 quoted as a result here. (The table below is the `main` run's 31 15-minute
 series; the sub-step sweep two sections down is `MODE=calib`, which runs only
 the eight eleven-year series, so the two universes are not the same and their
-levels are not comparable with each other either.) A 1-ATR stop against a 96-bar mark has a median of
-exactly **-1.000** and a positive mean: a short string of very large winners
-against a wall of stop-outs, so the sample mean is badly conditioned and any
-settlement bias rides on top of it. Measured with **random anchors**, where the
-answer must be zero:
+levels are not comparable with each other either.) A 1-ATR stop against a
+96-bar mark has a median of exactly **-1.000** and a positive mean: a short
+string of very large winners against a wall of stop-outs, so the sample mean
+is badly conditioned and any settlement bias rides on top of it. Measured with
+**random anchors**, where the answer must be zero:
 
 | bars the race ran on | k=0 mean R0 | stop rate | paired k=3 vs k=0 |
 |---|---|---|---|
@@ -168,10 +168,13 @@ three of the four it does.
 the worse of the stop and the bar's open is the honest reading of a gap on a
 real series. `walk_with_bar_geometry` and `bar_shuffle` draw each bar's open
 *inside that bar's own range*, independently of the previous close, so every
-synthetic bar opens with a fabricated gap. Measured on EURUSD 15m, `|open -
-previous close|` as a share of the bar range, at the median: **0.0000 real,
-0.6481 walk-geometry, 0.6721 bar-shuffle**. The first run of this harness duly
-read **-0.6378R at k=0 on walk-geometry** against a required zero. The headline
+synthetic bar opens with a fabricated gap. Measured on EURUSD 15m against its
+own twins, `|open - previous close|` as a share of the bar range, at the
+median: **0.0000 real, 0.6481 walk-geometry, 0.6721 bar-shuffle** - the means
+are not quoted because zero-range bars put them in the thousands. The first run
+of this harness duly read **-0.6378R at k=0 on walk-geometry** against a
+required zero, which `MODE=leak ET_GAPFILL=1 ET_SUBSTEPS=15 ET_DEMEAN=0`
+reproduces. The headline
 fills at the stop price, which is symmetric across arms; `ET_GAPFILL=1`
 restores the gap reading for a real-bars sensitivity. Underfilling is also the
 safer direction: `smc-bos-reconcile.md` measured the catalogue's own stop fills
@@ -197,28 +200,28 @@ Two smaller things fell out on the way, and both are recorded because each one
 looked like the cause and was not:
 
 - **"Driftless" was not.** Every one of these arms resamples or permutes real
-  steps and none removes the mean, so a surrogate of an eleven-year gold series
-  carries eleven years of gold's drift - about +0.01 price units a bar against
-  a 15-minute ATR of a few, a fifth of an R inside one 96-bar hold. `ET_DEMEAN`
-  removes it and is on by default. It moved the bridge arm from +0.1219 to
-  +0.1144, so it was **not** the cause of that arm's bias.
+  steps and none removes the mean, so a surrogate of an eleven-year gold
+  series carries eleven years of gold's drift - about +0.01 price units a bar
+  against a 15-minute ATR of a few, a fifth of an R inside one 96-bar hold.
+  `ET_DEMEAN` removes it and is on by default. It moved the bridge arm from
+  +0.1219 to +0.1144, so it was **not** the cause of that arm's bias.
 - **Refining the path does not fix the level either, and the residual's cause
-  is not identified.** On the eight eleven-year series (`MODE=calib`) the
-  bridge's k=0 reading across 15, 30, 60, 120 and 240 sub-steps a bar is
-  +0.1734, +0.1686, +0.1222, +0.1164, +0.1144 - it falls and
-  then stops, so about 0.06R of it was the stop's overshoot and the remaining
-  +0.11R is something else. Three candidates were ruled out by measurement
-  rather than argument: drift (`ET_DEMEAN`, worth 0.0075), path discreteness
-  (the sweep above) and the detector (random anchors read the same as BOS
-  signals read +0.0899 and +0.1253 on the same 31 series). What is left is a mean over a payoff whose
-  median is exactly -1.000, whose winners are a short heavy tail, and whose
-  stop sits closer in units of a bar's own step on a bridge than on a real
-  series - 0.74 of trades stopped against 0.65. `ET_STOPMULT` is the handle
-  that varies that while holding the signal fixed, and it carries **part of it
-  and not all**: tripling the stop takes the same arm's k=0 reading from
-  +0.1144 to **+0.0803** and its stop rate from 0.86 to 0.60. **No level in
-  this study is read as a result**, which is the whole argument for the paired
-  statistic.
+  is not identified.** On the eight eleven-year series (`MODE=calib
+  ET_SUBGRID=15,30,60,120,240`) the bridge's k=0 reading across 15, 30, 60,
+  120 and 240 sub-steps a bar is +0.1734, +0.1686, +0.1222, +0.1164, +0.1144 -
+  it falls and then stops, so about 0.06R of it was the stop's overshoot and
+  the remaining +0.11R is something else. Three candidates were ruled out by
+  measurement rather than argument: drift (`ET_DEMEAN`, worth 0.0075), path
+  discreteness (the sweep above) and the detector (random anchors read the
+  same as BOS signals read +0.0899 and +0.1253 on the same 31 series). What is
+  left is a mean over a payoff whose median is exactly -1.000, whose winners
+  are a short heavy tail, and whose stop sits closer in units of a bar's own
+  step on a bridge than on a real series - 0.74 of trades stopped against
+  0.65. `ET_STOPMULT` is the handle that varies that while holding the signal
+  fixed, and it carries **part of it and not all**: `MODE=calib ET_SUBGRID=240
+  ET_STOPMULT=3` takes the same arm's k=0 reading from +0.1144 to **+0.0803**
+  and its stop rate from 0.86 to 0.60. **No level in this study is read as a
+  result**, which is the whole argument for the paired statistic.
 
 ## `smc-bos-causal` at 15m: 7,128 trades, 31 real markets, 2015 to 2026
 
@@ -382,9 +385,9 @@ fail the pre-registered bar on three counts:
 
 The fair-rate story repeats on this rule too. At a 2R target the hit rate goes
 **0.306 at `k0` to 0.397 at `k5` and 0.529 at `c1`**, against fair rates of
-0.333, 0.405 and 0.513 - tracking within 0.016 on this rule - while the paired difference is
-+0.0150 [-0.0185, +0.0490] and +0.0302 [+0.0044, +0.0581] and the net is
--0.0593 and -0.0215.
+0.333, 0.405 and 0.513 - tracking within 0.016 on this rule - while the paired
+difference is +0.0150 [-0.0185, +0.0490] and +0.0302 [+0.0044, +0.0581] and
+the net is -0.0593 and -0.0215.
 
 ## The controls that must read nothing, and do
 
@@ -421,11 +424,14 @@ units, over the whole 96-bar hold.
   unit**, and the test's own 5% detection threshold on this sample is a plant of
   roughly **2.0 units**. It does not see 1.0.
 - The measured `c2` on real `smc-bos-causal` is -0.0201 with an upper bound of
-  **+0.0022R**, which on that slope corresponds to a planted effect of about
-  **0.2 volatility units**. So the *exclusion* is far tighter than the
-  detection threshold, because the real reading is negative and its interval is
-  narrow: the data rules out a confirmation effect worth more than about a fifth
-  of a bar's range of extra travel over a day's hold.
+  **+0.0022R**. The fitted line is `diff = -0.0051 + 0.0177 g`, so that upper
+  bound sits at **g = 0.41**; measured instead as an excess over the real-bars
+  placebo's own `c3` difference of -0.0020, it sits at **g = 0.24**. So the
+  *exclusion* is four to eight times tighter than the detection threshold,
+  because the real reading is negative and its interval narrow: the data rules
+  out a confirmation worth more than **a quarter to two fifths of a bar's
+  range** of extra travel over a day's hold, and the two figures differ only in
+  which arm's zero is taken as the baseline.
 - **A pure wait cannot select and the sweep shows it**: `k2` is flat at -0.015
   to -0.019 across the whole grid. So is `c5`, which fills 90% of signals and
   therefore barely refuses anything. Only an arm that *refuses* can read a
@@ -464,11 +470,11 @@ read positive too.
 
 **Refuted.** That a 1-5 bar confirmation delay adds selection to
 `smc-bos-causal` or `vol-impulse` at 15m. The hit rate rises at the fair rate
-to within 0.025 at every lag and target, and below it more often than above; the per-signal expectation falls
-or does not move; the fall survives turning the exchange off; the confirmation
-is indistinguishable from waiting at random for the same mean length; the
-matched placebo shows no delay effect at all; and no per-instrument cell
-survives multiplicity as an improvement.
+to within 0.025 at every lag and target, and below it more often than above;
+the per-signal expectation falls or does not move; the fall survives turning
+the exchange off; the confirmation is indistinguishable from waiting at random
+for the same mean length; the matched placebo shows no delay effect at all;
+and no per-instrument cell survives multiplicity as an improvement.
 
 **Refuted separately.** That `ArrivalEntry`'s candle witness is a usable
 confirmation **at a break price**. It fires on 1.7% of signals within one bar
