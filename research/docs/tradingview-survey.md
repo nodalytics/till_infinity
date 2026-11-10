@@ -219,7 +219,7 @@ instead of the author's.
 | MACD, RSI, stochastic, CCI, Williams %R, ADX/DI, Ichimoku, Parabolic SAR, Donchian, Keltner, Heikin-Ashi | a lagging oscillator or trend system times entries | textbook defaults; entry on the cross, exit unspecified | 0.013-0.059 | [battery.md](battery.md); [indicators.md](indicators.md) 0 of ~170 cells; [mean-reversion.md](mean-reversion.md) | **already refuted.** One survivor on fresh instruments in the whole program: crypto 4h CCI(20) at +0.06R |
 | Bollinger reversion and breakout, %B, BandWidth, *Fibonacci Bollinger Bands* (33,025) | price returns to, or escapes, a volatility band | BB(20, 2); entry on re-entry or on the break | 0.029 | [mean-reversion.md](mean-reversion.md); [indicators.md](indicators.md); [trailing-zscore-fakes-reversion] (the shuffled twin took +0.111 of a +0.137 effect) | **already refuted** |
 | Squeeze: *Squeeze Momentum* (118,116), *TTM Squeeze* (10,230), *TTM Squeeze Pro* (6,922) | compression precedes expansion; the histogram gives the side | BB(20) inside KC(20, 1.5); momentum = `linreg(close - avg(avg(hh,ll), sma), 20)`. Entry unspecified | 0.039 | [expansion.md](expansion.md) (shipped as a **risk** reading, AUC 0.781 held out; the breakout straddle nets -0.024R against a -0.030R null); [vol-impulse-trade.md](vol-impulse-trade.md) (-0.135R on 5,708 trades, and the 4h squeeze contributes nothing) | **already refuted, and measured again below** |
-| Order blocks, supply/demand zones | the candle before a displacement holds unfilled interest | *Order Blocks & Breaker Blocks* (LuxAlgo, 30,718): swing lookback 10; on `close > top.y`, the OB is the lowest-low bar between the swing and its break. Entry unspecified | 0.017 (`swing20`) | [order-block-zones.md](order-block-zones.md) (returns 82%, direction a coin, -0.259R traded at 1d); [origin-zones.md](origin-zones.md) (0 passes in 3,697 cells) | **already refuted** as a fade. The *flip* is not - see the shortlist |
+| Order blocks, supply/demand zones | the candle before a displacement holds unfilled interest | *Order Blocks & Breaker Blocks* (LuxAlgo, 30,718): swing lookback 10; on `close > top.y`, the OB is the lowest-low bar between the swing and its break. Entry unspecified | 0.017 (`swing20`) | [order-block-zones.md](order-block-zones.md) (returns 82%, direction a coin, -0.259R traded at 1d); [origin-zones.md](origin-zones.md) (0 passes in 3,697 cells) | **already refuted** as a fade, and [breaker-blocks.md](breaker-blocks.md) now refutes the *flip* as published: 0.2979 of 23,730 trades reach 2R against 0.3333, +0.0018R over a distance-matched placebo |
 | Fair value gaps, imbalances, FVG magnets | an unfilled gap attracts price | a 3-bar gap; target the consequent encroachment | 0.017 | [imbalance.md](imbalance.md) (50.2% against a 49.2% placebo, breakeven 51.5%); [zone-fill.md](zone-fill.md) (fill probability **is** distance, AUC 0.881 with no fitted parameter); [tv-indicators.md](tv-indicators.md) (-0.278R) | **already refuted** |
 | Market structure: BOS, CHoCH, MSB, CISD, auto structure maps (LuxAlgo SMC 180,328) | a break of structure calls the next move | pivot swings, label the break, draw the zone | 0.017 | [bos-predict.md](bos-predict.md) (side AUC 0.75 real, **0.755-0.757 on walks**); [lrc-retest.md](lrc-retest.md) (-0.291R over 167,501 trades); [smc-bos-reconcile.md](smc-bos-reconcile.md) | **already refuted** |
 | Liquidity sweeps, stop hunts, SFP, turtle soup, inducement | price takes out liquidity, then reverses | poke past a prior extreme, close back inside | 0.017 | [sweeps.md](sweeps.md) (**0 of 2,629 cells** survive BH; primary -0.021R over 65,104 trades); [stophunt.md](stophunt.md) (0 of 180); [trap-levels.md](trap-levels.md) | **already refuted** |
@@ -377,6 +377,15 @@ geometry-flavoured or carries a named open positive**; a new *directional* indic
 z +2.90 and earns **+0.019 spread units, about 2% of a spread**, against the 1.0 it needs.
 
 ### 1. The breaker block: trading the zone that failed, not the zone that held
+
+> **Run, 2026-11-10, same day: [breaker-blocks.md](breaker-blocks.md).** Refuted. `P(>= 2R)`
+> **0.2979** on 23,730 trades against an arithmetic 0.3333, mean **-0.0265R** [-0.0471, -0.0032],
+> **+0.0018R** over a distance-matched placebo, and the refuted fade arm does not beat its null
+> either - so there is nothing to assign to the flip. Two corrections to this section: the cost
+> below is priced at a 20-bar swing (3.46-3.55 ATR) where the rule's own stop is **1.14-1.87 ATR**,
+> making it **2.6x** dearer, and LuxAlgo's order block is **not** the object
+> `order-block-zones.md` measured - Jaccard **0.0027**, so that document's 1d positive is
+> addressed separately there and remains unmeasurable at 1d on 45 trades.
 
 **The idea.** *Order Blocks & Breaker Blocks* (LuxAlgo, 30,718) and *Market Structure Break & Order
 Block* (EmreKb, 65,011) publish a mechanical polarity flip that this desk's own version lacked: an
