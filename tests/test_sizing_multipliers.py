@@ -68,7 +68,11 @@ def test_an_empty_setting_leaves_everything_off(monkeypatch):
 def test_all_turns_on_every_one(monkeypatch):
     monkeypatch.setenv(MULTIPLIERS_ON, "all")
     assert multipliers_on() == set(MULTIPLIERS)
-    assert len(MULTIPLIERS) == 9, "eight reductions plus the structural share"
+    assert len(MULTIPLIERS) == 10, (
+        "nine reductions plus the structural share - `agreement` was added "
+        "2026-11-10 and prices how many *rules* point the same way, where "
+        "`crowding` prices how many *positions* sit on one currency leg"
+    )
 
 
 def test_the_import_actually_resolves_now(monkeypatch):
@@ -264,3 +268,122 @@ def test_a_dollar_pegged_quote_is_carried_with_its_own_code():
     from till_infinity.risk import exposure
 
     assert exposure.legs("hong kong 50") == ("HK50", "HKD")
+
+
+# ------------------------------------- rules that agree are not rules apart
+
+
+def test_rules_all_pointing_one_way_are_sized_as_fewer_rules():
+    """**The gap between the two guards this desk already had.**
+
+    `_already_held` refuses two rules wanting the *same* trade, and `crowding`
+    prices two rules both long USD on *different* instruments. Neither notices
+    five rules whose whole books point one way, so a book that is one bet five
+    times prices as five independent ones. `ideas.md` logs it as E6 and
+    `node/selection.effective_trials` already deflates a Sharpe by exactly this
+    quantity - it had simply never reached a sizing decision.
+    """
+    from till_infinity.risk.scaling import by_agreement
+
+    # Three rules, each long USD a different way.
+    others = {
+        "a": [("gbpusd", -1), ("audusd", -1)],
+        "b": [("eurusd", -1), ("usdcad", 1)],
+        "c": [("usdjpy", 1), ("xauusd", -1)],
+    }
+    mine = [("ethusd", -1)]  # also long USD
+    assert by_agreement(mine, others, 0.9) == pytest.approx(0.9**3)
+
+
+def test_a_hedging_rule_keeps_its_whole_size():
+    """A rule that is short the dollar against a book that is long it reduces
+    concentration. Penalising it would push the book further one way, which is
+    the opposite of what the multiplier is for."""
+    from till_infinity.risk.scaling import by_agreement
+
+    others = {"a": [("gbpusd", -1), ("audusd", -1)], "b": [("eurusd", -1), ("usdcad", 1)]}
+    hedge = [("eurusd", 1), ("gbpusd", 1)]  # long EUR and GBP, short USD
+    assert by_agreement(hedge, others, 0.9) == 1.0
+
+
+def test_the_threshold_separates_the_live_case_from_a_hedge_with_margin():
+    """**`AGREE_AT` is derived from the book, not chosen round.** Cosine over
+    full leg vectors dilutes a shared dollar leg, because each pair contributes
+    its own counter-currency and those read as disagreement even though they
+    are diversification. So the cases this exists for sit well below 1.0 and a
+    threshold picked by intuition would have missed all of them."""
+    from till_infinity.risk.exposure import agreement, leg_vector
+    from till_infinity.risk.scaling import AGREE_AT
+
+    one = leg_vector([("ethusd", -1)])
+    pair = leg_vector([("gbpusd", -1), ("audusd", -1)])
+    live = leg_vector(
+        [
+            ("gbpusd", -1),
+            ("audusd", -1),
+            ("eurusd", -1),
+            ("usdcad", 1),
+            ("usdjpy", 1),
+            ("xauusd", -1),
+            ("btcusd", -1),
+        ]
+    )
+    hedge = leg_vector([("eurusd", 1), ("gbpusd", 1)])
+
+    assert agreement(one, pair) == pytest.approx(0.5774, abs=5e-4)
+    assert agreement(one, live) == pytest.approx(0.6614, abs=5e-4)
+    assert agreement(hedge, pair) == pytest.approx(-0.8333, abs=5e-4)
+    # The threshold sits between them, with room on both sides.
+    assert agreement(hedge, pair) < AGREE_AT < agreement(one, pair)
+
+
+def test_a_share_of_zero_and_an_empty_book_both_leave_the_size_alone():
+    """The two off switches. A gate that silently admits everything reads the
+    same as one that works, so off must be exactly 1.0."""
+    from till_infinity.risk.scaling import by_agreement
+
+    others = {"a": [("gbpusd", -1)]}
+    assert by_agreement([("ethusd", -1)], others, 0.0) == 1.0
+    assert by_agreement([("ethusd", -1)], {}, 0.9) == 1.0
+    assert by_agreement([], others, 0.9) == 1.0
+
+
+def test_a_position_is_attributed_to_the_rule_that_opened_it():
+    """Nautilus derives `strategy_id` as `ClassName-tag` and `desks._tag`
+    guarantees no hyphen inside the tag, so the class names the leaf and
+    `LEAVES` names the rule. The class and not the tag's checksum: inverting a
+    checksum fails silently on a collision."""
+    from till_infinity.strategies.sizes import rule_of
+
+    assert rule_of("SurpriseEdge-EURUSD_E270") == "statespace-surprise"
+    assert rule_of("ZonesEdge-AUDCAD_E327_5m") == "zones"
+    assert rule_of("StructureEdge-eurcad_E580") == "smc-bos-causal"
+    assert rule_of("Nonsense-X") == "", "an unknown class names no rule"
+
+
+def test_an_unattributable_position_is_dropped_and_not_pooled():
+    """Pooling them under a blank key would make every unrecognised position
+    one synthetic rule that agrees with everything - the failure direction that
+    silently shrinks a size."""
+    from types import SimpleNamespace
+
+    from till_infinity.strategies.sizes import books_by_rule
+
+    def position(qty, sid, symbol):
+        return SimpleNamespace(
+            signed_qty=qty,
+            strategy_id=sid,
+            instrument_id=SimpleNamespace(symbol=SimpleNamespace(value=symbol)),
+        )
+
+    got = books_by_rule(
+        [
+            position(1.0, "SurpriseEdge-EURUSD_E270", "EURUSD"),
+            position(-1.0, "ZonesEdge-GBPUSD_E327", "GBPUSD"),
+            position(1.0, "Nonsense-X", "XAUUSD"),
+            position(0.0, "ZonesEdge-X_E327", "XAUUSD"),
+        ]
+    )
+    assert set(got) == {"statespace-surprise", "zones"}
+    assert "" not in got
+    assert got["zones"] == (("gbpusd", -1),), "the flat position was counted"

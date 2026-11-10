@@ -448,6 +448,12 @@ class Desk(NautilusStrategy):
             # crowded by whoever is on it. `_already_held` has already refused
             # this instrument, so this is every *other* position.
             book=sizes.book_of(self.cache.positions_open()),
+            rule=self._cfg.rule,
+            # **The same positions, grouped by who opened them.** `crowding`
+            # wants every position on a leg regardless of rule; `by_agreement`
+            # wants them per rule, because a book of five rules that all point
+            # one way is closer to one rule's risk than to five.
+            by_rule=sizes.books_by_rule(self.cache.positions_open()),
         )
         if isinstance(found, Refusal):
             return self._refuse(found, payload)

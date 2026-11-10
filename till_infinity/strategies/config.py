@@ -658,6 +658,21 @@ class Settings:
     #: Every floored intent carries `target_floored` in its features, so a
     #: later study can split on it rather than pooling two different exits.
     target_r: float = 0.0
+    #: How much of its size a trade keeps for each **other rule** already
+    #: making the same bet. `TRADING_AGREEMENT_SHARE`, off at 0.
+    #:
+    #: Different from `crowding_share`, which prices how many *positions* sit
+    #: on a shared currency leg. This prices how many *rules* point the same
+    #: way: a book of five rules that all agree is closer to one rule's risk
+    #: than to five. `ideas.md` logs it as E6, "collapse look-alike strategies
+    #: before counting trials", and `agenda.md` item 13 asks it as "when do
+    #: independent strategies become dangerously synchronised";
+    #: `node/selection.effective_trials` already deflates a Sharpe by exactly
+    #: this quantity and had never reached a sizing decision.
+    #:
+    #: Geometric like `crowding_share`: at 0.9 three agreeing rules leave the
+    #: next trade at 0.729, and a hedge keeps 1.0.
+    agreement_share: float = 0.0
 
     #: The net edge, in volatility units, that earns full size. Zero is off.
     #: Measured; see `research/docs/settings.md`.
@@ -1518,6 +1533,7 @@ class Settings:
             crowding_share=_float("TRADING_CROWDING_SHARE", 0.0),
             volatility_target_bps=_float("TRADING_VOLATILITY_TARGET_BPS", 0.0),
             target_r=_float("TRADING_TARGET_R", 0.0),
+            agreement_share=_float("TRADING_AGREEMENT_SHARE", 0.0),
             regime_band=_float("TRADING_REGIME_BAND", 0.0),
             regime_floor=_float("TRADING_REGIME_FLOOR", 0.5),
             spike_above=_float("TRADING_SPIKE_ABOVE", 0.0),
