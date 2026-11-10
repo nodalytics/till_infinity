@@ -359,48 +359,94 @@ def test_duplicate_timestamps_are_dropped_and_counted(tmp_path):
     assert list(bars["ts"]) == [0, 900, 1800]
 
 
-def test_a_negative_mean_gap_is_forced_by_the_identity_and_is_not_a_defect():
-    """The correction this study had to make to itself.
+def contiguous_bars(n: int = 4000, seed: int = 11) -> dict[str, np.ndarray]:
+    """Bars that open **exactly** at the previous close, as 58-83% of the
+    broker's 1h bars do, with varying shapes.
 
-    The first version read a surrogate's negative `mean(open[i] - close[i-1])`
-    as a defect in `node/surrogates.walk_with_bar_geometry` and "fixed" it. The
-    identity
-
-        close[i] - close[i-1] = (open[i] - close[i-1]) + (close[i] - open[i])
-
-    forces the sign for **any** series whose bars close above their opens on
-    average with near-nil close-to-close drift, the market included - and
-    `MODE=gap` measures it as negative on 28 of 28 of the broker's own 1h FX
-    stores, mean -0.0126 of a bar range. This test pins the arithmetic on a
-    constructed series so nobody reads the sign as a bug again.
+    The shapes have to vary: the planted gap is what happens when bar A's
+    open-inside-its-range is applied at a level set by bar B's close, so a
+    fixture whose bars all have the same shape reproduces itself and hides it.
     """
-    n = 5_000
-    rng = np.random.default_rng(21)
-    # Bars that close above their opens, joined by down-gaps, with no drift:
-    # exactly the shape the identity describes, built by hand.
-    body = np.abs(rng.normal(0, 1e-3, n)) + 1e-4
-    gap = -body + rng.normal(0, 1e-5, n)
-    open_ = np.empty(n)
-    close = np.empty(n)
-    open_[0], close[0] = 1.0, 1.0 + body[0]
-    for i in range(1, n):
-        open_[i] = close[i - 1] + gap[i]
-        close[i] = open_[i] + body[i]
-    span = (close - open_) + 2e-4
-    real = {"ts": np.arange(n, dtype=np.int64) * 3600, "spread": np.zeros(n),
+    rng = np.random.default_rng(seed)
+    close = 100.0 + np.cumsum(rng.normal(0.0, 0.10, n))
+    open_ = np.r_[100.0, close[:-1]]
+    up = np.abs(rng.normal(0.0, 0.08, n)) * rng.choice([0.2, 1.0, 3.0], n)
+    dn = np.abs(rng.normal(0.0, 0.08, n)) * rng.choice([0.2, 1.0, 3.0], n)
+    return {"ts": np.arange(n, dtype=np.int64) * 3600, "spread": np.zeros(n),
             "open": open_, "close": close,
-            "high": np.maximum(open_, close) + 1e-4, "low": np.minimum(open_, close) - 1e-4}
-    assert np.mean(close - open_) > 0                         # bars close above their opens
-    assert abs(np.mean(np.diff(close))) < 0.02 * np.mean(body)  # and go nowhere
-    assert np.mean(open_[1:] - close[:-1]) < 0                # so the gap must be negative
-    assert span.mean() > 0
+            "high": np.maximum(open_, close) + up, "low": np.minimum(open_, close) - dn}
 
-    # The shipped construction inherits a gap of its own; the continuous one
-    # pins it at exactly zero. Neither equals the market's, which is the point.
-    shipped = B.shipped_geom_bars(real, seed=1)
-    cont = B.contopen_bars(real, seed=1)
-    assert np.mean(cont["open"][1:] - cont["close"][:-1]) == pytest.approx(0.0, abs=1e-12)
-    assert np.mean(shipped["open"][1:] - shipped["close"][:-1]) != pytest.approx(0.0, abs=1e-9)
+
+def test_the_mean_gap_cannot_see_the_defect_and_the_distribution_can():
+    """**The statistic was chosen after the question, twice, and this pins both.**
+
+    The identity `close[i] - close[i-1] = (open[i] - close[i-1]) +
+    (close[i] - open[i])` forces `mean(gap) = -mean(body)` for any series whose
+    bars close above their opens with nil close-to-close drift. So a contiguous
+    market and a gap-at-every-bar surrogate agree on the mean, and this study
+    once withdrew a correct finding on that agreement. The median, the share of
+    bars with no gap and the p90 separate them immediately.
+    """
+    real = contiguous_bars()
+    fake = B.shipped_geom_bars(real, seed=3)
+    r = B._gap_shape(real["open"], real["high"], real["low"], real["close"])
+    f = B._gap_shape(fake["open"], fake["high"], fake["low"], fake["close"])
+
+    # the market side of the fixture: contiguous by construction
+    assert r["gap_zero"] == 1.0
+    assert r["gap_median"] == 0.0
+    # the surrogate gaps on essentially every bar, by a large share of a range
+    assert f["gap_zero"] < 0.01, f
+    assert f["gap_median"] > 0.3, f
+    assert f["gap_p90"] > 10 * max(r["gap_p90"], 1e-9), (r, f)
+    # ... and the two arms that fix it do
+    for make in (B.contopen_bars, B.path_bars):
+        g = make(real, seed=3)
+        shape = B._gap_shape(g["open"], g["high"], g["low"], g["close"])
+        assert shape["gap_zero"] == 1.0, make.__name__
+        assert shape["gap_median"] == 0.0, make.__name__
+
+
+def test_the_bridge_arm_opens_at_the_previous_close_and_owns_its_extremes():
+    """`path_bars` is the arm of record because it fixes **both** defects.
+
+    The open gap is the first; the second is that a surrogate which resamples
+    highs and lows independently of the close path fires a stop where the path
+    never went. A bar whose high and low are the running extremes of its own
+    bridge cannot do that, and must contain its own open and close.
+    """
+    real = contiguous_bars()
+    g = B.path_bars(real, seed=5)
+    o, h, l_, c = (g[k] for k in ("open", "high", "low", "close"))
+    assert o[1:] == pytest.approx(c[:-1], abs=1e-12)        # continuous
+    assert np.all(h >= np.maximum(o, c) - 1e-12)            # the extremes contain the bar
+    assert np.all(l_ <= np.minimum(o, c) + 1e-12)
+    assert np.all(h > l_)
+    # the one-bar step distribution is the real one, resampled and demeaned
+    assert np.std(np.diff(c)) == pytest.approx(np.std(np.diff(real["close"])), rel=0.1)
+    se = np.std(np.diff(real["close"])) / np.sqrt(len(c) - 1)
+    assert abs(np.mean(np.diff(c))) < 4 * se
+
+
+def test_the_bridge_arm_pays_nothing_through_every_trade_arm():
+    """The leak check that matters for the arm of record.
+
+    `shipped` pays the long-entry arm +0.1013R on this trade and that is the
+    planted gap. An arm offered as the fix has to read at or below zero through
+    the same settlement, or it is not a fix.
+    """
+    real = contiguous_bars(n=30_000, seed=17)
+    frame = B.path_bars(real, seed=4)
+    unit = B.atr(frame["high"], frame["low"], frame["close"])
+    rows = []
+    for mirror in (False, True):
+        part, _ = B.zones_and_trades(frame, unit, mirror, 0.0, targets=(2.0,))
+        rows += part
+    for arm in ("flip", "fade", "placebo"):
+        x = np.array([r["R_gross"] for r in rows if r["arm"] == arm])
+        assert len(x) > 50, arm
+        se = x.std(ddof=1) / np.sqrt(len(x))
+        assert x.mean() < 3 * se, f"{arm} pays {x.mean():+.4f} +-{se:.4f} on the bridge"
 
 
 def test_the_shipped_arm_draws_span_and_shape_independently():
@@ -494,3 +540,93 @@ def test_the_drifted_twin_keeps_the_drift_the_demeaned_one_removes():
     assert abs(np.diff(B.contopen_bars(real, seed=1)["close"]).mean()) < 4 * se
     assert np.diff(B.contdrift_bars(real, seed=1)["close"]).mean() == pytest.approx(
         per_bar, abs=4 * se)
+
+
+def market_shaped(n: int = 3000, seed: int = 7) -> dict[str, np.ndarray]:
+    """Bars with a drift, fat tails and wicks either side - not a flat fixture.
+
+    `check_matches_package` has to run on input that exercises every branch the
+    two implementations have: non-zero spans, bodies of both signs, and a close
+    that is not the previous open.
+    """
+    rng = np.random.default_rng(seed)
+    close = 1.10 + np.cumsum(1e-3 * rng.standard_t(4, n) + 2e-5)
+    open_ = np.r_[1.10, close[:-1]]
+    wick = np.abs(rng.normal(0, 8e-4, (n, 2)))
+    return {"ts": np.arange(n, dtype=np.int64) * 3600, "spread": np.zeros(n),
+            "open": open_, "close": close,
+            "high": np.maximum(open_, close) + wick[:, 0],
+            "low": np.minimum(open_, close) - wick[:, 1]}
+
+
+def test_the_vectorised_copy_is_the_package_function_to_the_last_bit():
+    """**A vectorised re-implementation is a second implementation.**
+
+    `two-definitions-of-one-concept` is the house defect and this file produced
+    it: the copy drew `span` and the shape pair with one index where
+    `walk_with_bar_geometry` draws them with two independent `r.choice` calls,
+    so the arm labelled shipped was not it, and the difference was worth 0.0229R
+    on the long-entry arm. Nothing flagged it, because a surrogate that is wrong
+    in a plausible way looks exactly like a surrogate. The only check that would
+    have is this one: run the original beside the copy and assert **equality**.
+    """
+    worst = B.check_matches_package(market_shaped())
+    assert set(worst) == {"open", "high", "low", "close"}
+    assert max(worst.values()) == 0.0, worst
+
+
+def test_the_faithfulness_check_fails_on_the_copy_it_was_written_for():
+    """The control for the check above: it has to be able to fail.
+
+    A check that cannot fail for its own reason is worse than none. Drawing the
+    span and the shape with **one** index is the exact defect this file had, so
+    reproducing it here must trip `check_matches_package`.
+    """
+    import random
+
+    bars = market_shaped()
+
+    def single_index(real, seed, pyrng=None):
+        rng = np.random.default_rng(seed)
+        o, h, l_, c = real["open"], real["high"], real["low"], real["close"]
+        n = len(c)
+        span = h - l_
+        denom = np.where(span > 0, span, 1.0)
+        of = np.where(span > 0, (o - l_) / denom, 0.5)
+        cf = np.where(span > 0, (c - l_) / denom, 0.5)
+        steps = np.diff(c)
+        pick = rng.integers(0, n, n)           # the defect: one index for both
+        price = float(c[0]) + np.cumsum(steps[rng.integers(0, len(steps), n)])
+        sp = span[pick]
+        low = price - cf[pick] * sp
+        return {"ts": real["ts"], "spread": real["spread"], "low": low, "high": low + sp,
+                "open": low + of[pick] * sp, "close": price}
+
+    original, B.shipped_geom_bars = B.shipped_geom_bars, single_index
+    try:
+        with pytest.raises(AssertionError, match="differs from the package"):
+            B.check_matches_package(bars)
+    finally:
+        B.shipped_geom_bars = original
+    assert max(B.check_matches_package(bars).values()) == 0.0  # and back to clean
+
+
+def test_no_two_instruments_share_a_null_realisation():
+    """Two identical rows in a control arm is the cheapest tell there is.
+
+    A `default_rng(SEED)` inside a per-instrument loop hands every instrument the
+    same draw, and an N-instrument control arm becomes one realisation counted N
+    times. The seeds here are `zlib.crc32(sym)`-derived for that reason, and this
+    pins it: two different symbols must not produce the same surrogate, and the
+    same symbol with a different draw index must not either.
+    """
+    bars = market_shaped(n=1200)
+    seeds = [B.zlib.crc32(s.encode()) for s in ("EURUSD", "GBPUSD", "XAUUSD")]
+    assert len(set(seeds)) == 3
+    for make in (B.shipped_geom_bars, B.contopen_bars, B.iid_bars):
+        closes = [make(bars, seed=s)["close"] for s in seeds]
+        for i in range(len(closes)):
+            for j in range(i + 1, len(closes)):
+                assert not np.array_equal(closes[i], closes[j]), make.__name__
+        a = make(bars, seed=seeds[0] + 1_000_003)
+        assert not np.array_equal(a["close"], closes[0]), make.__name__
