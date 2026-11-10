@@ -53,6 +53,7 @@ from nautilus_trader.config import ActorConfig
 from nautilus_trader.model.data import Bar, BarType
 
 from ..utils import topics
+from .timeframes import seconds_of
 
 #: Bars of history each ranking is computed over. 120 of them is thirty hours
 #: at 15m and ten at 5m - long enough that one session does not set the
@@ -76,6 +77,14 @@ class ScreenConfig(ActorConfig, frozen=True):
     window: int = WINDOW
     every: float = EVERY
     share: float = SHARE
+    #: Bars to request per instrument on start. **Without this the gate is a
+    #: five-hour trading halt after every deploy**: `_rank` needs 20 bars of an
+    #: instrument's own before it will rank it, which at 15m is five hours of
+    #: live bars, and `Desk._volatile_enough` refuses everything until a
+    #: ranking exists. Measured on 2026-11-10 - the screen came up at 19:04,
+    #: and at 19:19 it reported "no instrument with 20 bars yet, of 38
+    #: subscribed" while four signals were refused as `no-ranking`.
+    warm_bars: int = 40
 
 
 class VolatileScreen(Actor):
@@ -108,6 +117,8 @@ class VolatileScreen(Actor):
                 "ranking will be refused as not volatile. Set its bar types or "
                 "do not register it."
             )
+        if self._cfg.warm_bars > 0:
+            self._warm()
         self.clock.set_timer(
             name="volatile-screen",
             interval=timedelta(seconds=max(60.0, self._cfg.every)),
@@ -117,6 +128,49 @@ class VolatileScreen(Actor):
             f"screening {len(self._cfg.bar_types)} bar type(s) every "
             f"{self._cfg.every:.0f}s, admitting the top {self._cfg.share:.0%}"
         )
+
+    def _warm(self) -> None:
+        """Request enough history that the first ranking is not five hours away.
+
+        Asked for as a **span of each bar type** rather than a date, so one
+        number covers every interval the deployment screens - the same shape
+        `statespace/actor.py` uses, and for the same reason.
+
+        Never raises: a screen that fails to warm still ranks from live bars,
+        and taking the node down over a history request would turn a slow gate
+        into no desk at all.
+        """
+        for raw in self._cfg.bar_types:
+            try:
+                bar_type = BarType.from_str(raw)
+                span = seconds_of(bar_type) * self._cfg.warm_bars
+                if span <= 0:
+                    continue
+                self.request_bars(
+                    bar_type,
+                    self.clock.utc_now() - timedelta(seconds=span),
+                    limit=self._cfg.warm_bars,
+                )
+            except Exception as exc:  # pragma: no cover - the transport's shapes
+                self.log.warning(f"could not request history for {raw}: {exc}")
+
+    def on_historical_data(self, data: Any) -> None:
+        """Fold requested history into the ranges, through `on_bar`.
+
+        **Nautilus delivers a `request_bars` response here, not to `on_bar`**,
+        so without this handler the request is answered into a no-op and the
+        screen warms at the speed of the live market. It also delivers one bar
+        per call and per *bar type* rather than per requester, which is
+        harmless here - the screen subscribes to every bar type it ranks, and
+        `on_bar` keys each range by its own - but it is why there is no
+        de-duplication: a repeated bar moves a median of 20+ ranges by less
+        than the ranking's own resolution, and dropping a genuine bar would be
+        worse.
+        """
+        rows = data if isinstance(data, (list, tuple)) else [data]
+        for row in rows:
+            if isinstance(row, Bar):
+                self.on_bar(row)
 
     def on_bar(self, bar: Bar) -> None:
         """One closed bar's range, kept against its own bar type."""
