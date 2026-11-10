@@ -665,7 +665,8 @@ def garch_bars(real: dict[str, np.ndarray], seed: int, alpha: float = 0.06,
     return {**got, "ts": real["ts"], "spread": real["spread"]}
 
 
-def shipped_geom_bars(real: dict[str, np.ndarray], seed: int) -> dict[str, np.ndarray]:
+def shipped_geom_bars(real: dict[str, np.ndarray], seed: int,
+                      pyrng=None) -> dict[str, np.ndarray]:
     """`node/surrogates.walk_with_bar_geometry`, vectorised faithfully.
 
     The package's own construction and the null of record for a geometry claim:
@@ -702,7 +703,6 @@ def shipped_geom_bars(real: dict[str, np.ndarray], seed: int) -> dict[str, np.nd
     without matching its size, which is enough for a statistic that does not
     read the inside of a bar and not enough for one that does. See `MODE=gap`.
     """
-    rng = np.random.default_rng(seed)
     o, h, l, c = real["open"], real["high"], real["low"], real["close"]
     n = len(c)
     span = h - l
@@ -711,12 +711,64 @@ def shipped_geom_bars(real: dict[str, np.ndarray], seed: int) -> dict[str, np.nd
     of = np.where(good, (o - l) / denom, 0.5)
     cf = np.where(good, (c - l) / denom, 0.5)
     steps = np.diff(c)
-    price = float(c[0]) + np.cumsum(steps[rng.integers(0, len(steps), n)])
-    sp = span[rng.integers(0, n, n)]          # the package's `r.choice(spans)`
-    shape = rng.integers(0, n, n)             # ... and its separate `r.choice(shapes)`
-    low = price - cf[shape] * sp
+    if pyrng is None:
+        rng = np.random.default_rng(seed)
+        drawn = steps[rng.integers(0, len(steps), n)]
+        sp = span[rng.integers(0, n, n)]       # the package's `r.choice(spans)`
+        shape = rng.integers(0, n, n)          # ... and its separate `r.choice(shapes)`
+        drawn_of, drawn_cf = of[shape], cf[shape]
+    else:
+        # The same three draws in the package's own per-bar order, off a
+        # `random.Random`, so `check_matches_package` can assert equality
+        # instead of asserting a resemblance. Public API only: `choice` returns
+        # a value, which is all the arithmetic below needs.
+        steps_l, spans_l = steps.tolist(), span.tolist()
+        shapes_l = list(zip(of.tolist(), cf.tolist(), strict=True))
+        drawn, sp = np.empty(n), np.empty(n)
+        drawn_of, drawn_cf = np.empty(n), np.empty(n)
+        for i in range(n):
+            drawn[i] = pyrng.choice(steps_l)
+            sp[i] = pyrng.choice(spans_l)
+            drawn_of[i], drawn_cf[i] = pyrng.choice(shapes_l)
+    price = float(c[0]) + np.cumsum(drawn)
+    low = price - drawn_cf * sp
     return {"ts": real["ts"], "spread": real["spread"], "low": low, "high": low + sp,
-            "open": low + of[shape] * sp, "close": price}
+            "open": low + drawn_of * sp, "close": price}
+
+
+def check_matches_package(bars: dict[str, np.ndarray], seed: int = 20261110,
+                          tol: float = 1e-12) -> dict[str, float]:
+    """Assert `shipped_geom_bars` **is** `walk_with_bar_geometry`, to `tol`.
+
+    **A vectorised re-implementation of a production function is a second
+    implementation**, and `two-definitions-of-one-concept` is the house defect:
+    the only way to know the copy is the same function is to run the original
+    beside it on real-shaped input and assert **equality**, not resemblance.
+
+    This file shipped a copy that drew `span` and the shape pair with **one**
+    index where the package draws them with two independent `r.choice` calls, so
+    the arm labelled as the shipped one was not it - and the difference was worth
+    **0.0229R** on the long-entry arm, which is the size of the evidence the
+    whole first version of the write-up rested on. Nothing flagged it, because a
+    surrogate that is wrong in a plausible way looks exactly like a surrogate:
+    no count went to zero and no distribution collapsed.
+
+    Returns the worst absolute deviation per OHLC field so a caller can print it.
+    """
+    import random
+
+    from till_infinity.node.surrogates import walk_with_bar_geometry
+
+    quad = list(zip(bars["open"].tolist(), bars["high"].tolist(), bars["low"].tolist(),
+                    bars["close"].tolist(), strict=True))
+    theirs = np.asarray(walk_with_bar_geometry(quad, rng=random.Random(seed)), float)
+    mine = shipped_geom_bars(bars, seed, pyrng=random.Random(seed))
+    worst = {}
+    for k, col in (("open", 0), ("high", 1), ("low", 2), ("close", 3)):
+        worst[k] = float(np.max(np.abs(mine[k] - theirs[:, col])))
+        if worst[k] > tol:
+            raise AssertionError(f"{k} differs from the package by {worst[k]:.3e} > {tol:.0e}")
+    return worst
 
 
 def contopen_bars(real: dict[str, np.ndarray], seed: int,
@@ -774,15 +826,83 @@ def contopen_bars(real: dict[str, np.ndarray], seed: int,
 def contdrift_bars(real: dict[str, np.ndarray], seed: int) -> dict[str, np.ndarray]:
     """`contopen_bars` with the series' own realised drift left in.
 
-    Kept as its own arm so the claim "the market's unconditional drift reaches
-    none of these arms" is a measurement rather than prose: it reads within
-    0.002R of `contopen` on every arm of this study.
+    **Not in `ARMS`**: it read within 0.002R of `contopen` on every arm of this
+    study, so it measured the claim "the market's unconditional drift reaches
+    none of these arms" once and has nothing left to add to a table. It stays
+    callable because `path_bars` demeans for a reason `entry_timing` measured at
+    +0.1219R, and a reader who doubts that should be able to run the undemeaned
+    twin.
     """
     return contopen_bars(real, seed, demean=False)
 
 
+def path_bars(real: dict[str, np.ndarray], seed: int) -> dict[str, np.ndarray]:
+    '''A driftless walk whose open is the previous close and whose extremes are
+    the path's own. **The only arm here that is a valid null for this trade.**
+
+    Taken from `research/harness/entry_timing.walk_path`, which built it after
+    hitting the same two defects from the other side; the construction is
+    theirs and the reason both defects bite this study is that a breaker trade
+    is a resting limit *and* a barrier race:
+
+    * `shipped_geom_bars` places each bar's open inside that bar's own range,
+      so it **gaps at every bar** - median `|gap|` 0.60-0.64 of a range against
+      the market's 0.0000 - and a resting limit collects that gap. Here it paid
+      the long-entry arm **+0.1012R**.
+    * `contopen_bars` fixes the open and **is not sufficient**: its highs and
+      lows are resampled independently of the close path, so a stop fires where
+      the path never went while the mark is read off the close path as though
+      nothing happened. `entry_timing` measured that second defect with random
+      anchors - no detector to blame - at **-0.1985R** against **+0.0003R** on
+      real bars.
+
+    Each bar is a Brownian bridge of `SUB` sub-steps pinned to a close-to-close
+    step drawn from the real series' own steps. So the one-bar step
+    distribution is the real one exactly, the open is the previous close
+    exactly, the high and low are the running extremes of the path those closes
+    trace, and the race is a martingale race up to the discreteness `SUB`
+    controls.
+
+    **The steps are demeaned, and that is not cosmetic.** `entry_timing`
+    measured a resampled-but-not-demeaned bridge paying **+0.1219R** with random
+    anchors, and it did not shrink as the path was refined (0.1864, 0.1686,
+    0.1077, 0.1164, 0.1219 at 15 to 240 sub-steps), so it was never the stop's
+    overshoot.
+
+    What this arm does **not** carry is this market's wickiness: a bridge's
+    range is the range Brownian motion gives, and markets are wickier
+    (`how-markets-differ-from-every-simple-process`). That is the trade: it is
+    the right null for whether a race pays, and the wrong one for a claim about
+    bar shape. Both are reported.
+    '''
+    rng = np.random.default_rng(seed)
+    c = real["close"]
+    n = len(c)
+    steps = np.diff(c)
+    if n < 3:
+        return dict(real)
+    steps = steps - steps.mean()
+    sigma = float(np.std(steps)) or 1e-12
+    draws = steps[rng.integers(0, len(steps), n)]
+    base = float(c[0]) + np.r_[0.0, np.cumsum(draws)[:-1]]
+    weights = np.arange(1, SUB + 1, dtype=float) / SUB
+    low = np.empty(n)
+    high = np.empty(n)
+    chunk = 4096
+    for start in range(0, n, chunk):
+        stop = min(start + chunk, n)
+        walk = np.cumsum(rng.normal(0.0, sigma / np.sqrt(SUB), size=(stop - start, SUB)), axis=1)
+        step = draws[start:stop]
+        bridge = walk - np.outer(walk[:, -1], weights) + np.outer(step, weights)
+        path = base[start:stop, None] + bridge
+        low[start:stop] = np.minimum(base[start:stop], path.min(axis=1))
+        high[start:stop] = np.maximum(base[start:stop], path.max(axis=1))
+    return {"ts": real["ts"], "spread": real["spread"], "open": base, "high": high,
+            "low": low, "close": base + draws}
+
+
 ARMS = {"iid": iid_bars, "garch": garch_bars, "shipped": shipped_geom_bars,
-        "contopen": contopen_bars, "contdrift": contdrift_bars}
+        "contopen": contopen_bars, "path": path_bars}
 
 
 # ───────────────────────────────── the run ─────────────────────────────────
@@ -894,6 +1014,25 @@ def write(rows: list[dict], name: str) -> None:
     print(f"wrote {OUT / name}  ({len(rows):,} rows)", flush=True)
 
 
+def _gap_shape(o, h, l, c) -> dict[str, float]:
+    """The gap's **distribution**, as a share of each bar's own range.
+
+    `mean(gap)` is the one statistic that cannot see this defect: the identity
+    `close[i] - close[i-1] = (open[i] - close[i-1]) + (close[i] - open[i])`
+    forces `mean(gap) = -mean(body)` for any series whose bars close above their
+    opens with nil close-to-close drift, so a contiguous market and a
+    gap-at-every-bar surrogate agree on it and get there completely
+    differently. This study withdrew a correct finding on that agreement. The
+    median, the share of bars with **no** gap, and the p90 are what separate
+    them, and they are printed beside the mean so the mistake cannot recur.
+    """
+    span = np.maximum(h - l, 1e-12)
+    share = np.abs(o[1:] - c[:-1]) / span[1:]
+    return {"gap_median": float(np.median(share)),
+            "gap_zero": float(np.mean(share < 1e-9)),
+            "gap_p90": float(np.quantile(share, 0.90))}
+
+
 def gap() -> None:
     """Does the market carry the sawtooth the surrogates are judged on?
 
@@ -924,7 +1063,8 @@ def gap() -> None:
     """
     rows = []
     print("== the broker's own 1h stores, as stored ==")
-    print(f"  {'sym':<22}{'gap/span':>10}{'body/span':>11}{'step/span':>11}{'bars':>9}")
+    print(f"  {'sym':<22}{'gap/span':>10}{'body/span':>11}{'step/span':>11}{'bars':>9}"
+          f"{'med|gap|':>11}{'no gap':>10}{'p90|gap|':>10}")
     for path in sorted((HOME / "seqlab").glob("*.1h.npz")):
         sym = path.name[: -len(".1h.npz")]
         with np.load(path) as z:
@@ -935,15 +1075,19 @@ def gap() -> None:
         g, b, st = (float(np.mean(o[1:] - c[:-1])) / span, float(np.mean(c - o)) / span,
                     float(np.mean(np.diff(c))) / span)
         rows.append({"sym": sym, "iv": "1h", "series": "real", "store": "as-stored",
-                     "gap_span": g, "body_span": b, "step_span": st, "bars": len(c)})
-        print(f"  {sym:<22}{g:>10.4f}{b:>11.4f}{st:>11.4f}{len(c):>9,d}")
+                     "gap_span": g, "body_span": b, "step_span": st, "bars": len(c),
+                     **_gap_shape(o, h, l, c)})
+        r = rows[-1]
+        print(f"  {sym:<22}{g:>10.4f}{b:>11.4f}{st:>11.4f}{len(c):>9,d}"
+              f"{r['gap_median']:>11.4f}{r['gap_zero']:>10.4f}{r['gap_p90']:>10.4f}")
     gaps = np.array([r["gap_span"] for r in rows])
     if len(gaps):
         print(f"  negative on {int((gaps < 0).sum())} of {len(gaps)}; "
               f"mean {gaps.mean():+.4f}, median {np.median(gaps):+.4f}")
 
     print("\n== the folded series this study trades, and the two geometry arms ==")
-    print(f"  {'sym':<22}{'iv':>3}{'real':>10}{'shipped':>10}{'contopen':>10}  (gap/span)")
+    print(f"  {'sym':<22}{'iv':>3}  {'arm':<9}{'gap/span':>10}{'med|gap|':>11}"
+          f"{'no gap':>10}{'p90|gap|':>10}")
     src = sources()
     for sym in [s for s in DEEP + SYNTH if s in src]:
         raw, _d = read(src[sym])
@@ -951,16 +1095,17 @@ def gap() -> None:
             b = fold(raw, SEC[iv])
             if len(b["close"]) < MIN_BARS:
                 continue
-            out = {}
             for name, frame in (("real", b), ("shipped", shipped_geom_bars(b, seed=5)),
-                                ("contopen", contopen_bars(b, seed=5))):
-                span = float(np.mean(frame["high"] - frame["low"]))
-                out[name] = (float(np.mean(frame["open"][1:] - frame["close"][:-1])) / span
-                             if span > 0 else float("nan"))
+                                ("contopen", contopen_bars(b, seed=5)),
+                                ("path", path_bars(b, seed=5))):
+                o2, h2, l2, c2 = (frame[k] for k in ("open", "high", "low", "close"))
+                span = float(np.mean(h2 - l2))
+                g = (float(np.mean(o2[1:] - c2[:-1])) / span if span > 0 else float("nan"))
+                shape = _gap_shape(o2, h2, l2, c2)
                 rows.append({"sym": sym, "iv": iv, "series": name, "store": "folded",
-                             "gap_span": out[name], "bars": len(frame["close"])})
-            print(f"  {sym:<22}{iv:>3}{out['real']:>10.4f}{out['shipped']:>10.4f}"
-                  f"{out['contopen']:>10.4f}")
+                             "gap_span": g, "bars": len(c2), **shape})
+                print(f"  {sym:<22}{iv:>3}  {name:<9}{g:>10.4f}{shape['gap_median']:>11.4f}"
+                      f"{shape['gap_zero']:>10.4f}{shape['gap_p90']:>10.4f}")
     write(rows, "gap.csv")
 
 
@@ -1067,6 +1212,18 @@ def main() -> None:
     if MODE == "gap":
         gap()
         return
+    if MODE == "check":
+        src = sources()
+        for sym in [x for x in DEEP if x in src][:4]:
+            raw, _d = read(src[sym])
+            for iv in INTERVALS:
+                b = fold(raw, SEC[iv])
+                if len(b["close"]) < MIN_BARS:
+                    continue
+                small = {k: v[:4000] for k, v in b.items()}
+                print(f"  {sym:<10}{iv:>3} vs the package: "
+                      f"{check_matches_package(small)}", flush=True)
+        return
     src = sources()
     trips = quotes([s for s in DEEP + WIDE + SYNTH if s in src])
     js = jobs(trips)
@@ -1162,7 +1319,7 @@ def power() -> None:
             b = fold(raw, SEC[iv])
             if len(b["close"]) < MIN_BARS:
                 continue
-            for name in ("real", "iid", "garch", "shipped", "contopen"):
+            for name in ("real", "iid", "garch", "shipped", "contopen", "path"):
                 frame = b if name == "real" else ARMS[name](b, seed=zlib.crc32(sym.encode()) + 7)
                 unit = atr(frame["high"], frame["low"], frame["close"])
                 for g in grid:

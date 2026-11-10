@@ -35,7 +35,7 @@ OUT = Path(os.environ.get("OUT", ".data/breaker"))
 DRAWS = int(os.environ.get("DRAWS", "2000"))
 TARGET = float(os.environ.get("TARGET", "2"))
 SEED = 11
-WALK_ARMS = ("iid", "garch", "shipped", "contopen", "contdrift")
+WALK_ARMS = ("iid", "garch", "shipped", "contopen", "path")
 
 
 def day_block(x: np.ndarray, day: np.ndarray, draws: int = DRAWS,
@@ -258,7 +258,7 @@ def main() -> None:
     # nearly every cell when this test was written that way.
     print("\n== per instrument, breaker at 2R (never only pooled) ==")
     print(f"  {'sym':<22}{'iv':>3} {'n':>6} {'P>=2R':>7} {'meanR':>9} {'lo':>9} {'hi':>9} "
-          f"{'fade':>9} {'placebo':>9} {'shipped':>9} {'contopen':>9} {'net':>9}")
+          f"{'fade':>9} {'placebo':>9} {'path':>9} {'contopen':>9} {'net':>9}")
     rows = []
     for (sym, iv), g in trades.groupby(["sym", "iv"]):
         f = g[g["arm"] == "flip"]
@@ -268,7 +268,7 @@ def main() -> None:
         fade = g[g["arm"] == "fade"]["R_gross"].mean()
         plc = g[g["arm"] == "placebo"]["R_gross"].mean()
         walk = {}
-        for series in ("shipped", "contopen"):
+        for series in ("shipped", "contopen", "path"):
             gw = cells[(cells["sym"] == sym) & (cells["iv"] == iv)
                        & (cells["series"] == series) & (cells["arm"] == "flip")]
             walk[series] = np.average(gw["mean_R"], weights=gw["n"]) if len(gw) else float("nan")
@@ -277,9 +277,10 @@ def main() -> None:
         rows.append({"sym": sym, "iv": iv, "family": g["family"].iat[0], "n": len(f),
                      "reach": f["reach"].mean(), "mean_R": mean, "lo": lo, "hi": hi,
                      "fade": fade, "placebo": plc, "shipped": walk["shipped"],
-                     "contopen": walk["contopen"], "net_R": net, "p": p})
+                     "contopen": walk["contopen"], "path": walk["path"],
+                     "net_R": net, "p": p})
         print(f"  {sym:<22}{iv:>3} {len(f):6,d} {f['reach'].mean():7.4f} {mean:+9.4f} "
-              f"{lo:+9.4f} {hi:+9.4f} {fade:+9.4f} {plc:+9.4f} {walk['shipped']:+9.4f} "
+              f"{lo:+9.4f} {hi:+9.4f} {fade:+9.4f} {plc:+9.4f} {walk['path']:+9.4f} "
               f"{walk['contopen']:+9.4f} {net:+9.4f}")
     per = pd.DataFrame(rows)
     per.to_csv(OUT / "per_instrument.csv", index=False)
@@ -328,7 +329,7 @@ def main() -> None:
               f"beating zero at p<0.05: {(per['p'] < 0.05).sum()}; "
               f"surviving BH: {int(surv.sum())}")
         if surv.any():
-            print(per[surv][["sym", "iv", "n", "mean_R", "lo", "hi", "shipped", "contopen",
+            print(per[surv][["sym", "iv", "n", "mean_R", "lo", "hi", "path", "contopen",
                              "p"]].to_string(index=False))
 
     # ───────────────────── firing rates and the drops ─────────────────────
