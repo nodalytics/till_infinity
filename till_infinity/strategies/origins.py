@@ -74,6 +74,7 @@ from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .exits import ManagedExit
 from .profile import Profile
 from .structure import Fold
+from .warming import WarmFromHistory
 
 #: The readings this nominator can offer. `reject` is the reversal and `break`
 #: the continuation, so both signs are present; see the module docstring for
@@ -218,6 +219,18 @@ class OriginProfile(Profile):
     interval: ClassVar[str] = "4h"
     hold_bars: ClassVar[float] = 0.0
     hold_seconds: ClassVar[float] = 0.0
+    #: Bars of history to warm `Displacement` with on start.
+    #:
+    #: `SPAN` is 40 bars and an origin needs an impulsive chain inside that
+    #: window, so a cold desk cannot nominate a zone for ten hours on 15m and
+    #: six days on 4h - the clock this rule's numbers were measured on. 400
+    #: gives the window several turnovers.
+    warm_bars_request: ClassVar[int] = 400
+    #: Zero, for the reason `ZoneProfile.warm_fresh_bars` gives: a crossing is
+    #: a transition between two bars rather than an event with a timestamp, so
+    #: a replayed crossing is one this rule has already passed on. The warm
+    #: pass is for the detector, not for the signal.
+    warm_fresh_bars: ClassVar[int] = 0
 
 
 class StructureProfile(OriginProfile):
@@ -228,7 +241,7 @@ class StructureProfile(OriginProfile):
     shape: ClassVar[str] = "smc-zones"
 
 
-class Origins:
+class Origins(WarmFromHistory):
     """Origin crossings into orders. A mixin; the leaves below compose it."""
 
     profile: ClassVar[OriginProfile] = OriginProfile.__new__(OriginProfile)
@@ -261,6 +274,34 @@ class Origins:
         self.standing = 0
         self.counts: dict[str, int] = {"bars": 0, "signals": 0, "unwarmed": 0}
         super().on_start()
+        # After `super()`, which subscribes: a request issued before the
+        # subscription can have its response delivered to a strategy that is
+        # not yet listening for one.
+        self.start_warming()
+
+    def warm_bar(self, bar: Bar) -> None:
+        """Fold one historical bar into both detectors, and never propose.
+
+        **`Fold` is fed here too, not only `Displacement`.** `smc-zones` gates
+        on structure, so a warm pass that advanced the zone nominator and left
+        the structure reading cold would make every early live crossing read as
+        `unconfirmed` - a rule refusing itself for ten hours and counting it as
+        a gate rather than as a warm-up.
+
+        The `inside` book is built for the same reason `zones.py` builds it: a
+        crossing is the transition between two bars, so leaving it empty would
+        make the first live bar look like a crossing of every zone price
+        happened to be outside.
+        """
+        self.displacement.handle_bar(bar)
+        self.fold.update(float(bar.high), float(bar.low), float(bar.close))
+        self.counts["bars"] += 1
+        if not self.displacement.initialized:
+            self.counts["unwarmed"] += 1
+            return
+        close = float(bar.close)
+        for zone in self._zones(self.displacement.scale):
+            self.inside[zone.at] = zone.bottom <= close <= zone.top
 
     def on_bar(self, bar: Bar) -> None:
         """One closed bar, and any origin crossing it produced.

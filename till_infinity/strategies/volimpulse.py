@@ -61,7 +61,6 @@ from __future__ import annotations
 import math
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import timedelta
 from typing import Any, ClassVar
 
 from nautilus_trader.model.data import Bar
@@ -71,6 +70,7 @@ from ..domain.models import Intent, Refusal, Side
 from .entries import EdgeEntry
 from .exits import ManagedExit
 from .profile import Profile
+from .warming import WarmFromHistory
 
 #: Finished four-hour bins the squeeze range is measured over - four days.
 SQUEEZE_BINS = 24
@@ -556,7 +556,7 @@ class VolImpulseProfile(Profile):
     feeds: ClassVar[frozenset[str]] = frozenset(FEEDS)
 
 
-class VolImpulse:
+class VolImpulse(WarmFromHistory):
     """Trade a 15-minute impulse out of a four-hour squeeze, for four hours.
 
     A mixin with no base, composed with an entry from `entries.py` and an exit
@@ -623,45 +623,21 @@ class VolImpulse:
                 f"{self.profile.description} is an M15 rule and this desk is on "
                 f"{self._cfg.bar_type}: every lag and the hold are in bars of that clock."
             )
-        if inert or self.profile.warm_bars_request <= 0:
-            # **A desk that can never fire must not ask for 12,100 bars.**
-            # The request is not free and it is not local: thirty desks asked
-            # at once on 2026-11-08 at 21:43:44 - about 363,000 bars through
-            # the one transport the live desk trades through - and ten of those
-            # requests failed, every one of them on a thin FX cross. Twenty-five
-            # of the thirty had no frozen HAR, so the bars they were waiting on
-            # could not have produced a signal whatever came back.
+        if inert:
             return
-        span = timedelta(seconds=self._bar_seconds() * self.profile.warm_bars_request)
-        start = self.clock.utc_now() - span
-        # **A composite bar type cannot be requested.** Nautilus refuses
-        # `request_bars` for one outright and this rule is configured both
-        # ways: a live desk runs the standard external M15, a backtest
-        # aggregates M15 from an M1 feed.
-        if self._cfg.bar_type.is_composite():
-            self.request_aggregated_bars(
-                [self._cfg.bar_type],
-                start,
-                limit=self.profile.warm_bars_request,
-                include_external_data=False,
-            )
-        else:
-            self.request_bars(self._cfg.bar_type, start, limit=self.profile.warm_bars_request)
+        # `strategies/warming.py` holds the request, the composite/standard
+        # split and the one-bar-per-call delivery shape. This was the third
+        # copy of the same forty lines; it checks `warm_bars_request` itself.
+        self.start_warming()
 
     def _bar_seconds(self) -> float:
-        """This bar type's interval in seconds, for the warm request's span."""
-        spec = self._cfg.bar_type.spec
-        step = float(spec.step)
-        unit = str(spec.aggregation)
-        if "SECOND" in unit:
-            return step
-        if "MINUTE" in unit:
-            return step * 60.0
-        if "HOUR" in unit:
-            return step * 3_600.0
-        if "DAY" in unit:
-            return step * 86_400.0
-        return step * 900.0
+        """This bar type's interval in seconds. `warming.bar_seconds`.
+
+        **The version this replaces never matched its own branches**:
+        `spec.aggregation` is an int, so an M15 bar read 13,500 seconds for a
+        900-second bar. See `warming.bar_seconds`.
+        """
+        return self.warm_seconds()
 
     def _tally_extra(self) -> str:
         """The fold's state on the desk's tally line.
@@ -680,26 +656,23 @@ class VolImpulse:
             f" fired={counts['fired'] - self.warmed['fired']}+{self.warmed['fired']}w"
         )
 
-    def on_historical_data(self, data: Any) -> None:
-        """Fold requested history, which warms and never acts.
+    def warm_bar(self, row: Bar) -> None:
+        """Fold one historical bar, which warms and never acts.
 
-        **The fold advances; `on_data` is not called.** An impulse on a bar
-        hours old names a price that has gone, so a warm firing is counted and
-        nothing is proposed.
+        **Never acts, and that is this rule's own judgement.** `structure.py`
+        forwards a break confirmed on its last warm bar, because a break is an
+        event with a timestamp. This rule fires off a 4-hour calendar bin whose
+        rank is read against a trailing 750 bins, so a replayed firing is a
+        firing whose bin has already closed and been superseded.
         """
-        rows = data if isinstance(data, list | tuple) else [data]
-        for row in rows:
-            if not isinstance(row, Bar):
-                continue
-            self.warmed["bars"] += 1
-            found = self.fold.update(
-                int(row.ts_event // 1_000_000_000),
-                float(row.high),
-                float(row.low),
-                float(row.close),
-            )
-            if found is not None:
-                self.warmed["fired"] += 1
+        found = self.fold.update(
+            int(row.ts_event // 1_000_000_000),
+            float(row.high),
+            float(row.low),
+            float(row.close),
+        )
+        if found is not None:
+            self.warmed["fired"] += 1
 
     def on_bar(self, bar: Bar) -> None:
         """One closed M15 bar through the fold, and any impulse it produced.

@@ -21,6 +21,7 @@ def line(counts: dict[str, int], *, zones: int, initialized: bool = True) -> str
     """`Zones._tally_extra` on a stub carrying only what it reads."""
     stub = SimpleNamespace(
         counts=counts,
+        warmed={"bars": counts.get("warm", 0)},
         levels=SimpleNamespace(
             initialized=initialized,
             zones=[SimpleNamespace(at=i) for i in range(zones)],
@@ -70,3 +71,13 @@ def test_the_signal_count_is_reported_and_is_not_the_trade_count():
     desk is a quiet rule or a rule being refused downstream."""
     got = line({"bars": 400, "unwarmed": 0, "signals": 9}, zones=5)
     assert "signals=9" in got
+
+
+def test_the_warm_bar_count_is_reported_apart_from_the_live_one():
+    """**A fold warmed by replay and one filled by the market are different
+    states.** `zones` now requests 400 bars on start, so without this the bar
+    count would read as live and a desk twelve hours into its blind window
+    would be indistinguishable from one that had been trading all day."""
+    got = line({"bars": 400, "warm": 380, "unwarmed": 50, "signals": 0}, zones=18)
+    assert "bars=400" in got
+    assert "warm=380" in got

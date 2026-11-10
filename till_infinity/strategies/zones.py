@@ -58,6 +58,7 @@ from .crossing import side_of
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .exits import ManagedExit
 from .profile import Profile
+from .warming import WarmFromHistory
 
 #: The two published configurations. `script` is `BjorgumLevels()`'s own
 #: defaults; `measured` is what every number in `bjorgum.md` was run on.
@@ -240,9 +241,31 @@ class ZoneProfile(Profile):
     interval: ClassVar[str] = "15m"
     hold_bars: ClassVar[float] = 0.0
     hold_seconds: ClassVar[float] = 0.0
+    #: Bars of history to warm `BjorgumLevels` with on start.
+    #:
+    #: **This rule had the longest blind window on the desk.** The `script`
+    #: preset needs `left + right` bars for one pivot - 35 - plus an ATR of 30,
+    #: so it cannot nominate a zone until roughly 50 bars have closed: twelve
+    #: hours of 15m after every deploy, during which the tally read
+    #: `taken=0 refused=0` and a desk that *could not* fire was
+    #: indistinguishable from one choosing not to. 400 covers the deepest
+    #: preset - `measured` keeps ten zones a side off a 5/5 pivot - with room
+    #: for the zone book to have turned over.
+    warm_bars_request: ClassVar[int] = 400
+    #: A crossing confirmed within this many bars of now may still be acted on.
+    #:
+    #: **Zero, deliberately, and this is the difference from `smc-bos-causal`.**
+    #: A zone crossing is read from `self.inside`, which is per-bar state built
+    #: *as* the replay runs, so the first historical bar has no previous bar to
+    #: compare against and every crossing found during a replay is a crossing
+    #: this rule has already decided not to trade once. A break of structure is
+    #: an event with a timestamp; a crossing is a transition between two bars,
+    #: and replaying it would re-proposed every zone the warm window passed
+    #: through. The warm pass is for the *indicator*, not for the signal.
+    warm_fresh_bars: ClassVar[int] = 0
 
 
-class Zones:
+class Zones(WarmFromHistory):
     """Bjorgum zones into orders. A mixin; the leaves below compose it."""
 
     profile: ClassVar[ZoneProfile] = ZoneProfile.__new__(ZoneProfile)
@@ -273,6 +296,34 @@ class Zones:
         self.standing = 0
         self.counts: dict[str, int] = {"bars": 0, "signals": 0, "unwarmed": 0}
         super().on_start()
+        # After `super()`, which subscribes: a request issued before the
+        # subscription can have its response delivered to a strategy that is
+        # not yet listening for one.
+        self.start_warming()
+
+    def warm_bar(self, bar: Bar) -> None:
+        """Fold one historical bar into the indicator, and never propose.
+
+        **The `inside` book is built here too**, and that is the whole reason
+        this is not simply "feed the indicator". A crossing is the *transition*
+        between two bars, so a replay that updated the indicator and left
+        `inside` empty would make the first live bar look like a crossing of
+        every zone price happened to be outside - a burst of proposals on the
+        first bar after every deploy, each of them a state and not an edge.
+
+        Nothing is proposed: see `ZoneProfile.warm_fresh_bars` for why a
+        replayed crossing is a crossing this rule has already passed on, which
+        is the opposite of the judgement `structure.py` makes about a break.
+        """
+        self.levels.handle_bar(bar)
+        self.counts["bars"] += 1
+        if not self.levels.initialized:
+            self.counts["unwarmed"] += 1
+            return
+        close = float(bar.close)
+        for zone in self.levels.zones:
+            self.inside[zone.at] = zone.bottom <= close <= zone.top
+            self.flipped[zone.at] = bool(zone.flipped)
 
     def on_bar(self, bar: Bar) -> None:
         """One closed bar, and any zone crossing it produced.
@@ -337,6 +388,7 @@ class Zones:
         live = len(self.levels.zones) if self.levels.initialized else 0
         return (
             f" bars={self.counts['bars']}"
+            f" warm={self.warmed.get('bars', 0)}"
             f" unwarmed={self.counts['unwarmed']}"
             f" zones={live}"
             f" signals={self.counts['signals']}"
