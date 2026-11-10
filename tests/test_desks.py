@@ -1154,3 +1154,64 @@ def test_the_fold_covers_every_interval_the_desks_trade(monkeypatch, loop):
         "EURUSD.MT5-15-MINUTE-LAST-EXTERNAL",
         "EURUSD.MT5-4-HOUR-LAST-EXTERNAL",
     }
+
+
+def test_a_faster_clock_can_be_scoped_to_the_symbols_that_pay_for_it(monkeypatch):
+    """**A 5m desk costs three units where a 15m one costs one.**
+
+    Adding 5m to all 30 deployed symbols across five rules asks for 600
+    weighted units where the instance allows about 151 - measured at roughly
+    0.53 cores per 150 units, so 600 is 2.12 cores against a 1.8-core quota.
+    Without a per-clock list the only ways to express "5m, but not everywhere"
+    were to shorten `TRADING_SYMBOLS` for every clock at once, or to let the
+    ceiling clip the tail - and a clip chooses by position in a string, which
+    is the one thing a risk decision must not do.
+    """
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD,GBPUSD,AUDNZD,EURCAD")
+    monkeypatch.setenv("TRADING_INTERVALS", "5m,15m")
+    monkeypatch.setenv("TRADING_SYMBOLS_5M", "EURUSD,GBPUSD")
+
+    built, clipped = desks.build("MT5")
+    assert not clipped
+    on = {
+        (str(s.config.instrument_id.symbol), str(s.config.bar_type).split(".MT5-")[1].split("-")[0])
+        for s in built
+    }
+    assert ("EURUSD", "5") in on
+    assert ("GBPUSD", "5") in on
+    assert ("AUDNZD", "5") not in on, "a symbol outside the 5m list got a 5m desk"
+    assert ("EURCAD", "5") not in on
+    # The control: the slower clock still reaches every symbol, so the scope
+    # narrowed one clock rather than the deploy.
+    assert {sym for sym, step in on if step == "15"} == {
+        "EURUSD",
+        "GBPUSD",
+        "AUDNZD",
+        "EURCAD",
+    }
+
+
+def test_an_unscoped_clock_reaches_every_symbol(monkeypatch):
+    """The control for the test above, and the backward-compatibility claim:
+    every existing deploy sets no per-clock list, so nothing changes for it."""
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD,GBPUSD,AUDNZD")
+    monkeypatch.setenv("TRADING_INTERVALS", "15m")
+    monkeypatch.delenv("TRADING_SYMBOLS_15M", raising=False)
+
+    built, _ = desks.build("MT5")
+    assert {str(s.config.instrument_id.symbol) for s in built} == {
+        "EURUSD",
+        "GBPUSD",
+        "AUDNZD",
+    }
+    assert desks.symbols_for("MT5", "15m") == desks.symbols()
+
+
+def test_the_per_clock_suffix_is_the_clocks_own_name(monkeypatch):
+    """`TRADING_SYMBOLS_5M` for `5m`, `TRADING_SYMBOLS_4H` for `4h` - upper-cased
+    and nothing else changed, so it reads the way `TRADING_SYMBOLS_<VENUE>`
+    already does."""
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD")
+    monkeypatch.setenv("TRADING_SYMBOLS_4H", "XAUUSD,BTCUSD")
+    assert desks.symbols_for("MT5", "4h") == ("XAUUSD", "BTCUSD")
+    assert desks.symbols_for("MT5", "15m") == ("EURUSD",), "another clock is unaffected"

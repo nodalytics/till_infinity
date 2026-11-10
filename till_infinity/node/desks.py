@@ -220,6 +220,32 @@ def symbols(venue: str | None = None) -> tuple[str, ...]:
     return _names(os.environ.get("TRADING_SYMBOLS"))
 
 
+def symbols_for(venue: str | None, interval: str) -> tuple[str, ...]:
+    """The instruments to trade **on this clock**. `TRADING_SYMBOLS_<INTERVAL>`.
+
+    **A faster clock is not affordable on every symbol, and that is arithmetic
+    rather than preference.** A 5m desk closes a bar three times as often as a
+    15m one, so `cost_of` charges it three units. Adding 5m to all 30 deployed
+    symbols across five rules asks for 600 weighted units where the instance
+    allows about 151 - measured at roughly 0.53 cores per 150 units, so 600 is
+    **2.12 cores against a 1.8-core quota**. Without this the only ways to
+    express "5m, but not everywhere" were to shorten `TRADING_SYMBOLS` for
+    every clock at once, or to let the ceiling clip the tail of the list - and
+    a clip chooses by position in a string, which is the one thing a risk
+    decision must not do.
+
+    `TRADING_SYMBOLS_5M` therefore names the symbols that get 5m desks, and
+    the clock's own name is the suffix - `5M`, `15M`, `4H`, upper-cased with
+    nothing else changed, so `TRADING_SYMBOLS_5M` reads the way
+    `TRADING_SYMBOLS_<VENUE>` already does.
+
+    Absent, the venue's own list applies, so every existing deploy and every
+    clock nobody has scoped behaves exactly as before.
+    """
+    scoped = _names(os.environ.get(f"TRADING_SYMBOLS_{interval.strip().upper()}"))
+    return scoped or symbols(venue)
+
+
 def intervals() -> tuple[str, ...]:
     """The timeframes. `TRADING_INTERVALS`, **one desk per name**.
 
@@ -496,12 +522,18 @@ def _wanted(
     name different desks - see `importable` for why that matters more than it
     looks.
     """
+    # **Symbols per clock, not one list for all of them.** `symbols_for` says
+    # why: a 5m desk costs three units where a 15m one costs one, so "5m but
+    # only on the feeds that can pay for it" has to be expressible without
+    # shortening every other clock's list or letting the ceiling clip by
+    # position in a string.
     wanted = [
         (rule, entry, symbol, interval)
         for symbol in symbols(venue)
         for rule in rules()
         for entry in entries()
         for interval in intervals()
+        if symbol in symbols_for(venue, interval)
     ]
     # **Interval innermost, so a clip drops whole symbols and never whole
     # timeframes.** The budget is spent in order, so whatever nesting this

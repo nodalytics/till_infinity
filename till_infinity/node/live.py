@@ -561,10 +561,16 @@ def _statespace() -> list[Actor]:
         # slower view of the same state - it is a different estimate, and with
         # only `intervals()[0]` folded it would be subscribed to a topic
         # nothing published for its clock.
+        # **Per clock, the symbols that clock actually trades.** `5m` is scoped
+        # by `TRADING_SYMBOLS_5M` because a 5m desk costs three units against
+        # the ceiling, so folding 5m for a feed that has no 5m desk would be a
+        # Kalman update per bar whose reading nothing can act on - the
+        # `australia 200` failure again, one clock down.
         bars = tuple(
             str(desks.bar_type(symbol, venue, interval))
             for symbol, venue in used
             for interval in desks.intervals()
+            if symbol in desks.symbols_for(venue, interval)
         )
         if bars:
             log.warning(
