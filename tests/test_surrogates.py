@@ -250,3 +250,51 @@ class TestTheClosedRegister:
     def test_an_unknown_kind_is_refused(self):
         with pytest.raises(ValueError, match="kind must be"):
             null_for("fractal")
+
+
+def test_the_walk_keeps_the_market_s_own_sawtooth_rather_than_removing_it():
+    """**A mean gap of zero would be the defect, not the fix.**
+
+    `close[i] - close[i-1]` is `(open[i] - close[i-1]) + (close[i] - open[i])`,
+    so a series whose bars close above their opens with no close-to-close
+    drift has `mean(gap) = -mean(body)` identically - the market included.
+    Measured over 12 hourly stores, the real mean gap is negative on 10 of 12
+    and the surrogate understates it as often as it overstates it.
+
+    This exists because the construction was reported as planting a sawtooth
+    and the proposed fix - opening each bar at the previous close - would set
+    the surrogate's mean gap to exactly zero where the market's is about
+    -0.011 of a bar range. That is a different series, not a corrected one.
+    """
+    import random
+    import statistics
+
+    from till_infinity.node.surrogates import walk_with_bar_geometry
+
+    rng = random.Random(20261110)
+    # Bars that close above their opens, as a drifting market's do, with the
+    # close-to-close step near zero - which is what forces the identity.
+    bars = []
+    close = 100.0
+    for i in range(400):
+        open_ = close - 0.10
+        high = open_ + 0.22 + 0.01 * (i % 3)
+        low = open_ - 0.08
+        close = open_ + 0.10 + 0.002 * ((i % 5) - 2)
+        bars.append((open_, high, low, close))
+
+    def sawtooth(series):
+        gaps = [series[i][0] - series[i - 1][3] for i in range(1, len(series))]
+        bodies = [c[3] - c[0] for c in series]
+        return statistics.fmean(gaps), statistics.fmean(bodies)
+
+    real_gap, real_body = sawtooth(bars)
+    assert real_gap < 0.0, "the fixture is not a market-shaped one"
+    assert real_body > 0.0
+
+    fake_gap, fake_body = sawtooth(walk_with_bar_geometry(bars, rng=rng))
+    assert fake_gap < 0.0, "the surrogate removed a sawtooth the market has"
+    # Same side and the same order of magnitude, which is the claim. Not
+    # equality: the span and the shape are resampled independently.
+    assert 0.2 < abs(fake_gap / real_gap) < 5.0, (real_gap, fake_gap)
+    assert fake_body > 0.0
