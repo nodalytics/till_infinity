@@ -68,7 +68,7 @@ from nautilus_trader.trading.strategy import Strategy as NautilusStrategy
 
 from ..domain.models import Intent, Refusal, Side, SymbolSpec, Tick
 from ..risk import sizing
-from ..utils.topics import PROPOSALS, subscribe
+from ..utils.topics import PROPOSALS, VOLATILE, subscribe
 from . import sizes
 from .config import Settings
 from .counterfactual import Counterfactual, Resolved
@@ -161,6 +161,10 @@ class Desk(NautilusStrategy):
         #: only logged so a run can be asked what its declined trades were
         #: worth - which is the number the trial count depends on.
         self.resolved: list[Resolved] = []
+        #: Bar types the volatility screen currently admits. Empty until one
+        #: is published, which `_volatile_enough` treats as "refuse" rather
+        #: than "admit everything" - see there for why.
+        self._admitted: list[str] = []
 
     # ----------------------------------------------------------- the lifecycle
 
@@ -239,6 +243,13 @@ class Desk(NautilusStrategy):
         # one topic twice, which is why the subscribe sits next to the bars
         # rather than somewhere a reader has to go looking for it.
         subscribe(self, PROPOSALS, self.on_data)
+        # **The volatility ranking, if one is being published.** Subscribed
+        # unconditionally and acted on only when `TRADING_VOLATILE_ONLY` is
+        # set: a desk that subscribes to a topic nobody publishes costs one
+        # handler, and a desk that gates on a ranking that never arrives would
+        # refuse every trade for ever - which is the failure mode this desk has
+        # on record three times under the name "consumer with no producer".
+        subscribe(self, VOLATILE, self._on_ranking)
         self.log.info(f"{self._cfg.rule} on {self._cfg.bar_type}, proposals on {PROPOSALS}")
         # **Say what this desk is doing while it runs, not only when it stops.**
         # `taken`, `refused` and `passed_over` were logged in `on_stop` alone,
@@ -397,15 +408,7 @@ class Desk(NautilusStrategy):
             self._count(f"{self.label}:unwanted")
             return None
 
-        tick = self._tick()
-        if refusal := self._undealable(spec, tick):
-            self._count(f"(desk):{refusal.gate}")
-            self._journal(refusal, payload)
-            return refusal
-
-        if refusal := self._already_held():
-            self._count(f"(desk):{refusal.gate}")
-            self._journal(refusal, payload)
+        if refusal := self._barred(spec, payload):
             return refusal
 
         verdict = self.decide(payload)
@@ -605,6 +608,81 @@ class Desk(NautilusStrategy):
                 gate="crossed", detail=f"{spec.symbol} bid {tick.bid} above ask {tick.ask}"
             )
         return None
+
+    def _on_ranking(self, payload: Any) -> None:
+        """Keep the latest volatility ranking. Published by `VolatileScreen`."""
+        from .screening import ranked_bar_types
+
+        self._admitted = ranked_bar_types(payload)
+
+    def _barred(self, spec: SymbolSpec, payload: dict[str, Any]) -> Refusal | None:
+        """Every desk-level refusal, in order, counted and recorded.
+
+        Extracted because `consider` reached nine return statements and the
+        ninth was a lint error rather than a reader's complaint - but the
+        reader's version is the better reason: these three are the gates that
+        are *not* a rule's judgement, and keeping them together says so.
+
+        **The order is the cheap check first.** `_undealable` reads a cached
+        quote, `_volatile_enough` reads a published list, `_already_held` walks
+        the cache's positions. None of them is expensive and the order is not
+        about speed: it is that an untradable instrument should be refused as
+        untradable rather than as insufficiently volatile, because the gate
+        name is what an operator reads off the tally.
+
+        `_volatile_enough` is counted and **not journalled**, unlike the two
+        either side of it. With the screen on, every desk outside the top share
+        is refused on every signal - that is the gate working, not a wanted
+        trade declined - and journalling it would write the quiet book's whole
+        signal stream to disk. `_journal`'s own docstring draws that line.
+        """
+        if refusal := self._undealable(spec, self._tick()):
+            self._count(f"(desk):{refusal.gate}")
+            self._journal(refusal, payload)
+            return refusal
+        if refusal := self._volatile_enough():
+            self._count(f"(desk):{refusal.gate}")
+            return refusal
+        if refusal := self._already_held():
+            self._count(f"(desk):{refusal.gate}")
+            self._journal(refusal, payload)
+            return refusal
+        return None
+
+    def _volatile_enough(self) -> Refusal | None:
+        """Refuse an instrument outside the current top share, when asked to.
+
+        **Off unless `TRADING_VOLATILE_ONLY` is set**, and off is a no-op
+        rather than a permissive default: a gate that silently admits
+        everything reads the same as one that is working, and
+        `venue-faults-hide-below-the-strategy` is what that costs.
+
+        Refuses when the gate is on and **no ranking has arrived**, which is
+        the opposite of the usual choice here and deliberate. A scalp whose
+        whole premise is "only the volatile ones" has no fallback instrument
+        set: admitting everything until the screener warms would trade the
+        quiet book under a rule written for the loud one. `VolatileScreen`
+        says so on its own tally, so the quiet period is visible rather than
+        inferred.
+        """
+        if not self.settings.volatile_only:
+            return None
+        if not self._admitted:
+            return Refusal(
+                gate="no-ranking",
+                detail="no volatility ranking has been published yet",
+                feed=self._feed_name(),
+            )
+        if str(self._cfg.bar_type) in self._admitted:
+            return None
+        return Refusal(
+            gate="not-volatile",
+            detail=(
+                f"{self._cfg.instrument_id.symbol} is outside the top "
+                f"{len(self._admitted)} by range"
+            ),
+            feed=self._feed_name(),
+        )
 
     def _already_held(self) -> Refusal | None:
         """Does anything already hold this instrument?
