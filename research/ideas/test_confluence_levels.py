@@ -200,6 +200,28 @@ def test_a_touch_is_a_first_touch() -> None:
     assert got == [(10, 100.0)], got
 
 
+def test_dedupe_still_works_where_the_unit_is_far_from_its_median() -> None:
+    """The bucket grid is the tolerance at the *median* unit, so a row whose own
+    tolerance is a hundred buckets wide needs a hundred-bucket scan.
+
+    A fixed one-bucket scan stops de-duplicating in exactly the regime with the
+    most levels - the violent one - which inflates a density figure without
+    touching any outcome, since `k` comes from `Book.names` and never consults
+    this grid. The series below has a unit of 1.0 almost everywhere and 100.0
+    at the end, so the median grid is 0.25 and the late tolerance is 25.0.
+    """
+    unit = np.ones(1000)
+    unit[990:] = 100.0
+    rows = np.array([[1000.0, 992.0, 998.0, 0.0], [1020.0, 993.0, 999.0, 1.0]])
+    kept = cl.dedupe(rows, unit)
+    assert len(kept) == 1, kept
+    assert kept[0, 1] == 992.0
+    # And a price genuinely outside the tolerance survives, or the scan is
+    # merging everything in sight.
+    far = np.array([[1000.0, 992.0, 998.0, 0.0], [1100.0, 993.0, 999.0, 1.0]])
+    assert len(cl.dedupe(far, unit)) == 2
+
+
 def test_dedupe_keeps_the_earliest_birth() -> None:
     unit = np.full(100, 1.0)
     rows = np.array([[500.0, 10.0, 80.0, 0.0], [500.1, 20.0, 90.0, 1.0],
@@ -547,11 +569,15 @@ def test_the_placebo_is_unnamed_and_matched_on_distance(monkeypatch) -> None:
     for row in extra:
         assert row["k"] == 0.0
         assert all(row[f"has_{f}"] == 0.0 for f in cl.FRAMEWORKS)
+        # The price is reconstructed from the recorded displacement rather than
+        # stored, because the panel keeps only what a statistic reads. Asking
+        # the book again is the point: the flags above come from the same call,
+        # so this re-derives the price independently and checks it is free.
         bar = int(row["bar"])
+        price = bars["close"][bar - 1] - row["displacement"] * unit[bar]
         tol = cl.TOL_VOL * unit[bar]
-        assert all(book.names(f, row["price"] if "price" in row else
-                              bars["close"][bar - 1] - row["displacement"] * unit[bar],
-                              bar, tol) == -1 for f in cl.FRAMEWORKS)
+        assert all(book.names(f, price, bar, tol) == -1 for f in cl.FRAMEWORKS)
+        assert bars["low"][bar] - 1e-9 <= price <= bars["high"][bar] + 1e-9
     want = float(np.mean([abs(r["displacement"]) for r in flat]))
     have = float(np.mean([abs(r["displacement"]) for r in extra]))
     assert have == pytest.approx(want, rel=0.25), (want, have)

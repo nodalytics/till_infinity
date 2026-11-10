@@ -6,6 +6,7 @@
     ./.secrets/lab.sh run research/ideas/confluence_levels.py MODE=cost
     ./.secrets/lab.sh run research/ideas/confluence_levels.py MODE=calibrate
     ./.secrets/lab.sh run research/ideas/confluence_levels.py MODE=sweep
+    ./.secrets/lab.sh run research/ideas/confluence_levels.py MODE=lifesweep
     MODE=report uv run python research/ideas/confluence_levels.py   # tables from the npz
     MODE=smoke  uv run python research/ideas/confluence_levels.py   # seconds, generated bars
 
@@ -59,7 +60,7 @@ trade.
 |---|---|---|
 | `swing` | a confirmed pivot high or low, flagged `doubled` when a second pivot lands within `TOL_VOL` of an earlier one - the double bottom the commentary names | pivot bar + `SWING` |
 | `fib` | `FIB_RATIOS` retracements of a **completed** leg between two confirmed opposite pivots, the leg at least `MIN_LEG_VOL` units | the later pivot's confirmation |
-| `gann` | the Square-of-9 wheel from the latest confirmed pivot, `((sqrt(a*s) + deg/180)^2)/s` for `deg` in `GANN_DEGREES`, both signs | the anchor pivot's confirmation |
+| `gann` | the Square-of-9 wheel from **each** confirmed pivot, `((sqrt(a*s) + deg/180)^2)/s` for `deg` in `GANN_DEGREES`, both signs, each rung alive for `LIFE` bars - so the live wheel is the superposition of every anchor inside the last `LIFE` bars, which is most of why this framework is the densest of the four | the anchor pivot's confirmation |
 | `round` | the whole and half steps of the smallest power of ten at least `STEP_VOL` units wide | always; it needs no history at all |
 
 `gann` is in the study **precisely because it is the most arbitrary of the
@@ -313,8 +314,8 @@ PLACEBO_PAIR = ("Volatility 25 Index", "Volatility 75 Index")
 #: observations as dicts is five gigabytes and as columns is six hundred
 #: megabytes.
 COLUMNS = ("series", "arm", "bucket", "bar", "day", "side", "k", "stratum",
-           "unit", "displacement", "hold", "took", "shape", "cascade_went",
-           "cascade_realised", "cascade_far", "doubled",
+           "unit", "displacement", "width", "hold", "took", "shape",
+           "cascade_went", "cascade_realised", "cascade_far", "doubled",
            *(f"has_{f}" for f in FRAMEWORKS))
 
 
@@ -507,6 +508,12 @@ def levels_for(bars, unit: np.ndarray) -> dict[str, np.ndarray]:
         for r, ratio in enumerate(FIB_RATIOS):
             out["fib"].append((price - ratio * leg, born, min(born + LIFE, n), r))
 
+    # **Every pivot is an anchor, not only the latest.** A practitioner redraws
+    # the wheel when the swing changes, so the live book is the superposition of
+    # the anchors inside the last `LIFE` bars rather than one wheel - which is
+    # most of why this framework is the densest of the four at 1.63 levels per
+    # volatility unit, and the reason the density is reported beside the
+    # agreement rather than left to be assumed.
     for born, price, _side in pivots:
         if price <= 0:
             continue
@@ -543,8 +550,18 @@ def dedupe(rows: np.ndarray, unit: np.ndarray) -> np.ndarray:
         price, born, die = rows[idx, 0], int(rows[idx, 1]), int(rows[idx, 2])
         tol = TOL_VOL * unit[min(born, len(unit) - 1)]
         key = int(price // grid)
+        # **The scan width is derived from the row's own tolerance**, not fixed
+        # at one bucket. The bucket grid is the tolerance at the *median* unit,
+        # and on a series whose volatility spans an order of magnitude - BTCUSD
+        # does - a late row's tolerance is several buckets wide, so a
+        # fixed one-bucket scan silently stops de-duplicating in exactly the
+        # regime with the most levels. It changes the reported level counts and
+        # densities only: `k` and every outcome come from `Book.names`, which
+        # searches a price window with the bar's own tolerance and never
+        # consults this grid.
+        span = int(tol / grid) + 1
         hit = False
-        for near in (key - 1, key, key + 1):
+        for near in range(key - span, key + span + 1):
             bucket = live.get(near)
             if not bucket:
                 continue
@@ -774,6 +791,14 @@ def _row(bars, unit, strata, bar: int, price: float, side: int, k: int,
         "bar": float(bar), "day": float(bars["ts"][bar] // 86400), "side": float(side),
         "k": float(k), "stratum": float(strata[bar]), "unit": float(unit[bar]),
         "displacement": float((prev - price) / unit[bar]),
+        # **The arrival bar's range over the *lagged* unit.** This is the
+        # candidate mechanism for the `k` ladder and it is recorded so the
+        # question can be asked rather than argued: a `k >= 2` price needs
+        # several frameworks' levels inside one tolerance, which is likelier
+        # in a bar that is wide for its regime - and in a wide bar the race's
+        # barriers, which are set from the *lagged* unit, are both close, so
+        # whichever the close is nearer to wins more often.
+        "width": float((bars["high"][bar] - bars["low"][bar]) / unit[bar]),
         "hold": float("nan") if outcome == 0 else float(outcome > 0),
         "took": float(took),
         "shape": float(side * (bars["close"][bar + SHAPE_N] - price) / unit[bar]),
@@ -1679,6 +1704,62 @@ def mode_sweep() -> None:
     globals().update(base)
 
 
+def mode_lifesweep() -> None:
+    """The level-life axis on its own, because it is the one knob under which
+    the market's `k` gap and a walk's move in **opposite** directions.
+
+    `MODE=sweep` found the excess changing sign with the tolerance, which
+    disqualifies it: an effect cannot depend on what counts as "the same price".
+    The life knob is different in kind - it is how long a level stays in the
+    book, which is the closest thing in this harness to *how long anybody is
+    still watching* - and over 150, 500 and 1500 bars the market's gap went
+    +0.0191, +0.0156, +0.0097 while the walk's went +0.0022, +0.0170, +0.0279.
+
+    That is either the watchedness claim showing itself at short life or two
+    geometry terms crossing, and three points cannot tell. **The prediction is
+    stated here before the run**: if it is recency, the market's gap keeps
+    rising as the life shortens and the walk's keeps falling, monotonically,
+    through 50 and 100 bars. If either series turns over, it is neither.
+    """
+    use_arms(("real", "walkpath"))
+    base = {k: globals()[k] for k in ("TOL_VOL", "HOLD_VOL", "LIFE", "STRATA", "SWING")}
+    rows: list[dict] = []
+    for life in (50, 100, 150, 300, 500, 1000, 1500):
+        globals().update(base)
+        globals()["LIFE"] = life
+        panel, books = run_pool(jobs())
+        fam = _family(panel)
+        traded = fam != "deriv"
+        good = [x for x in books if "error" not in x]
+        line: dict[str, float | str] = {"cell": f"life {life}", "LIFE": life}
+        line["share_k2plus"] = float(np.nanmean(
+            [1.0 - x["share_k1"] for x in good])) if good else float("nan")
+        for f in FRAMEWORKS:
+            line[f"density_{f}"] = float(np.nanmean([x[f"density_{f}"] for x in good]))
+        for arm in ("real", "walkpath"):
+            hi = traded & (panel["arm"] == arm) & np.isin(panel["bucket"], ("k2", "k3"))
+            lo = traded & (panel["arm"] == arm) & (panel["bucket"] == "k1")
+            gap, se, _a, _b = paired_gap(panel["hold"][hi], panel["day"][hi],
+                                         panel["hold"][lo], panel["day"][lo], draws=400)
+            line[f"{arm}_gap"] = gap
+            line[f"{arm}_se"] = se
+            line[f"{arm}_n"] = int(np.isfinite(panel["hold"][hi]).sum())
+        a_hi = traded & (panel["arm"] == "real") & np.isin(panel["bucket"], ("k2", "k3"))
+        a_lo = traded & (panel["arm"] == "real") & (panel["bucket"] == "k1")
+        b_hi = traded & (panel["arm"] == "walkpath") & np.isin(panel["bucket"], ("k2", "k3"))
+        b_lo = traded & (panel["arm"] == "walkpath") & (panel["bucket"] == "k1")
+        got, se, lo_ci, hi_ci = gap_of_gaps(panel, a_hi, a_lo, b_hi, b_lo, draws=400)
+        line.update(excess=got, excess_se=se, excess_lo=lo_ci, excess_hi=hi_ci)
+        rows.append(line)
+        print(f"life {life:<5} k>=2 share {line['share_k2plus']:.3f}  "
+              f"real {line['real_gap']:+.4f} +- {line['real_se']:.4f}  "
+              f"walk {line['walkpath_gap']:+.4f} +- {line['walkpath_se']:.4f}  "
+              f"excess {got:+.4f} [{lo_ci:+.4f}, {hi_ci:+.4f}]  n {line['real_n']}",
+              flush=True)
+        write_csv(OUT / "lifesweep.csv", rows)
+    globals().update(base)
+
+
 def mode_calibrate() -> None:
     """What the construction reads at **random anchors**, where there is no
     level and no detector.
@@ -2034,6 +2115,38 @@ def report(panel=None) -> None:
             cells.append({"scope": "displacement", "arm": arm, "bucket": "within",
                           "n": len(gaps), "hold": float(np.mean(gaps))})
 
+    if "width" in panel:
+        print("\narm       quintile of bar range / lagged unit   k=1       k>=2      gap")
+        wedges = np.nanquantile(panel["width"][traded], np.linspace(0, 1, 6))
+        for arm in ("real", "walkpath"):
+            gaps = []
+            for j in range(len(wedges) - 1):
+                band = (traded & (panel["arm"] == arm)
+                        & (panel["width"] >= wedges[j]) & (panel["width"] < wedges[j + 1]))
+                hi = band & np.isin(panel["bucket"], ("k2", "k3"))
+                lo = band & (panel["bucket"] == "k1")
+                nhi = int(np.isfinite(panel["hold"][hi]).sum())
+                nlo = int(np.isfinite(panel["hold"][lo]).sum())
+                if nhi < 100 or nlo < 100:
+                    continue
+                a = float(np.nanmean(panel["hold"][lo]))
+                c = float(np.nanmean(panel["hold"][hi]))
+                gaps.append(c - a)
+                print(f"{arm:<9} [{wedges[j]:.3f}, {wedges[j + 1]:.3f})      "
+                      f"{a:.4f}    {c:.4f}   {c - a:+.4f}   ({nlo}/{nhi})")
+                cells.append({"scope": "width", "arm": arm,
+                              "bucket": f"[{wedges[j]:.3f},{wedges[j + 1]:.3f})",
+                              "n": nhi, "hold": c, "alone": a})
+            if gaps:
+                print(f"{arm:<9} equal-weight gap within quintiles: {np.mean(gaps):+.4f}")
+                cells.append({"scope": "width", "arm": arm, "bucket": "within",
+                              "n": len(gaps), "hold": float(np.mean(gaps))})
+        for arm in ("real", "walkpath"):
+            w = panel["width"][traded & (panel["arm"] == arm)]
+            k = panel["k"][traded & (panel["arm"] == arm)]
+            print(f"{arm:<9} mean bar width at k=1 {np.nanmean(w[k == 1.0]):.3f}, "
+                  f"at k>=2 {np.nanmean(w[k >= 2.0]):.3f}")
+
     print("\n=== by family, k>=2 hold rate (a regime split is information) ===")
     for family in sorted(set(fam.tolist())):
         sel = (fam == family) & (panel["arm"] == "real") & np.isin(panel["bucket"],
@@ -2093,6 +2206,7 @@ MODES = {
     "cost": mode_cost,
     "calibrate": mode_calibrate,
     "sweep": mode_sweep,
+    "lifesweep": mode_lifesweep,
     "report": report,
 }
 
