@@ -322,3 +322,75 @@ What these quantities share is not that they discard direction. It is that
 they are arithmetic rearrangements of an **alternating sequence produced by a
 thresholded detector**, which has strong structure of its own. Null the next
 one against a walk before reasoning about it.
+
+## What would make `symmetry.py` work, and what it is worth
+
+Asked on 2026-11-10: the member is refuted and imported by nothing, so is it
+retirable or fixable? Fixable, and the size of the prize is recoverable from
+the numbers already here rather than from a new run.
+
+### The measured persistence is 0.05, not 0.45
+
+For an AR(1) in log size with coefficient `r`, the lag-1 correlation of the
+*ratio* is exactly `-(1 - r) / 2` - the shared term, again. Inverting the
+three figures in section 3:
+
+| | lag-1 on the ratio | implied `rho(log size)` |
+| --- | ---: | ---: |
+| the market | -0.451 | **+0.098** |
+| its own shuffle | -0.477 | +0.046 |
+| arithmetic alone | -0.500 | 0.000 |
+
+Simulated to confirm the inversion: `r` of 0.0, 0.098, 0.2 and 0.4 give ratio
+correlations of -0.476, -0.447, -0.391 and -0.289 against the predicted -0.500,
+-0.451, -0.400 and -0.300.
+
+So the excess over the shuffled twin is **0.052 of autocorrelation in log
+displacement size**. At two to four thousand readings the standard error is
+about 0.018, so that is near three sigma - real, small, and **exactly the 0.009
+nats a reading the member already extracted**. Re-parameterising cannot
+manufacture more than that; it can only stop the model fighting an artefact.
+
+### Three changes, in order of what they are worth
+
+**1. Observe the level, not the ratio.** `log size(t)` has `rho = 0.098`; the
+ratio has `-0.45` of which `-0.5` is arithmetic. A persistent-regime mixture
+on the level has 0.05 of real persistence to fit, where on the difference it
+spends its parameters cancelling a shared term. This also makes the member's
+`loglike` comparable with the other volatility members, which its own
+docstring currently says it is not - that incomparability was a symptom of
+observing a ratio, not a property of the subject.
+
+**2. Reclassify it as a volatility member on an event clock.** Displacement
+size *is* a volatility quantity, and direction is closed on this desk while
+log-volatility is where the ladder pays - +191 to +547 on 7 of 7 markets,
+losing on 5 of 5 controls. So the question stops being "is the sequence
+symmetric", which is a geometry claim already null twice, and becomes **does a
+displacement clock carry volatility structure the bar clock and volume time do
+not**. `the-q-clock-is-an-activity-clock` found volume time absorbing 76% of
+the clock effect and still paying on top, so there is room for a third clock;
+`clocks-must-pass-an-iid-control` is the control it has to clear, because range
+time looked best on 8 of 8 markets and invented clustering at 5.3x on a
+specified process.
+
+**3. Use the duration, which the member threw away.** A displacement has a
+size, a duration and a direction, and only the size is observed - the duration
+enters solely through the per-hour hazard. `log size` and `log duration` share
+no term, so there is no mechanical correlation to fight, and their ratio is a
+velocity, which is what both papers were gesturing at. **This is the only one
+of the three that adds information rather than re-expressing it.**
+
+And drop the three anchored classes. With a level as the observable,
+mirror/expanding/contracting are three points on one parameter's continuum; the
+anchors existed only to stop free centres collapsing, which was itself the
+symptom of a model with nothing to learn from its observable. Keep the per-hour
+hazard: it was right, and it is what makes the member portable from 15m to 1d.
+
+### What it is not worth
+
+0.05 of autocorrelation in a volatility quantity is below anything that pays
+on its own: the cost ceiling here is 0.16 of risk and this is not in sight of
+it. It is worth running only as part of the clock question in (2), where the
+quantity composes with work that already pays. The symmetry *claim* stays
+refuted either way - what is being rescued is the observable, not the paper.
+
