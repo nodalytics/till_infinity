@@ -131,20 +131,59 @@ def test_the_payload_reader_refuses_a_shape_it_does_not_know():
 # ---------------------------------------------------------------- the gate
 
 
-def gate(*, on: bool, admitted: list[str], mine: str) -> object:
+def gate(
+    *,
+    on: bool,
+    admitted: list[str],
+    mine: str,
+    rules: tuple[str, ...] = (),
+    rule: str = "zones",
+) -> object:
     """`Desk._volatile_enough` on a stub carrying only what it reads."""
     from till_infinity.strategies.desk import Desk
 
     stub = SimpleNamespace(
-        settings=SimpleNamespace(volatile_only=on),
+        settings=SimpleNamespace(volatile_only=on, volatile_rules=rules),
         _admitted=admitted,
         _cfg=SimpleNamespace(
             bar_type=mine,
+            rule=rule,
             instrument_id=SimpleNamespace(symbol="EURUSD"),
         ),
         _feed_name=lambda: "eurusd",
     )
     return Desk._volatile_enough(stub)
+
+
+def test_the_screen_only_gates_the_rules_it_is_pointed_at():
+    """**The screen is a scalping filter and one live rule is not a scalp.**
+
+    `structure.HOLD_MINUTES // 15` is **96 bars - a full day** against
+    `volimpulse.HOLD_BARS`' 16, so gating `smc-bos-causal` on the volatile
+    subset would restrict a rule to a universe its own numbers were never
+    measured on. With `TRADING_VOLATILE_RULES` naming the scalps, an unnamed
+    rule passes whatever the ranking says.
+    """
+    scalps = ("vol-impulse", "zones")
+
+    # Named and outside the admitted head: refused, which is the point.
+    refusal = gate(on=True, admitted=["X"], mine="Z", rules=scalps, rule="zones")
+    assert refusal is not None, "a named rule outside the head was admitted"
+    assert refusal.gate == "not-volatile"
+
+    # Not named: the ranking is not consulted at all.
+    assert gate(on=True, admitted=["X"], mine="Z", rules=scalps, rule="smc-bos-causal") is None
+    assert gate(on=True, admitted=[], mine="Z", rules=scalps, rule="smc-bos-causal") is None
+
+    # Case-blind, because `TRADING_STRATEGIES` is matched that way too.
+    assert gate(on=True, admitted=["X"], mine="Z", rules=scalps, rule="ZONES") is not None
+
+
+def test_an_empty_rule_list_gates_everything_which_is_the_old_behaviour():
+    """Empty is every rule, so a deployment that set only the master switch
+    behaves as it did before the scoping existed - and the setting's docstring
+    says that is rarely what is wanted."""
+    assert gate(on=True, admitted=["X"], mine="Z", rules=(), rule="smc-bos-causal") is not None
 
 
 def test_off_is_a_true_no_op():
