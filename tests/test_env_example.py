@@ -26,7 +26,29 @@ PACKAGE = ROOT / "till_infinity"
 #: first version of this walk accepted any `.get` and put seven SDMX field
 #: names from the IMF adapter into the example file.
 HELPERS = frozenset(
-    {"_flag", "_float", "_int", "_str", "_list", "_csv", "_name", "_seconds", "_text"}
+    {
+        "_flag",
+        "_float",
+        "_int",
+        "_str",
+        "_list",
+        "_csv",
+        "_name",
+        "_seconds",
+        "_text",
+        # **`_env` was missing and that made this test lie.**
+        # `strategies/config.py` reads most settings as
+        # `_names(_env("TRADING_X"))`, so the literal is the argument of the
+        # *wrapper* rather than of a reader this list knew. Every such key read
+        # as "documented but not read", and the only reason the test passed on
+        # 2026-11-10 is that each one also appeared in an `os.environ.get`
+        # elsewhere - `TRADING_STRATEGIES` in `node/desks.py:131`, for
+        # instance. `TRADING_VOLATILE_RULES` was the first key read solely
+        # through the wrapper and it failed immediately.
+        "_env",
+        "_env_int",
+        "_env_float",
+    }
 )
 
 #: Names built at runtime from an interval, so no literal exists to find.
@@ -77,6 +99,20 @@ def test_the_walk_finds_the_settings_it_is_supposed_to():
     assert len(found) > 150, f"only {len(found)} settings found; the walk is broken"
     for name in ("TRADING_LIVE", "TRADING_STRATEGIES", "STATESPACE_WARM_BARS", "NOTIFY_SHAPES"):
         assert name in found, f"{name} is read by the node and the walk missed it"
+
+
+def test_the_walk_sees_a_setting_read_only_through_a_wrapper():
+    """**The blind spot that made this test lie, pinned.**
+
+    `strategies/config.py` reads most settings as `_names(_env("TRADING_X"))`,
+    so the literal is the wrapper's argument. With `_env` missing from
+    `HELPERS` every such key read as undocumented, and the test passed only
+    because each also appeared in an `os.environ.get` elsewhere.
+    `TRADING_VOLATILE_RULES` is read **only** through the wrapper, so it is the
+    case that tells a working walk from a lucky one.
+    """
+    found = read_by_the_code()
+    assert "TRADING_VOLATILE_RULES" in found, "a wrapper-only setting is invisible to the walk"
 
 
 def test_the_walk_does_not_mistake_a_dict_read_for_a_setting():
