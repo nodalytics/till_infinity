@@ -66,8 +66,26 @@ WINDOW = 120
 #: service` is a measured outcome on a two-core box.
 EVERY = 900.0
 
-#: The share of the ranking a desk may trade. 0.2 is the top fifth.
-SHARE = 0.2
+#: The share of the volatility ranking a desk may trade. 0.3 is the top third.
+SHARE = 0.3
+
+#: The share of the **cost** ranking admitted as well - the cheapest fifth of
+#: the book by round-trip spread, measured in the same basis points the range
+#: is.
+#:
+#: **Admitted as a union with the volatility set, not an intersection**, which
+#: is the operator's call and is the permissive direction: an instrument gets
+#: in by moving a lot *or* by being cheap. The per-trade cost gate still
+#: refuses anything that cannot pay, so the screen is the coarse filter and
+#: the gate does the fine work with the actual numbers.
+#:
+#: **The two criteria pull against each other on this book**, which is why the
+#: cost half is worth having at all. Ranking by range selects for cost too,
+#: because the spread here scales with the range: the first live ranking, on
+#: 2026-11-10, admitted oil, crypto and exotic metals - and `BNBUSD`, which
+#: cannot clear its own cost gate at 18% of target against a 10% ceiling.
+#: Exotic round trips run 0.40 to 0.97 of a **whole bar range**.
+COST_SHARE = 0.2
 
 
 class ScreenConfig(ActorConfig, frozen=True):
@@ -77,6 +95,9 @@ class ScreenConfig(ActorConfig, frozen=True):
     window: int = WINDOW
     every: float = EVERY
     share: float = SHARE
+    #: The cheapest share admitted beside the loudest, as a union. 0 turns the
+    #: cost half off and leaves the volatility ranking alone.
+    cost_share: float = COST_SHARE
     #: Bars to request per instrument on start. **Without this the gate is a
     #: five-hour trading halt after every deploy**: `_rank` needs 20 bars of an
     #: instrument's own before it will rank it, which at 15m is five hours of
@@ -186,6 +207,34 @@ class VolatileScreen(Actor):
             if close > 0.0:
                 found.append(10_000.0 * span / close)
 
+    def _costs(self, names: list[str]) -> dict[str, float]:
+        """Round-trip cost per bar type in basis points, where a quote exists.
+
+        Read from the cache rather than subscribed, because one read per bar
+        type every `every` seconds is free and a quote subscription for the
+        whole book is not: `the-healthcheck-is-the-cpu-load` measures the
+        instance at 1.2 cores for 2s every 60s on two cores.
+
+        **The same basis points the range is in**, so the two rankings are
+        comparable and their ratio - how many round trips wide a bar is - is
+        the quantity a scalp actually needs. An instrument with no quote is
+        absent rather than zero: a missing cost ranked as free would admit
+        exactly the instruments nothing can be priced on.
+        """
+        out: dict[str, float] = {}
+        for name in names:
+            try:
+                quote = self.cache.quote_tick(BarType.from_str(name).instrument_id)
+            except Exception:  # pragma: no cover - the cache's shapes
+                continue
+            if quote is None:
+                continue
+            bid, ask = float(quote.bid_price), float(quote.ask_price)
+            mid = 0.5 * (bid + ask)
+            if mid > 0.0 and ask >= bid:
+                out[name] = 10_000.0 * (ask - bid) / mid
+        return out
+
     def _rank(self) -> None:
         """Publish the ranking, or say why there is not one."""
         ready = {
@@ -202,22 +251,65 @@ class VolatileScreen(Actor):
             return
         ranked = sorted(ready.items(), key=lambda kv: -kv[1])
         cut = max(1, round(len(ranked) * self._cfg.share))
-        admitted = [name for name, _ in ranked[:cut]]
+        loud = [name for name, _ in ranked[:cut]]
+
+        # **A union, not an intersection.** An instrument gets in by moving a
+        # lot *or* by being cheap, and the per-trade cost gate still refuses
+        # anything that cannot pay - so this is the coarse filter and the gate
+        # does the fine work with the actual numbers.
+        costs = self._costs(list(ready))
+        cheap: list[str] = []
+        if self._cfg.cost_share > 0.0 and costs:
+            by_cost = sorted(costs.items(), key=lambda kv: kv[1])
+            cheap = [
+                name for name, _ in by_cost[: max(1, round(len(by_cost) * self._cfg.cost_share))]
+            ]
+        admitted = list(dict.fromkeys(loud + cheap))
+
         self._rankings += 1
         topics.publish(
             self,
             topics.VOLATILE,
             {
                 "share": float(self._cfg.share),
-                "ranked": [{"bar_type": name, "range_bps": value} for name, value in ranked],
+                "cost_share": float(self._cfg.cost_share),
+                "ranked": [
+                    {
+                        "bar_type": name,
+                        "range_bps": value,
+                        # Both numbers and their ratio, because a desk refused
+                        # for being outside the head should be able to say how
+                        # far outside and on which axis.
+                        **(
+                            {
+                                "cost_bps": costs[name],
+                                "ranges_per_cost": value / costs[name] if costs[name] > 0 else 0.0,
+                            }
+                            if name in costs
+                            else {}
+                        ),
+                    }
+                    for name, value in ranked
+                ],
                 "admitted": admitted,
+                "loud": loud,
+                "cheap": cheap,
                 "rankings": self._rankings,
             },
         )
         head = ", ".join(f"{name.split('.')[0]} {value:.0f}bps" for name, value in ranked[:cut])
-        self.log.info(
-            f"volatile screen: top {self._cfg.share:.0%} of {len(ranked)} is {cut} - {head}"
-        )
+        line = f"volatile screen: top {self._cfg.share:.0%} of {len(ranked)} is {cut} - {head}"
+        if self._cfg.cost_share > 0.0:
+            # Said every pass, because the union's size is the whole question:
+            # if the two criteria are anti-correlated the union is close to no
+            # filter at all, and that is visible here rather than inferred.
+            line += (
+                f"; + cheapest {self._cfg.cost_share:.0%} is {len(cheap)}, "
+                f"union {len(admitted)} of {len(ranked)}"
+            )
+            if len(costs) < len(ready):
+                line += f" ({len(ready) - len(costs)} unquoted, cost-ineligible)"
+        self.log.info(line)
 
 
 def ranked_bar_types(payload: Any) -> list[str]:
