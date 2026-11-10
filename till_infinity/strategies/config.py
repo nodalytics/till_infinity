@@ -673,6 +673,26 @@ class Settings:
     #: Geometric like `crowding_share`: at 0.9 three agreeing rules leave the
     #: next trade at 0.729, and a hedge keeps 1.0.
     agreement_share: float = 0.0
+    #: Floor every stop at the one-bar volatility-forecast band.
+    #: `TRADING_FORECAST_BAND`, off.
+    #:
+    #: The forecast is a decaying average of **true range**, which `profile.py`
+    #: records beating `vol_bps`, `garch_bps`, `ensemble_bps`, `forecast_bps`
+    #: and `range_bps` in every cell over 11,797 recorded calls - and beating
+    #: GARCH at one bar ahead on GARCH's own quantity. The band is
+    #: `quantiles.student_stop`, which held on 64 of 64 out of sample at dof
+    #: 3 to 5.
+    #:
+    #: **A floor, never a replacement.** A rule's stop distance is part of what
+    #: was measured about that rule, so this only widens a stop the forecast
+    #: says is too tight and leaves a wider one alone. On a steady 20-pip 15m
+    #: bar the band is 30 pips against a rule's own 60, so it binds on a stop
+    #: under about 1.5 units and not otherwise.
+    #:
+    #: `target_r` then measures R against the **floored** stop, so switching
+    #: this on moves the target with the stop rather than leaving the two on
+    #: different bases.
+    forecast_band: bool = False
     #: Trade only the instruments the volatility screen currently admits.
     #: `TRADING_VOLATILE_ONLY`, off.
     #:
@@ -1543,6 +1563,7 @@ class Settings:
             volatility_target_bps=_float("TRADING_VOLATILITY_TARGET_BPS", 0.0),
             target_r=_float("TRADING_TARGET_R", 0.0),
             agreement_share=_float("TRADING_AGREEMENT_SHARE", 0.0),
+            forecast_band=_flag("TRADING_FORECAST_BAND", False),
             volatile_only=_flag("TRADING_VOLATILE_ONLY", False),
             regime_band=_float("TRADING_REGIME_BAND", 0.0),
             regime_floor=_float("TRADING_REGIME_FLOOR", 0.5),

@@ -67,7 +67,7 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy as NautilusStrategy
 
 from ..domain.models import Intent, Refusal, Side, SymbolSpec, Tick
-from ..risk import sizing
+from ..risk import forecast, sizing
 from ..utils.topics import PROPOSALS, VOLATILE, subscribe
 from . import sizes
 from .config import Settings
@@ -165,6 +165,10 @@ class Desk(NautilusStrategy):
         #: is published, which `_volatile_enough` treats as "refuse" rather
         #: than "admit everything" - see there for why.
         self._admitted: list[str] = []
+        #: The volatility forecast a stop can be floored at. Fed in `on_bar`
+        #: from this desk's own bars, so it is on the clock the desk trades
+        #: rather than on whatever a producer happened to publish.
+        self._forecast = forecast.RangeForecast()
 
     # ----------------------------------------------------------- the lifecycle
 
@@ -461,7 +465,7 @@ class Desk(NautilusStrategy):
         if isinstance(found, Refusal):
             return self._refuse(found, payload)
 
-        found = self._floor_target(found)
+        found = self._floor_target(self._floor_stop(found))
 
         # The broker's own minimum stop distance, checked before the order
         # rather than discovered by its retcode. This fires only where the
@@ -473,6 +477,46 @@ class Desk(NautilusStrategy):
             refusal = Refusal(gate="stops-level", detail=breach, feed=found.feed)
             return self._refuse(refusal, payload)
         return found
+
+    def _floor_stop(self, intent: Intent) -> Intent:
+        """Widen a stop the volatility forecast says is too tight.
+
+        **A floor and never a replacement**, because a rule's stop distance is
+        part of what was measured about that rule and
+        `reproduce-the-baseline-before-an-increment` is the standing warning
+        about swapping a model under a result - HAR read +0.036 against the
+        shelf's +0.110 and the cause was the data window, not the model.
+
+        Ordered **before** `_floor_target`, so `target_r` measures R against
+        the floored stop. The two on different bases would be worse than
+        either alone: a target in units of a stop the desk then widened is a
+        reward-to-risk ratio that describes no trade that happened.
+
+        Off unless `TRADING_FORECAST_BAND` is set, and an unwarmed forecast is
+        a no-op - `risk/forecast.floored` returns the distance unchanged when
+        it has no opinion, so a desk in its first fourteen bars behaves exactly
+        as it did before.
+        """
+        if not self.settings.forecast_band or not self._forecast.ready:
+            return intent
+        risk = intent.risk
+        if risk <= 0.0:
+            return intent
+        wanted = forecast.floored(risk, self._forecast.value)
+        if wanted <= risk:
+            return intent
+        sign = 1 if intent.side is Side.BUY else -1
+        return replace(
+            intent,
+            stop=intent.entry - sign * wanted,
+            features={
+                **intent.features,
+                # Both numbers, because the journal has to show what the floor
+                # changed and not only that it fired.
+                "stop_floored_from": float(risk),
+                "stop_forecast": float(self._forecast.value),
+            },
+        )
 
     def _floor_target(self, intent: Intent) -> Intent:
         """Give an intent a target where its rule shipped none.
@@ -852,6 +896,24 @@ class Desk(NautilusStrategy):
         its close, so what is recorded here is always final.
         """
         self.frames.observe(bar.bar_type, bar.ts_event / 1e9, self.readings())
+        self.observe_forecast(bar)
+
+    def observe_forecast(self, bar: Bar) -> None:
+        """Fold one bar into the stop-floor forecast. Live or replayed.
+
+        **Only this desk's own signal frame.** A desk may be handed a context
+        frame or, on `identity-arb`, a partner leg's bars - folding either
+        would average two instruments' ranges and set a stop from neither,
+        which is the shape that took a warmed ATR from 0.00132 to 0.62083 one
+        level down.
+
+        Called from the warm replay as well as from `on_bar`, because a desk
+        that has to wait fourteen live bars for its stop floor is a desk whose
+        first trades after every deploy are the ones the floor exists for -
+        three and a half hours of them on a 15m clock.
+        """
+        if str(bar.bar_type) == str(self._cfg.bar_type):
+            self._forecast.update(float(bar.high), float(bar.low), float(bar.close))
 
     def readings(self) -> dict[str, Any]:
         """What a frame's state is worth recording, per registered detector.
