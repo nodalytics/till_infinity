@@ -651,7 +651,7 @@ class Profile:
             # and this read 1.0 against a full book - a multiplier that cannot
             # fire, behind a switch that says it is off anyway.
             # `strategies/sizes.book_of` builds the pairs now.
-            scaling.crowding(feed, book, settings.crowding_share),
+            scaling.crowding(feed, book, settings.crowding_share, side),
             # **`ewma_tr_bps`, not `vol_bps`.** A decaying average of true range
             # forecast the next bar's movement better than every figure the desk
             # produces, at the horizon each of those was built for: against 11,797

@@ -52,16 +52,52 @@ effects.declare("trading.spike_switch", enabled=False)
 FLOOR = 0.05
 
 
-def crowding(feed: str, open_trades: Sequence[tuple[str, int]], share: float) -> float:
-    """Reduce for every open position that shares a currency leg.
+def _sign_of(side: object) -> int:
+    """+1 for a buy, -1 for a sell, +1 when nothing says.
+
+    Reads `Side.sign` where it exists and falls back to the word, because the
+    callers hand this a `Side`, a string and sometimes an int - the same three
+    shapes `overshoot_for` accepts.
+    """
+    found = getattr(side, "sign", None)
+    if isinstance(found, int) and found:
+        return 1 if found > 0 else -1
+    if isinstance(side, int) and side:
+        return 1 if side > 0 else -1
+    word = str(getattr(side, "value", side) or "").strip().lower()
+    return -1 if word.startswith("sell") else 1
+
+
+def crowding(
+    feed: str,
+    open_trades: Sequence[tuple[str, int]],
+    share: float,
+    side: object = None,
+) -> float:
+    """Reduce for every open position that shares a currency leg, same way round.
 
     See `trading-scaling.md` in research/docs.
+
+    **`side` is the proposed trade's direction and leaving it out mis-scores a
+    sell.** Without it this assumed every proposal was a buy, so it read a
+    short of EURUSD as long EUR when it is long **USD** - and therefore found
+    no crowding against a book that was long the dollar seven other ways.
+    Measured on the live desk on 2026-11-10: `statespace-surprise` opened eight
+    positions on one bar close, **every one of them long USD** - two by buying
+    USDxxx and six by selling xxxUSD - and this multiplier scored the eighth at
+    1.000 against the seven before it. An unsided reading of a currency leg is
+    not a reading of it at all.
+
+    `None` keeps the old buy-shaped behaviour rather than raising, because a
+    caller that cannot say which way it is going is better served by the
+    conservative half of the answer than by an exception in a sizing path.
     """
     if share <= 0 or share >= 1:
         return 1.0
     base, quote = ex.legs(feed)
     if not base and not quote:
         return 1.0
+    mine_sign = _sign_of(side)
 
     crowded = 0
     for other_feed, sign in open_trades:
@@ -70,8 +106,9 @@ def crowding(feed: str, open_trades: Sequence[tuple[str, int]], share: float) ->
             continue
         # A shared leg only crowds when both positions are the same way round
         # on it. `Side.sign` is +1 for a buy, so a long of the base is long
-        # that currency and short the quote.
-        for leg, mine in ((base, 1), (quote, -1)):
+        # that currency and short the quote - and a sell is the mirror, which
+        # is what `mine_sign` carries.
+        for leg, mine in ((base, mine_sign), (quote, -mine_sign)):
             if not leg:
                 continue
             theirs = 0
