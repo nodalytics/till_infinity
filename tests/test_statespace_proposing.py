@@ -188,11 +188,17 @@ class TestTheTopicAgrees:
     allowlist did not carry the string.
     """
 
-    def test_the_bus_the_service_and_the_producer_agree(self) -> None:
-        from till_infinity.statespace.service import PROPOSES
+    def test_the_bus_and_the_producer_agree(self) -> None:
+        """**Two names for one topic is a consumer with no producer.**
+
+        This compared three constants until 2026-11-10: the bus's, the
+        producer's, and the retired service's `PROPOSES`. The service is gone
+        and the third name went with it - a constant kept only so a test could
+        compare it against itself is not a contract, it is a copy.
+        """
         from till_infinity.utils.topics import PROPOSALS
 
-        assert proposing.TOPIC == PROPOSALS == PROPOSES
+        assert proposing.TOPIC == PROPOSALS
 
     def test_it_is_not_the_signals_topic(self) -> None:
         from till_infinity.utils.topics import PROPOSALS, SIGNALS
@@ -209,12 +215,30 @@ class TestTheServicePublishes:
         assert Settings().proposals is True
 
     def test_the_counter_is_reported(self) -> None:
-        """`report` is the only witness in a container that runs at INFO."""
-        from till_infinity.statespace.config import Settings
-        from till_infinity.statespace.engine import Engine
-        from till_infinity.statespace.service import Watcher
+        """`report` is the only witness in a container that runs at INFO, and
+        the actor is what reports it now.
 
-        watcher = Watcher(engine=Engine(Settings()))
-        watcher.proposed = 7
-        line = watcher.report(at=1e12)
-        assert "7 proposed" in line
+        This drove the retired service's `Watcher.report`. The live producer is
+        `StatespaceActor`, whose tally carries the same count, so the witness
+        moved rather than went away - and a test against a class no production
+        path constructs was pinning the wrong one.
+        """
+        from types import SimpleNamespace
+
+        from till_infinity.statespace.actor import StatespaceActor
+
+        # Called unbound on a stub, because `Actor.log` is read-only on the
+        # Cython base and `_say_tally` reads only these four attributes.
+        said: list[str] = []
+        stub = SimpleNamespace(
+            _engine=SimpleNamespace(tally={"bars": 120, "readouts": 11}, saturated=0),
+            _proposals=7,
+            _notices=SimpleNamespace(sent=2),
+            _warmed=400,
+            log=SimpleNamespace(info=said.append, warning=said.append),
+        )
+        StatespaceActor._say_tally(stub)
+
+        assert said, "the tally said nothing at all"
+        assert "proposals=7" in said[0]
+        assert "warmed=400" in said[0], "a fold warmed by replay is not one filled by the market"

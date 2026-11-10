@@ -89,6 +89,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Any
 
 #: How long a member's reading counts toward its cohort. A cohort pooled from
 #: stale members overstates agreement, because the stale ones cannot disagree.
@@ -306,3 +307,35 @@ def independent_of(live: int, agreement: float) -> float:
         return float(max(live, 0))
     rho = max(0.0, 2.0 * agreement - 1.0)
     return live / (1.0 + (live - 1) * rho)
+
+
+def fields_for(pool: Pool, readout: Any) -> dict[str, object]:
+    """Fold this readout into its cohorts and return what they now say.
+
+    Nested under one key rather than merged flat. A feed can belong to two
+    cohorts - USDJPY carries both USD and JPY - so a flat merge would have to
+    pick one and silently drop the other, and merging a second dict's keys over
+    a payload is how this desk already lost an exit reason on every close.
+
+    Empty until a cohort has `LEAST_LIVE` fresh members, which is the
+    common case for a feed whose cohort-mates are not subscribed.
+    """
+    pool.observe(
+        readout.feed,
+        readout.interval,
+        # The drift of **log variance**, not of price. `rate_sd` is its spread,
+        # so the pool weights by precision exactly as `pooling.py` does.
+        rate=float(readout.rate),
+        rate_sd=float(readout.rate_sd),
+        # Half-band units against the feed's own anchor, which is the one
+        # variance quantity comparable across feeds - the level is not, so it is
+        # deliberately not pooled.
+        stretch=float(readout.stretch),
+        when=float(readout.at),
+    )
+    seen = [
+        got.to_dict()
+        for name in pool.cohorts_of(readout.feed)
+        if (got := pool.read(name, readout.interval, now=float(readout.at))) is not None
+    ]
+    return {"cohorts": seen} if seen else {}
