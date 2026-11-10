@@ -2519,6 +2519,21 @@ class Displacement(Indicator):
         return leg.side if leg is not None else 0
 
     @property
+    def scale(self) -> float:
+        """The volatility unit every `*_vol` reading here is divided by.
+
+        Exposed because a rule trading these origins needs a stop distance in
+        the **same** unit the leg sizes are quoted in. The alternative is a
+        second ATR registered beside this indicator, and two scales over one
+        bar series is how they come to disagree - `size_vol` would then be
+        measuring one thing and the stop another, with both printing.
+
+        0.0 before there is a scale, which is what `size_vol` already treats as
+        "no reading" rather than as a distance of nothing.
+        """
+        return self._bar_scale
+
+    @property
     def size_vol(self) -> float:
         """The last leg's signed size in volatility units, 0.0 without a scale.
 
