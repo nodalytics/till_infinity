@@ -243,6 +243,12 @@ class WarmFromHistory:
                 continue
             seen.add(key)
             self.warmed["bars"] = self.warmed.get("bars", 0) + 1
+            # Every class that mixes this in is a `Desk`, which carries the
+            # stop-floor forecast; the guard is for this mixin's own test
+            # doubles, which are not.
+            observe = getattr(self, "observe_forecast", None)
+            if observe is not None:
+                observe(row)
             self.warm_bar(row)
 
 
