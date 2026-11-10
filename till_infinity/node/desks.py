@@ -138,6 +138,43 @@ def rules() -> tuple[str, ...]:
     return asked
 
 
+def rules_for(interval: str) -> tuple[str, ...]:
+    """The decision rules to run **on this clock**. `TRADING_STRATEGIES_<INTERVAL>`.
+
+    **Because a rule can be measured on one clock and refuted on another.**
+    `five-minute-surprise-is-a-different-rule` is the case this exists for: at
+    5m `statespace-surprise` doubles its cost and its coin twin is identical,
+    so the rule was measured at 15m and declined at 5m. Without a per-clock
+    rule list, adding 5m to a deploy puts every rule on it - including the one
+    whose 5m behaviour is already a published null.
+
+    It is also the cheaper half of the cost question. A 5m desk is three
+    weighted units, so dropping one rule from one clock on eight feeds saves
+    24 of them - more than `TRADING_DESKS_PER_CORE` can safely buy back on a
+    1.8-core quota.
+
+    Unknown names raise, for the same reason `rules` raises: a typo that
+    silently runs nothing is a node that reports up and trades nothing, which
+    is on record from three deploys that were built, tagged, health-checked
+    and ran none of the code they claimed. Absent, every rule runs on the
+    clock, so a deploy that scopes nothing behaves as before.
+    """
+    asked = _names(os.environ.get(f"TRADING_STRATEGIES_{interval.strip().upper()}"))
+    if not asked:
+        return rules()
+    unknown = [name for name in asked if name not in RULES]
+    if unknown:
+        raise ValueError(
+            f"TRADING_STRATEGIES_{interval.strip().upper()} names "
+            f"{', '.join(unknown)}, which is not a decision rule. "
+            f"Known: {', '.join(RULES)}."
+        )
+    # Intersected with the deploy's own rule set rather than replacing it: a
+    # clock cannot enable a rule the node is not running, only narrow one.
+    running = rules()
+    return tuple(name for name in asked if name in running)
+
+
 def exits() -> str:
     """The exit mechanism to override every rule's own with. `TRADING_EXITS`.
 
@@ -533,7 +570,7 @@ def _wanted(
         for rule in rules()
         for entry in entries()
         for interval in intervals()
-        if symbol in symbols_for(venue, interval)
+        if symbol in symbols_for(venue, interval) and rule in rules_for(interval)
     ]
     # **Interval innermost, so a clip drops whole symbols and never whole
     # timeframes.** The budget is spent in order, so whatever nesting this

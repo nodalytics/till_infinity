@@ -1215,3 +1215,74 @@ def test_the_per_clock_suffix_is_the_clocks_own_name(monkeypatch):
     monkeypatch.setenv("TRADING_SYMBOLS_4H", "XAUUSD,BTCUSD")
     assert desks.symbols_for("MT5", "4h") == ("XAUUSD", "BTCUSD")
     assert desks.symbols_for("MT5", "15m") == ("EURUSD",), "another clock is unaffected"
+
+
+def test_a_rule_can_be_kept_off_a_clock_it_was_refuted_on(monkeypatch):
+    """**A rule can be measured on one clock and refuted on another.**
+
+    `five-minute-surprise-is-a-different-rule`: at 5m `statespace-surprise`
+    doubles its cost and its coin twin is identical, so the rule was measured
+    at 15m and declined at 5m. Without a per-clock rule list, adding 5m to a
+    deploy puts every rule on it - including the one whose 5m behaviour is
+    already a published null.
+    """
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD,AUDNZD")
+    monkeypatch.setenv("TRADING_STRATEGIES", "statespace-surprise,zones")
+    monkeypatch.setenv("TRADING_INTERVALS", "5m,15m")
+    monkeypatch.setenv("TRADING_SYMBOLS_5M", "EURUSD")
+    monkeypatch.setenv("TRADING_STRATEGIES_5M", "zones")
+
+    built, clipped = desks.build("MT5")
+    assert not clipped
+    on = {
+        (
+            s.config.rule,
+            str(s.config.instrument_id.symbol),
+            str(s.config.bar_type).split(".MT5-")[1].split("-")[0],
+        )
+        for s in built
+    }
+    assert ("zones", "EURUSD", "5") in on, "the scoped rule did not reach the fast clock"
+    assert not [row for row in on if row[0] == "statespace-surprise" and row[2] == "5"], (
+        "the rule refuted at 5m got a 5m desk"
+    )
+    # The control: both rules still run on the clock neither was scoped off.
+    assert {(r, s) for r, s, step in on if step == "15"} == {
+        ("statespace-surprise", "EURUSD"),
+        ("statespace-surprise", "AUDNZD"),
+        ("zones", "EURUSD"),
+        ("zones", "AUDNZD"),
+    }
+
+
+def test_a_clock_can_only_narrow_the_rule_set_and_never_widen_it(monkeypatch):
+    """A clock list is a filter, not a second `TRADING_STRATEGIES`. A rule the
+    node is not running must not appear because one clock named it - that would
+    make the deployed rule set depend on which clocks are configured."""
+    monkeypatch.setenv("TRADING_SYMBOLS", "EURUSD")
+    monkeypatch.setenv("TRADING_STRATEGIES", "zones")
+    monkeypatch.setenv("TRADING_INTERVALS", "5m")
+    monkeypatch.setenv("TRADING_STRATEGIES_5M", "zones,smc-bos-causal")
+
+    assert desks.rules_for("5m") == ("zones",)
+    built, _ = desks.build("MT5")
+    assert {s.config.rule for s in built} == {"zones"}
+
+
+def test_an_unscoped_clock_runs_every_rule(monkeypatch):
+    """The backward-compatibility control: every existing deploy names no
+    per-clock rule list, so nothing changes for it."""
+    monkeypatch.setenv("TRADING_STRATEGIES", "statespace-surprise,zones")
+    monkeypatch.delenv("TRADING_STRATEGIES_15M", raising=False)
+    assert desks.rules_for("15m") == desks.rules()
+
+
+def test_a_typo_in_a_per_clock_rule_list_raises(monkeypatch):
+    """Same reason `rules` raises: a typo that silently runs nothing is a node
+    that reports up and trades nothing, which is on record from three deploys
+    that were built, tagged, health-checked and ran none of the code they
+    claimed. A per-clock list is one more place for that typo to hide."""
+    monkeypatch.setenv("TRADING_STRATEGIES", "zones")
+    monkeypatch.setenv("TRADING_STRATEGIES_5M", "statespace-surprize")
+    with pytest.raises(ValueError, match=r"not a decision rule"):
+        desks.rules_for("5m")
