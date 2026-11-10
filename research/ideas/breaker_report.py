@@ -35,7 +35,7 @@ OUT = Path(os.environ.get("OUT", ".data/breaker"))
 DRAWS = int(os.environ.get("DRAWS", "2000"))
 TARGET = float(os.environ.get("TARGET", "2"))
 SEED = 11
-WALK_ARMS = ("iid", "garch", "geom", "geomdrift", "legacy")
+WALK_ARMS = ("iid", "garch", "shipped", "contopen", "contdrift")
 
 
 def day_block(x: np.ndarray, day: np.ndarray, draws: int = DRAWS,
@@ -233,6 +233,8 @@ def main() -> None:
             print(f"  {(iv or 'pooled'):>6}  flip - {other:<15} {g:+.4f} [{lo:+.4f}, {hi:+.4f}]")
         f = sel[sel["arm"] == "flip"]
         for series in WALK_ARMS:
+            # Unpaired by construction: a walk is a different series, so there
+            # are no shared days to pair on and the width is the two arms' added.
             c = cells[traded & (cells["arm"] == "flip") & (cells["series"] == series)
                       & ((cells["iv"] == iv) if iv else True)]
             if c.empty or f.empty:
@@ -247,9 +249,16 @@ def main() -> None:
                   f"{f['cost_r'].mean():.4f}R")
 
     # ───────────────────── 4. per instrument ─────────────────────
+    # **The per-cell p is against zero, not against a walk.** Both geometry
+    # surrogates assemble the inside of a bar differently from the market and
+    # from each other, and a resting-limit arm moves 0.171R between them, so a
+    # per-cell test against one of them would rest on an assembly choice. Zero
+    # is the floor that needs no surrogate, and it is the harder one anyway:
+    # every walk arm reads negative, so `max(walk, 0)` was already zero on
+    # nearly every cell when this test was written that way.
     print("\n== per instrument, breaker at 2R (never only pooled) ==")
     print(f"  {'sym':<22}{'iv':>3} {'n':>6} {'P>=2R':>7} {'meanR':>9} {'lo':>9} {'hi':>9} "
-          f"{'fade':>9} {'placebo':>9} {'geom':>9} {'net':>9}")
+          f"{'fade':>9} {'placebo':>9} {'shipped':>9} {'contopen':>9} {'net':>9}")
     rows = []
     for (sym, iv), g in trades.groupby(["sym", "iv"]):
         f = g[g["arm"] == "flip"]
@@ -258,17 +267,20 @@ def main() -> None:
         mean, lo, hi = day_block(f["R_gross"].to_numpy(), f["day"].to_numpy())
         fade = g[g["arm"] == "fade"]["R_gross"].mean()
         plc = g[g["arm"] == "placebo"]["R_gross"].mean()
-        gw = cells[(cells["sym"] == sym) & (cells["iv"] == iv) & (cells["series"] == "geom")
-                   & (cells["arm"] == "flip")]
-        geom = np.average(gw["mean_R"], weights=gw["n"]) if len(gw) else float("nan")
-        p = block_p(f["R_gross"].to_numpy(), f["day"].to_numpy(), floor=max(geom, 0.0)
-                    if np.isfinite(geom) else 0.0)
+        walk = {}
+        for series in ("shipped", "contopen"):
+            gw = cells[(cells["sym"] == sym) & (cells["iv"] == iv)
+                       & (cells["series"] == series) & (cells["arm"] == "flip")]
+            walk[series] = np.average(gw["mean_R"], weights=gw["n"]) if len(gw) else float("nan")
+        p = block_p(f["R_gross"].to_numpy(), f["day"].to_numpy(), floor=0.0)
         net = (f["R_gross"] - f["cost_r"]).mean()
         rows.append({"sym": sym, "iv": iv, "family": g["family"].iat[0], "n": len(f),
                      "reach": f["reach"].mean(), "mean_R": mean, "lo": lo, "hi": hi,
-                     "fade": fade, "placebo": plc, "geom": geom, "net_R": net, "p": p})
+                     "fade": fade, "placebo": plc, "shipped": walk["shipped"],
+                     "contopen": walk["contopen"], "net_R": net, "p": p})
         print(f"  {sym:<22}{iv:>3} {len(f):6,d} {f['reach'].mean():7.4f} {mean:+9.4f} "
-              f"{lo:+9.4f} {hi:+9.4f} {fade:+9.4f} {plc:+9.4f} {geom:+9.4f} {net:+9.4f}")
+              f"{lo:+9.4f} {hi:+9.4f} {fade:+9.4f} {plc:+9.4f} {walk['shipped']:+9.4f} "
+              f"{walk['contopen']:+9.4f} {net:+9.4f}")
     per = pd.DataFrame(rows)
     per.to_csv(OUT / "per_instrument.csv", index=False)
 
@@ -313,11 +325,11 @@ def main() -> None:
         print(f"\n== Benjamini-Hochberg over {len(per)} (instrument, interval) cells, q 0.05 ==")
         print(f"  nominally positive: {(per['mean_R'] > 0).sum()} of {len(per)}; "
               f"lower bound above zero: {(per['lo'] > 0).sum()}; "
-              f"beating the geometry walk at p<0.05: {(per['p'] < 0.05).sum()}; "
+              f"beating zero at p<0.05: {(per['p'] < 0.05).sum()}; "
               f"surviving BH: {int(surv.sum())}")
         if surv.any():
-            print(per[surv][["sym", "iv", "n", "mean_R", "lo", "hi", "geom", "p"]].to_string(
-                index=False))
+            print(per[surv][["sym", "iv", "n", "mean_R", "lo", "hi", "shipped", "contopen",
+                             "p"]].to_string(index=False))
 
     # ───────────────────── firing rates and the drops ─────────────────────
     z = zones[zones["series"] == "real"]

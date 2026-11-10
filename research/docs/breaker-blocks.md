@@ -1,99 +1,215 @@
 # The breaker block: 92.6% of order blocks flip, and the flip is a distance-matched placebo
 
+> **Withdrawn and then reinstated, both on 2026-11-10, and the round trip is
+> worth more than either reading.** This document led with a "leak in
+> `node/surrogates.walk_with_bar_geometry`": the surrogate places each bar's
+> open inside that bar's own range, independently of the previous close, and a
+> long-entry arm paid **+0.1012R** a trade on it.
+>
+> The claim was withdrawn after the coordinator measured the **mean** gap and
+> found the market carrying the same one - negative on 28 of 28 of the broker's
+> 1h FX stores at -0.0126 of a bar range, which `MODE=gap` reproduces here. The
+> identity `close[i] - close[i-1] = (open[i] - close[i-1]) + (close[i] -
+> open[i])` forces that for any series whose bars close above their opens with
+> near-nil drift.
+>
+> **The mean is the one statistic that cannot see this defect, and the claim is
+> reinstated on the distribution** (`till_infinity/node/surrogates.py`, and
+> `#384`). As a share of the bar range, on the broker's 15m and 1h stores:
+>
+> | | median `|gap|` | bars with no gap | p90 `|gap|` |
+> | --- | ---: | ---: | ---: |
+> | real | **0.0000** | **71 - 79%** | 0.012 - 0.040 |
+> | the surrogate | **0.60 - 0.64** | 0.01 - 0.16% | 1.64 - 1.88 |
+>
+> The market is contiguous on three quarters of its bars and reaches its mean
+> through a minority of session-boundary gaps; the surrogate gaps 0.6 of a
+> range on **every** bar. So the arm does plant a collectable edge for anything
+> that fills on a gap, and the +0.1012R is it.
+>
+> **Both failures were the same failure.** The first version diagnosed a
+> mechanism on a hand-built source with zero gap and never measured the
+> market's; the withdrawal measured the market with a statistic that averages
+> the defect away. A mechanism is not a defect until the thing it should be
+> absent from has been checked, **and not with a statistic that cannot tell
+> them apart**.
+>
+> A second limit stands on its own and is below under
+> [a resting-limit arm is not measurable on bar data](#a-resting-limit-arm-is-not-measurable-on-bar-data):
+> OHLC does not order the high and the low, so any fill inside a bar is the
+> harness choosing an intrabar path. **The refutation never rested on that arm
+> and does not now.**
+
 **Measured 2026-11-10**, pre-registered as shortlist item 1 of
 [`tradingview-survey.md`](tradingview-survey.md) and run to the specification
 there without alteration. Code: [`breaker_blocks.py`](../ideas/breaker_blocks.py)
-(detector, trades, nulls, cost, power, sweep, detector overlap),
-[`breaker_report.py`](../ideas/breaker_report.py) (every table below), tests in
-[`test_breaker_blocks.py`](../ideas/test_breaker_blocks.py).
+(detector, trades, nulls, cost, power, sweep, detector overlap, the gap
+measurement), [`breaker_report.py`](../ideas/breaker_report.py) (every table
+below), tests in [`test_breaker_blocks.py`](../ideas/test_breaker_blocks.py).
 
 **The headline is a rate, not a mean.** The published breaker reaches a 2R
-target before a 1R stop on **0.2979 of 23,730 trades** where the arithmetic rate
-is **0.3333** and matched walks through the same detector read 0.2866-0.3187.
-Mean R is **-0.0265** [-0.0471, -0.0032] day-blocked, against a **measured round
-trip of 0.0531R**. The flip beats a distance-matched prior swing with no order
-block behind it by **+0.0018R** [-0.0224, +0.0290].
+target before a 1R stop on **0.2980 of 23,751 trades** where the arithmetic rate
+is **0.3333** and every matched walk through the same detector reads
+0.2695-0.3187. Mean R is **-0.0263** [-0.0468, -0.0032] day-blocked, against a
+**measured round trip of 0.0536R**. The flip beats a distance-matched prior
+swing with no order block behind it by **+0.0023R** [-0.0228, +0.0292].
 
 **And the refuted arm was kept in the run, which is what the design was for: it
 does not beat its null either.** The fade to the un-flipped zone reads -0.0478
-[-0.0678, -0.0264] against walks at -0.0291 to -0.0613. Neither arm clears its
-null, so the small positive gap over the walks belongs to neither claim.
+[-0.0677, -0.0264] against walks at -0.0291 to -0.0614 on the three arms that
+are usable for it. Neither arm clears its null, so there is no gap to assign to
+either claim.
+
+**Every number in this document that carries a confidence interval is read off
+the real bars**; the surrogates appear only in the `walk` columns, and where
+they disagree with each other the disagreement is reported rather than resolved.
 
 ## Verdict
 
 | question | answer |
 |---|---|
-| Does the **published breaker** pay at 2R? | **No.** 23,730 trades on 30 traded instruments at 1h, 4h and 1d: `P(>= 2R)` **0.2979** against an arithmetic 0.3333 and 0.2866 on the hardest walk; mean **-0.0265R** [-0.0471, -0.0032] gross, **-0.0795R** net of a 0.0531R round trip |
-| Does it beat the **placebo** - a breaker declared at a prior swing with no order block behind it, matched on zone height and drawn one per real trade? | **No. +0.0018R** [-0.0224, +0.0290], paired on days. The zone heights match to three decimals (median 1.197 against 1.201 units), so this is the same geometry with and without an order block, and the order block adds nothing |
-| Does the **refuted fade** also beat the null? | **No**, and that is the single most important column. Fade -0.0478 [-0.0678, -0.0264] against iid -0.0613, GARCH -0.0291 and the geometry walk -0.0568. Neither the flip nor the fade clears its own walk, so there is no finding to assign to either claim |
-| Does **EmreKb's confirmation** - a fresh swing inside the broken band - help? | **No.** -0.0332R [-0.0744, +0.0097] on 4,513 trades, worse than the unconfirmed arm, and it applies to only **0.2591 of flips** because the zone is usually deleted first |
-| Does the prior study's **+0.337R at 1d / +0.506R at 4h** reproduce? | **Not on either zone population, and the 1d cell cannot settle it.** On the published blocks: 1d -0.0096R [-0.1220, +0.1129] on 567 trades, 4h -0.0288R [-0.0717, +0.0146] on 4,573. On **the desk's own blocks** with the published flip lifecycle: 4h -0.1189R [-0.2668, +0.0335] on 328, which excludes +0.506R; 1d **-0.0667R [-0.4667, +0.3636] on 45 trades**, which excludes nothing and is reported as unmeasurable |
+| Does the **published breaker** pay at 2R? | **No.** 23,751 trades on 30 traded instruments at 1h, 4h and 1d: `P(>= 2R)` **0.2980** against an arithmetic 0.3333; mean **-0.0263R** [-0.0468, -0.0032] gross, **-0.0800R** net of a 0.0536R round trip |
+| Does it beat the **placebo** - a breaker declared at a prior swing with no order block behind it, matched on zone height and drawn one per real trade? | **No. +0.0023R** [-0.0228, +0.0292], paired on days. The zone heights match to three decimals (median 1.197 against 1.201 units), so this is the same geometry with and without an order block, and the order block adds nothing. **This is the load-bearing control**: it runs on the real bars through the identical construction, so the harness's own intrabar assumption cancels, which no walk arm can do |
+| Does the **refuted fade** also beat the null? | **No**, and that is the single most important column. Fade -0.0478 [-0.0677, -0.0264] against iid -0.0614, GARCH -0.0291 and `contopen` -0.0464. Neither the flip nor the fade clears a null, so there is no finding to assign to either claim |
+| Does **EmreKb's confirmation** - a fresh swing inside the broken band - help? | **No.** -0.0330R [-0.0766, +0.0108] on 4,515 trades, worse than the unconfirmed arm, and it applies to only **0.2591 of flips** because the zone is usually deleted first |
+| Does the prior study's **+0.337R at 1d / +0.506R at 4h** reproduce? | **Not on either zone population, and the 1d cell cannot settle it.** On the published blocks: 1d -0.0096R [-0.1220, +0.1129] on 567 trades, 4h -0.0290R [-0.0719, +0.0144] on 4,574. On **the desk's own blocks** with the published flip lifecycle: 4h -0.1189R [-0.2668, +0.0335] on 328, which excludes +0.506R; 1d **-0.0667R [-0.4667, +0.3636] on 45 trades**, which excludes nothing and is reported as unmeasurable |
 | Is the published order block the **same object** as this repo's? | **No, and this is why neither null transfers.** Jaccard **0.0027** over 219,000 bars on eight instruments: LuxAlgo cuts **20,133** blocks where `zones.ob_zones` cuts **1,316**, and finds 4.4% of them. Two detectors with the same name are usually two detectors |
 | Is "flipped" a **selection** at all? | **Barely. 0.9264 of order blocks flip** (0.9297 on the desk's), and 0.94-0.96 of flipped zones are retested before deletion. The published polarity flip is the default outcome of an order block, not a rare event, which is the mechanical reason it carries so little information |
 | Does **cost** kill it first? | **No, and the survey priced it at the wrong stop.** The breaker's own stop is the zone plus a pad - **1.14 to 1.87 ATR**, not the 3.46-3.55 ATR of a 20-bar swing - so the real cost is about **2.6x** the survey's figure: median 0.0416R at 1h, 0.0204R at 4h, 0.0085R at 1d, outside the desk's 0.16 ceiling on 2 of 27 at 1h (XAGUSD 0.2500, XCUUSD 0.3113) and 0 of 27 at 4h |
 | Does **any** parameter cell pay? | **No. 0 of 432.** Twelve configurations, one parameter moved at a time, three clocks, three arms, four targets: not one cell has a lower bound above zero. The best is +0.0339 +- 0.1037 |
 | Does any **instrument** pay? | **No. 0 of 68 traded cells** have a lower bound above zero and **0 of 98 survive Benjamini-Hochberg**. The only two cells with a positive lower bound are **Boom 1000 Index** and **Boom 500 Index** - the arm that must be empty |
 | Where does the test go **blind**? | Below about **0.2R of planted edge** pooled (z +1.88), and it sees 0.4R at z +6.25. In realised terms 2 sigma needs 0.019R at 1h, 0.040R at 4h and **0.11R at 1d**. About a fifth of each plant is what the estimator resolves, because the median trade closes in 5 bars of a 60-bar window |
-| What is the most valuable thing here? | **A leak in `node/surrogates.walk_with_bar_geometry`**, found by this harness's own leak check and worth **0.171R** on a long-entry arm. It is a shipped package function and other studies use it |
+| What does the study **not** settle, and why? | **Whether a resting-limit arm has any edge against a surrogate.** OHLC does not order the high and the low, so filling at a limit inside a bar and marking the race from that bar is the harness choosing an intrabar path. The market itself carries a negative mean `open[i] - close[i-1]` and arithmetic says it must, so the shipped surrogate having one is correct - but it does not match its size away from the hourly FX cells, where it is the same sign on 5 of 5 within a factor of 4.4, growing to 2.4-9.0x at 1d and reaching -0.1393 to +0.1280 on the Deriv synthetics. The same trade therefore reads **+0.0019R** over one geometry arm and **+0.0693R** over the other. That is why the verdict rests on the arithmetic rate, the placebo and the per-cell counts, none of which need a surrogate |
 
-## The leak, first, because it decided which null is believable
+## A resting-limit arm is not measurable on bar data
 
-`node/surrogates.walk_with_bar_geometry` builds a surrogate by walking the
-closes on resampled steps and then placing each bar's **open inside that bar's
-own range** at a resampled fraction:
+This replaces a section that claimed a defect in
+`node/surrogates.walk_with_bar_geometry`. The claim was wrong and the banner at
+the top says so; what follows is what the same measurement actually supports,
+and it is a harder constraint than the one it replaces.
 
-```python
-low = price - close_frac * span
-out.append((low + open_frac * span, high, low, price))
-```
+**Start with the arithmetic, because it settles the sign for free.** For any
+series,
 
-The open is therefore independent of the previous close. In any market whose
-bars close above their opens on average - every up-trending instrument - the
-resampled `(open_frac, close_frac)` pair carries that asymmetry, so the
-surrogate emits a **systematic down-gap at every open followed by an up-move
-inside the bar**. A resting limit below the market is filled at the gap and
-rides the rise. Measured directly on a 60,000-bar series with its close-to-close
-steps demeaned:
+    close[i] - close[i-1] = (open[i] - close[i-1]) + (close[i] - open[i])
+
+so a series whose bars close above their opens on average and whose
+close-to-close drift is about nil **must** carry a negative mean gap. That is
+not a property of surrogates; it is a property of bookkeeping, and the market
+obeys it. `MODE=gap`, on the broker's own 1h stores as stored:
 
 | | |
 |---|---:|
-| `mean(close[i] - open[i])`, inside the bar | **+4.0e-04** |
-| `mean(open[i] - close[i-1])`, across the join | **-3.9e-04** |
-| `mean(close[i] - close[i-1])`, the walk itself | +3.9e-06 |
+| stores with a negative mean `open[i] - close[i-1]` | **28 of 28** |
+| mean gap, as a share of the mean bar range | **-0.0126** |
+| median | -0.0120 |
 
-Through this harness, on the traded book:
+with the mean body positive and the mean step near zero on every one. **So a
+sawtooth in a surrogate is not an artefact and this document does not call it
+one.**
 
-| the long-entry arm (`fade`), on a walk | mean R at 2R | `P(>= 2R)` | n |
-|---|---:|---:|---:|
-| the package's construction (`legacy`) | **+0.1241** | 0.3466 | 83,295 |
-| the same walk, assembled continuously (`geom`) | **-0.0468** | 0.2897 | 92,678 |
-| **the correction** | **0.1709** | | |
+Two store sets, two counts, and they agree. The coordinator's measurement is
+over **12 hourly stores** and reads the real gap as negative on **10 of 12**,
+with the surrogate understating it as often as it overstates; the two stores
+where the real gap is about zero are BTCUSD and XCUUSD. Mine is over the **28
+FX** 1h stores, which is why it is 28 of 28: the FX legs all carry it, and my own
+folded table reads about **zero** on BTC (+0.0001) and the Deriv synthetics
+(-0.0001). Same phenomenon, different denominators.
 
-A walk is a martingale, so +0.1241R is impossible: `a-martingale-cannot-pay`.
-Two wrong explanations were tried and recorded rather than deleted:
+**Where the two arms stand against it depends on the clock, and the honest
+summary leads with the hourly FX cells** - the ones the coordinator measured -
+rather than with the extremes:
 
-* **Drift.** Resampling `diff(close)` i.i.d. keeps the series' realised drift,
-  which looked like the cause and was not: demeaning the steps moved the number
-  by **0.004R**. The drifted arm is kept as `geomdrift` anyway, and reads within
-  0.002R of the demeaned one everywhere, so the market's unconditional drift
-  reaches none of these arms.
-* **Zone imbalance.** The sawtooth also distorts the *detector*: the legacy arm
-  takes 42,154 breaker trades where the corrected one takes 102,116, a 2.4x
-  difference, which was first read as a drift-driven long/short imbalance.
+| cells | market's gap/span | `shipped` | same sign | `shipped` nearer zero than the market |
+|---|---|---|---:|---:|
+| the 5 deep FX legs, 1h | -0.0051 to -0.0031 | -0.0139 to -0.0015 | 5 of 5 | 1 of 5 |
+| the same legs, 4h | -0.0047 to -0.0026 | -0.0235 to +0.0037 | 4 of 5 | 0 of 5 |
+| the same legs, 1d | -0.0106 to -0.0057 | -0.0607 to -0.0181 | 5 of 5 | 0 of 5 |
+| all 30 traded cells | -0.0106 to +0.0042 | -0.0607 to +0.0037 | | |
+| all 24 Deriv cells | -0.0025 to +0.0028 | **-0.1393 to +0.1280** | | |
+| all 54 | | | 28 of 54 | 2 of 54 |
 
-The fix is one line of construction - each bar **opens at the previous close**,
-with the two wicks resampled as a pair and attached outside the body - and
-`geom_bars` carries it. The corrected arm then agrees with the iid and GARCH
-arms to within 0.007R on every arm of this study, which is the check that it is
-now a walk.
+At the hourly FX clock the surrogate is the **same sign on 5 of 5** and within a
+factor of 0.46 to 4.43, under- as often as over-stating, which is the
+coordinator's reading reproduced. The disagreement grows with the clock - 1.44
+to 7.03x at 4h, 2.42 to 8.96x at 1d - and on the Deriv synthetics, where the
+market's gap is about zero, the surrogate reaches **+0.1280** on Boom 1000 and
+**-0.1393** on Crash 1000. `contopen_bars`, which opens every bar at the
+previous close, pins it at exactly zero on all 54. **Neither arm is the market's
+value, and the package's is the better of the two where it was measured**;
+`contopen` is carried to size the sensitivity, not offered as a fix - the
+package's docstring and its test say why one must not be applied.
 
-**This matters outside this document.** The package function is used by
-`level_shield.py` and the harnesses built on it as `walk-geometry`. Those read a
-first-passage rate rather than a limit-order trade, and a two-sided
-distance-matched statistic may absorb the bias; **this study did not measure
-that**, and it is the obvious next thing to check. `expect-the-correction-to-be-the-size-of-the-effect`
-is the standing rule and the correction here is five times the effect the arm
-was being used to judge.
+**A resting-limit arm reads exactly that quantity**, because OHLC does not order
+the high and the low inside a bar. Filling at a limit price inside bar `j` and
+then marking the barrier race from bar `j` is the harness choosing an intrabar
+path, and the choice is worth:
+
+| arm, at 2R | real bars | `shipped` | `contopen` | the two arms' disagreement |
+|---|---:|---:|---:|---:|
+| `flip` (short entry) | **-0.0263** | -0.0956 | -0.0283 | 0.067 |
+| `fade` (long entry) | **-0.0478** | **+0.0706** | -0.0464 | 0.117 |
+| `placebo` (short entry) | **-0.0286** | -0.0784 | -0.0303 | 0.048 |
+
+The shipped arm's long-entry reading, **+0.0706R on the traded book and +0.1012R
+pooled with the synthetics**, is a positive expectancy on a series whose closes
+are a resampled walk - and its short-entry readings are depressed by about as
+much, which is the signature of a systematic intrabar path rather than of
+structure. **The same thing happens on the real series for the same reason**,
+which is the coordinator's point and the reason this is a method limit rather
+than a surrogate defect. It also cuts a different population: 47,547 breaker
+trades against `contopen`'s 101,901, so the two are not even a like-for-like
+contrast.
+
+Three consequences, and they are the reason this section exists:
+
+1. **`flip - walk` is not a usable statistic for this trade.** It reads +0.0019
+   +- 0.0103 against `contopen` and +0.0693 +- 0.0129 against `shipped`. A
+   verdict resting on the second would be a verdict about bar assembly.
+2. **The placebo is the control that works.** It runs on the **real** bars
+   through the identical entry, stop, side and settlement, so the intrabar
+   assumption appears in both arms and cancels. It reads +0.0023R
+   [-0.0228, +0.0292].
+3. **The arithmetic rate needs no surrogate at all**, and 0.2980 against 0.3333
+   is the number this study leads with for that reason.
+
+**And the two arms fail in different places, which is why both are reported.**
+The shipped arm draws `span` and the shape pair independently, so a bar's body
+share survives as a marginal - it is a function of the pair alone, and the pair
+travels - while its dependence on the bar's size and on the bar's own move does
+not. `contopen_bars` makes the body exactly the close-to-close step, so that
+dependence is exact, and the wicks are resampled independently of it, so **body
+share is rebuilt from marginals rather than carried**. Two readings here are
+graded on body share and are therefore mis-nulled by `contopen` and better
+served by `shipped`: `zones.ob_zones` (the `ZONES=desk` population) requires
+`PUSH_BODY` 0.70 and `ORIGIN_BODY` 0.45 as body-to-range fractions, and the
+`BAND=body` sweep cell measures the band off `max(open, close)`. The
+pre-registered `BAND=range` detector reads no body share, but its flip condition
+`min(close, open) < btm` does read where a body sits inside its bar. None of
+that is worked around; it is stated, and
+`test_the_contopen_arm_breaks_the_body_to_wick_joint` pins it.
+
+**What I got wrong, recorded rather than deleted.** Three things, all of them
+mine.
+
+1. I read the surrogate's sawtooth as a defect **without measuring the
+   market's**, having diagnosed the mechanism on a hand-built source that had
+   **zero** gap by construction - a mechanism found in a surrogate and never
+   nulled against the thing it was supposed to be absent from.
+2. My first "vectorised" copy of the package function drew `span` and the shape
+   pair with **one** index, preserving a link the package breaks with two
+   independent `r.choice` calls, so the arm labelled as the shipped one was not
+   it. `test_the_shipped_arm_draws_span_and_shape_independently` now pins the
+   difference, and fixing it moved the long-entry reading from +0.1241R to
+   +0.1012R - the size of the first error's own evidence, which is
+   `expect-the-correction-to-be-the-size-of-the-effect` cutting both ways.
+3. The first draft of this correction then **overclaimed in the other
+   direction**, saying the shipped arm's gap was "an order of magnitude wider"
+   and "the wrong sign on gold, silver, BTC and Boom". That is the Deriv
+   synthetics and the daily clock; at the hourly FX cells the arm is the same
+   sign on 5 of 5 and within a factor of 4.4, which is what the coordinator
+   measured. Generalising from the extremes is the same mistake as generalising
+   from the zero-gap fixture, made twice in one document.
 
 ## The rules, as frozen before the run
 
@@ -123,20 +239,29 @@ days at 1d; the three clocks are three horizons and are never pooled.
 Entries are resting limits and the fill bar is settled as
 `research/mt5bt/engine.walk` settles one: the **stop counts** on the fill bar,
 the **target counts only if that bar closes beyond it**, and when both legs are
-reachable in one bar the **stop wins**. All three are conservative, so a walk
-must read at or below zero and at or below `1/(1+N)`. It does, on every arm:
+reachable in one bar the **stop wins**. All three are conservative, so a
+surrogate whose closes are a martingale should read at or below zero and at or
+below `1/(1+N)`. Four of the five arms do:
 
-| walk | `flip` | `fade` | `placebo` |
-|---|---:|---:|---:|
-| iid, Student-t(3) sub-steps | -0.0400 | -0.0653 | -0.0431 |
-| GARCH(1,1)-t(5) | -0.0339 | -0.0309 | -0.0375 |
-| this market's geometry, continuous | -0.0347 | -0.0468 | -0.0380 |
+| null series | `flip` | `fade` | `placebo` | n, `flip` |
+|---|---:|---:|---:|---:|
+| `iid`, Student-t(3) sub-steps | -0.0400 | -0.0653 | -0.0431 | 108,574 |
+| `garch`, GARCH(1,1)-t(5) | -0.0337 | -0.0308 | -0.0376 | 107,719 |
+| `contopen`, bar geometry, continuous | -0.0278 | -0.0339 | -0.0306 | 101,901 |
+| `contdrift`, the same with the drift left in | -0.0313 | -0.0463 | -0.0342 | 101,272 |
+| `shipped`, `walk_with_bar_geometry` | -0.1001 | **+0.1012** | -0.0860 | 47,547 |
+
+The fifth is the subject of the section above: a positive long-entry expectancy
+on a resampled walk, which is the intrabar path the harness is forced to assume
+rather than a property of the series. `contdrift` reading within 0.002R of
+`contopen` on every arm is the measurement behind "the market's unconditional
+drift reaches none of these arms".
 
 A fourth convention is new here and drops trades: **a resting limit must sit on
 the far side of the market when it is placed**. LuxAlgo's `min(close, open) <
 btm` can be satisfied by an up-closing bar's open alone, which would leave the
 sell limit at or below the market and make the entry a market order wearing a
-limit's settlement rules. 2,029 trades at 1h were refused for it.
+limit's settlement rules. 2,028 trades at 1h were refused for it.
 
 ## The data
 
@@ -174,19 +299,20 @@ conditional rate is the quantity a walk must put on 0.3333.
 
 | arm | n | `P(>= 2R)` | `P` given resolved | mean R, day-blocked | cost | net |
 |---|---:|---:|---:|---|---:|---:|
-| **breaker (`flip`)** | 23,730 | **0.2979** | 0.3164 | **-0.0265** [-0.0471, -0.0032] | 0.0531 | -0.0795 |
-| breaker, confirmed | 4,513 | 0.2725 | 0.3059 | -0.0332 [-0.0744, +0.0097] | 0.0462 | -0.0794 |
-| **the refuted fade** | 21,982 | 0.2901 | 0.3081 | -0.0478 [-0.0678, -0.0264] | 0.0531 | -0.1009 |
-| **the placebo** | 22,141 | 0.2967 | 0.3153 | -0.0283 [-0.0548, -0.0034] | 0.0491 | -0.0774 |
+| **breaker (`flip`)** | 23,751 | **0.2980** | 0.3164 | **-0.0263** [-0.0468, -0.0032] | 0.0536 | -0.0800 |
+| breaker, confirmed | 4,515 | 0.2726 | 0.3060 | -0.0330 [-0.0766, +0.0108] | 0.0464 | -0.0794 |
+| **the refuted fade** | 21,995 | 0.2901 | 0.3081 | -0.0478 [-0.0677, -0.0264] | 0.0535 | -0.1013 |
+| **the placebo** | 22,167 | 0.2966 | 0.3152 | -0.0286 [-0.0535, -0.0035] | 0.0497 | -0.0783 |
 | arithmetic null | | **0.3333** | 0.3333 | 0.0000 | | |
-| iid walk | 74,724 | 0.3166 | 0.3187 | -0.0406 | | |
-| GARCH walk | 74,211 | 0.3187 | 0.3207 | -0.0343 | | |
-| geometry walk | 69,083 | 0.2866 | 0.3098 | -0.0336 | | |
+| `iid` walk | 74,728 | 0.3166 | 0.3187 | -0.0406 | | |
+| `garch` walk | 74,217 | 0.3187 | 0.3207 | -0.0343 | | |
+| `contopen` walk | 68,894 | 0.2891 | 0.3120 | -0.0283 | | |
+| `shipped` walk | 32,409 | 0.2695 | 0.2989 | -0.0956 | | |
 
 Every mean has its median beside it, because one row has ended a study here
 before: the flip arm's median R is **-1.00**, its range is [-5.60, +11.43], and
-winsorising to [-1.5, 2.5] or dropping the 234 gap exits moves the mean by
-**0.0002R**. Record consistency over all 420,000 rows: 0 rows claim a target
+winsorising to [-1.5, 2.5] or dropping the 235 gap exits moves the mean by
+**0.0001R**. Record consistency over all 420,856 rows: 0 rows claim a target
 they did not reach, 0 reach one without claiming it, 0 are unresolved without
 having timed out, and 0 stops paid anything but -1R.
 
@@ -196,30 +322,35 @@ Paired on days, so the two arms see the same market conditions:
 
 | | pooled | 1h | 4h | 1d |
 |---|---|---|---|---|
-| flip - placebo | **+0.0018** [-0.0224, +0.0290] | -0.0034 [-0.0323, +0.0260] | +0.0139 [-0.0424, +0.0655] | +0.0756 [-0.0842, +0.2353] |
-| flip - fade | +0.0213 [-0.0109, +0.0533] | +0.0212 [-0.0134, +0.0545] | +0.0176 [-0.0459, +0.0784] | +0.0545 [-0.1132, +0.2159] |
-| flip - geometry walk | +0.0071 +- 0.0103 | +0.0093 +- 0.0117 | +0.0042 +- 0.0236 | -0.0393 +- 0.0674 |
-| **the round trip it must clear** | **0.0531** | 0.0593 | 0.0324 | 0.0165 |
+| **flip - placebo**, paired | **+0.0023** [-0.0228, +0.0292] | -0.0026 [-0.0315, +0.0269] | +0.0130 [-0.0433, +0.0646] | +0.0756 [-0.0842, +0.2353] |
+| flip - fade, paired | +0.0215 [-0.0106, +0.0534] | +0.0213 [-0.0133, +0.0547] | +0.0176 [-0.0459, +0.0784] | +0.0545 [-0.1132, +0.2159] |
+| flip - `iid` walk | +0.0143 +- 0.0103 | +0.0099 +- 0.0116 | +0.0254 +- 0.0235 | +0.0650 +- 0.0665 |
+| flip - `contopen` walk | +0.0019 +- 0.0103 | +0.0032 +- 0.0117 | -0.0030 +- 0.0236 | -0.0032 +- 0.0674 |
+| flip - `shipped` walk | +0.0693 +- 0.0129 | +0.0715 +- 0.0147 | +0.0556 +- 0.0292 | +0.0379 +- 0.0844 |
+| **the round trip it must clear** | **0.0536** | 0.0600 | 0.0325 | 0.0166 |
 
-The largest gap over any walk is **+0.0142R** (iid, pooled) with a standard
-error of 0.0103, against a round trip of 0.0531R - so even read at face value
-and ignoring that it does not clear two standard errors, it is **27% of a
-spread**. That is the same shape
+Read the placebo row, not the walk rows. The two geometry arms disagree by
+0.067R on this trade for the reason the section above gives, so `flip - walk`
+is a statement about bar assembly; the placebo runs on the same bars through the
+same construction and reads **+0.0023R**. The largest gap over a *generated*
+walk is **+0.0143R** (iid, pooled) with a standard error of 0.0103, against a
+round trip of 0.0536R - so even read at face value and ignoring that it does not
+clear two standard errors, it is **27% of a spread**. That is the same shape
 [`statespace-directional-edge.md`](statespace-directional-edge.md) reports for
 every directional gate measured here, which earns about 2% of a spread against
 the 1.0 it needs.
 
 ### Per clock, and per instrument
 
-| clock | n | `P(>= 2R)` | mean R | fade | placebo | geometry walk | net |
+| clock | n | `P(>= 2R)` | mean R | fade | placebo | `contopen` | net |
 |---|---:|---:|---|---:|---:|---:|---:|
-| 1h | 18,590 | 0.2976 | -0.0264 [-0.0506, -0.0033] | -0.0476 | -0.0230 | -0.0357 | -0.0857 |
-| 4h | 4,573 | 0.2974 | -0.0288 [-0.0717, +0.0146] | -0.0464 | -0.0427 | -0.0330 | -0.0611 |
-| 1d | 567 | 0.3122 | -0.0096 [-0.1220, +0.1129] | -0.0641 | -0.0852 | +0.0297 | -0.0261 |
-| Deriv, all clocks | 11,036 | 0.3243 | -0.0167 [-0.0438, +0.0122] | -0.0351 | -0.0360 | -0.0371 | -0.0364 |
+| 1h | 18,610 | 0.2977 | -0.0262 [-0.0504, -0.0030] | -0.0475 | -0.0236 | -0.0294 | -0.0861 |
+| 4h | 4,574 | 0.2973 | -0.0290 [-0.0719, +0.0144] | -0.0466 | -0.0420 | -0.0260 | -0.0615 |
+| 1d | 567 | 0.3122 | -0.0096 [-0.1220, +0.1129] | -0.0641 | -0.0852 | -0.0064 | -0.0263 |
+| Deriv, all clocks | 11,027 | 0.3243 | -0.0167 [-0.0440, +0.0123] | -0.0350 | -0.0351 | -0.0272 | -0.0447 |
 
 By family, weighted by n: index -0.0627, fx -0.0378, deriv -0.0167, metal
--0.0015, crypto +0.0170 (n 2,475), energy +0.0440 (n 746). **Net of cost every
+-0.0008, crypto +0.0170 (n 2,475), energy +0.0440 (n 746). **Net of cost every
 family is negative except energy at +0.0059 on 746 trades**, which is four cells.
 
 Per (instrument, clock), 98 cells:
@@ -229,8 +360,13 @@ Per (instrument, clock), 98 cells:
 | traded cells with a nominally positive mean | 29 of 68 |
 | traded cells with a day-blocked lower bound above zero | **0 of 68** |
 | Deriv cells with a lower bound above zero | 2 of 30 - **Boom 1000 Index** 4h (n 50) and **Boom 500 Index** 1h (n 294) |
-| cells beating the geometry walk at p < 0.05 | 2 of 98 - Boom 1000 Index 4h, and USDCHF 4h on **n 24** |
+| cells beating **zero** at a day-blocked p < 0.05 | 3 of 98 |
 | cells surviving Benjamini-Hochberg at q 0.05 | **0 of 98** |
+
+The per-cell test is against zero rather than against a walk, because the two
+geometry arms disagree by 0.067R on this trade and a per-cell test against one
+of them would rest on an assembly choice. Zero is also the harder floor: every
+walk arm reads negative.
 
 **The only cells that pass are in the arm that must be empty.** Boom and Crash
 spike one way by construction, so a short arm on them is a different trade; this
@@ -241,18 +377,18 @@ that the test's positives at this sample size are noise.
 ### Overlap, non-overlap, halves and legs
 
 * **Non-overlapping subsample**, one live trade at a time per instrument, clock
-  and arm: flip -0.0205 [-0.0445, +0.0024] on 19,748, placebo -0.0288, fade
-  -0.0453. The ranking and the magnitudes survive, so the dense overlap that
+  and arm: flip -0.0231 [-0.0478, -0.0002] on 19,764, placebo -0.0310, fade
+  -0.0448. The ranking and the magnitudes survive, so the dense overlap that
   `HOLD` and `EXPIRE` create is not carrying the reading.
-* **Split halves**, reported as information and not a verdict: 1h flip -0.0253
-  then -0.0275, 4h -0.0333 then -0.0243, 1d +0.0538 then -0.0728. Both halves
+* **Split halves**, reported as information and not a verdict: 1h flip -0.0245
+  then -0.0279, 4h -0.0337 then -0.0243, 1d +0.0538 then -0.0728. Both halves
   negative on both intraday clocks; the 1d halves straddle zero on 283 trades
   each, which is below the floor.
-* **Legs.** 1h flip long -0.0078 (n 9,134), short -0.0444 (n 9,456). The
+* **Legs.** 1h flip long -0.0077 (n 9,148), short -0.0441 (n 9,462). The
   population is 49/51, so nothing here is a standing short - the defect that
   took the first version of `order-block-zones.md` apart.
-* **Deep against wide.** -0.0259 [-0.0508, -0.0019] on the eight instruments
-  with 11.8 years, -0.0283 [-0.0779, +0.0202] on the twenty-two with 2.4. Adding
+* **Deep against wide.** -0.0257 [-0.0508, -0.0020] on the eight instruments
+  with 11.8 years, -0.0281 [-0.0776, +0.0204] on the twenty-two with 2.4. Adding
   22 instruments did not reverse the sign, which is the test
   `widening-the-universe` exists for.
 
@@ -310,13 +446,13 @@ whole reason this one exists (`ZONES=desk`):
 
 | arm, the desk's blocks | n | `P(>= 2R)` | mean R, day-blocked | cost |
 |---|---:|---:|---|---:|
-| **breaker (`flip`)** | 1,534 | 0.3096 | **-0.0635** [-0.1314, +0.0109] | 0.0672 |
-| the refuted fade | 1,387 | 0.3273 | -0.0104 [-0.0868, +0.0664] | 0.0694 |
-| the placebo | 1,414 | 0.3253 | -0.0169 [-0.0920, +0.0612] | 0.0592 |
-| flip - placebo, paired | | | **-0.0466** [-0.1542, +0.0604] | |
-| 1h | 1,161 | 0.3144 | -0.0477 [-0.1257, +0.0379] | 0.0740 |
-| **4h** | 328 | 0.2927 | **-0.1189** [-0.2668, +0.0335] | 0.0485 |
-| **1d** | **45** | 0.3111 | **-0.0667 [-0.4667, +0.3636]** | 0.0285 |
+| **breaker (`flip`)** | 1,535 | 0.3094 | **-0.0641** [-0.1340, +0.0063] | 0.0680 |
+| the refuted fade | 1,389 | 0.3276 | -0.0097 [-0.0859, +0.0654] | 0.0703 |
+| the placebo | 1,417 | 0.3253 | -0.0168 [-0.0916, +0.0578] | 0.0607 |
+| flip - placebo, paired | | | **-0.0472** [-0.1499, +0.0541] | |
+| 1h | 1,162 | 0.3141 | -0.0485 [-0.1284, +0.0307] | 0.0749 |
+| **4h** | 328 | 0.2927 | **-0.1189** [-0.2668, +0.0335] | 0.0486 |
+| **1d** | **45** | 0.3111 | **-0.0667 [-0.4667, +0.3636]** | 0.0286 |
 
 On the desk's own population the flip is **worse** than both its controls, and
 0.9297 of its blocks flip too. At 4h the interval excludes +0.506R. **At 1d it
@@ -404,9 +540,10 @@ screen wants a week of quotes and does not yet have one.
 **Refuted.**
 
 * The **published breaker block** as a trade, at 1h, 4h and 1d, on 30 traded
-  instruments and 23,730 trades: it reaches 2R less often than the arithmetic
-  rate, less often than two of three matched walks, and it is within +0.0018R of
-  a distance-matched prior swing with no order block behind it.
+  instruments and 23,751 trades: it reaches 2R less often than the arithmetic
+  rate (0.2980 against 0.3333), and it is within **+0.0023R** [-0.0228, +0.0292]
+  of a distance-matched prior swing with no order block behind it. Neither of
+  those two statements needs a surrogate, which is why they carry the verdict.
 * **The polarity flip as a source of information.** 92.6% of order blocks flip,
   so "flipped" selects almost nothing, and EmreKb's confirmation - which does
   select, applying to a quarter of flips - reads worse than no confirmation.
@@ -434,9 +571,17 @@ screen wants a week of quotes and does not yet have one.
 * The maker side. Every entry here is a resting limit charged a full round trip,
   which is what crossing from ask to bid costs; `polymarket-taker-fee` aside,
   this desk has no measured maker rebate to credit.
-* Whether the `walk_with_bar_geometry` leak has moved any published number in
-  `level-shield.md` or the studies downstream of it. The defect is demonstrated;
-  its effect on a two-sided first-passage statistic is not.
+* **Whether a resting-limit arm has any edge against a surrogate at all.** The
+  two geometry arms put this trade 0.067R apart and neither matches the market's
+  intrabar assembly, so the question is not answerable on bar data and no
+  `flip - walk` number here should be read as one. Settling it needs ticks,
+  which `research/mt5bt` can use (`Book.ticks`, `walk_ticks`) and this study's
+  stores do not carry.
+* Whether the same sensitivity has moved a published number in
+  [`level-shield.md`](level-shield.md) or the studies downstream of
+  `walk_with_bar_geometry`. Their statistic is a two-sided first-passage rate
+  rather than a limit-order trade and may well absorb it; **this study did not
+  measure that** and the question is left open rather than asserted either way.
 
 ## Caveats
 
@@ -449,9 +594,16 @@ screen wants a week of quotes and does not yet have one.
   from the zone being known to its flip is 86 bars for the breaker and 60 for
   the placebo. A level that has stood longer is a different object, and that
   difference is unmatched.
-* **The geometry walk loses the body-wick correlation.** A big body comes with
-  big wicks in a real market and does not in `geom_bars`, which is why the iid
-  and GARCH arms are read beside it rather than instead of it.
+* **Neither geometry arm preserves everything, and they fail differently.**
+  `shipped` draws `span` and the shape pair independently, so a bar's body share
+  survives as a marginal but its joint with the bar's size and with the bar's own
+  move does not. `contopen` makes the body the step, so that joint is exact, and
+  rebuilds body share from marginals instead. Two readings here grade on body
+  share - `zones.ob_zones` at `PUSH_BODY` 0.70 and `ORIGIN_BODY` 0.45, and the
+  `BAND=body` sweep cell - and are mis-nulled by `contopen`; the pre-registered
+  `BAND=range` detector reads no body share but its flip condition does read
+  where a body sits inside its bar. Both arms are reported for that reason and
+  the iid and GARCH arms are read beside both.
 * **No ticks.** Every both-barriers-in-one-bar race is given to the stop, which
   is conservative and identical across arms, and is why the walks read 0.31
   rather than 0.3333 conditional on resolving.
@@ -459,6 +611,11 @@ screen wants a week of quotes and does not yet have one.
 * **The multiplicity count.** 98 instrument-clock cells, 432 sweep cells, 4
   arms, 5 null series, 2 zone populations. Nothing was selected on; the full grid
   is printed; and 0 cells survive BH on the published population.
+* **One claim in this document was withdrawn and then reinstated**, and the
+  banner at the top says which and why. The numbers involved are the `walk`
+  columns and nothing else; the verdict rests on `P(>= 2R)` against its
+  arithmetic rate, on a placebo running through the identical construction, and
+  on per-cell counts, none of which touches a surrogate.
 
 ## Re-running
 
@@ -468,6 +625,7 @@ screen wants a week of quotes and does not yet have one.
     ./.secrets/lab.sh run research/ideas/breaker_blocks.py MODE=sweep   OUT=.data/breaker WORKERS=28
     ./.secrets/lab.sh run research/ideas/breaker_blocks.py MODE=power   OUT=.data/breaker
     ./.secrets/lab.sh run research/ideas/breaker_blocks.py MODE=overlap OUT=.data/breaker
+    ./.secrets/lab.sh run research/ideas/breaker_blocks.py MODE=gap     OUT=.data/breaker
     ./.secrets/lab.sh exec 'cd ~/till_infinity && PYTHONPATH=$HOME/till_infinity/repo \
         OUT=.data/breaker .venv/bin/python -u repo/research/ideas/breaker_report.py'
 
@@ -479,4 +637,4 @@ out of scope read identically.
 Outputs under `$OUT`, none committed: `trades.csv.gz` (one row per real trade
 per target), `cells.csv` (every arm and every null series summarised),
 `zones.csv` (firing rates and drops), `cost.csv`, `sweep.csv`, `power.csv`,
-`overlap.csv`, `per_instrument.csv`.
+`overlap.csv`, `gap.csv`, `per_instrument.csv`.

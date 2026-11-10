@@ -359,28 +359,138 @@ def test_duplicate_timestamps_are_dropped_and_counted(tmp_path):
     assert list(bars["ts"]) == [0, 900, 1800]
 
 
-def test_the_geometry_walk_is_demeaned_and_the_drifted_twin_is_not():
-    """The leak this file found in itself.
+def test_a_negative_mean_gap_is_forced_by_the_identity_and_is_not_a_defect():
+    """The correction this study had to make to itself.
 
-    Resampling `diff(close)` i.i.d. keeps the series' realised drift, and a
-    drifting series cuts far more demand blocks than supply ones, so the long
-    arm comes out net long and is handed the drift. The first run read
-    **+0.1155R on the traded fade arm and +0.1839R on the synthetics** that way
-    - a positive expectancy on a resampled walk, which cannot happen.
+    The first version read a surrogate's negative `mean(open[i] - close[i-1])`
+    as a defect in `node/surrogates.walk_with_bar_geometry` and "fixed" it. The
+    identity
+
+        close[i] - close[i-1] = (open[i] - close[i-1]) + (close[i] - open[i])
+
+    forces the sign for **any** series whose bars close above their opens on
+    average with near-nil close-to-close drift, the market included - and
+    `MODE=gap` measures it as negative on 28 of 28 of the broker's own 1h FX
+    stores, mean -0.0126 of a bar range. This test pins the arithmetic on a
+    constructed series so nobody reads the sign as a bug again.
     """
+    n = 5_000
+    rng = np.random.default_rng(21)
+    # Bars that close above their opens, joined by down-gaps, with no drift:
+    # exactly the shape the identity describes, built by hand.
+    body = np.abs(rng.normal(0, 1e-3, n)) + 1e-4
+    gap = -body + rng.normal(0, 1e-5, n)
+    open_ = np.empty(n)
+    close = np.empty(n)
+    open_[0], close[0] = 1.0, 1.0 + body[0]
+    for i in range(1, n):
+        open_[i] = close[i - 1] + gap[i]
+        close[i] = open_[i] + body[i]
+    span = (close - open_) + 2e-4
+    real = {"ts": np.arange(n, dtype=np.int64) * 3600, "spread": np.zeros(n),
+            "open": open_, "close": close,
+            "high": np.maximum(open_, close) + 1e-4, "low": np.minimum(open_, close) - 1e-4}
+    assert np.mean(close - open_) > 0                         # bars close above their opens
+    assert abs(np.mean(np.diff(close))) < 0.02 * np.mean(body)  # and go nowhere
+    assert np.mean(open_[1:] - close[:-1]) < 0                # so the gap must be negative
+    assert span.mean() > 0
+
+    # The shipped construction inherits a gap of its own; the continuous one
+    # pins it at exactly zero. Neither equals the market's, which is the point.
+    shipped = B.shipped_geom_bars(real, seed=1)
+    cont = B.contopen_bars(real, seed=1)
+    assert np.mean(cont["open"][1:] - cont["close"][:-1]) == pytest.approx(0.0, abs=1e-12)
+    assert np.mean(shipped["open"][1:] - shipped["close"][:-1]) != pytest.approx(0.0, abs=1e-9)
+
+
+def test_the_shipped_arm_draws_span_and_shape_independently():
+    """`walk_with_bar_geometry` calls `r.choice(spans)` and `r.choice(shapes)`
+    separately, so a bar's size and its body share are independent there.
+
+    The first version of `shipped_geom_bars` drew both with one index, which
+    **preserved a link the package breaks** - so it was not the shipped arm it
+    claimed to be. A faithful copy must lose the correlation between a bar's
+    range and its body share.
+    """
+    n = 20_000
+    rng = np.random.default_rng(33)
+    # A series where a wide bar always has a large body share and a narrow one
+    # a small one, so the correlation is unmistakable in the source.
+    span = np.where(rng.random(n) < 0.5, 1e-3, 1e-2)
+    share = np.where(span > 5e-3, 0.9, 0.1)
+    close = 1.0 + np.cumsum(rng.normal(0, 1e-3, n))
+    open_ = close - share * span
+    real = {"ts": np.arange(n, dtype=np.int64) * 3600, "spread": np.zeros(n),
+            "open": open_, "close": close,
+            "high": np.maximum(open_, close) + 0.05 * span,
+            "low": np.minimum(open_, close) - 0.05 * span}
+
+    def corr(f):
+        sp = f["high"] - f["low"]
+        ok = sp > 0
+        return float(np.corrcoef(sp[ok], np.abs(f["close"] - f["open"])[ok] / sp[ok])[0, 1])
+
+    assert abs(corr(real)) > 0.5                       # the source carries it
+    assert abs(corr(B.shipped_geom_bars(real, seed=2))) < 0.2   # the package breaks it
+
+
+def test_the_contopen_arm_breaks_the_body_to_wick_joint():
+    """Its body **is** the close-to-close step and its wicks are resampled
+    independently of it, so where a market's bodies and wicks move together the
+    body-to-range ratio is rebuilt from marginals rather than carried.
+
+    The shipped arm carries it exactly - body share is `|close_frac -
+    open_frac|`, a function of the shape pair, and the pair travels. So a
+    detector grading an order block by body share (`zones.ob_zones` at
+    `PUSH_BODY` 0.70 and `ORIGIN_BODY` 0.45, and this file's `BAND=body`) is
+    mis-nulled by `contopen` and better served by `shipped`; the reverse holds
+    for a detector reading a bar's own move against its own shape. Neither arm
+    is right for both, which is why both are reported.
+
+    **The fixture has to carry the joint, or the assertion is empty**: a first
+    version drew body and wicks independently, and there `contopen` reproduced
+    the body share to 1% because rebuilding from marginals is correct when the
+    marginals are all there is. These bars come in two regimes - a wide body
+    with thin wicks, or a thin body with wide wicks - so a surrogate that
+    crosses them is visible.
+    """
+    n = 20_000
+    rng = np.random.default_rng(34)
+    wide = rng.random(n) < 0.6                     # 60%, so the median is well defined
+    body = np.where(wide, 1e-2, 1e-4) * rng.choice([-1.0, 1.0], n)
+    wick = np.where(wide, 1e-5, 5e-3)
+    close = 1.0 + np.cumsum(body)                  # open[i] == close[i-1]: step == body
+    open_ = np.r_[1.0, close[:-1]]
+    real = {"ts": np.arange(n, dtype=np.int64) * 3600, "spread": np.zeros(n),
+            "open": open_, "close": close,
+            "high": np.maximum(open_, close) + wick, "low": np.minimum(open_, close) - wick}
+
+    def share(f):
+        sp = f["high"] - f["low"]
+        ok = sp > 0
+        return float(np.median(np.abs(f["close"] - f["open"])[ok] / sp[ok]))
+
+    base = share(real)
+    assert base > 0.9, "the fixture must put its median bar in the wide-body regime"
+    assert share(B.shipped_geom_bars(real, seed=3)) == pytest.approx(base, rel=0.05)
+    crossed = share(B.contopen_bars(real, seed=3))
+    assert crossed < 0.75, f"contopen should cross the regimes, read {crossed:.4f}"
+
+
+def test_the_drifted_twin_keeps_the_drift_the_demeaned_one_removes():
+    """`contdrift` exists so "the market's unconditional drift reaches none of
+    these arms" is a measurement rather than prose."""
     n = 20_000
     drift = 1e-4
     c = 100.0 + drift * np.arange(n) + np.cumsum(np.random.default_rng(2).normal(0, 1e-3, n))
     real = {"ts": np.arange(n, dtype=np.int64) * 3600, "spread": np.zeros(n),
             "open": c, "close": c, "high": c + 1e-3, "low": c - 1e-3}
-    flat = B.geom_bars(real, seed=1)
-    kept = B.geomdrift_bars(real, seed=1)
     per_bar = np.diff(real["close"]).mean()
-    assert per_bar == pytest.approx(drift, rel=0.25)   # the noise adds its own endpoint
     # A demeaned draw still has a realised drift of order sd / sqrt(n) - that is
     # the null's own sampling spread, not the series' drift, and it is why the
     # walk arms are averaged over several draws and many instruments.
     se = np.diff(real["close"]).std(ddof=1) / np.sqrt(n - 1)
-    assert abs(np.diff(flat["close"]).mean()) < 4 * se
-    assert np.diff(kept["close"]).mean() == pytest.approx(per_bar, abs=4 * se)
-    assert per_bar > 10 * se   # the planted drift is the larger quantity
+    assert per_bar > 10 * se
+    assert abs(np.diff(B.contopen_bars(real, seed=1)["close"]).mean()) < 4 * se
+    assert np.diff(B.contdrift_bars(real, seed=1)["close"]).mean() == pytest.approx(
+        per_bar, abs=4 * se)

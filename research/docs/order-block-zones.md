@@ -167,7 +167,7 @@ the same finding reached independently.
   which gave "flipped" the mechanical definition this study lacked (LuxAlgo's
   and EmreKb's) and ran it on 30 traded instruments and 13 Deriv families. The
   published breaker is refuted outright. On **these** zones, re-run with that
-  lifecycle, the flip reads **-0.0635R** [-0.1314, +0.0109] on 1,534 trades and
+  lifecycle, the flip reads **-0.0641R** [-0.1340, +0.0063] on 1,535 trades and
   is worse than both its placebo and the fade; at 4h the interval excludes
   +0.506R on 328 trades, and **at 1d, on 45 trades, it excludes nothing**. So the
   1d half of the number above is still open, and only new bars or the broker's

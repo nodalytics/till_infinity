@@ -379,8 +379,8 @@ z +2.90 and earns **+0.019 spread units, about 2% of a spread**, against the 1.0
 ### 1. The breaker block: trading the zone that failed, not the zone that held
 
 > **Run, 2026-11-10, same day: [breaker-blocks.md](breaker-blocks.md).** Refuted. `P(>= 2R)`
-> **0.2979** on 23,730 trades against an arithmetic 0.3333, mean **-0.0265R** [-0.0471, -0.0032],
-> **+0.0018R** over a distance-matched placebo, and the refuted fade arm does not beat its null
+> **0.2980** on 23,751 trades against an arithmetic 0.3333, mean **-0.0263R** [-0.0468, -0.0032],
+> **+0.0023R** over a distance-matched placebo, and the refuted fade arm does not beat its null
 > either - so there is nothing to assign to the flip. Two corrections to this section: the cost
 > below is priced at a 20-bar swing (3.46-3.55 ATR) where the rule's own stop is **1.14-1.87 ATR**,
 > making it **2.6x** dearer, and LuxAlgo's order block is **not** the object
