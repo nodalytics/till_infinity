@@ -55,6 +55,13 @@ SIGNALS = "structures.signals"
 # ──── statespace ────
 DISPERSION = "statespace.dispersion"
 PROPOSALS = "statespace.proposals"
+
+#: Which instruments are currently volatile enough to scalp, as a ranking.
+#:
+#: Its own topic rather than a field on a reading, for the reason `PROPOSALS`
+#: is separate from `DISPERSION`: a ranking changes on a slow timer and is read
+#: by every desk, while a reading changes per bar and is read by one.
+VOLATILE = "screen.volatile"
 STATESPACE_SIGNALS = "statespace.signals"
 
 # ──── the desk ────
@@ -136,6 +143,7 @@ DECLARED: tuple[str, ...] = (
     MACRO,
     PROPOSALS,
     QUOTES,
+    VOLATILE,
     RESOLUTIONS,
     SIGNALS,
     STATESPACE_SIGNALS,

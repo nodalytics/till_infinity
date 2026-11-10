@@ -658,6 +658,15 @@ class Settings:
     #: Every floored intent carries `target_floored` in its features, so a
     #: later study can split on it rather than pooling two different exits.
     target_r: float = 0.0
+    #: Trade only the instruments the volatility screen currently admits.
+    #: `TRADING_VOLATILE_ONLY`, off.
+    #:
+    #: **On, a desk with no ranking refuses rather than admits.** A scalp whose
+    #: premise is "only the volatile ones" has no fallback instrument set, so
+    #: admitting everything until `VolatileScreen` warms would trade the quiet
+    #: book under a rule written for the loud one. Off is a true no-op, because
+    #: a gate that silently admits everything reads the same as one that works.
+    volatile_only: bool = False
 
     #: The net edge, in volatility units, that earns full size. Zero is off.
     #: Measured; see `research/docs/settings.md`.
@@ -1518,6 +1527,7 @@ class Settings:
             crowding_share=_float("TRADING_CROWDING_SHARE", 0.0),
             volatility_target_bps=_float("TRADING_VOLATILITY_TARGET_BPS", 0.0),
             target_r=_float("TRADING_TARGET_R", 0.0),
+            volatile_only=_flag("TRADING_VOLATILE_ONLY", False),
             regime_band=_float("TRADING_REGIME_BAND", 0.0),
             regime_floor=_float("TRADING_REGIME_FLOOR", 0.5),
             spike_above=_float("TRADING_SPIKE_ABOVE", 0.0),
