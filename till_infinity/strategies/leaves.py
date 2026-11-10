@@ -245,15 +245,24 @@ LEAVES: dict[tuple[str, str], type[Desk]] = {
     ("smc-zones", "edge"): SmcZonesEdge,
     ("smc-zones", "resting"): SmcZonesResting,
     ("smc-zones", "arrival"): SmcZonesArrival,
-    # **One entry, deliberately, and registered without being enabled.**
-    # `VI_M15_imp_H4sq` says "enter at the next 1-minute open", so a rest at a
-    # named price and a wait for an arrival are both a different rule; listed
-    # for the edge alone, `desks.build` refuses the other two by name.
+    # **One entry, deliberately.** `VI_M15_imp_H4sq` says "enter at the next
+    # 1-minute open", so a rest at a named price and a wait for an arrival are
+    # both a different rule; listed for the edge alone, `desks.build` refuses
+    # the other two by name.
     #
-    # It is in no default and in no `TRADING_STRATEGIES` anywhere. Registering
-    # it is what makes `TRADING_STRATEGIES=vol-impulse` measurable at all -
-    # `desks.build` refuses an unregistered name - and the measurement that
-    # would license enabling it is `research/docs/vol-impulse-trade.md`.
+    # **It is enabled in production and it runs against its own measurement,
+    # which is a deliberate override and not an oversight.** This comment said
+    # "in no default and in no `TRADING_STRATEGIES` anywhere" until 2026-11-10,
+    # when the live list was found to carry it. The measurement that was meant
+    # to license it, `research/docs/vol-impulse-trade.md`, came back **gross
+    # zero and net its spread** over 5,708 non-overlapping trades and 11.8
+    # years on the five markets the rule names - so enabling it was the
+    # operator's call with that number in hand, recorded here so the next
+    # reader does not take the registration as evidence of an edge.
+    #
+    # What limits it is sizing rather than the rule list: `crowding` and
+    # `agreement` shrink a trade that shares a leg or a direction with others
+    # already open, which is the half of the exposure question `risk/` answers.
     ("vol-impulse", "edge"): VolImpulseEdge,
 }
 
