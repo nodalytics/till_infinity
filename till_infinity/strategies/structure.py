@@ -364,6 +364,12 @@ class StructureProfile(Profile):
     #: exited at 49.0h and 56.8h of clock because the 86,400-second deadline
     #: fell inside a weekend and the exit landed on the first quote at the
     #: Sunday reopen - which is the one place a survivorship confound lives.
+    #: **The M15 value, kept as the record of what was measured.** `Structure
+    #: ._due_bars` is what `_clock` reads, because `// 15` is a conversion from
+    #: minutes to *M15* bars and this rule now runs on other clocks: on a 5m
+    #: desk these 96 bars are **eight hours against the twenty-four the rule
+    #: specifies**, which is a third of the hold and was live on eight symbols
+    #: before anyone converted it.
     hold_signal_bars: ClassVar[int] = HOLD_MINUTES // 15
     #: Bars each side of a swing, per side, zero meaning `reach`. See `Fold`.
     reach_up: ClassVar[int] = 0
@@ -607,6 +613,29 @@ class Structure(WarmFromHistory):
             # it declined. A dict is one of the two shapes it accepts.
             self.on_data(self._payload(event, bar))
 
+    def _due_bars(self) -> int:
+        """The hold in bars of **this** desk's clock.
+
+        `HOLD_MINUTES` is 1,440 - twenty-four hours - and the profile's
+        `hold_signal_bars` divides it by 15 because the rule was specified and
+        measured on M15. That division is a property of the clock and not of
+        the rule, so a desk on another clock has to redo it: at 5m the
+        profile's 96 bars are eight hours, a third of the hold, and the trade
+        would be closed by the clock long before the rule says.
+
+        Identical at 15m - 1,440 x 60 / 900 is exactly 96 - so every existing
+        deploy holds for the same number of bars it always did.
+
+        Falls back to the profile's value where the bar span is unknown, which
+        is an activity clock: a tick bar has no minutes, so converting a hold
+        expressed in minutes into one is not meaningful and the measured bar
+        count is the better of two imperfect answers.
+        """
+        span = self.warm_seconds()
+        if span <= 0.0:
+            return self.profile.hold_signal_bars
+        return max(1, round(HOLD_MINUTES * 60.0 / span))
+
     def _clock(self) -> None:
         """Close anything that has run out of bars.
 
@@ -614,7 +643,7 @@ class Structure(WarmFromHistory):
         fold's own events so the slot a closing trade holds is free for a
         break on this bar, which is what a greedy one-position rule does.
         """
-        due = self.profile.hold_signal_bars
+        due = self._due_bars()
         if due <= 0:
             return
         for position_id, opened in list(self.opened_on.items()):

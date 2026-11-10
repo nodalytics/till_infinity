@@ -1101,3 +1101,59 @@ def _stamped(strategy, ts: int) -> Bar:
         ts_event=ts,
         ts_init=ts,
     )
+
+
+def test_the_hold_is_twenty_four_hours_on_whatever_clock_the_desk_runs():
+    """**`// 15` is a property of the clock, not of the rule.**
+
+    `HOLD_MINUTES` is 1,440 - twenty-four hours - and the profile divides it by
+    15 because the rule was specified and measured on M15. On a 5m desk those
+    96 bars are **eight hours**, a third of the hold, and the trade would be
+    closed by the clock long before the rule says. That was live on eight
+    symbols the day 5m was enabled.
+
+    Asserted as hours rather than as bars, because hours are what the rule
+    specifies and bars are the thing that varies.
+    """
+    from types import SimpleNamespace
+
+    from till_infinity.strategies.structure import HOLD_MINUTES, Structure
+
+    for span in (300.0, 900.0, 3_600.0, 14_400.0):
+        stub = SimpleNamespace(
+            warm_seconds=lambda s=span: s,
+            profile=SimpleNamespace(hold_signal_bars=96),
+        )
+        bars = Structure._due_bars(stub)
+        assert bars * span == pytest.approx(HOLD_MINUTES * 60.0), (
+            f"a {span:.0f}s bar held {bars} bars = {bars * span / 3600:.1f}h, "
+            f"not the specified {HOLD_MINUTES / 60:.0f}h"
+        )
+
+
+def test_the_measured_clock_is_bit_identical():
+    """The control that protects the existing numbers: at 15m this must return
+    exactly the profile's own constant, so every deploy holds for the same
+    number of bars it always did."""
+    from types import SimpleNamespace
+
+    from till_infinity.strategies.structure import Structure, StructureProfile
+
+    stub = SimpleNamespace(
+        warm_seconds=lambda: 900.0,
+        profile=SimpleNamespace(hold_signal_bars=StructureProfile.hold_signal_bars),
+    )
+    assert Structure._due_bars(stub) == StructureProfile.hold_signal_bars == 96
+
+
+def test_a_clock_with_no_minutes_keeps_the_measured_bar_count():
+    """An activity clock - `500tick` - has no span, so converting a hold
+    expressed in minutes into one is not meaningful. The measured bar count is
+    the better of two imperfect answers, and it is returned rather than a
+    division by zero."""
+    from types import SimpleNamespace
+
+    from till_infinity.strategies.structure import Structure
+
+    stub = SimpleNamespace(warm_seconds=lambda: 0.0, profile=SimpleNamespace(hold_signal_bars=96))
+    assert Structure._due_bars(stub) == 96
