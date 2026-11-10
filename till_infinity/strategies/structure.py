@@ -52,7 +52,6 @@ from __future__ import annotations
 
 from collections import deque
 from dataclasses import dataclass, field
-from datetime import timedelta
 from typing import Any, ClassVar
 
 from nautilus_trader.model.data import Bar
@@ -61,6 +60,7 @@ from ..domain.models import Intent, Refusal, Side
 from .entries import EdgeEntry
 from .exits import ManagedExit
 from .profile import Profile
+from .warming import WarmFromHistory
 
 #: Minutes a trade is held before it is closed on the clock. The `time` in the
 #: rule's name, and 1,440 one-minute bars is about a day.
@@ -321,6 +321,22 @@ class StructureProfile(Profile):
     #: removes, and `StatespaceActor.warm_bars_request` already does the same
     #: thing with the same machinery.
     warm_bars_request: ClassVar[int] = 1_000
+    #: A break confirmed within this many bars of now is still actionable.
+    #:
+    #: **One, and the default used to be effectively zero.** Warm breaks never
+    #: reached `on_data` at all, on the reasoning that "a BOS on a bar hours
+    #: old names a price that has gone" - sound for a break hours old and
+    #: wrong for the last bar of the request. The fold needs 101 bars for one
+    #: swing and two a side before a break can be labelled, so a deploy that
+    #: discards the break sitting on the final warm bar throws away the one
+    #: setup it can see and waits for the next: a self-inflicted blind spot
+    #: rather than caution.
+    #:
+    #: Safe because the entry is never the historical price. `decide` reads
+    #: `self._tick()` for the live quote and takes only the *stop* from the
+    #: break's own swing, so a forwarded warm break is placed at the market
+    #: now with a level from a bar that closed minutes ago.
+    warm_fresh_bars: ClassVar[int] = 1
     #: Its own shape, so a statespace proposal on the same topic is skipped
     #: rather than judged - this rule reads bars and nothing else.
     shape: ClassVar[str] = "structure"
@@ -388,7 +404,7 @@ class StructureProfile(Profile):
         return (self.spreads_up if sign > 0 else self.spreads_down) or self.spreads
 
 
-class Structure:
+class Structure(WarmFromHistory):
     """Trade a causal break of structure in the direction of the trend.
 
     A mixin with no base, composed with an entry from `entries.py` and an exit
@@ -454,32 +470,17 @@ class Structure:
         #: replay and a fold filled by the market can be told apart in the
         #: tally. A port is judged on these before it is judged on any money.
         self.warmed: dict[str, int] = {"bars": 0, "breaks": 0, "bos": 0, "choch": 0}
+        #: Fold indices this rule has already proposed on, so a bar delivered
+        #: as history *and* then live cannot place the same break twice. The
+        #: desk's `held` guard would refuse the duplicate, but it would refuse
+        #: it as a gate count and the record would read as a rule proposing
+        #: setups it never saw.
+        self._proposed: set[int] = set()
         super().on_start()
-        if self.profile.warm_bars_request > 0:
-            # Asked as a span of this bar type rather than a date, so the same
-            # number of bars is covered whatever the interval - the shape
-            # `StatespaceActor` uses. `start` is positional and required: a
-            # request with no window is a TypeError, not a request for
-            # everything.
-            span = timedelta(seconds=self._bar_seconds() * self.profile.warm_bars_request)
-            start = self.clock.utc_now() - span
-            # **A composite bar type cannot be requested.** Nautilus refuses
-            # `request_bars` for one outright - "Use a standard bar type with
-            # request_bars. Composite bar types can be used with
-            # request_aggregated_bars" - and this rule is configured both ways:
-            # the live desks run `...-15-MINUTE-LAST-EXTERNAL`, which is
-            # standard, while a backtest aggregates M15 from an M1 feed. Asking
-            # the wrong one raises in `on_start`, which takes the desk down
-            # rather than leaving it cold.
-            if self._cfg.bar_type.is_composite():
-                self.request_aggregated_bars(
-                    [self._cfg.bar_type],
-                    start,
-                    limit=self.profile.warm_bars_request,
-                    include_external_data=False,
-                )
-            else:
-                self.request_bars(self._cfg.bar_type, start, limit=self.profile.warm_bars_request)
+        # `strategies/warming.py` holds the request, the composite/standard
+        # split and the one-bar-per-call delivery shape. It was three copies of
+        # the same forty lines across this rule, `volimpulse` and `zones`.
+        self.start_warming()
         if not str(self._cfg.bar_type.spec).startswith("15-MINUTE"):
             # Said out loud rather than refused: a sweep may deliberately run
             # the same rule on another clock, and a deploy that did so by
@@ -517,63 +518,58 @@ class Structure:
             f" swings={self.fold.highs}/{self.fold.lows}"
             f" bos={live_bos}+{self.warmed['bos']}w"
             f" choch={live_choch}+{self.warmed.get('choch', 0)}w"
+            + (f" warmacted={self.warmed['acted']}" if self.warmed.get("acted") else "")
         )
 
     def _bar_seconds(self) -> float:
-        """This bar type's interval in seconds, for the warm request's span."""
-        spec = self._cfg.bar_type.spec
-        step = float(spec.step)
-        unit = str(spec.aggregation)
-        if "SECOND" in unit:
-            return step
-        if "MINUTE" in unit:
-            return step * 60.0
-        if "HOUR" in unit:
-            return step * 3600.0
-        if "DAY" in unit:
-            return step * 86400.0
-        # Unknown aggregation: ask for the bars by count and let the window be
-        # generous rather than refuse to warm at all.
-        return step * 900.0
+        """This bar type's interval in seconds. `warming.bar_seconds`.
 
-    def on_historical_data(self, data: Any) -> None:
-        """Fold requested history, which warms and never acts.
+        Kept as a name because this module's tests know it; the parsing moved
+        out so three rules cannot disagree about how long a bar is.
+        """
+        return self.warm_seconds()
 
-        **The fold advances; `on_data` is not called.** A BOS on a bar hours
-        old names a price that has gone - the rule `StatespaceActor`'s own
-        handler states - so a warm break is counted and nothing is proposed.
+    def warm_bar(self, row: Bar) -> None:
+        """Fold one historical bar, and act only on a break that just happened.
+
+        **Warm breaks used to never reach `on_data`.** The reason given was "a
+        BOS on a bar hours old names a price that has gone", which is right
+        about a break hours old and wrong about the last bar of the request.
+        The fold needs 101 bars for one swing and two a side before a break can
+        be labelled, so a deploy that discarded the break sitting on its final
+        warm bar threw away the one setup it could see and waited for the next.
+
+        `fresh` draws the line by **time**, because Nautilus delivers history
+        one bar per call and a handler cannot know whether another is coming.
+        See `StructureProfile.warm_fresh_bars`.
 
         The ATR is fed here too. `register_indicator_for_bars` wires an
         indicator to the *subscription*, and whether Nautilus also feeds it
         from a `request_bars` response is version-dependent - so this is
         asserted by a test rather than assumed, because a cold ATR when the
         fold is already warm makes the first stop `20 * spread` wearing an
-        ATR's name. That used to be safe only because the fold took days.
+        ATR's name.
         """
-        rows = data if isinstance(data, (list, tuple)) else [data]
-        for row in rows:
-            if not isinstance(row, Bar):
+        if not self.atr.initialized:
+            self.atr.handle_bar(row)
+        self.structure["bars"] += 1
+        events = self.fold.update(float(row.high), float(row.low), float(row.close))
+        self.structure["swing_highs"] = self.fold.highs
+        self.structure["swing_lows"] = self.fold.lows
+        self.warmed["breaks"] = self.warmed.get("breaks", 0) + len(events)
+        fresh = self.fresh(row)
+        for event in events:
+            self.structure[event.kind] += 1
+            # Every kind, not just `bos`: the tally subtracts warm from pooled,
+            # and a kind counted on one side only reads as live.
+            self.warmed[event.kind] = self.warmed.get(event.kind, 0) + 1
+            if event.kind != "bos" or not fresh:
                 continue
-            if not self.atr.initialized:
-                self.atr.handle_bar(row)
-            self.warmed["bars"] += 1
-            self.structure["bars"] += 1
-            events = self.fold.update(float(row.high), float(row.low), float(row.close))
-            self.structure["swing_highs"] = self.fold.highs
-            self.structure["swing_lows"] = self.fold.lows
-            self.warmed["breaks"] += len(events)
-            for event in events:
-                self.structure[event.kind] += 1
-                # Every kind, not just `bos`: the tally subtracts warm from
-                # pooled, and a kind counted on one side only reads as live.
-                self.warmed[event.kind] = self.warmed.get(event.kind, 0) + 1
-        # **No log line here.** Nautilus delivers a `request_bars` response one
-        # bar per call, not as a batch, so logging the running total once per
-        # call wrote "warmed 1 bars", "warmed 2 bars" ... up to the request
-        # limit, per feed: measured at **38,748 lines** on a 32-feed start,
-        # which buries everything else on a two-core box. The desk tally
-        # reports `warm=` on one line every TALLY_EVERY seconds, which is the
-        # number anyone wants - `_tally_extra` above.
+            if event.at in self._proposed:
+                continue
+            self._proposed.add(event.at)
+            self.warmed["acted"] = self.warmed.get("acted", 0) + 1
+            self.on_data(self._payload(event, row))
 
     def on_bar(self, bar: Bar) -> None:
         """One closed M15 bar through the fold, and any BOS it produced.
@@ -599,6 +595,13 @@ class Structure:
             self.structure[event.kind] += 1
             if event.kind != "bos":
                 continue
+            # **The same guard as the warm path.** A bar can arrive as history
+            # and then again on the live subscription - the request window ends
+            # at `utc_now()` and the first live bar may be the one that closed
+            # during it - so without this the same break is proposed twice.
+            if event.at in self._proposed:
+                continue
+            self._proposed.add(event.at)
             # Through `on_data` and not `consider` directly, because that is
             # where the desk counts what it took, places it, and follows what
             # it declined. A dict is one of the two shapes it accepts.

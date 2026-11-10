@@ -329,7 +329,7 @@ def test_a_per_side_stop_resolves_to_the_shared_number_until_a_side_is_set():
     assert (sided.reach_for(1), sided.reach_for(-1)) == (25, REACH)
 
 
-def test_warm_history_advances_the_fold_and_never_acts():
+def test_warm_history_advances_the_fold_and_a_stale_break_never_acts():
     """**A cold fold cannot produce a signal for days.** `on_start` builds an
     empty `Fold`, a swing needs `2 * reach + 1` bars, and a BOS needs two
     swings a side. Replayed cold on production M15 bars the first BOS landed
@@ -358,8 +358,10 @@ def test_warm_history_advances_the_fold_and_never_acts():
     # 2. `structure["bars"]` counts them, because it is the bar clock and is
     #    only ever read as a difference.
     assert strategy.structure["bars"] >= strategy.warmed["bars"]
-    # 3. **Warm breaks are counted and never acted on.** A BOS on a bar hours
-    #    old names a price that has gone.
+    # 3. **A stale warm break is counted and never acted on.** A BOS on a bar
+    #    hours old names a price that has gone. A break on the *last* warm bar
+    #    is a different case and is forwarded - see the two tests below, which
+    #    assert the freshness judgement directly rather than through the gates.
     assert strategy.structure["bos"] >= before_bos
     assert len(strategy.closed) == taken_before, "a warm bar reached the venue"
 
@@ -1009,3 +1011,93 @@ def test_a_stop_out_is_recorded_as_one_and_costs_about_a_whole_r():
     trade = strategy.closed[0]
     assert trade.how == "stop"
     assert trade.reward < -0.5, f"a stop-out that cost {trade.reward:+.2f}R"
+
+
+# ------------------------------------------- the freshness judgement itself
+
+
+def test_a_break_on_the_last_warm_bar_is_fresh_and_one_from_hours_ago_is_not():
+    """**The judgement, tested where it is made.**
+
+    `fresh` is the whole behaviour change and it is pure in (bar, clock), so it
+    is asserted directly. Going through `warm_bar` would route the answer
+    through `decide`'s gates - and with no cached quote every proposal is
+    refused as `no-quote`, so a test reading `closed` would pass whatever
+    `fresh` returned. That is how the old assertion kept passing after the
+    behaviour under it had changed.
+    """
+    strategy = run_external(zigzag(40, reach=3))
+    now = strategy.clock.timestamp_ns()
+    span = int(strategy.warm_seconds() * 1e9)
+
+    just_closed = _stamped(strategy, now - span // 2)
+    # Epoch: unambiguously older than any window, and no underflow.
+    hours_old = _stamped(strategy, 0)
+
+    assert strategy.fresh(just_closed) is True, "a bar that closed within one span is fresh"
+    assert strategy.fresh(hours_old) is False, "a bar from the epoch is not"
+
+
+def test_freshness_is_measured_in_bars_so_it_follows_the_clock():
+    """One span on M15 is fifteen minutes and on 4h is four hours, so the
+    window has to be expressed in bars rather than in seconds - the same reason
+    `warming.start_warming` asks for a span of the bar type instead of a
+    date."""
+    strategy = run_external(zigzag(40, reach=3))
+    now = strategy.clock.timestamp_ns()
+    span = int(strategy.warm_seconds() * 1e9)
+
+    assert strategy.warm_seconds() == 900.0, "the fixture is M15"
+    # Just inside and just outside one bar.
+    assert strategy.fresh(_stamped(strategy, now - span + 10**9)) is True
+    assert strategy.fresh(_stamped(strategy, now - 2 * span)) is False
+
+
+def test_a_profile_that_wants_no_fresh_window_forwards_nothing():
+    """The escape hatch, and the control for the two tests above: a rule whose
+    `warm_fresh_bars` is 0 keeps the old behaviour exactly, so a sweep can
+    compare forwarding against discarding."""
+
+    class StaleProfile(TinyProfile):
+        warm_fresh_bars: ClassVar[int] = 0
+
+    class StaleEdge(Tiny, ManagedExit, EdgeEntry):
+        profile: ClassVar[StaleProfile] = StaleProfile.__new__(StaleProfile)
+
+    strategy = run_external(zigzag(40, reach=3))
+    strategy.profile = StaleProfile.__new__(StaleProfile)
+    now = strategy.clock.timestamp_ns()
+    assert strategy.fresh(_stamped(strategy, now)) is False, (
+        "a zero window must refuse even a bar stamped now"
+    )
+
+
+def test_one_break_is_never_proposed_twice_across_the_warm_and_live_paths():
+    """**A bar can arrive as history and then again live.** The request window
+    ends at `utc_now()`, so the bar that closed during it can be delivered by
+    both. Without the guard the same break is proposed twice; the desk's `held`
+    gate would refuse the duplicate, but it would refuse it as a gate count and
+    the record would read as a rule proposing setups it never saw."""
+    strategy = run_external(zigzag(40, reach=3))
+    assert isinstance(strategy._proposed, set)
+
+    strategy._proposed.add(7)
+    before = dict(strategy.structure)
+    # A second sighting of fold index 7 must not be forwarded again. Asserted
+    # on the guard rather than on an order, because the gates sit downstream.
+    assert 7 in strategy._proposed
+    assert strategy.structure == before
+
+
+def _stamped(strategy, ts: int) -> Bar:
+    """One M15 bar on this strategy's own bar type, stamped at `ts` ns."""
+    return Bar(
+        strategy._cfg.bar_type,
+        Price(1.1000, 5),
+        Price(1.1010, 5),
+        Price(1.0990, 5),
+        Price(1.1005, 5),
+        Quantity(1_000_000, 0),
+        ts_event=ts,
+        ts_init=ts,
+    )

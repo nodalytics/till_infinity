@@ -74,6 +74,7 @@ from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .exits import ManagedExit
 from .profile import Profile
 from .structure import Fold
+from .warming import WarmFromHistory
 
 #: The readings this nominator can offer. `reject` is the reversal and `break`
 #: the continuation, so both signs are present; see the module docstring for
@@ -218,6 +219,18 @@ class OriginProfile(Profile):
     interval: ClassVar[str] = "4h"
     hold_bars: ClassVar[float] = 0.0
     hold_seconds: ClassVar[float] = 0.0
+    #: Bars of history to warm `Displacement` with on start.
+    #:
+    #: `SPAN` is 40 bars and an origin needs an impulsive chain inside that
+    #: window, so a cold desk cannot nominate a zone for ten hours on 15m and
+    #: six days on 4h - the clock this rule's numbers were measured on. 400
+    #: gives the window several turnovers.
+    warm_bars_request: ClassVar[int] = 400
+    #: One, for the reason `ZoneProfile.warm_fresh_bars` gives at length: the
+    #: replay rebuilds the `inside` book, so a crossing on the last warm bar is
+    #: a transition the market actually made while this desk was starting up.
+    #: Older ones update state and propose nothing.
+    warm_fresh_bars: ClassVar[int] = 1
 
 
 class StructureProfile(OriginProfile):
@@ -228,7 +241,7 @@ class StructureProfile(OriginProfile):
     shape: ClassVar[str] = "smc-zones"
 
 
-class Origins:
+class Origins(WarmFromHistory):
     """Origin crossings into orders. A mixin; the leaves below compose it."""
 
     profile: ClassVar[OriginProfile] = OriginProfile.__new__(OriginProfile)
@@ -261,6 +274,24 @@ class Origins:
         self.standing = 0
         self.counts: dict[str, int] = {"bars": 0, "signals": 0, "unwarmed": 0}
         super().on_start()
+        # After `super()`, which subscribes: a request issued before the
+        # subscription can have its response delivered to a strategy that is
+        # not yet listening for one.
+        self.start_warming()
+
+    def warm_bar(self, bar: Bar) -> None:
+        """Replay one historical bar through the same path a live bar takes.
+
+        **`Fold` is advanced here too, not only `Displacement`.** `smc-zones`
+        gates on structure, so a warm pass that advanced the zone nominator and
+        left the structure reading cold would make every early live crossing
+        read `unconfirmed` - a rule refusing itself for ten hours and counting
+        it as a gate rather than as a warm-up.
+
+        Acts only on a fresh bar; see `OriginProfile.warm_fresh_bars`.
+        """
+        self.displacement.handle_bar(bar)
+        self._step(bar, act=self.fresh(bar))
 
     def on_bar(self, bar: Bar) -> None:
         """One closed bar, and any origin crossing it produced.
@@ -271,6 +302,16 @@ class Origins:
         the structure gate sees this bar too rather than the previous one.
         """
         super().on_bar(bar)
+        self._step(bar, act=True)
+
+    def _step(self, bar: Bar, *, act: bool) -> None:
+        """One bar through the crossing book. **One derivation, two callers.**
+
+        `Fold` is updated here and **before** the zones are read, so the
+        structure gate sees this bar rather than the previous one - and it is
+        updated on the warm path too, which is what lets `smc-zones` confirm
+        anything at all in its first ten hours.
+        """
         self.counts["bars"] += 1
         self.fold.update(float(bar.high), float(bar.low), float(bar.close))
         if not self.displacement.initialized:
@@ -291,6 +332,12 @@ class Origins:
             if self.confirms and not self._confirmed(side):
                 self.counts["unconfirmed"] = self.counts.get("unconfirmed", 0) + 1
                 continue
+            if not act:
+                # A crossing this rule was not running for. The side is still
+                # recorded, so an opposing live signal knows what it reverses.
+                self.standing = side
+                self.counts["replayed"] = self.counts.get("replayed", 0) + 1
+                return
             if self.standing != 0 and side == -self.standing:
                 self._leave(side)
             self.standing = side
