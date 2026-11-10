@@ -35,7 +35,7 @@ arithmetic is written down where it can be argued with.
 from __future__ import annotations
 
 import math
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 from till_infinity.utils import effects
 
@@ -120,6 +120,75 @@ def crowding(
                 crowded += 1
                 break
     return share**crowded if crowded else 1.0
+
+
+#: The cosine at which two rules count as making the same bet.
+#:
+#: **Derived from the live book rather than chosen round.** Measured on the
+#: exposure that prompted this - one rule holding eight positions, every one
+#: long USD - and on the shapes either side of it:
+#:
+#: * a one-position rule against a two-position long-dollar rule: **0.577**
+#: * two two-position long-dollar rules against each other: **0.667**
+#: * a one-position rule against the live seven-position book: **0.661**
+#: * a **hedge** - long EUR and GBP, short the dollar - against a long-dollar
+#:   rule: **-0.833**
+#:
+#: So the cases this exists for sit at 0.58 to 0.67 and a genuine hedge sits at
+#: -0.83, and 0.5 separates them with wide margin on both sides. A threshold
+#: above 0.7 would have missed every one of them: cosine over full leg vectors
+#: **dilutes a shared dollar leg**, because each pair contributes its own
+#: counter-currency and those read as disagreement even though they are
+#: diversification. That dilution is the reason this number is written down
+#: with its measurements instead of being left to look obvious.
+#:
+#: Nobody has scored it against outcomes. It is a risk threshold, not an edge.
+AGREE_AT = 0.5
+
+
+def by_agreement(
+    mine: Sequence[tuple[str, int]],
+    others: Mapping[str, Sequence[tuple[str, int]]],
+    share: float,
+    at_least: float = AGREE_AT,
+) -> float:
+    """Reduce for every **other rule** whose book points the same way as this one.
+
+    **Different granularity from `crowding`, and that is the point.**
+    `crowding` prices how many *positions* sit on a shared currency leg;
+    this prices how many *rules* are making the same bet. A book of five rules
+    that all agree is closer to one rule's risk than to five, and nothing in
+    this desk's pipeline noticed that until now: `ideas.md` logs it as E6,
+    "collapse look-alike strategies before counting trials", and
+    `agenda.md` item 13 asks it as "when do independent strategies become
+    dangerously synchronised".
+
+    The desk already has the answer for *counting*: `node/selection.
+    effective_trials` deflates a Sharpe by `N / (1 + (N-1) * mean pairwise
+    correlation)`. It had never reached a sizing decision.
+
+    `mine` is the exposure this rule would hold **including** the proposed
+    trade, so a rule's first position is compared on what it is about to be
+    rather than on what it was. `others` is each other rule's current book.
+
+    Geometric, like `crowding`, and for the same reason: the risk of a shared
+    direction compounds, so three rules all long the dollar are closer to three
+    of one trade than to one and a half.
+
+    `at_least` is a cosine, and `AGREE_AT` is derived from the case rather than
+    picked - see its own comment for the four numbers.
+    """
+    if share <= 0 or share >= 1 or not others:
+        return 1.0
+    ours = ex.leg_vector(mine)
+    if not ours:
+        return 1.0
+    agreeing = sum(
+        1
+        for book in others.values()
+        if book and ex.agreement(ours, ex.leg_vector(book)) >= at_least
+    )
+    return share**agreeing if agreeing else 1.0
 
 
 def by_volatility(vol_bps: float, target_bps: float) -> float:

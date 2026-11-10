@@ -30,6 +30,7 @@ the yen are now the same trade. This is the version that cannot go stale.
 
 from __future__ import annotations
 
+import math
 from collections import defaultdict
 from collections.abc import Sequence
 from dataclasses import dataclass
@@ -216,6 +217,60 @@ def register_broker_legs(feeds: Sequence[str], quote: str = "USD") -> None:
 def legs(feed: str) -> tuple[str, str]:
     """Base and quote for an instrument, or ("", "") if it is not mapped."""
     return LEGS.get(feed, ("", ""))
+
+
+def leg_vector(book: Sequence[tuple[str, int]]) -> dict[str, float]:
+    """Signed currency exposure for a set of `(feed, sign)` positions.
+
+    A long of the base is long that currency and short the quote, so each
+    position contributes `+sign` to its base and `-sign` to its quote. Feeds
+    with no mapping contribute nothing and are not an error - `legs` returns
+    `("", "")` for anything unmapped, and a test over the deployed symbol list
+    is what keeps that set empty.
+
+    Counted in positions and not in money, deliberately. The question this
+    answers is "are these two rules making the same bet", and a money weighting
+    would let one large position on a cheap instrument dominate the direction
+    of a rule's whole book.
+    """
+    found: dict[str, float] = {}
+    for feed, sign in book:
+        base, quote = legs(feed)
+        if base:
+            found[base] = found.get(base, 0.0) + float(sign)
+        if quote:
+            found[quote] = found.get(quote, 0.0) - float(sign)
+    return found
+
+
+def agreement(first: dict[str, float], second: dict[str, float]) -> float:
+    """Cosine similarity of two currency-exposure vectors, in [-1, 1].
+
+    **Cosine and not Pearson**, because the question is whether two books point
+    the same way and not whether they co-vary around their means. Subtracting a
+    mean here would make two rules that are both long the dollar against
+    everything look uncorrelated, which is the exact case worth catching: on
+    2026-11-10 one rule opened eight positions and **every one was long USD**.
+
+    Cosine also needs no history. `relationships-are-contemporaneous` records
+    that on this desk the large relationships are contemporaneous and every
+    lagged measure is null, so a rolling return correlation would be the weaker
+    measure as well as the slower one - and `strategy-switching.md` measured a
+    rule's own return record at **+0.009 over 737,691 trades**, which is what a
+    short P&L window would mostly be made of.
+
+    Zero when either side holds nothing, which reads as "no agreement" rather
+    than as a division by zero.
+    """
+    shared = set(first) | set(second)
+    if not shared:
+        return 0.0
+    dot = sum(first.get(name, 0.0) * second.get(name, 0.0) for name in shared)
+    one = math.sqrt(sum(value * value for value in first.values()))
+    two = math.sqrt(sum(value * value for value in second.values()))
+    if one <= 0.0 or two <= 0.0:
+        return 0.0
+    return max(-1.0, min(1.0, dot / (one * two)))
 
 
 def feeds_for(currency: str) -> tuple[str, ...]:

@@ -47,7 +47,7 @@ and an intent, so the arithmetic is assertable on its own.
 
 from __future__ import annotations
 
-from collections.abc import Iterable, Sequence
+from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import replace
 from typing import Any
 
@@ -156,6 +156,58 @@ def book_of(positions: Iterable[Position]) -> tuple[tuple[str, int], ...]:
             continue
         found.append((feed_of(position.instrument_id), 1 if quantity > 0 else -1))
     return tuple(found)
+
+
+def rule_of(strategy_id: Any) -> str:
+    """Which decision rule a position's `strategy_id` belongs to, or "".
+
+    Nautilus derives `strategy_id` as `ClassName-tag`, and `node/desks._tag`
+    guarantees no hyphen inside the tag - so the class name is everything
+    before the first one. That class is a leaf, and `leaves.LEAVES` maps a leaf
+    to its rule.
+
+    **The class name and not the tag's checksum.** The tag carries
+    `crc32(rule) % 997`, which would also identify the rule, but inverting a
+    checksum to recover a name is a lookup that fails silently on a collision
+    and the class name is already unambiguous.
+
+    Imported inside the function because `leaves` imports the rule modules and
+    several of those import this one.
+    """
+    from .leaves import LEAVES
+
+    name = str(strategy_id).split("-", 1)[0]
+    for (rule, _entry), leaf in LEAVES.items():
+        if leaf.__name__ == name:
+            return rule
+    return ""
+
+
+def books_by_rule(positions: Iterable[Position]) -> dict[str, tuple[tuple[str, int], ...]]:
+    """Open positions as one `(feed, sign)` book per decision rule.
+
+    What `scaling.by_agreement` reads. Separate from `book_of` rather than
+    replacing it, because the two answer different questions: `crowding` wants
+    every position on a leg regardless of who opened it, and agreement wants
+    them grouped by who did.
+
+    A position whose rule cannot be named is dropped rather than pooled into a
+    blank key. Pooling would make every unrecognised position one synthetic
+    rule that agrees with everything, which is the failure direction that
+    silently shrinks a size.
+    """
+    found: dict[str, list[tuple[str, int]]] = {}
+    for position in positions:
+        quantity = float(getattr(position, "signed_qty", 0.0) or 0.0)
+        if quantity == 0.0:
+            continue
+        rule = rule_of(getattr(position, "strategy_id", ""))
+        if not rule:
+            continue
+        found.setdefault(rule, []).append(
+            (feed_of(position.instrument_id), 1 if quantity > 0 else -1)
+        )
+    return {rule: tuple(rows) for rule, rows in found.items()}
 
 
 def _stated(info: dict[str, Any], *names: str) -> float:
@@ -331,6 +383,8 @@ def size(
     profile: Any = None,
     peak: float = 0.0,
     book: Sequence[tuple[str, int]] = (),
+    rule: str = "",
+    by_rule: Mapping[str, Sequence[tuple[str, int]]] | None = None,
 ) -> Intent | Refusal:
     """An accepted intent with a volume on it, or the reason it cannot have one.
 
@@ -373,6 +427,8 @@ def size(
             peak=peak,
             interval=intent.interval,
             side=intent.side,
+            rule=rule,
+            by_rule=by_rule,
         )
         scale = scaling.combined(*terms.values())
 

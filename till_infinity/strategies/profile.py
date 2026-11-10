@@ -34,7 +34,7 @@ one riding on a measured one's reputation.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from typing import Any, ClassVar
 
 from till_infinity.utils.logging import get_logger
@@ -103,6 +103,7 @@ MULTIPLIERS_ON = "SIZING_MULTIPLIERS"
 #: than keeping it here.
 MULTIPLIERS: tuple[str, ...] = (
     "crowding",
+    "agreement",
     "volatility",
     "regime",
     "spike",
@@ -161,6 +162,20 @@ def spike_scale(features: object, settings: object) -> float:
         float(getattr(settings, "spike_above", 0.0) or 0.0),
         float(getattr(settings, "spike_floor", 0.5) or 0.5),
     )
+
+
+def _buying(side: object) -> bool:
+    """Whether a side is a buy. The three shapes the callers hand over.
+
+    A `Side`, the string it stringifies to, and an int - the same set
+    `scaling._sign_of` accepts, which is why neither of them guesses.
+    """
+    found = getattr(side, "sign", None)
+    if isinstance(found, int) and found:
+        return found > 0
+    if isinstance(side, int) and side:
+        return side > 0
+    return not str(getattr(side, "value", side) or "").strip().lower().startswith("sell")
 
 
 class Profile:
@@ -612,6 +627,8 @@ class Profile:
         peak: float = 0.0,
         interval: str = "",
         side: object = None,
+        rule: str = "",
+        by_rule: Mapping[str, Sequence[tuple[str, int]]] | None = None,
     ) -> dict[str, float]:
         """Every reduction, **by name**, with the disabled ones at 1.0.
 
@@ -641,6 +658,7 @@ class Profile:
         from ..risk import scaling
 
         settings = self.settings
+        by_rule = dict(by_rule or {})
         computed = self._reductions(
             # **The book arrives as `(feed, sign)` pairs, already.** This used
             # to take position objects and dig the pairs out with
@@ -652,6 +670,14 @@ class Profile:
             # fire, behind a switch that says it is off anyway.
             # `strategies/sizes.book_of` builds the pairs now.
             scaling.crowding(feed, book, settings.crowding_share, side),
+            # **Rules pointing the same way, not positions on one leg.** The
+            # proposed trade is included in `mine`, so a rule's first position
+            # is compared on what it is about to be rather than on what it was.
+            scaling.by_agreement(
+                [*(by_rule.get(rule) or ()), (feed, 1 if _buying(side) else -1)],
+                {name: rows for name, rows in by_rule.items() if name != rule},
+                settings.agreement_share,
+            ),
             # **`ewma_tr_bps`, not `vol_bps`.** A decaying average of true range
             # forecast the next bar's movement better than every figure the desk
             # produces, at the horizon each of those was built for: against 11,797
@@ -702,6 +728,7 @@ class Profile:
     def _reductions(
         self,
         crowding: float,
+        agreement: float,
         volatility: float,
         regime: float,
         spike: float,
@@ -722,6 +749,7 @@ class Profile:
         """
         return {
             "crowding": crowding,
+            "agreement": agreement,
             "volatility": volatility,
             "regime": regime,
             "spike": spike,
