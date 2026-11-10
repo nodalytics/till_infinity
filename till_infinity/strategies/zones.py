@@ -407,12 +407,22 @@ class Zones(WarmFromHistory):
         cold indicator from a quiet market. Every number here was already
         being counted and none of it was printed.
         """
-        live = len(self.levels.zones) if self.levels.initialized else 0
+        # **The indicator's own numbers, not the desk's view of them.** The
+        # desk read `bars=617 warm=616 unwarmed=617 zones=0` on 2026-11-10 and
+        # there was no way to tell an indicator that had been fed nothing from
+        # one that had been fed 616 bars and nominated nothing - which is the
+        # same distinction this whole method exists to make, one level down.
+        # `fed` is the indicator's own count and `atr` is the number every zone
+        # width derives from, so a scale inflated by foreign bars is visible.
         return (
             f" bars={self.counts['bars']}"
             f" warm={self.warmed.get('bars', 0)}"
-            f" unwarmed={self.counts['unwarmed']}"
-            f" zones={live}"
+            + (f" foreign={self.warmed['foreign']}" if self.warmed.get("foreign") else "")
+            + (f" repeat={self.warmed['repeat']}" if self.warmed.get("repeat") else "")
+            + f" unwarmed={self.counts['unwarmed']}"
+            f" fed={self.levels.bars}"
+            f" atr={self.levels.atr:.6g}"
+            f" zones={len(self.levels.zones)}"
             f" signals={self.counts['signals']}"
             + (f" dropped={self.counts['duty_dropped']}" if self.counts.get("duty_dropped") else "")
             + (
