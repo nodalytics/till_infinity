@@ -50,6 +50,64 @@ def _token(name: str) -> str:
 
 
 LEGS: dict[str, tuple[str, str]] = {
+    # ---------------------------------------------------------------------
+    # **The MT5 symbol names, added 2026-11-10 because the table had gone
+    # stale at the migration and nobody noticed.** The keys below this block
+    # are the retired service's feed names - `gold`, `btc`, `us100` - and the
+    # live desk calls those feeds `xauusd`, `btcusd`, `us tech 100`. So
+    # `legs()` returned `("", "")` for **22 of the 30 deployed symbols** and
+    # `scaling.crowding` returned 1.0 for every one of them: a concentration
+    # limit that could only see the eight USD majors.
+    #
+    # Found the day `statespace-surprise` opened eight positions on one bar
+    # close, every one of them long USD, three of which (gold, BTC, ETH) this
+    # table could not see at all.
+    #
+    # The convention is the one the index entries below already set: **the
+    # instrument's own risk factor is the base and its settlement currency is
+    # the quote.** The broker reports `currency_base` as the *settlement*
+    # currency for an index or a crypto CFD - `BTCUSD` comes back
+    # `base=USD` - which is true of the contract and false of the risk, so
+    # the quote half is taken from the broker and the base half is the thing
+    # being traded. Every quote currency here was read off
+    # `/symbols/info/{symbol}` rather than assumed.
+    "xauusd": ("XAU", "USD"),
+    "xagusd": ("XAG", "USD"),
+    "xptusd": ("XPT", "USD"),
+    "xcuusd": ("XCU", "USD"),
+    "us oil": ("WTI", "USD"),
+    "uk brent oil": ("BRENT", "USD"),
+    "btcusd": ("BTC", "USD"),
+    "ethusd": ("ETH", "USD"),
+    "bnbusd": ("BNB", "USD"),
+    "solusd": ("SOL", "USD"),
+    "wall street 30": ("WALLST30", "USD"),
+    "us sp 500": ("SPX500", "USD"),
+    "us tech 100": ("US100", "USD"),
+    "us small cap 2000": ("US2000", "USD"),
+    # The index entries that genuinely diversify a dollar book, for the reason
+    # the older block below gives: a DAX CFD settles in euros and a FTSE CFD in
+    # sterling, so mapping them to USD out of habit would make them count
+    # against the one limit they do not load.
+    "germany 40": ("GER40", "EUR"),
+    "france 40": ("FRA40", "EUR"),
+    "europe 50": ("EU50", "EUR"),
+    "uk 100": ("UK100", "GBP"),
+    "japan 225": ("JP225", "JPY"),
+    "australia 200": ("AUS200", "AUD"),
+    # **HKD is pegged to the dollar**, so this diversifies the currency code and
+    # not the risk. Carried with its own code because that is what the broker
+    # settles in, and flagged here because a reader counting distinct quote
+    # currencies would otherwise score it as diversification.
+    "hong kong 50": ("HK50", "HKD"),
+    # The three crosses this desk trades that the table never had. The rest -
+    # `euraud`, `eurgbp`, `eurjpy`, `eurchf`, `gbpjpy`, `audjpy`, `chfjpy` -
+    # were already below and are not repeated here.
+    "audcad": ("AUD", "CAD"),
+    "audnzd": ("AUD", "NZD"),
+    "eurcad": ("EUR", "CAD"),
+    # ---------------------------------------------------------------------
+    # The retired service's feed names, kept so an older config still resolves.
     "eurusd": ("EUR", "USD"),
     "gbpusd": ("GBP", "USD"),
     "audusd": ("AUD", "USD"),
