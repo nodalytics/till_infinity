@@ -1,44 +1,23 @@
-# One node, because that is what the port left behind.
+# One node.
 #
 #   docker compose up -d                     the node, unarmed
 #   TRADING_LIVE=1 docker compose up -d      the node, able to place orders
 #
 # Config from .env; see .env.example.
 #
-# ── what this file used to say, and why it could not work ────────────────────
-#
-# Until 2026-11-01 it started six services - `prices collect`, `news collect`,
-# `statespace watch`, `journal listen`, `notify listen`, `trading run` - each a
-# subcommand of a `till-infinity` console script. **None of those existed.**
-# The 2,852-line CLI retired to `research/retire/bus/` with the services it
-# drove, and `pyproject.toml` declares no console script on purpose: a second
-# way to run the desk is a second thing to go stale. So every container in this
-# file failed immediately, and so did the image, whose `ENTRYPOINT` named the
-# same missing script.
-#
-# ── why one service and not six ──────────────────────────────────────────────
-#
-# The Nautilus port collapsed the topology rather than renaming it. `statespace`
-# is an `Actor`; the journal is an `Actor`; notifications is an `Actor`; the
-# desks are `Strategy`s. They share one kernel, one message bus, one cache and
-# one portfolio - and that sharing is the point, not packaging convenience. It
-# is what makes exposure answerable across venues at all, and `risk/exposure.py`
-# exists because what is at risk is a question about an *account* rather than
-# about a ticket. A process per service would put each one's positions out of
-# the others' sight.
+# **One process, not a service per part.** `statespace`, the journal and
+# notifications are `Actor`s and the desks are `Strategy`s, sharing one kernel,
+# bus, cache and portfolio. That sharing is what makes exposure answerable
+# across venues: what is at risk is a question about an *account*, and a
+# process per service would hide each one's positions from the others.
 #
 # **Redis is gone, and not by omission.** Nothing under `till_infinity/` imports
-# it any more; Nautilus's bus is in-process, with its own optional Redis backing
-# if a future deploy wants one. A bus nothing publishes to is a dependency that
-# can only fail.
+# it; Nautilus's bus is in-process. A bus nothing publishes to can only fail.
 #
-# ── what is still a separate container ───────────────────────────────────────
-#
-# The MT5 terminal, necessarily: it is a Windows program under Wine, so it
-# cannot live here. `TRADING_MT5_URL` points at its bridge - the lab box in
-# production - or the node starts one itself through
-# `MT5ExecClientConfig(dockerized_terminal=...)`, which is the shape the
-# Interactive Brokers adapter uses for TWS. See `adapters/mt5/terminal.py`.
+# The MT5 terminal stays a separate container because it is a Windows program
+# under Wine. `TRADING_MT5_URL` points at its bridge, or the node starts one
+# through `MT5ExecClientConfig(dockerized_terminal=...)`. See
+# `adapters/mt5/terminal.py`.
 
 services:
   node:
@@ -48,9 +27,8 @@ services:
     env_file: [.env]
     environment:
       TZ: UTC
-      # Where the node writes what it has established about itself, and where
-      # the healthcheck reads it. On the volume, so a probe can tell "not yet
-      # up" from "up two minutes ago and now gone".
+      # On the volume, so the healthcheck can tell "not yet up" from "up two
+      # minutes ago and now gone".
       TILL_STATUS_PATH: /app/.data/status.json
     volumes:
       # The journal, the status file and any online model state. Mount it or
@@ -59,13 +37,9 @@ services:
     # **Nothing arms this but `TRADING_LIVE`.** Unset, the node still connects,
     # reconciles, subscribes and computes - those are reads, and they are how
     # the desk is observed - but its risk engine sits in `HALTED` and every
-    # order is denied inside the engine, below the strategies and above the
-    # client. See `node/live._arm`.
-    #
-    # There is no `profiles:` guard any more. It guarded a `trading` service
-    # against being started by accident, and the guard that actually holds is
-    # the one in the risk engine: a profile is a thing somebody forgets to
-    # pass, and `HALTED` is a thing the venue never sees past.
+    # order is denied below the strategies and above the client. There is no
+    # `profiles:` guard: a profile is a thing somebody forgets to pass, and
+    # `HALTED` is a thing the venue never sees past. See `node/live._arm`.
 
 volumes:
   data:

@@ -31,7 +31,7 @@
   <br><b>Live alerts</b> - scan, or use the badge above
 </p>
 
-## In plain words
+## The idea
 
 Imagine a street where houses normally sell for about £300,000. One goes on the
 market at £380,000. You do not know whether it will sell - but you do know it is
@@ -50,11 +50,30 @@ seems to agree the thing is worth.
 is the whole point. A price far from fair value is a price somebody might trade
 back toward it.
 
+**Which way we trade follows from the gap, and nothing else decides it.**
+Fair price above the market and we buy, below it and we sell. That is
+deliberate rather than minimal: the gap is the only thing here that has to be
+estimated, so it is the only thing that can be wrong.
+
+**A price stops at a line because enough people agree, not because the line is
+special.** This is the whole difference between this and reading shapes off a
+chart. Price turns at £1,000 because enough of the market agrees, for now, that
+the thing is worth about £1,000 - so the turn is a consequence of what people
+think it is worth, and a line that stops working was a claim about value that
+turned out to be wrong. A shape on a chart cannot be wrong about anything; it
+either repeats or it does not.
+
 **It measures that gap in "how unusual is this", not in pounds.** Gold moving
 $50 and the euro moving half a cent sound nothing alike, but they can be equally
 unusual for the thing in question. Converting everything to "how unusual" is
 what lets one set of rules work on gold, currencies, and crypto without being
 retuned for each.
+
+**A long way from fair price is an opportunity, not a promise.** Nothing drags
+a price back because it has gone far: it arrives at a level within twenty bars
+**44.9%** of the time, against **49.5%** for an arbitrary price the same
+distance away. Being far away is a reason to be interested, and not a reason to
+expect a return.
 
 ### What it can and cannot tell you
 
@@ -100,36 +119,17 @@ once tested well.
 The rest of this README is the detailed version of the above, for anyone who
 wants the mechanics and the numbers.
 
-## The idea
-
-**A level is the market's fair price, and the turn is what that costs.**
-
-Price does not stop at a level because the line is special. It stops because
-enough of the market agrees, for now, that the instrument is worth about that
-much - and a price away from it is a price somebody is prepared to trade back.
-The turn is the *consequence* of fair value, not the definition of it: the
-level is a claim about value that can be wrong, rather than a shape on a chart
-that either repeats or does not.
-
-**So we price the market, and take a stance relative to where that price
-lands.** Fair value above the market and the stance is long; below it and the
-stance is short. The distance between the two is what the trade is worth, and
-it is the only quantity that has to be estimated.
+### What it forecasts, and what it does not
 
 Everything is measured in **volatility units**, so gold and EURUSD, 3m and 1w
-compare without per-instrument tuning - and "how far from fair value" means
-the same thing everywhere.
+compare without per-instrument tuning - and "how far from fair value" means the
+same thing everywhere.
 
-Two things have been tested rather than asserted. **A level's own record
-predicts whether it holds** - hold rate on the arriving side separates 59% to
-92% across four bands - though it is the record's *conviction* that carries
-this and not its direction: over 293,252 live resolutions the raw reading scores
-AUC 0.5005 and `|record - 0.5|` scores **0.6006**. **Price is not drawn to a
-level**: reached within twenty bars 44.9% of the time against 49.5% for an
-arbitrary price the same distance away. So the distance is an *opportunity*, not
-a magnet.
-
-### What it forecasts, and what it does not
+**A level's own record predicts whether it holds** - hold rate on the arriving
+side separates 59% to 92% across four bands - though it is the record's
+*conviction* that carries this and not its direction: over 293,252 live
+resolutions the raw reading scores AUC 0.5005 and `|record - 0.5|` scores
+**0.6006**. The no-magnet figures above are the control for it.
 
 The valuation fixes the side by arithmetic. On top of that sit two families that
 genuinely predict, both measured on the desk's own record rather than on stored
