@@ -51,7 +51,7 @@ per-instrument cells on that rule survive Benjamini-Hochberg.
 | does `smc-bos-causal` exit on a 16-bar clock? | **no, 96.** 16 is `vol-impulse`'s. A 5-bar lag eats 5.2% of one hold and 31.3% of the other | mechanic |
 | what does the delay cost to execute? | **nothing measurable.** `N20` pins cost in R to 1/20 by construction, and the measured 0.049 is flat across k to three decimals - a later entry moves the entry, not the stop distance it is divided by | reading |
 | can `walk_with_bar_geometry` null a barrier race? | **no.** Random anchors on it read **-0.2055R** where optional stopping requires zero; the same anchors on real bars read **-0.0004R** | **defect** |
-| where does the test go blind? | it detects a planted conditional continuation at 2.0 volatility units over a 96-bar hold and not at 1.0; the measured interval excludes anything above about **0.2 units** | power |
+| where does the test go blind? | it detects a planted conditional continuation at 2.0 volatility units over a 96-bar hold and not at 1.0; the measured interval excludes anything above **0.24 to 0.41 units**, depending on which arm's zero is the baseline | power |
 | readable at 1d? | **no.** 128 trades, mean +1.44R, interval [+0.28, +2.83], median -1.000 | unmeasurable |
 
 ## What was run
@@ -421,11 +421,14 @@ units, over the whole 96-bar hold.
   unit**, and the test's own 5% detection threshold on this sample is a plant of
   roughly **2.0 units**. It does not see 1.0.
 - The measured `c2` on real `smc-bos-causal` is -0.0201 with an upper bound of
-  **+0.0022R**, which on that slope corresponds to a planted effect of about
-  **0.2 volatility units**. So the *exclusion* is far tighter than the
-  detection threshold, because the real reading is negative and its interval is
-  narrow: the data rules out a confirmation effect worth more than about a fifth
-  of a bar's range of extra travel over a day's hold.
+  **+0.0022R**. The fitted line is `diff = -0.0051 + 0.0177 g`, so that upper
+  bound sits at **g = 0.41**; measured instead as an excess over the real-bars
+  placebo's own `c3` difference of -0.0020, it sits at **g = 0.24**. So the
+  *exclusion* is four to eight times tighter than the detection threshold,
+  because the real reading is negative and its interval narrow: the data rules
+  out a confirmation worth more than **a quarter to two fifths of a bar's
+  range** of extra travel over a day's hold, and the two figures differ only in
+  which arm's zero is taken as the baseline.
 - **A pure wait cannot select and the sweep shows it**: `k2` is flat at -0.015
   to -0.019 across the whole grid. So is `c5`, which fills 90% of signals and
   therefore barely refuses anything. Only an arm that *refuses* can read a
