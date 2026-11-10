@@ -675,7 +675,10 @@ class ExitMechanism:
 
             instrument = str(getattr(event, "instrument_id", ""))
             side = self._announced_side(event)
-            if side and extra.get("side") is None:
+            # **The word wins over anything numeric.** A caller handing in a
+            # Nautilus side enum passes `"2"`, and a reader of `side 2` has to
+            # know which enum and which direction it counts from.
+            if side and str(extra.get("side") or "").lower() not in ("long", "short"):
                 extra["side"] = side
             payload = alert(
                 shape="trade",
@@ -773,7 +776,14 @@ class ExitMechanism:
         self._announce(
             "opened",
             event,
-            side=str(getattr(event, "entry", "")),
+            # **No `side=` here.** `PositionOpened.entry` is an `OrderSide`,
+            # which is an int enum on the Cython model: `str(OrderSide.SELL)`
+            # is `"2"`, and a value passed in wins over the word `_announce`
+            # computes - so a live alert read `side 2` under a title that
+            # already said `short`. The same shape as `order.order_type`
+            # reading `"3"` against `"STOP_MARKET"` and
+            # `BarSpecification.aggregation` reading `"12"` against
+            # `"MINUTE"`, both found in this repo on 2026-11-10.
             quantity=str(getattr(event, "quantity", "")),
             price=str(getattr(event, "last_px", "")),
             stop=round(float(intent.stop), 6),
