@@ -108,10 +108,10 @@ counted volume-dependent on its prose:
 | **volume** | 100 of 345 (29.0%) | no input on this venue |
 | **lookahead** | 28 of 345 (8.1%), of which **21 naked** | `barmerge.lookahead_on`. The documented *safe* idiom pairs it with `close[1]`, so 28 is the upper bound and 21 is the count with no offset in front of it - a higher-timeframe bar read before it closed, which draws history the live chart cannot reproduce |
 | **cost** | 6 of 345 (1.7%) | mentions commission, slippage or spread anywhere |
-| **strategy()** | 15 of 345 (4.3%) | specifies an entry and an exit at all |
+| **strategy()** | 15 of 345 (4.3%) | is a `strategy`, so it names an entry and an exit a backtest could run. The other 330 are `indicator` scripts: many plot a buy or sell marker, none states a stop, a target or a size |
 
 **Those last two numbers are the survey's finding.** 95.7% of the catalogue's most boosted scripts
-name no trade, and 98.3% never mention what one costs - and two of the six that do are position-size
+name no entry-and-exit a backtest could run, and 98.3% never mention what one costs - and two of the six that do are position-size
 calculators. That is not a criticism of the authors: TradingView's feed carries no bid-ask, so a Pine
 author has nothing to price with. It is the structural reason the catalogue fails here, where
 `triage.md` found that every strategy's loss is its spread and
@@ -228,7 +228,7 @@ instead of the author's.
 | Harmonic patterns: Gartley, bat, butterfly, crab, PRZ | five-leg ratio patterns mark reversal zones | zigzag legs matched to ratio windows; entry in the PRZ | 0.017 | no study by name. Its **precondition** is refuted: [pivot-families.md](pivot-families.md) finds no clustering at the ratios the patterns use, and [chart-patterns.md](chart-patterns.md) uses the same zigzag machinery | **already refuted at the precondition.** Measuring the patterns adds a trial for a claim whose input is flat |
 | Classical patterns: head and shoulders, triangles, flags, wedges, double tops, cup and handle | a shape predicts the break direction and the measured move | detectors on confirmed pivots; the measure rule as target | 0.017 | [chart-patterns.md](chart-patterns.md) (**18 of 18** break rates reproduced by a random walk; H&S breaks down 73.2% real, **74.5%** on an iid shuffle); [patterns.md](patterns.md); [eve-and-adam.md](eve-and-adam.md) | **already refuted** |
 | Candlestick patterns (35,039) | a bar's shape signals rejection or continuation | engulfing, pin bar, doji, hammer, three soldiers, by body and wick fractions | 0.017 | [letter-shapes.md](letter-shapes.md) (**0 of 384** cells survive BH); [fuzzy-logic.md](fuzzy-logic.md) (-0.110R over 210,048 trades, crisp twin -0.100R); [fractal-twins.md](fractal-twins.md) (shapes call volatility, not direction) | **already refuted** |
-| Elliott Wave (incl. the frame's top new script, *Elliott Wave Impulse 12345*) | impulse and corrective counts with Fibonacci targets | a labelled count plus ratio targets | 0.017 | [pivot-families.md](pivot-families.md): the falsifiable piece - Fibonacci leg-ratio clustering - is null, and the count itself is unidentifiable because the rule set can label almost any path | **already refuted** on its testable claim; the schema is not falsifiable |
+| Elliott Wave (*Elliott Wave [LuxAlgo]* 17,934; *Elliot Wave Oscillator* 16,501) | impulse and corrective counts with Fibonacci targets | a labelled count plus ratio targets | 0.017 | [pivot-families.md](pivot-families.md): the falsifiable piece - Fibonacci leg-ratio clustering - is null, and the count itself is unidentifiable because the rule set can label almost any path | **already refuted** on its testable claim; the schema is not falsifiable |
 | Wyckoff (8,280) | effort versus result, phases, spring and UTAD | volume against range at the end of a leg | 0.017 | [pivot-families.md](pivot-families.md): effort-vs-result AUC **0.5693** against **0.5791 on block-shuffled bars** - it reads *worse* than its own null. Also volume-dependent as published | **already refuted** |
 | Gann: angles, squares, fans | price and time move on fixed ratios | angles from a pivot at a chosen scale | 0.017 | [pivot-families.md](pivot-families.md): the move-vs-horizon exponent is **0.5577** against 0.5788 block-shuffled; a calibrated angle is off by about 2.7x over a 10x horizon | **already refuted** |
 | RSI/MACD divergence detectors (30,693; *VuManChu Cipher B* 24,951) | momentum diverging from price precedes a turn | pivots on the oscillator against pivots on price | 0.017 | [confirm.md](confirm.md) (divergence is among the 45 gates: **17 of 8,366** cells, 4 of 5 survivors fail deflation); [origin-zones.md](origin-zones.md) (RSI and SMT divergence as triggers, all negative) | **already refuted.** *Cipher B* also carries a naked `lookahead_on` |
@@ -322,16 +322,23 @@ is not a market reading.
 | Volatility 75 Index | 0.0072 | 0.0131 | 0.0301 | 0.0099 | 0.0170 | 0.0246 |
 | the other five synthetics | 0.0095-0.0397 | 0.0111-0.0653 | 0.0036-0.0476 | 0.0146-0.0556 | 0.0139-0.0410 | 0.0039-0.0544 |
 
-- **The incumbent reads 0.42-0.47 on the three real markets and 0.014-0.047 on the seven synthetics**,
-  whose volatility is constant by construction ([deriv-variants.md](deriv-variants.md): they realise
-  0.99-1.01 of their named sigma). That is a control which **must** come back empty, and it does.
+- **The incumbent reads 0.42-0.47 on the three real markets and 0.014-0.047 on the seven synthetics.**
+  The standing rule on this desk is that **Deriv synthetics are a real market and never a control**
+  ([findings.md](findings.md), set 2026-09-29), and that is not being set aside here: what the seven
+  Volatility and Jump indices supply is one **named property** - a published constant sigma, which
+  [deriv-variants.md](deriv-variants.md) measured them realising at 0.99-1.01 - so a *volatility*
+  forecaster has nothing to find on them and an arm that must come back empty does. The control proper
+  is the iid walk, which reads <=0.026 on every reading. `a-control-is-only-for-a-named-property`: the
+  property is constant volatility, and nothing else about these feeds is being used as a null.
 - **The squeeze bit reads 0.016-0.065 on the same three real markets, against 0.016-0.024 for its own
   block-shuffled twin.** It is at its shuffle. One eighth of the incumbent's rank correlation, and
   nothing that separates from a null which keeps its serial structure and breaks only its alignment.
 - The continuous ratio is no better here (0.008-0.079 against shuffles of 0.012-0.047). On this
   target, at this horizon, on these ten instruments, the whole family is flat; what
   `drive-q-from-the-range` found is a *within-strata* effect on FX and equities, which these three
-  index CFDs and seven synthetics are not.
+  index CFDs and seven synthetics are not. **So this run does not refute the continuous ratio**, and is
+  not read as doing so: it bounds the bit against the ratio and both against the incumbent, on the
+  instruments the deep stores reach.
 - **The iid-walk arm reads |rho| <= 0.026 on every reading**, as it must.
 - **Power.** On a target built to depend on the ratio and nothing else, the harness recovers
   |rho| **0.7460** [0.7148, 0.7765] for the ratio and **0.5499** [0.5245, 0.5988] for the bit. So the
