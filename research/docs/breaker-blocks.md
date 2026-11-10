@@ -168,11 +168,11 @@ tail control.
 
 ### The arms, pooled over the traded book
 
-`P|res` is `P(>= 2R)` among trades that reached a barrier; a finite hold makes
-`1/(1+N)` an upper bound rather than the rate, and `P|res` is the quantity a
-walk must put on 0.3333.
+"`P` given resolved" is `P(>= 2R)` among the trades that reached a barrier at
+all; a finite hold makes `1/(1+N)` an upper bound rather than the rate, and the
+conditional rate is the quantity a walk must put on 0.3333.
 
-| arm | n | `P(>= 2R)` | `P|res` | mean R, day-blocked | cost | net |
+| arm | n | `P(>= 2R)` | `P` given resolved | mean R, day-blocked | cost | net |
 |---|---:|---:|---:|---|---:|---:|
 | **breaker (`flip`)** | 23,730 | **0.2979** | 0.3164 | **-0.0265** [-0.0471, -0.0032] | 0.0531 | -0.0795 |
 | breaker, confirmed | 4,513 | 0.2725 | 0.3059 | -0.0332 [-0.0744, +0.0097] | 0.0462 | -0.0794 |
@@ -454,7 +454,7 @@ screen wants a week of quotes and does not yet have one.
   and GARCH arms are read beside it rather than instead of it.
 * **No ticks.** Every both-barriers-in-one-bar race is given to the stop, which
   is conservative and identical across arms, and is why the walks read 0.31
-  rather than 0.3333 on `P|res`.
+  rather than 0.3333 conditional on resolving.
 * **One snapshot of cost**, as above.
 * **The multiplicity count.** 98 instrument-clock cells, 432 sweep cells, 4
   arms, 5 null series, 2 zone populations. Nothing was selected on; the full grid
