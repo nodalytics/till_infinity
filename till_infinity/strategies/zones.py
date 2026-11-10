@@ -317,6 +317,36 @@ class Zones:
         for gone in [at for at in self.flipped if at not in live]:
             del self.flipped[gone]
 
+    def _tally_extra(self) -> str:
+        """The indicator's state on the desk's tally line.
+
+        **A signal count of zero cannot tell "no crossings" from "no zones
+        yet".** `structure.py` has the same method for the same reason and
+        records what it cost: on 2026-11-07 all 32 feeds had zero confirmed
+        swings after 7.8 hours and nothing said so. This rule is worse placed
+        than that one - `BjorgumLevels` needs `left + right` bars for a pivot
+        and an ATR window on top, so the `script` preset cannot nominate a
+        zone until about 50 bars have closed, which is twelve hours of 15m.
+
+        Asked of the live desk within fifteen minutes of shipping `zones`: the
+        tally read `taken=0 refused=0 gates={}` and there was no way to tell a
+        cold indicator from a quiet market. Every number here was already
+        being counted and none of it was printed.
+        """
+        live = len(self.levels.zones) if self.levels.initialized else 0
+        return (
+            f" bars={self.counts['bars']}"
+            f" unwarmed={self.counts['unwarmed']}"
+            f" zones={live}"
+            f" signals={self.counts['signals']}"
+            + (f" dropped={self.counts['duty_dropped']}" if self.counts.get("duty_dropped") else "")
+            + (
+                f" turned={self.counts['closed_on_turn']}"
+                if self.counts.get("closed_on_turn")
+                else ""
+            )
+        )
+
     def _kept(self, zone: Any, bar: Bar) -> bool:
         """Whether this signal survives the duty-cycle draw.
 
