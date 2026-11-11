@@ -2521,6 +2521,168 @@ class TestSubmittingAnOrder:
         assert not rig.events(OrderAccepted)
         assert "no open EURUSD position" in rig.events(OrderRejected)[0].reason
 
+    async def test_a_reduce_only_market_order_closes_by_ticket_rather_than_opening(self):
+        """**The one that cost money.** This account is a hedging account -
+        `test_mt5_live.py` records the live terminal answering `margin_mode: 2`
+        - and on a hedging account an opposite-side market order opens a second
+        position rather than closing the first.
+
+        So every exit this desk sent went out as a bare `SELL` and the terminal
+        did what it was asked: on 2026-11-11 a `ZonesEdge-BTCUSD` long reported
+        closed at -3.01 while the broker was left holding a short, with no stop,
+        no target and no rule watching it.
+
+        `Bridge.close_position` sends the opposite deal **with `position` set**,
+        which is the one thing that makes MT5 reduce. It had existed and been
+        tested the whole time and this client had never called it.
+        """
+        terminal = Terminal(positions=[_held()])
+        rig = make_exec(terminal.bridge)
+        order = _factory().market(
+            EURUSD_ID, OrderSide.SELL, Quantity.from_str("0.50"), reduce_only=True
+        )
+        await rig.client._submit_order(_submit(rig, order))
+
+        assert not rig.bridge.called("order"), "a close must not be sent as a new order"
+        assert rig.bridge.called("close_position"), "the close route was not used"
+        assert terminal.positions == [], "the position is still open at the broker"
+        filled = rig.events(OrderFilled)
+        assert len(filled) == 1, f"{rig.events(OrderRejected)}"
+        assert float(filled[0].last_qty) == pytest.approx(0.50)
+        assert float(filled[0].last_px) == pytest.approx(1.08500)
+
+    async def test_a_close_names_the_ticket_and_the_volume(self):
+        """A close that did not carry both would be a close of something else.
+
+        MT5 reduces the position the request names, so the ticket is the whole
+        instruction; the volume is what makes a partial close partial rather
+        than a flatten.
+        """
+        terminal = Terminal(positions=[_held(ticket=77, volume=1.0)])
+        rig = make_exec(terminal.bridge)
+        order = _factory().market(
+            EURUSD_ID, OrderSide.SELL, Quantity.from_str("0.40"), reduce_only=True
+        )
+        await rig.client._submit_order(_submit(rig, order))
+
+        sent = [call for call in rig.bridge.calls if call[0] == "close_position"]
+        assert sent, "the close route was not used"
+        assert sent[0][1] == (77, 0.40), f"sent {sent}"
+        assert terminal.positions[0]["volume"] == pytest.approx(0.6), "it flattened a partial"
+
+    async def test_a_close_walks_a_hedged_stack_until_the_volume_is_met(self):
+        """**Hedging holds a stack, and the engine holds one position.**
+
+        A rule that adds to a winner leaves several tickets on one symbol while
+        Nautilus carries one aggregate, so a close for the aggregate quantity
+        is not one ticket's close. Oldest first, which is what a reader means
+        by closing a position.
+        """
+        terminal = Terminal(
+            positions=[
+                _held(ticket=10, volume=0.30, time=100),
+                _held(ticket=11, volume=0.30, time=200),
+            ]
+        )
+        rig = make_exec(terminal.bridge)
+        order = _factory().market(
+            EURUSD_ID, OrderSide.SELL, Quantity.from_str("0.50"), reduce_only=True
+        )
+        await rig.client._submit_order(_submit(rig, order))
+
+        closed = [call[1] for call in rig.bridge.calls if call[0] == "close_position"]
+        assert closed == [(10, 0.30), (11, 0.20)], f"closed {closed}"
+        assert [r["ticket"] for r in terminal.positions] == [11]
+        assert terminal.positions[0]["volume"] == pytest.approx(0.10)
+        assert float(rig.events(OrderFilled)[0].last_qty) == pytest.approx(0.50)
+
+    async def test_a_close_prefers_the_ticket_the_engine_named(self):
+        """**Which of a stack the engine actually meant.** Oldest-first is the
+        fallback, not the rule: `Strategy.close_position` submits with
+        `position_id=position.id`, and this client's own fills set
+        `venue_position_id` to the MT5 ticket - so the id resolves straight
+        back to the position being closed even when it is not the oldest.
+        """
+        terminal = Terminal(
+            positions=[
+                _held(ticket=20, volume=0.50, time=100),
+                _held(ticket=21, volume=0.50, time=200),
+            ]
+        )
+        rig = make_exec(terminal.bridge)
+        order = _factory().market(
+            EURUSD_ID, OrderSide.SELL, Quantity.from_str("0.50"), reduce_only=True
+        )
+        # The engine's position for this order points at the newer ticket.
+        rig.client._named_ticket = lambda _order: 21
+
+        await rig.client._submit_order(_submit(rig, order))
+
+        closed = [call[1] for call in rig.bridge.calls if call[0] == "close_position"]
+        assert closed == [(21, 0.50)], f"closed {closed}"
+        assert [r["ticket"] for r in terminal.positions] == [20], "it closed the wrong leg"
+
+    async def test_a_close_will_not_touch_a_position_on_its_own_side(self):
+        """**The check whose absence let a close open a position.**
+
+        A `SELL` closes a long. A short on the same symbol is not something a
+        reduce-only sell may touch, and under hedging both can be open at once
+        - which is exactly the state the bug leaves behind.
+        """
+        terminal = Terminal(positions=[_held(ticket=12, type=1)])
+        rig = make_exec(terminal.bridge)
+        order = _factory().market(
+            EURUSD_ID, OrderSide.SELL, Quantity.from_str("0.50"), reduce_only=True
+        )
+        await rig.client._submit_order(_submit(rig, order))
+
+        assert not rig.bridge.called("close_position"), "it closed a position facing the same way"
+        assert not rig.bridge.called("order"), "it fell back to opening one"
+        assert "no open EURUSD position" in rig.events(OrderRejected)[0].reason
+        assert len(terminal.positions) == 1
+
+    async def test_a_close_with_nothing_to_close_is_rejected_not_sent(self):
+        """Believing this process holds what the broker does not is the state
+        to surface. Falling back to a plain market order is the behaviour being
+        fixed, so it must not be the failure path either."""
+        rig = make_exec(Terminal(positions=[]).bridge)
+        order = _factory().market(
+            EURUSD_ID, OrderSide.SELL, Quantity.from_str("0.50"), reduce_only=True
+        )
+        await rig.client._submit_order(_submit(rig, order))
+
+        assert not rig.bridge.called("order")
+        assert not rig.events(OrderFilled)
+        assert "no open EURUSD position" in rig.events(OrderRejected)[0].reason
+
+    async def test_a_close_only_claims_what_the_terminal_confirmed(self):
+        """A refused close must not report a fill. The engine believing it is
+        flat while the broker is not is the whole failure - a fabricated fill
+        reproduces it through a different door."""
+        rig = make_exec(Terminal(positions=[_held()], close_position={}).bridge)
+        order = _factory().market(
+            EURUSD_ID, OrderSide.SELL, Quantity.from_str("0.50"), reduce_only=True
+        )
+        await rig.client._submit_order(_submit(rig, order))
+
+        assert not rig.events(OrderFilled), "an unconfirmed close reported a fill"
+        assert rig.events(OrderRejected)
+
+    async def test_a_market_order_that_is_not_reduce_only_still_opens(self):
+        """**The control, and it is what keeps the change scoped.**
+
+        Without it, "a reduce-only market order closes" cannot be told from
+        "every market order is quietly turned into a close" - which would make
+        the desk unable to open anything at all.
+        """
+        terminal = Terminal(positions=[_held()])
+        rig = make_exec(terminal.bridge)
+        await rig.client._submit_order(_submit(rig, _market(OrderSide.SELL)))
+
+        assert rig.bridge.called("order"), "an entry was not sent"
+        assert not rig.bridge.called("close_position")
+        assert len(terminal.positions) == 1
+
     async def test_a_stop_that_is_not_reduce_only_is_still_refused(self):
         """**The control, and it is what keeps the change scoped.**
 
@@ -2622,6 +2784,7 @@ class Terminal:
             "modify": self._modify,
             "modify_order": self._move,
             "cancel": self._cancel,
+            "close_position": self._close,
         }
         wiring.update(responses)
         self.bridge = FakeBridge(**wiring)
@@ -2643,6 +2806,32 @@ class Terminal:
     def _cancel(self, ticket):
         self.pending = [r for r in self.pending if r["ticket"] != ticket]
         return DONE_ENVELOPE
+
+    def _close(self, ticket, volume=None):
+        """Reduce or remove a position, **by ticket**, as MT5 does.
+
+        The whole point of the route: a close names the position it reduces.
+        A fake that ignored the ticket could not tell a close from a new
+        order, which is the bug this models.
+        """
+        for row in self.positions:
+            if row["ticket"] != ticket:
+                continue
+            left = float(row["volume"]) - float(volume if volume is not None else row["volume"])
+            if left > 1e-12:
+                row["volume"] = left
+            else:
+                self.positions = [r for r in self.positions if r["ticket"] != ticket]
+            return {
+                "success": True,
+                "result": {
+                    "retcode": 10009,
+                    "order": 900 + ticket,
+                    "deal": 800 + ticket,
+                    "price": 1.08500,
+                },
+            }
+        return {"success": False, "result": {"retcode": 10013, "comment": "no such position"}}
 
 
 class TestModifyAndCancel:
