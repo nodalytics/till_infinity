@@ -433,7 +433,10 @@ def size(
             # every one with `__new__`, so `Profile.__init__` never runs.
             settings=settings,
         )
-        scale = scaling.combined(*terms.values())
+        scale = scaling.combined(
+            *terms.values(),
+            ceiling=float(getattr(settings, "size_ceiling", 1.0) or 1.0),
+        )
 
     found = sizing.lots(
         spec,

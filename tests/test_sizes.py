@@ -742,3 +742,83 @@ def test_equity_refuses_to_add_two_currencies():
             return {"USD": _Money(10_000.0), "JPY": _Money(1_500_000.0)}
 
     assert equity_of(_Two()) == 0.0
+
+
+# ------------------------------------------------------- aggressive sizing
+
+
+def _aggressive(ceiling: float, monkeypatch) -> object:
+    """A settings with volatility targeting on, which is the only reading the
+    ceiling can act on. Without `SIZING_MULTIPLIERS` the whole path returns
+    1.0 before it reads anything, so a test that forgot this would pass for
+    the wrong reason."""
+    monkeypatch.setenv("SIZING_MULTIPLIERS", "volatility")
+    return Settings(volatility_target_bps=20.0, size_ceiling=ceiling)
+
+
+def test_the_ceiling_raises_the_lot_on_a_quiet_instrument(monkeypatch):
+    """**The end-to-end claim.** `buy()` carries `vol_bps` 10 against a target
+    of 20, so the instrument is half as volatile as the target and the ratio
+    is 2.0 - truncated to 1.0 today, and 1.5 under a ceiling of 1.5.
+
+    Asserted on the volume and not on the multiplier, because the scale is
+    applied to the *risk fraction* and `lots` then rounds down to the broker's
+    volume step: a test on the scalar would pass over a path where the number
+    never reached a size.
+    """
+    from till_infinity.strategies.profile import Profile
+
+    # Built with `__new__`, the way production builds every rule profile -
+    # which is the construction that took the node down 13 times when
+    # `multipliers` read `self.settings`.
+    bare = Profile.__new__(Profile)
+
+    plain = sized(settings=_aggressive(1.0, monkeypatch), profile=bare)
+    loud = sized(settings=_aggressive(1.5, monkeypatch), profile=bare)
+    assert plain.volume > 0.0
+    assert loud.volume > plain.volume, "the ceiling did not reach a size"
+    # The exact lots, not a ratio. `buy()`'s own docstring sets the arithmetic:
+    # the stop costs 220 per lot, so a 25 budget buys 0.1136 and a 1.5x budget
+    # of 37.5 buys 0.1704 - and **both round down to the volume step**, which
+    # is why 0.17 over 0.11 is 1.545 and not 1.5. A ratio assertion here would
+    # be a test of the broker's step, not of the ceiling.
+    assert plain.volume == pytest.approx(0.11)
+    assert loud.volume == pytest.approx(0.17)
+    assert loud.features["size_volatility"] == pytest.approx(1.5)
+
+
+def test_the_money_cap_still_binds_above_the_ceiling(monkeypatch):
+    """**It raises the fraction and not the stated cash loss.** A ceiling that
+    could walk past `TRADING_MAX_RISK_MONEY` would make the one number a
+    reader checks before a deploy stop meaning anything."""
+    from till_infinity.strategies.profile import Profile
+
+    # Built with `__new__`, the way production builds every rule profile -
+    # which is the construction that took the node down 13 times when
+    # `multipliers` read `self.settings`.
+    bare = Profile.__new__(Profile)
+
+    capped = Settings(volatility_target_bps=20.0, size_ceiling=3.0, max_risk_money=25.0)
+    monkeypatch.setenv("SIZING_MULTIPLIERS", "volatility")
+    found = sized(settings=capped, profile=bare)
+    assert found.risk_money <= 25.0 + 1e-9, f"the cash cap was passed: {found.risk_money}"
+
+
+def test_a_loud_instrument_is_still_cut_with_the_ceiling_up(monkeypatch):
+    """The control. "The ceiling raises a quiet instrument" must be
+    distinguishable from "the ceiling disables volatility targeting"."""
+    from till_infinity.strategies.profile import Profile
+
+    # Built with `__new__`, the way production builds every rule profile -
+    # which is the construction that took the node down 13 times when
+    # `multipliers` read `self.settings`.
+    bare = Profile.__new__(Profile)
+
+    quiet = sized(settings=_aggressive(2.0, monkeypatch), profile=bare)
+    noisy = sized(
+        buy(features={"vol_bps": 80.0}),
+        settings=_aggressive(2.0, monkeypatch),
+        profile=bare,
+    )
+    assert noisy.volume < quiet.volume
+    assert noisy.features["size_volatility"] == pytest.approx(0.25)

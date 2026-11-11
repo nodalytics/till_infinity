@@ -435,3 +435,77 @@ def test_without_settings_it_names_the_problem_rather_than_raising_an_attribute_
     monkeypatch.setenv(MULTIPLIERS_ON, "crowding")
     with pytest.raises(ValueError, match="no settings"):
         Bare.__new__(Bare).multipliers({}, "eurusd")
+
+
+# ----------------------------------------------------- aggressive sizing
+
+
+def test_the_ceiling_is_one_by_default_and_that_is_reduction_only():
+    """**Off is a true no-op.** Every deployment before this setting existed
+    ran a reduction-only book, so the default has to reproduce it exactly -
+    a flag that quietly changes size on a redeploy is the one shape of change
+    nobody can audit after the fact."""
+    from till_infinity.risk import scaling
+    from till_infinity.strategies.config import Settings
+
+    assert Settings().size_ceiling == 1.0
+    # An instrument at half the target: the ratio is 2.0 and is cut to 1.0.
+    assert scaling.by_volatility(50.0, 100.0) == 1.0
+    assert scaling.combined(1.5, 0.8) == pytest.approx(0.8)
+
+
+def test_the_ceiling_lets_the_quiet_half_of_the_same_ratio_through():
+    """`target / vol` is **one formula**. Clamping it at 1.0 keeps the cut
+    when an instrument is loud and discards the increase when it is quiet,
+    which is an asymmetric estimator and not conservatism: a desk that halves
+    at twice the target and never doubles at half of it runs a lower average
+    risk than `TRADING_RISK_FRACTION` says, by an amount no setting records.
+    """
+    from till_infinity.risk import scaling
+
+    # Twice as quiet as the target earns twice the size, up to the ceiling.
+    assert scaling.by_volatility(50.0, 100.0, 2.0) == pytest.approx(2.0)
+    # Four times as quiet still earns only the ceiling. The bound is required
+    # rather than optional: the ratio goes to infinity on a dead instrument.
+    assert scaling.by_volatility(25.0, 100.0, 1.5) == pytest.approx(1.5)
+    # And the loud half is untouched by the ceiling, which is the half that
+    # was never in question.
+    assert scaling.by_volatility(200.0, 100.0, 2.0) == pytest.approx(0.5)
+
+
+def test_the_ceiling_bounds_the_product_and_the_floor_still_holds():
+    from till_infinity.risk import scaling
+
+    assert scaling.combined(1.5, 0.8, ceiling=1.5) == pytest.approx(1.2)
+    assert scaling.combined(1.5, 1.5, ceiling=1.5) == pytest.approx(1.5), "the ceiling was passed"
+    assert scaling.combined(0.01, 0.01, ceiling=2.0) == pytest.approx(scaling.FLOOR)
+
+
+def test_a_ceiling_below_one_cannot_shrink_the_book():
+    """A ceiling is the *top* of the range and never a cut. Read as a scale,
+    `TRADING_SIZE_CEILING=0.5` would halve every position on the desk; read as
+    a ceiling it is simply not raising anything, which is what the name says.
+    """
+    from till_infinity.risk import scaling
+
+    assert scaling.by_volatility(200.0, 100.0, 0.5) == pytest.approx(0.5)
+    assert scaling.combined(0.8, ceiling=0.0) == pytest.approx(0.8)
+    assert scaling.combined(1.0, ceiling=0.5) == pytest.approx(1.0)
+
+
+def test_no_other_scaler_is_allowed_above_one():
+    """**What keeps the lever to one measured quantity.** Every other scaler's
+    upper half would be a new claim nothing here measured - more edge earns
+    more size, above the high-water mark earns more size - and the second of
+    those is a martingale. `refit-the-parameter-a-lever-multiplies` is why
+    eight levers at once cannot be read at all.
+    """
+    from till_infinity.risk import scaling
+
+    assert scaling.by_edge(10.0, 1.0) == 1.0, "edge sized up"
+    assert scaling.by_drawdown(100.0, 200.0, 0.2) == 1.0, "equity above the peak sized up"
+    assert scaling.by_regime(1.0, 0.1) == 1.0
+    assert scaling.by_spike(0.99, 0.9, 2.0) == 1.0
+    assert scaling.by_slippage(0.5) == 1.0, "an undershooting stop sized up"
+    assert scaling.by_interval("15m", (("15m", 3.0),)) == 1.0
+    assert scaling.crowding("eurusd", (), 2.0) == 1.0

@@ -728,6 +728,9 @@ class Profile:
             scaling.by_volatility(
                 float(features.get("ewma_tr_bps") or features.get("vol_bps") or 0.0),
                 settings.volatility_target_bps,
+                # The aggressive half of the same ratio. 1.0 is reduction-only
+                # and is what every deployment ran before the setting existed.
+                float(getattr(settings, "size_ceiling", 1.0) or 1.0),
             ),
             # How far this instrument's volatility sits from its own normal.
             # Both tails are worse for a level holding, so this is a distance
