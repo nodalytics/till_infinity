@@ -224,11 +224,25 @@ def _leg_id(ticket: Any, order: Any, entry: Any) -> str:
 class MT5ExecutionClient(LiveExecutionClient):
     """The order side of the venue.
 
-    **Net, not hedging.** MT5 accounts can be either and the distinction is
-    not cosmetic: on a netting account a second buy adds to one position and on
-    a hedging account it opens a second. `OmsType.NETTING` is declared here
-    because that is what the Deriv account is; a hedging account would need
-    `HEDGING` and would change what `generate_position_status_reports` means.
+    **The account is hedging and this declares `NETTING`, knowingly.** The
+    live terminal answers `margin_mode: 2` - `ACCOUNT_MARGIN_MODE_RETAIL_
+    HEDGING` - recorded in `tests/test_mt5_live.py` beside the `trade_mode`
+    the demo guard reads. The distinction is not cosmetic: on a netting
+    account a second buy adds to one position, and on a hedging account it
+    opens a second, so the engine can carry one aggregate where the broker
+    holds a stack.
+
+    The expensive half of that was the *exit*, and it is fixed: a market order
+    on the opposite side does not close a hedged position, it opens one facing
+    the other way, which is why `_close_out` routes every reduce-only market
+    order through `Bridge.close_position` and its ticket. See that method for
+    what it cost.
+
+    What is left is the bookkeeping. Declaring `HEDGING` would give each
+    broker ticket its own Nautilus position and change what
+    `generate_position_status_reports` means, what `cache.positions_open()`
+    hands a rule, and what `exits.Held` is keyed on - so it is a deliberate
+    piece of work and not a one-line flip, and it is not done here.
     """
 
     def __init__(
@@ -1222,6 +1236,193 @@ class MT5ExecutionClient(LiveExecutionClient):
                 return
         self._fill(order, instrument, ticket=ticket, trade_id=deal or ticket, qty=qty, px=price)
 
+    async def _close_out(self, order: Any, together: tuple) -> bool:
+        """A reduce-only market order is **a close by ticket**, not a new order.
+
+        Returns whether it was handled, in the same shape as `_attach_stop`.
+
+        **This account is a hedging account.** `tests/test_mt5_live.py` records
+        the live terminal answering `margin_mode: 2`, which is
+        `ACCOUNT_MARGIN_MODE_RETAIL_HEDGING`, and on a hedging account a market
+        order on the opposite side does **not** close anything - it opens a
+        second position facing the other way. So every exit this desk sent went
+        out as a bare `SELL` and the terminal did what it was asked: on
+        2026-11-11 a `ZonesEdge-BTCUSD` long reported closed at -3.01 while the
+        broker was left holding a short.
+
+        The divergence is the expensive half. The adapter reports the fill,
+        the engine nets it against the long because this client declares
+        `OmsType.NETTING`, and from then on Nautilus believes it is flat while
+        the broker is not: a position with no stop, no target and no rule
+        watching it. Every "closed" alert this desk has sent had that shape.
+
+        `Bridge.close_position` is the route that does close - it sends the
+        opposite deal **with `position` set to the ticket**, which is the one
+        thing that makes MT5 reduce rather than open. It has existed, and
+        tested, the whole time and nothing in this client had ever called it:
+        the dead-route failure `venue-faults-hide-below-the-strategy` is about,
+        where a rule that never fires and a route that never works read alike.
+
+        **Several positions, not one.** Under hedging, a rule that adds to a
+        winner holds a *stack* of tickets on one symbol while Nautilus carries
+        one aggregate position, so a close for the aggregate quantity cannot
+        be one ticket's close. The stack is walked oldest first until the
+        requested volume is met, which is what a reader means by closing a
+        position and what the engine's single fill then describes.
+        """
+        if order.order_type != OrderType.MARKET or not bool(
+            getattr(order, "is_reduce_only", False)
+        ):
+            return False
+        symbol = order.instrument_id.symbol.value
+        instrument = await self._instrument(order.instrument_id)
+        if instrument is None:
+            self._reject_all(together, f"{symbol} is not a symbol this terminal lists")
+            return True
+        try:
+            stack = await self._closable(order, symbol)
+        except Exception as exc:
+            # Refused rather than sent as a plain order. Falling back to a bare
+            # market order is precisely the behaviour being fixed, and a desk
+            # that cannot read its own book must not act on it.
+            self._reject(order, f"cannot read the terminal's book to close {symbol}: {exc}")
+            return True
+        if not stack:
+            # The same argument `_attach_stop` makes about a stop with nothing
+            # to protect: believing this process holds what the broker does not
+            # is the state to surface, not to paper over with a new position.
+            self._reject(order, f"no open {symbol} position of this desk's to close")
+            return True
+
+        self.generate_order_submitted(
+            strategy_id=order.strategy_id,
+            instrument_id=order.instrument_id,
+            client_order_id=order.client_order_id,
+            ts_event=self._clock.timestamp_ns(),
+        )
+        wanted = float(order.quantity)
+        done = 0.0
+        last: dict[str, Any] = {}
+        for ticket, held in stack:
+            if done >= wanted - 1e-12:
+                break
+            part = min(float(held.get("volume") or 0.0), wanted - done)
+            if part <= 0.0:
+                continue
+            try:
+                raw = await self._bridge.close_position(ticket, part)
+            except Exception as exc:
+                self._log.error(f"{order.client_order_id}: closing {ticket} failed: {exc}")
+                break
+            if raw.get("success") is not True or _retcode(raw) not in _TAKEN:
+                detail = str((raw.get("result") or {}).get("comment") or "not confirmed")
+                self._log.error(f"{order.client_order_id}: closing {ticket}: {detail}")
+                break
+            last = raw
+            done += part
+
+        if done <= 0.0:
+            self._reject(order, f"the terminal confirmed no close of {symbol}")
+            return True
+        self.generate_order_accepted(
+            strategy_id=order.strategy_id,
+            instrument_id=order.instrument_id,
+            client_order_id=order.client_order_id,
+            venue_order_id=VenueOrderId(str(stack[0][0])),
+            ts_event=self._clock.timestamp_ns(),
+        )
+        result = last.get("result") or {}
+        price = float(result.get("price") or 0.0)
+        if price <= 0.0:
+            # Closed at the broker but unpriced. The position is gone either
+            # way, so the fill is reported at the last quote rather than left
+            # for reconciliation to find - an engine that still believes it
+            # holds this is the state that produced the bug above.
+            price = self._last_price(order)
+        if price <= 0.0:
+            self._log.error(f"{order.client_order_id}: closed with no price - reconcile")
+            return True
+        self._fill(
+            order,
+            instrument,
+            ticket=result.get("order") or stack[0][0],
+            trade_id=result.get("deal") or result.get("order") or stack[0][0],
+            qty=done,
+            px=price,
+        )
+        if done < wanted - 1e-12:
+            # Said out loud rather than inferred from two numbers in a journal.
+            # A partial close leaves the remainder unmanaged by any rule, which
+            # is the same exposure the whole method exists to stop.
+            self._log.error(
+                f"{order.client_order_id}: closed {done:g} of {wanted:g} on {symbol} - "
+                f"the remainder is still open at the broker"
+            )
+        return True
+
+    async def _closable(self, order: Any, symbol: str) -> list[tuple[int, dict]]:
+        """This desk's open positions a reduce-only order would close.
+
+        **Opposite side only.** A `SELL` closes a long, and a row on the same
+        side as the order is not something this order may touch - that is the
+        check whose absence let a close open a position.
+
+        Ordered with the ticket Nautilus named first, then oldest first. The
+        named one is the position the engine is actually talking about;
+        `venue_position_id` is this client's own `PositionId(str(ticket))`, so
+        it resolves straight back to a ticket when the cache has it.
+        """
+        want = 0 if order.side == OrderSide.SELL else 1
+        rows = [
+            row
+            for row in await self._bridge.positions()
+            if self._ours(row)
+            and str(row.get("symbol")) == symbol
+            and int(row.get("type") or 0) % 2 == want
+            and float(row.get("volume") or 0.0) > 0.0
+            and int(row.get("ticket") or 0)
+        ]
+        rows.sort(key=lambda row: int(row.get("time") or row.get("ticket") or 0))
+        named = self._named_ticket(order)
+        if named:
+            rows.sort(key=lambda row: int(row.get("ticket") or 0) != named)
+        return [(int(row.get("ticket") or 0), row) for row in rows]
+
+    def _named_ticket(self, order: Any) -> int:
+        """The broker ticket the engine's own position carries, or 0.
+
+        Never raises and never guesses: an unresolvable id simply leaves the
+        stack in time order, which is what a reader means by closing first
+        what was opened first.
+
+        **The order may not carry it yet.** `Strategy.close_position` builds
+        the market order and submits it with `position_id=position.id` as a
+        *command* field; the order's own `position_id` is assigned by the
+        execution engine. So the cache is asked by client order id as well,
+        which is the join that holds at submit time.
+        """
+        try:
+            position_id = getattr(order, "position_id", None) or self._cache.position_id(
+                order.client_order_id
+            )
+            if position_id is None:
+                return 0
+            position = self._cache.position(position_id)
+            found = getattr(position, "venue_position_id", None)
+            return int(str(found)) if found is not None else 0
+        except Exception:
+            return 0
+
+    def _last_price(self, order: Any) -> float:
+        """The side a close prints against, from the cache. 0.0 when unknown."""
+        try:
+            quote = self._cache.quote_tick(order.instrument_id)
+            if quote is None:
+                return 0.0
+            return float(quote.bid_price if order.side == OrderSide.SELL else quote.ask_price)
+        except Exception:
+            return 0.0
+
     async def _unsendable(self, order: Any, together: tuple) -> bool:
         """Whether this order cannot go to the terminal as an order of its own.
 
@@ -1230,8 +1431,12 @@ class MT5ExecutionClient(LiveExecutionClient):
         own rather than a line inside a longer function.
 
         Only the two shapes this client can express go to the terminal. A
-        reduce-only stop is handled instead of refused - see `_attach_stop`.
+        reduce-only stop is handled instead of refused - see `_attach_stop`,
+        and a reduce-only *market* order is a close rather than an order at
+        all - see `_close_out`, which is the one that cost money.
         """
+        if await self._close_out(order, together):
+            return True
         if order.order_type in (OrderType.MARKET, OrderType.LIMIT):
             return False
         if await self._attach_stop(order):
