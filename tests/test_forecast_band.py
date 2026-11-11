@@ -165,6 +165,7 @@ def test_the_desk_floors_the_stop_before_it_floors_the_target():
     so the stop floor runs first and `target_r` measures R against the result.
     """
     from till_infinity.domain.models import Intent, Side
+    from till_infinity.strategies.config import Settings
     from till_infinity.strategies.desk import Desk
 
     value = steady().value
@@ -182,7 +183,7 @@ def test_the_desk_floors_the_stop_before_it_floors_the_target():
         hold=0.0,
     )
     stub = SimpleNamespace(
-        settings=SimpleNamespace(forecast_band=True, target_r=2.0),
+        settings=Settings(forecast_band=True, target_r=2.0),
         _forecast=steady(),
     )
     widened = Desk._floor_stop(stub, intent)
@@ -197,6 +198,7 @@ def test_the_desk_does_nothing_with_the_flag_off():
     """Off is a no-op and a test says so, because a gate that silently changes
     nothing reads the same as one that is working."""
     from till_infinity.domain.models import Intent, Side
+    from till_infinity.strategies.config import Settings
     from till_infinity.strategies.desk import Desk
 
     value = steady().value
@@ -213,13 +215,11 @@ def test_the_desk_does_nothing_with_the_flag_off():
         features={},
         hold=0.0,
     )
-    off = SimpleNamespace(
-        settings=SimpleNamespace(forecast_band=False, target_r=0.0), _forecast=steady()
-    )
+    off = SimpleNamespace(settings=Settings(forecast_band=False, target_r=0.0), _forecast=steady())
     assert Desk._floor_stop(off, intent) is intent
 
     cold = SimpleNamespace(
-        settings=SimpleNamespace(forecast_band=True, target_r=0.0),
+        settings=Settings(forecast_band=True, target_r=0.0),
         _forecast=steady(bars=3),
     )
     assert Desk._floor_stop(cold, intent) is intent, "an unwarmed forecast moved a stop"
@@ -229,6 +229,118 @@ def test_the_setting_is_off_by_default():
     from till_infinity.strategies.config import Settings
 
     assert Settings().forecast_band is False
+
+
+# ---------------------------------------------------------- the release scale
+
+
+def _banded(release_band: bool, releases, now: float):
+    """A desk's worth of state for `_floor_stop`, and no more.
+
+    `Settings` rather than a namespace on purpose: the desk reads whichever
+    fields it reads, and a hand-kept stub of two of them breaks the day a
+    third is added - which is exactly how this test last failed.
+    """
+    from till_infinity.strategies.config import Settings
+
+    return SimpleNamespace(
+        settings=Settings(forecast_band=True, release_band=release_band, target_r=0.0),
+        _forecast=steady(),
+        _releases=releases,
+        clock=SimpleNamespace(timestamp=lambda: now),
+        _feed_name=lambda: "eurusd",
+    )
+
+
+def _one_unit_long(value: float):
+    from till_infinity.domain.models import Intent, Side
+
+    return Intent(
+        feed="eurusd",
+        symbol="EURUSD",
+        volume=0.1,
+        side=Side.BUY,
+        entry=1.1000,
+        stop=1.1000 - 1.0 * value,
+        target=0.0,
+        reason="a test",
+        interval="15m",
+        features={},
+        hold=0.0,
+    )
+
+
+def test_a_print_in_reach_widens_the_floor_by_the_measured_multiple():
+    """**2.424x on the print's own bar**, so a stop sized on a normal bar is
+    about two and a half times too tight into one. The multiple scales the
+    *forecast* and not the distance, because the forecast is the quantity
+    `news-volatility.md` measured."""
+    from till_infinity.risk.releases import Releases
+    from till_infinity.strategies.desk import Desk
+
+    value = steady().value
+    at = 1_800_000_000.0
+    held = Releases()
+    held.note([{"time": at, "importance": 2, "country": "US"}])
+
+    widened = Desk._floor_stop(_banded(True, held, at), _one_unit_long(value))
+    assert widened.risk == pytest.approx(forecast.band(value * 2.424))
+    assert widened.features["release_vol_multiple"] == pytest.approx(2.424)
+
+
+def test_the_quiet_windows_cannot_tighten_a_stop():
+    """**The asymmetry that makes it a floor.** The pre-release lull runs
+    0.789x and four hours later 0.920x, and a multiple below 1.0 that reached
+    the distance would narrow a stop on a measured lull - the unsafe error.
+    The multiple is still recorded, so a later study can split on proximity
+    rather than averaging two regimes."""
+    from till_infinity.risk.releases import Releases
+    from till_infinity.strategies.desk import Desk
+
+    value = steady().value
+    at = 1_800_000_000.0
+    held = Releases()
+    held.note([{"time": at, "importance": 2, "country": "US"}])
+
+    # An hour before the print: the 0.789x lull.
+    lulled = Desk._floor_stop(_banded(True, held, at - 3600.0), _one_unit_long(value))
+    assert lulled.risk == pytest.approx(forecast.band(value)), "a lull tightened a stop"
+    assert lulled.features["release_vol_multiple"] == pytest.approx(0.789)
+
+
+def test_the_release_scale_is_off_unless_its_own_flag_is_set():
+    """Two flags, because the band and the calendar are separate deploys: a
+    desk running the forecast band must be able to take the calendar or leave
+    it without changing what the band does."""
+    from till_infinity.risk.releases import Releases
+    from till_infinity.strategies.desk import Desk
+
+    value = steady().value
+    at = 1_800_000_000.0
+    held = Releases()
+    held.note([{"time": at, "importance": 2, "country": "US"}])
+
+    plain = Desk._floor_stop(_banded(False, held, at), _one_unit_long(value))
+    assert plain.risk == pytest.approx(forecast.band(value)), "the calendar moved an off desk"
+    assert "release_vol_multiple" not in plain.features
+
+
+def test_nothing_in_reach_is_the_plain_band():
+    """Most of the time. A missing calendar must read as "no opinion" and not
+    as a multiple of 1.0 dressed up as one."""
+    from till_infinity.risk.releases import Releases
+    from till_infinity.strategies.desk import Desk
+
+    value = steady().value
+    alone = Desk._floor_stop(_banded(True, Releases(), 1_800_000_000.0), _one_unit_long(value))
+    assert alone.risk == pytest.approx(forecast.band(value))
+    assert "release_vol_multiple" not in alone.features
+
+
+def test_the_release_setting_is_off_by_default():
+    from till_infinity.strategies.config import Settings
+
+    assert Settings().release_band is False
 
 
 def test_the_replay_warms_the_forecast_so_the_floor_is_live_on_the_first_bar():

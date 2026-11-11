@@ -69,8 +69,8 @@ from nautilus_trader.model.identifiers import InstrumentId
 from nautilus_trader.trading.strategy import Strategy as NautilusStrategy
 
 from ..domain.models import Intent, Refusal, Side, SymbolSpec, Tick
-from ..risk import forecast, sizing
-from ..utils.topics import PROPOSALS, VOLATILE, subscribe
+from ..risk import forecast, releases, sizing
+from ..utils.topics import EVENTS, PROPOSALS, VOLATILE, subscribe
 from . import sizes
 from .config import Settings
 from .counterfactual import Counterfactual, Resolved
@@ -229,6 +229,10 @@ class Desk(NautilusStrategy):
         #: from this desk's own bars, so it is on the clock the desk trades
         #: rather than on whatever a producer happened to publish.
         self._forecast = forecast.RangeForecast()
+        #: Scheduled releases, folded from `topics.EVENTS`. Empty until the
+        #: calendar publisher sends one, and empty is "no opinion" rather than
+        #: "normal", so an unwired deployment sizes exactly as before.
+        self._releases = releases.Releases()
 
     # ----------------------------------------------------------- the lifecycle
 
@@ -314,6 +318,7 @@ class Desk(NautilusStrategy):
         # refuse every trade for ever - which is the failure mode this desk has
         # on record three times under the name "consumer with no producer".
         subscribe(self, VOLATILE, self._on_ranking)
+        subscribe(self, EVENTS, self._on_calendar)
         self.log.info(f"{self._cfg.rule} on {self._cfg.bar_type}, proposals on {PROPOSALS}")
         # **Say what this desk is doing while it runs, not only when it stops.**
         # `taken`, `refused` and `passed_over` were logged in `on_stop` alone,
@@ -538,6 +543,21 @@ class Desk(NautilusStrategy):
             return self._refuse(refusal, payload)
         return found
 
+    def _on_calendar(self, payload: Any) -> None:
+        """Fold the scheduled-release calendar. Never raises.
+
+        One publisher reads the store and every desk folds the same rows, so
+        this is cheap and idempotent - `note` keys on `(time, country)`, and
+        the live store's 25 important rows over five days collapse to the 7
+        distinct moments that matter for proximity.
+        """
+        try:
+            from .releasing import rows_of
+
+            self._releases.note(rows_of(payload))
+        except Exception as exc:  # pragma: no cover - defensive
+            self.log.warning(f"could not fold the calendar: {exc}")
+
     def _floor_stop(self, intent: Intent) -> Intent:
         """Widen a stop the volatility forecast says is too tight.
 
@@ -562,7 +582,24 @@ class Desk(NautilusStrategy):
         risk = intent.risk
         if risk <= 0.0:
             return intent
-        wanted = forecast.floored(risk, self._forecast.value)
+        # **The release multiple scales Q, never R.** `news-volatility.md`
+        # measures realised volatility at 2.424x on a print's own bar and
+        # 0.789x in the two hours before, so a stop sized on a normal bar is
+        # about two and a half times too tight into a print. Applied to the
+        # forecast rather than to the distance, because that is the quantity
+        # that was measured; `break-features.md` found the calendar moves
+        # volatility and **not** the probability a level breaks, so nothing
+        # here may reach a side.
+        #
+        # A multiple below 1.0 cannot tighten a stop: this is a floor, so the
+        # quiet windows simply stop it binding. That asymmetry is deliberate -
+        # widening on a measured spike is the safe error and narrowing on a
+        # measured lull is not.
+        expect = None
+        if self.settings.release_band:
+            expect = self._releases.expect(self._feed_name(), float(self.clock.timestamp()))
+        scale = float(expect) if expect and expect > 1.0 else 1.0
+        wanted = forecast.floored(risk, self._forecast.value * scale)
         if wanted <= risk:
             return intent
         sign = 1 if intent.side is Side.BUY else -1
@@ -575,6 +612,10 @@ class Desk(NautilusStrategy):
                 # changed and not only that it fired.
                 "stop_floored_from": float(risk),
                 "stop_forecast": float(self._forecast.value),
+                # Recorded whenever a release is in reach, even at a multiple
+                # that did not bind, so a later study can split on proximity
+                # rather than average two different regimes.
+                **({"release_vol_multiple": float(expect)} if expect is not None else {}),
             },
         )
 

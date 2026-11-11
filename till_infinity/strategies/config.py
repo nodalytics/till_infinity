@@ -717,6 +717,25 @@ class Settings:
     #: constant nobody measured and this is a deployment's own statement about
     #: which of its rules are scalps.
     volatile_rules: tuple[str, ...] = ()
+    #: Widen the stop band by the measured release multiple when a scheduled
+    #: print is within reach. `TRADING_RELEASE_BAND`, off.
+    #:
+    #: **The calendar is one of two things measured forecastable here**, and
+    #: the only one needing no model of the future - release times are
+    #: published days ahead. `news-volatility.md`: realised volatility runs
+    #: **0.789x** in the two hours before a print, **2.424x** on the print's
+    #: own bar, 1.762x at +30m, and **0.920x** four hours later, *below*
+    #: normal. Every interval excludes 1.0 and both halves of the sample agree
+    #: in sign at every horizon.
+    #:
+    #: **It drives Q and never R.** `break-features.md` measured that the
+    #: calendar moves volatility and does **not** move the probability a level
+    #: breaks, and `seasonality-belongs-on-q` is the standing rule.
+    #:
+    #: Needs `TRADING_FORECAST_BAND`, since it scales that band rather than
+    #: setting a stop of its own. A multiple below 1.0 cannot tighten anything:
+    #: the band is a floor, so the quiet windows simply stop it binding.
+    release_band: bool = False
 
     #: The net edge, in volatility units, that earns full size. Zero is off.
     #: Measured; see `research/docs/settings.md`.
@@ -1581,6 +1600,7 @@ class Settings:
             forecast_band=_flag("TRADING_FORECAST_BAND", False),
             volatile_only=_flag("TRADING_VOLATILE_ONLY", False),
             volatile_rules=_names(_env("TRADING_VOLATILE_RULES")),
+            release_band=_flag("TRADING_RELEASE_BAND", False),
             regime_band=_float("TRADING_REGIME_BAND", 0.0),
             regime_floor=_float("TRADING_REGIME_FLOOR", 0.5),
             spike_above=_float("TRADING_SPIKE_ABOVE", 0.0),
