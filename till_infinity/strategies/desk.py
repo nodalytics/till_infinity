@@ -57,6 +57,8 @@ above it and not inside.
 
 from __future__ import annotations
 
+import functools
+import traceback
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any
@@ -119,6 +121,64 @@ class DeskConfig(StrategyConfig, frozen=True):
 #: Seconds between tally lines, matching `StatespaceActor`'s cadence so a
 #: reader comparing the two is comparing like with like.
 TALLY_EVERY = 300.0
+
+
+def guarded(what: str):
+    """Keep one handler's failure from taking the whole node down with it.
+
+    **Measured cost of not having this: 13 restarts in seven hours.** On
+    2026-11-11 `profile.multipliers` raised `AttributeError` on every sized
+    intent from two rules; the exception left `on_bar`, reached Nautilus, the
+    node exited cleanly and `restart: unless-stopped` brought it back. Each
+    restart drops the in-memory bracket legs, so a position opened between two
+    of them runs naked - which is exactly what was found by hand the night
+    before. **One desk's bug cost thirty desks their stops.**
+
+    So a handler that raises now refuses its own message and the node keeps
+    running. That is strictly better than the alternative here: a sizing bug
+    should cost one trade, not every open position's protection.
+
+    **Loud and counted, never silent.** `strategies/screening.py` and the
+    refusal gates are written on the principle that a gate quietly admitting
+    everything reads the same as one that works; the same applies in reverse,
+    and a desk refusing every bar because of a defect must not read as a quiet
+    market. So:
+
+    * counted under `(bug):<handler>`, a key no ordinary refusal uses, so the
+      tally and `tis.sh refusals` separate "broken" from "no signal";
+    * the **first** occurrence of each distinct message is logged at `error`
+      with its traceback, and repeats are counted only - a per-bar traceback
+      across a 38-desk book buries every other line, which is what the 13
+      restarts did to the log.
+
+    `on_start` is deliberately **not** guarded. A desk that cannot build
+    should fail at boot rather than trade half-constructed, and that failure is
+    one a deploy gate can see.
+    """
+
+    def wrap(fn):
+        @functools.wraps(fn)
+        def inner(self, *args, **kwargs):
+            try:
+                return fn(self, *args, **kwargs)
+            except Exception as exc:
+                seen = getattr(self, "_bugs", None)
+                if seen is None:
+                    seen = self._bugs = set()
+                key = f"{type(exc).__name__}: {exc}"
+                self._count(f"(bug):{what}")
+                if key not in seen:
+                    seen.add(key)
+                    self.log.error(
+                        f"{what} raised and was contained so the node keeps running - "
+                        f"this desk refuses the message and the failure is counted as "
+                        f"(bug):{what}: {key}\n{traceback.format_exc()}"
+                    )
+            return None
+
+        return inner
+
+    return wrap
 
 
 class Desk(NautilusStrategy):
@@ -892,6 +952,7 @@ class Desk(NautilusStrategy):
 
     # ----------------------------------------------------------- the handlers
 
+    @guarded("on_bar")
     def on_bar(self, bar: Bar) -> None:
         """Nautilus delivers this after every registered indicator has updated.
 
@@ -935,6 +996,7 @@ class Desk(NautilusStrategy):
         """
         return {name: getattr(detector, "value", None) for name, detector in self.detectors.items()}
 
+    @guarded("on_data")
     def on_data(self, data: Any) -> None:
         """A published reading. The gate sequence, then place or record.
 
@@ -987,6 +1049,7 @@ class Desk(NautilusStrategy):
         )
         self._count(f"(desk):following-{refusal.gate}")
 
+    @guarded("on_quote_tick")
     def on_quote_tick(self, tick: QuoteTick) -> None:
         """Walk the counterfactual forward. Subclasses that override this must
         call `super().on_quote_tick(tick)`, or the record stops resolving and

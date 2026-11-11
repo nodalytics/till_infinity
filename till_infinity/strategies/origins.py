@@ -70,6 +70,7 @@ from nautilus_trader.model.data import Bar
 from ..domain.models import Intent, Refusal, Side
 from ..indicators.levels import CHAIN_GAP, PUSH_BODY, PUSH_MIN, SPAN, Displacement, Origin
 from .crossing import NEEDS_HISTORY, side_of
+from .desk import guarded
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .exits import ManagedExit
 from .profile import Profile
@@ -293,6 +294,7 @@ class Origins(WarmFromHistory):
         self.displacement.handle_bar(bar)
         self._step(bar, act=self.fresh(bar))
 
+    @guarded("origins.on_bar")
     def on_bar(self, bar: Bar) -> None:
         """One closed bar, and any origin crossing it produced.
 

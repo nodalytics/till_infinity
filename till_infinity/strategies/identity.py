@@ -71,7 +71,7 @@ from typing import Any, ClassVar
 from nautilus_trader.model.data import Bar, BarType
 
 from ..domain.models import Intent, Refusal, Side
-from .desk import Desk
+from .desk import Desk, guarded
 from .entries import EdgeEntry
 from .exits import ManagedExit
 from .profile import Profile
@@ -329,6 +329,7 @@ class Identity(WarmFromHistory, Desk):
         for row in buffered:
             self._step(row, act=self.fresh(row))
 
+    @guarded("identity.on_bar")
     def on_bar(self, bar: Bar) -> None:
         """A partner close is stored; the traded leg's close is a decision."""
         super().on_bar(bar)

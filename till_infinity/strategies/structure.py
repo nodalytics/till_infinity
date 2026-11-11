@@ -57,6 +57,7 @@ from typing import Any, ClassVar
 from nautilus_trader.model.data import Bar
 
 from ..domain.models import Intent, Refusal, Side
+from .desk import guarded
 from .entries import EdgeEntry
 from .exits import ManagedExit
 from .profile import Profile
@@ -577,6 +578,7 @@ class Structure(WarmFromHistory):
             self.warmed["acted"] = self.warmed.get("acted", 0) + 1
             self.on_data(self._payload(event, row))
 
+    @guarded("structure.on_bar")
     def on_bar(self, bar: Bar) -> None:
         """One closed M15 bar through the fold, and any BOS it produced.
 

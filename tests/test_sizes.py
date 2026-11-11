@@ -581,8 +581,14 @@ def test_crowding_reaches_the_sizer_with_a_real_book(monkeypatch):
     0.5 on one shared leg, so a quarter of the budget goes: 25 x 0.5 / 220 is
     0.0568 lots, which is 0.05 on a 0.01 grid."""
     monkeypatch.setenv("SIZING_MULTIPLIERS", "crowding")
+    # **The share arrives with the caller, not on the profile.** Production
+    # builds every profile with `__new__`, so `self.settings` does not exist
+    # there at all - reading it took the node down 13 times on 2026-11-11 -
+    # and `sizes.size` already receives the deployment's one `Settings`. There
+    # is one configuration and this is where it comes from.
     found = sized(
-        profile=SurpriseProfile(Settings(crowding_share=0.5)),
+        settings=Settings(crowding_share=0.5),
+        profile=SurpriseProfile.__new__(SurpriseProfile),
         book=sizes.book_of([held("GBPUSD", 0.05)]),
     )
     assert isinstance(found, Intent)

@@ -62,6 +62,7 @@ from typing import Any, ClassVar
 from nautilus_trader.model.data import Bar
 
 from ..domain.models import Intent, Refusal, Side
+from .desk import guarded
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .exits import ManagedExit
 from .profile import Profile
@@ -535,6 +536,7 @@ class Bands(WarmFromHistory):
             self.atr.handle_bar(bar)
         self._step(bar, act=self.fresh(bar))
 
+    @guarded("bands.on_bar")
     def on_bar(self, bar: Bar) -> None:
         """One closed bar into both pairs, and any turn it produced.
 

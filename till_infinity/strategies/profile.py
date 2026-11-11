@@ -671,6 +671,11 @@ class Profile:
         #
         # `sizes.size` already takes `settings` and the desk already passes
         # its own, so the caller has it in hand at every production call site.
+        # **The caller's settings win where both exist.** There is one
+        # `Settings` in a deployment and `sizes.size` has it; a profile
+        # carrying a second one would be two sources of truth for one
+        # configuration, which is the drift this desk's whole bar is set
+        # against. The attribute is a fallback for a caller that has none.
         settings = settings if settings is not None else getattr(self, "settings", None)
         if settings is None:
             # Named rather than an `AttributeError` from a line that reads
