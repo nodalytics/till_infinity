@@ -191,14 +191,37 @@ def by_agreement(
     return share**agreeing if agreeing else 1.0
 
 
-def by_volatility(vol_bps: float, target_bps: float) -> float:
-    """Reduce when the instrument is more volatile than the target.
+def by_volatility(vol_bps: float, target_bps: float, ceiling: float = 1.0) -> float:
+    """Size toward a constant risk in volatility terms.
 
     See `trading-scaling.md` in research/docs.
+
+    **`ceiling` is the aggressive-sizing lever, and 1.0 is this function as it
+    has always been.** Above 1.0 the quiet half of the same ratio is allowed
+    through: `target / vol` is one formula, and truncating it at 1.0 keeps the
+    reduction when an instrument is loud while throwing away the increase when
+    it is quiet.
+
+    That truncation is not conservatism, it is an asymmetric estimator.
+    `q-multipliers-need-mean-one` is the standing note - a multiplier whose
+    mean is not one changes the average too - and a desk that halves size at
+    twice the target without doubling it at half the target runs a *lower*
+    average risk than `TRADING_RISK_FRACTION` says it does, with no setting
+    anywhere recording by how much.
+
+    **A ceiling is required rather than optional.** `target / vol` goes to
+    infinity on a dead-quiet instrument, and the one sizing error this desk
+    cannot take back is the large one, so the bound is the caller's and is
+    written down.
+
+    This is the only lever allowed above 1.0. Every other scaler's upper half
+    would be a *new* claim - more edge earns more size, above the high-water
+    mark earns more size - that nothing here measured, and the second of those
+    is a martingale: `a-martingale-cannot-pay`.
     """
     if target_bps <= 0 or vol_bps <= 0:
         return 1.0
-    return min(1.0, target_bps / vol_bps)
+    return min(max(1.0, float(ceiling)), target_bps / vol_bps)
 
 
 def by_regime(ratio: float | None, width: float, floor: float = 0.5) -> float:
@@ -297,15 +320,23 @@ def by_slippage(overshoot: float) -> float:
     return max(FLOOR, 1.0 / overshoot)
 
 
-def combined(*multipliers: float) -> float:
-    """Every reduction at once, bounded to [FLOOR, 1].
+def combined(*multipliers: float, ceiling: float = 1.0) -> float:
+    """Every reduction at once, bounded to [FLOOR, ceiling].
 
     Multiplicative because each is an independent reason to be smaller, and
     because it makes the order they are applied in irrelevant - which matters
     when four of them can fire on one trade and no reader should have to know
     which ran first.
+
+    **`ceiling` defaults to 1.0, which is reduction-only and is what every
+    deployment ran before it existed.** Raising it does not by itself make
+    anything bigger: each term is still clamped to the ceiling individually
+    and only `by_volatility` is written to return above 1.0, so the lever is
+    one measured quantity rather than eight at once -
+    `refit-the-parameter-a-lever-multiplies` is why that matters.
     """
+    top = max(1.0, float(ceiling))
     total = 1.0
     for value in multipliers:
-        total *= max(0.0, min(1.0, value))
-    return max(FLOOR, min(1.0, total))
+        total *= max(0.0, min(top, value))
+    return max(FLOOR, min(top, total))

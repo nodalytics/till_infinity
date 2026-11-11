@@ -736,6 +736,33 @@ class Settings:
     #: setting a stop of its own. A multiple below 1.0 cannot tighten anything:
     #: the band is a floor, so the quiet windows simply stop it binding.
     release_band: bool = False
+    #: **Aggressive sizing.** The most the measured scalers may size *up* to,
+    #: as a multiple of `risk_fraction`. `TRADING_SIZE_CEILING`, 1.0 - which is
+    #: reduction-only and is exactly what every deployment ran before this
+    #: existed, so off is a true no-op.
+    #:
+    #: Only `by_volatility` is written to return above 1.0, and the reason is
+    #: that it is the only lever whose upper half is the *same measurement* as
+    #: its lower one: `target / vol` is one formula, and clamping it at 1.0
+    #: keeps the cut when an instrument is loud and discards the increase when
+    #: it is quiet. `q-multipliers-need-mean-one` is the standing note - a
+    #: multiplier whose mean is not one changes the average too - so a desk
+    #: that halves at twice the target and never doubles at half of it runs a
+    #: lower average risk than `TRADING_RISK_FRACTION` claims, by an amount no
+    #: setting records.
+    #:
+    #: Every other scaler's upper half would be a new claim nothing measured:
+    #: more edge earns more size, and above the high-water mark earns more
+    #: size - the second of which is a martingale.
+    #:
+    #: **It does not loosen the money cap.** `TRADING_MAX_RISK_MONEY` still
+    #: binds after this in `sizing.lots`, so a ceiling can raise the fraction
+    #: and cannot raise the per-trade loss past the stated ceiling in cash.
+    #:
+    #: Needs `SIZING_MULTIPLIERS` to include `volatility` and
+    #: `TRADING_VOLATILITY_TARGET_BPS` to be set; with neither it is inert,
+    #: because there is no reading to size up on.
+    size_ceiling: float = 1.0
 
     #: The net edge, in volatility units, that earns full size. Zero is off.
     #: Measured; see `research/docs/settings.md`.
@@ -1601,6 +1628,7 @@ class Settings:
             volatile_only=_flag("TRADING_VOLATILE_ONLY", False),
             volatile_rules=_names(_env("TRADING_VOLATILE_RULES")),
             release_band=_flag("TRADING_RELEASE_BAND", False),
+            size_ceiling=_float("TRADING_SIZE_CEILING", 1.0),
             regime_band=_float("TRADING_REGIME_BAND", 0.0),
             regime_floor=_float("TRADING_REGIME_FLOOR", 0.5),
             spike_above=_float("TRADING_SPIKE_ABOVE", 0.0),
