@@ -922,11 +922,35 @@ class MT5ExecutionClient(LiveExecutionClient):
                 )
                 continue
             now = self._clock.timestamp_ns()
+            # **The deal's own second, not the clock.** `ts_event` is what
+            # orders fills and what a lookback window is measured against, so
+            # stamping a day-old deal "now" tells the engine a fill has just
+            # happened - and on a reconciliation that decides the state the
+            # desk is reported to be in. A deal that cannot be dated is still a
+            # deal and keeps the clock, the same argument `Bridge.deals` makes
+            # about a row whose time will not parse.
+            try:
+                stamped = int(float(row.get("time") or 0.0) * 1e9) or now
+            except (TypeError, ValueError):
+                stamped = now
+            # **The position this deal belongs to, where the broker names it.**
+            # Without it `position_check_interval_secs` cannot do its job: it
+            # spots a position the cache holds and the venue does not, queries
+            # for the lost fills, and then cannot attribute them on a hedging
+            # account where one symbol carries several.
+            #
+            # That is the phantom. On 2026-11-11 ETHUSD, US Oil, XAUUSD and UK
+            # Brent Oil all closed on their own stops before 11:00 and the desk
+            # was still refusing entries on them as "already held by EXTERNAL"
+            # at 19:30 - five instruments out of the book for a session,
+            # because the engine never learned the broker had closed them.
+            position = row.get("position_id") or row.get("position") or 0
             reports.append(
                 FillReport(
                     account_id=self.account_id,
                     instrument_id=instrument_id,
                     venue_order_id=venue_order_id,
+                    venue_position_id=PositionId(str(int(position))) if position else None,
                     trade_id=TradeId(str(row.get("ticket"))),
                     order_side=_SIDES.get(int(row.get("type") or 0), OrderSide.BUY),
                     last_qty=Quantity(float(row.get("volume") or 0.0), instrument.size_precision),
@@ -936,8 +960,8 @@ class MT5ExecutionClient(LiveExecutionClient):
                     ),
                     liquidity_side=LiquiditySide.TAKER,
                     report_id=UUID4(),
-                    ts_event=now,
-                    ts_init=now,
+                    ts_event=stamped,
+                    ts_init=max(now, stamped),
                 )
             )
         return reports

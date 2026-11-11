@@ -3728,6 +3728,52 @@ class TestFillReports:
         assert float(report.commission) == pytest.approx(-0.35)
         assert str(report.commission.currency) == "USD"
 
+    async def test_a_fill_carries_the_position_it_belongs_to(self):
+        """**Without this the position check cannot do its job.**
+
+        `LiveExecEngineConfig.position_check_interval_secs` works by spotting a
+        position the cache holds and the venue does not, then querying for the
+        fills that were lost. A fill report with no `venue_position_id` cannot
+        be attributed to a position on a hedging account, where one symbol can
+        carry several - so the query comes back and reconciles nothing.
+
+        That is the phantom: on 2026-11-11 ETHUSD, US Oil, XAUUSD and UK Brent
+        Oil all closed on their own stops before 11:00 UTC, and the desk was
+        still refusing entries on them as "already held by EXTERNAL" at 19:30,
+        because the engine never learned the broker had closed them. Five
+        instruments silently out of the book for most of a session.
+        """
+        rig = make_exec(FakeBridge(deals=[_deal(position_id=4242)]))
+        (report,) = await rig.client.generate_fill_reports()
+        assert report.venue_position_id is not None, "the fill named no position"
+        assert str(report.venue_position_id) == "4242"
+
+    async def test_a_deal_with_no_position_field_still_reports(self):
+        """A deal that names no position is still a fill. Dropping it to be
+        tidy would lose history the reconciliation reads."""
+        rig = make_exec(FakeBridge(deals=[_deal()]))
+        (report,) = await rig.client.generate_fill_reports()
+        assert report.venue_position_id is None
+        assert str(report.trade_id) == "5001"
+
+    async def test_a_fill_is_stamped_with_the_deals_own_time(self):
+        """**Not the clock.** `ts_event` is what orders fills and what the
+        lookback window is measured against, so stamping a day-old deal "now"
+        tells the engine a fill just happened - and on a reconciliation that
+        decides what state the desk is reported to be in."""
+        when = 1_762_866_000  # a real second, not this process's
+        rig = make_exec(FakeBridge(deals=[_deal(time=when)]))
+        (report,) = await rig.client.generate_fill_reports()
+        assert report.ts_event == when * 1_000_000_000, "the deal's own time was discarded"
+        assert report.ts_init >= report.ts_event
+
+    async def test_a_deal_with_no_time_falls_back_to_the_clock(self):
+        """A fill that cannot be dated is still a fill - the same argument the
+        bridge's own window applies - so it is stamped rather than dropped."""
+        rig = make_exec(FakeBridge(deals=[_deal()]))
+        (report,) = await rig.client.generate_fill_reports()
+        assert report.ts_event > 0
+
     async def test_the_window_is_the_last_day_plus_a_minute_of_slack(self):
         """The minute is on the *end* of the window, and it is for the
         terminal's clock rather than for the network.

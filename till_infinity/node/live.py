@@ -103,6 +103,18 @@ def settings() -> TradingNodeConfig:
             # check is a `/positions/` read against a single Wine-hosted
             # terminal that the same box serves quotes from, and the thing this
             # catches resolves in minutes, not seconds.
+            # **It depends on `generate_fill_reports` naming the position.**
+            # The check spots a position the cache holds and the venue does
+            # not, then queries for the fills that were lost - and a fill
+            # report with no `venue_position_id` cannot be attributed on a
+            # hedging account, where one symbol carries several. This was on
+            # for two days doing exactly nothing for that reason: on
+            # 2026-11-11 ETHUSD, US Oil, XAUUSD and UK Brent Oil all closed on
+            # their own stops before 11:00 UTC and the desk was still refusing
+            # entries on them as "already held by EXTERNAL" at 19:30 - five
+            # instruments out of the book for a session. A check whose
+            # producer is malformed reads exactly like one that is switched
+            # off, which is why the dependency is written down here.
             position_check_interval_secs=60.0,
             # **`open_check_interval_secs` is deliberately left unset.** It
             # polls the venue for orders the cache thinks are open, and this
