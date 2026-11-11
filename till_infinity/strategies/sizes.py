@@ -429,6 +429,9 @@ def size(
             side=intent.side,
             rule=rule,
             by_rule=by_rule,
+            # The profile cannot read these off itself: production builds
+            # every one with `__new__`, so `Profile.__init__` never runs.
+            settings=settings,
         )
         scale = scaling.combined(*terms.values())
 

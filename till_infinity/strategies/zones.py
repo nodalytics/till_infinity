@@ -55,6 +55,7 @@ from nautilus_trader.model.data import Bar
 from ..domain.models import Intent, Refusal, Side
 from ..indicators.levels import BjorgumLevels, PivotSource, Sided
 from .crossing import side_of
+from .desk import guarded
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .exits import ManagedExit
 from .profile import Profile
@@ -331,6 +332,7 @@ class Zones(WarmFromHistory):
         self.levels.handle_bar(bar)
         self._step(bar, act=self.fresh(bar))
 
+    @guarded("zones.on_bar")
     def on_bar(self, bar: Bar) -> None:
         """One closed bar, and any zone crossing it produced.
 

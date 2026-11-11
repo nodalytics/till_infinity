@@ -629,6 +629,7 @@ class Profile:
         side: object = None,
         rule: str = "",
         by_rule: Mapping[str, Sequence[tuple[str, int]]] | None = None,
+        settings: object = None,
     ) -> dict[str, float]:
         """Every reduction, **by name**, with the disabled ones at 1.0.
 
@@ -657,7 +658,35 @@ class Profile:
 
         from ..risk import scaling
 
-        settings = self.settings
+        # **Passed in, never read off `self`.** Every rule profile in
+        # production is built with `__new__` - `ZoneProfile`'s own docstring
+        # says so, because configuration is shared between instances on two
+        # instruments - so `Profile.__init__` never runs and `self.settings`
+        # does not exist. Reading it took the node down 13 times in seven
+        # hours on 2026-11-11, the first night `SIZING_MULTIPLIERS` was set:
+        # `AttributeError('ZoneProfile' object has no attribute 'settings')`
+        # inside `on_bar`, a clean exit, and `restart: unless-stopped`
+        # bringing it back. The comment on the off path above predicted
+        # exactly this and guarded only that path.
+        #
+        # `sizes.size` already takes `settings` and the desk already passes
+        # its own, so the caller has it in hand at every production call site.
+        # **The caller's settings win where both exist.** There is one
+        # `Settings` in a deployment and `sizes.size` has it; a profile
+        # carrying a second one would be two sources of truth for one
+        # configuration, which is the drift this desk's whole bar is set
+        # against. The attribute is a fallback for a caller that has none.
+        settings = settings if settings is not None else getattr(self, "settings", None)
+        if settings is None:
+            # Named rather than an `AttributeError` from a line that reads
+            # like an attribute access, and refused rather than sized without
+            # the reductions: a multiplier that silently returns 1.0 is a
+            # position larger than intended, which is the wrong direction to
+            # be quiet about.
+            raise ValueError(
+                f"{type(self).__name__} was asked for sizing multipliers with no settings; "
+                f"pass `settings=` from the caller - this profile was built without them"
+            )
         by_rule = dict(by_rule or {})
         computed = self._reductions(
             # **The book arrives as `(feed, sign)` pairs, already.** This used
