@@ -20,6 +20,8 @@ switch is on - the second being the part a `hasattr` could never check.
 
 from __future__ import annotations
 
+from types import SimpleNamespace
+
 import pytest
 
 from till_infinity.strategies.profile import (
@@ -365,7 +367,6 @@ def test_an_unattributable_position_is_dropped_and_not_pooled():
     """Pooling them under a blank key would make every unrecognised position
     one synthetic rule that agrees with everything - the failure direction that
     silently shrinks a size."""
-    from types import SimpleNamespace
 
     from till_infinity.strategies.sizes import books_by_rule
 
@@ -387,3 +388,50 @@ def test_an_unattributable_position_is_dropped_and_not_pooled():
     assert set(got) == {"statespace-surprise", "zones"}
     assert "" not in got
     assert got["zones"] == (("gbpusd", -1),), "the flat position was counted"
+
+
+def test_a_profile_built_the_way_production_builds_one_sizes_with_a_multiplier_on(monkeypatch):
+    """**This took the node down 13 times in seven hours.**
+
+    Every rule profile in production is built with `__new__` - `ZoneProfile`'s
+    own docstring says so, because configuration is shared between instances
+    on two instruments - so `Profile.__init__` never runs and `self.settings`
+    does not exist. The *off* path returns before reading it and carries a
+    comment saying it must; the *on* path read it anyway.
+
+    The first night `SIZING_MULTIPLIERS=crowding` was set, every sized intent
+    from `zones` and `structure` raised
+    `AttributeError('ZoneProfile' object has no attribute 'settings')` inside
+    `on_bar`. The node exited cleanly and `restart: unless-stopped` brought it
+    back, 13 times, each restart dropping the bracket legs that protect open
+    positions.
+
+    The existing `__new__` test passes because the multipliers are off in it.
+    This is the same construction with one switched on, which is the case the
+    deployment actually ran.
+    """
+    monkeypatch.setenv(MULTIPLIERS_ON, "crowding")
+    # The real `Settings`, because a stub would only prove that a stub has
+    # whatever fields the test gave it - and the production failure was a
+    # *missing* field.
+    from till_infinity.strategies.config import Settings
+
+    settings = Settings()
+
+    found = Bare.__new__(Bare).multipliers({}, "eurusd", book=(("eurusd", 1),), settings=settings)
+
+    assert set(found) == set(MULTIPLIERS)
+    assert all(value > 0.0 for value in found.values())
+
+
+def test_without_settings_it_names_the_problem_rather_than_raising_an_attribute_error(
+    monkeypatch,
+):
+    """**Named, and refused rather than sized.** A multiplier that quietly
+    returned 1.0 would be a position larger than intended, which is the wrong
+    direction to be quiet about - and an `AttributeError` from a line that
+    reads like an attribute access is the hardest kind of failure to place.
+    """
+    monkeypatch.setenv(MULTIPLIERS_ON, "crowding")
+    with pytest.raises(ValueError, match="no settings"):
+        Bare.__new__(Bare).multipliers({}, "eurusd")
