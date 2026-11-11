@@ -754,3 +754,32 @@ def test_a_bar_whose_extremes_do_not_contain_its_ends_is_flagged():
 def test_the_boundary_case_is_a_bar_and_not_a_defect():
     """A dead bar - four equal prices - is malformed by none of the four tests."""
     assert not malformed(np.array([[0.0, 10.0, 10.0, 10.0, 10.0]]))[0]
+
+
+def test_an_absent_second_trigger_is_the_symmetric_rule_exactly():
+    """**The control for the asymmetric grid.** Every mode but `asym` builds an
+    eight-field task and passes no `k2`, so the published numbers must be
+    reachable unchanged - a default that quietly altered them would make the
+    whole study irreproducible."""
+    data = flat(400)
+    widths = np.full(len(data.close), 1.0)
+    vol = np.full(len(data.close), 1.0)
+
+    same, _ = run_rule(data, widths, vol, 0.5, 0.5)
+    again, _ = run_rule(data, widths, vol, 0.5, 0.5)
+    assert [t.gross for t in same] == [t.gross for t in again]
+
+
+def test_an_asymmetric_pair_moves_the_two_triggers_independently():
+    """A wider short trigger must make short entries rarer, which is the whole
+    point of tuning them apart - and is what makes the both-triggers bar's
+    convention load-bearing rather than incidental."""
+    data = flat(400)
+    widths = np.full(len(data.close), 1.0)
+    vol = np.full(len(data.close), 1.0)
+
+    even, _ = run_rule(data, widths, vol, 0.3, 0.3)
+    tilted, _ = run_rule(data, widths, vol, 0.3, 0.9)
+    shorts_even = sum(1 for t in even if t.side < 0)
+    shorts_tilted = sum(1 for t in tilted if t.side < 0)
+    assert shorts_tilted <= shorts_even, "a wider short trigger did not reduce short entries"
