@@ -156,6 +156,25 @@ LEGS: dict[str, tuple[str, str]] = {
     "euraud": ("EUR", "AUD"),
 }
 
+#: The feeds whose legs are **written down above** rather than guessed by
+#: `register_broker_legs`, frozen at import so registration cannot blur the two.
+#:
+#: The distinction matters because the auto-registration gives every unmapped
+#: broker symbol a `USD` quote leg, which is the right default for netting
+#: exposure - a Deriv synthetic really does settle in dollars - and the wrong
+#: one for anything that reads a leg as a *transmission channel*. A US CPI
+#: print does not move `Volatility 75 Index`: the generator is a broker's RNG,
+#: and `deriv-synthetics-are-real-markets` is the note that it is a real market
+#: with a *known* generator. `risk/releases` consults this so a print reaches
+#: the feeds somebody mapped and stays off the ones nobody did.
+DECLARED: frozenset[str] = frozenset(LEGS)
+
+
+def declared(feed: str) -> bool:
+    """True where this feed's legs were stated rather than auto-registered."""
+    return feed in DECLARED
+
+
 #: What a calendar row's `country` means, in currency terms. The field carries
 #: **both forms** - checked against the stored events rather than assumed:
 #: TradingView writes ISO country codes (`US`, `JP`, `GB`, `DE`, `EU`, `CN`,

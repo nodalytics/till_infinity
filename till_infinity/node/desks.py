@@ -789,6 +789,19 @@ def actors(venue: str) -> list[Actor]:
         found.append(
             VolatileScreen(ScreenConfig(bar_types=bars, component_id=f"VolatileScreen-{venue}"))
         )
+    # **Only where a desk would read it**, for the same reason: `_floor_stop`
+    # consults the calendar only under `TRADING_RELEASE_BAND`, and an unread
+    # publisher is a sqlite open every half hour for nothing.
+    #
+    # The reverse case is **not** symmetric with the screen's. A missing
+    # ranking makes `_volatile_enough` refuse, because a rule whose premise is
+    # "only the loud ones" has no fallback book; a missing calendar makes the
+    # band size exactly as it did without one. Widening on a print is an
+    # improvement on a stop, never a precondition for taking the trade.
+    if Settings.from_env().release_band:
+        from till_infinity.strategies.releasing import ReleaseConfig, ReleaseWatch
+
+        found.append(ReleaseWatch(ReleaseConfig(component_id=f"ReleaseWatch-{venue}")))
     return found
 
 
@@ -905,6 +918,18 @@ def importable_actors(venue: str, *, fresh: bool = False) -> list[ImportableActo
             config={"venue": venue},
         )
     ]
+    from till_infinity.strategies.config import Settings
+
+    if Settings.from_env().release_band:
+        from till_infinity.strategies.releasing import ReleaseConfig, ReleaseWatch
+
+        out.append(
+            ImportableActorConfig(
+                actor_path=f"{ReleaseWatch.__module__}:{ReleaseWatch.__name__}",
+                config_path=f"{ReleaseConfig.__module__}:{ReleaseConfig.__name__}",
+                config={"component_id": f"ReleaseWatch-{venue}"},
+            )
+        )
     named = _names(os.environ.get("STATESPACE_BARS"))
     # **Every configured interval, not the first.** A desk on 4h consumes
     # proposals keyed by its own clock, so a fold built only on 15m leaves the
