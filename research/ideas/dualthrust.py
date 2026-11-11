@@ -976,13 +976,24 @@ def cell_rows(
     k: float,
     cost_px: float,
     *,
+    k2: float | None = None,
     arms: tuple[str, ...],
     nulls: tuple[str, ...] = (),
     surrogates: int = 0,
     plant_grid: tuple[float, ...] = (0.0,),
 ) -> list[dict]:
-    """Every row for one (instrument, clock, N, K): the arms, the strata, the nulls."""
+    """Every row for one (instrument, clock, N, K): the arms, the strata, the nulls.
+
+    `k2` is the **short** trigger's multiple and defaults to `k`, so every
+    symmetric caller is unchanged. An asymmetric pair makes the both-triggers
+    bar's convention load-bearing rather than incidental: this study's first
+    convention - nearest-trigger-first - left the position short on every
+    whipsaw bar with `k1 == k2`, and with `k1 != k2` that tilt becomes
+    systematic. `INTRABAR=once` is symmetric by construction and `close` and
+    `adverse` bracket it, which is why all three run.
+    """
     vol = units(series, UNIT_SPAN.get(series.interval, 48))
+    k_short = k if k2 is None else float(k2)
     bar_range = series.high - series.low
     common = float(np.median(bar_range[bar_range > 0])) or 1.0
     base = {
@@ -993,6 +1004,7 @@ def cell_rows(
         "source": series.venue,
         "n_window": n,
         "k": k,
+        "k2": k_short,
         "days": round(series.days, 1),
     }
     rows: list[dict] = []
@@ -1010,7 +1022,7 @@ def cell_rows(
         plans.append(("const", const_range(measured), INTRABARS[0]))
     for arm, widths, convention in plans:
         rng = random.Random(f"{series.name}|{n}|{k}|{arm}|{SEED}")
-        trades, same_bar = run_rule(series, widths, vol, k, k, intrabar=convention)
+        trades, same_bar = run_rule(series, widths, vol, k, k_short, intrabar=convention)
         row = describe(trades, len(series.close), common, cost_px, rng)
         rows.append(
             {
@@ -1047,7 +1059,7 @@ def cell_rows(
                 if "const" in arms and not strength:
                     legs.append((f"{name}-const", const_range(p_widths)))
                 for leg, leg_widths in legs:
-                    trades, same_bar = run_rule(planted, leg_widths, s_vol, k, k)
+                    trades, same_bar = run_rule(planted, leg_widths, s_vol, k, k_short)
                     row = describe(trades, len(planted.close), s_common, cost_px, rng)
                     tag = {
                         **base,
@@ -1087,20 +1099,24 @@ SURROGATE = {"reflect": reflect, "shuffle": shuffle, "walk-path": walk_path}
 
 
 def _job(task: tuple) -> list[dict]:
-    series, n, k, cost_px, arms, nulls, surrogates, plant_grid = task
+    # Eight fields is the symmetric task every mode but `asym` builds; a ninth
+    # is the short trigger's own multiple.
+    series, n, k, cost_px, arms, nulls, surrogates, plant_grid = task[:8]
+    k2 = task[8] if len(task) > 8 else None
     try:
         return cell_rows(
             series,
             n,
             k,
             cost_px,
+            k2=k2,
             arms=arms,
             nulls=nulls,
             surrogates=surrogates,
             plant_grid=plant_grid,
         )
     except Exception as exc:  # noqa: BLE001 - one bad cell must not lose the run
-        print(f"  ERROR {series.name} N={n} K={k}: {exc!r}")
+        print(f"  ERROR {series.name} N={n} K={k}/{k2}: {exc!r}")
         return [{"symbol": series.feed, "interval": series.interval, "arm": "error", "n": 0}]
 
 
@@ -1310,6 +1326,45 @@ def main() -> int:
         ]
         rows = run_cells(tasks)
         write(rows, "sweep")
+        _report_sweep(rows)
+        return 0
+
+    if MODE == "asym":
+        # **The full `k_up x k_down x N` surface, every cell against its own
+        # direction-free twin.** Dual Thrust is traditionally tuned per
+        # instrument, and the published sweep crossed only a symmetric `K`.
+        #
+        # **The objective is `real - reflect` and not Sharpe, deliberately.**
+        # The trigger fill is worth a roughly fixed price per trade and the
+        # unit is `K * range`, so the offset *in units* grows as `K` shrinks
+        # while the trade count grows too - and Sharpe, which scales as
+        # `mean / sd * sqrt(n)`, rewards both. A Sharpe-maximising search over
+        # this grid therefore points straight at the artefact: the first
+        # symmetric sweep run without a null read EURUSD `K = 0.2` at
+        # `+0.1034, z +12.3`, and that cell's own null read `+0.1264`.
+        #
+        # Cost is priced first by `MODE=cost` and is not optional here either:
+        # the realised round trip is 1.21-1.35x the screened one because a
+        # nearer trigger selects small-range bars, so the region this grid
+        # scores best is the region cost refuses.
+        ups = tuple(float(x) for x in (os.environ.get("DT_K1_GRID") or "0.2,0.3,0.5,0.7,0.9").split(","))
+        downs = tuple(
+            float(x) for x in (os.environ.get("DT_K2_GRID") or "0.2,0.3,0.5,0.7,0.9").split(",")
+        )
+        backs = tuple(int(x) for x in (os.environ.get("DT_N_ASYM") or "2,4,6,8,10").split(","))
+        tasks = [
+            (s, n, k1, px.get(s.feed, float("nan")), ("real",), NULLS[:1], SWEEP_DRAWS, (0.0,), k2)
+            for s in pop
+            for n in backs
+            for k1 in ups
+            for k2 in downs
+        ]
+        print(
+            f"{len(tasks)} cells: {len(pop)} series x {len(backs)} lookbacks x "
+            f"{len(ups)}x{len(downs)} triggers, each with its own null"
+        )
+        rows = run_cells(tasks)
+        write(rows, "asym")
         _report_sweep(rows)
         return 0
 

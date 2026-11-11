@@ -591,6 +591,54 @@ range-scaled breakout captures less of a move than its geometry suggests.
   up-expansion. `once` - reverse the position and stop - is symmetric in the
   side by construction and is the headline; `close` and `adverse` bracket it.
 
+## A reader's cell, run against its own direction-free twin
+
+**Reported 2026-11-11**, from outside this desk: EURUSD, the range over the
+last **8 daily** bars, `K = 0.3`, entries intraday, **flat at 21:00 UTC**,
+about ten trades a month at a median hold of eight hours - **+0.038R a trade**
+at Sharpe 0.86, positive on 5 of 7 other symbols, sign preserved in 2005-12,
+and **beating 99% of random entry times**.
+
+Two clocks and an exit this study's rule does not have, so `dualthrust.py`
+cannot express it: `run_rule` triggers off **each bar's own open** and has no
+flat state. `dualthrust_session.py` is that rule and nothing else.
+
+**+0.038 a trade is inside the range the trigger fill is worth with no
+direction present.** That is this study's central measurement - an OHLC fill
+at a touched trigger price earns **+0.03 to +0.06 units a trade** on a
+direction-free arm, and the same test against a coin passes on 57 of 216 rows
+with **52 of them positive**. Run at the reader's own `N` and `K` on 15m, the
+`reflect` arm earned **+0.0574 [+0.0314, +0.0794]** against the real market's
+**+0.0088**: the market *underperformed* its own direction-free twin.
+
+The reader's own control does not reach this, and that is not a criticism of
+it - **a random *entry time* does not fill at a trigger**, so the offset a
+touched-price fill collects is absent from that null by construction. Two
+controls can both be honest and test different things.
+
+Run as specified, one entry per day, 1,595 trades over the 15m cache:
+
+| arm | n | mean, trigger units | 95% interval |
+| --- | ---: | ---: | --- |
+| **real** | 1,595 | **+0.0072** | **[-0.0415, +0.0527]** |
+| **reflect** | 1,630 | **+0.0114** | sd over 6 draws 0.0253 |
+| `shuffle` | 1,647 | +0.0069 | sd over 6 draws 0.0149 |
+| **`real - reflect`** | | **-0.0043** | inside the arm's own draw noise |
+
+The rule's own interval spans zero, and a series with the same bars, ranges,
+gaps and wicks but **the sign of every body coined** earns slightly more. The
+levels here are in trigger units and the reader's are in R, so the two are not
+comparable to the decimal; what is comparable is **arm against arm inside one
+harness**, and that difference is negative.
+
+**A defect in this harness, found by its own trade count.** The first run
+reported **5,669** trades where the rule takes about ten a month: flattening
+at 21:00 cleared the position and the next bar saw `pos == 0`, so it re-entered
+at 21:15 on a trigger still touched. The duty cycle is the object under test,
+so getting it wrong measures a different rule - and the count, not the result,
+is what showed it. One entry per day brings it to 1,595, about 8.4 a month,
+which is the rule as described.
+
 ## Re-running it
 
 All computation on the lab, nothing on `tis`. The harness is staged outside
