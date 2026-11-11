@@ -18,7 +18,9 @@ from __future__ import annotations
 
 import os
 import socket
+from dataclasses import dataclass
 from pathlib import Path
+from typing import Any
 
 from nautilus_trader.backtest.node import BacktestNode
 from nautilus_trader.config import (
@@ -30,6 +32,7 @@ from nautilus_trader.config import (
     RiskEngineConfig,
 )
 from nautilus_trader.model.data import Bar, QuoteTick
+from nautilus_trader.model.enums import PositionSide
 
 from till_infinity.adapters.mt5 import MT5
 
@@ -290,10 +293,149 @@ def run_config(
     )
 
 
+@dataclass(frozen=True, slots=True)
+class Swaps:
+    """What a run's positions owed in overnight financing."""
+
+    #: Total financing, in the account currency. Positive is a cost.
+    charged: float = 0.0
+    #: How many closed positions paid any of it.
+    positions: int = 0
+    #: How many were held across at least one rollover, which is the number
+    #: that says whether a result is a carry result at all.
+    overnight: int = 0
+    #: How many of those the catalogue has **no swap rate for**, so they were
+    #: charged zero for want of a number rather than because they owed none.
+    #:
+    #: Reported rather than folded away, because the two read identically in a
+    #: total and only one of them is a fact. The catalogue's instruments are
+    #: Nautilus's standard conventions and carry no broker swap at all, so
+    #: every rate here comes from `swap.DERIV_FALLBACK` - which was measured
+    #: off this broker on 2026-09-30 and covers the **Deriv indices only**. An
+    #: FX pair in a backtest therefore owes nothing, and a reader has to be
+    #: told that rather than left to infer it from a zero.
+    unknown: int = 0
+
+    def __str__(self) -> str:
+        said = (
+            f"swap {self.charged:.2f} over {self.overnight} of "
+            f"{self.positions} positions held overnight"
+        )
+        if self.unknown:
+            said += f"; {self.unknown} held overnight with no rate, charged nothing"
+        return said
+
+
+def swap_charged(engine: Any) -> Swaps:
+    """The overnight financing a finished run's closed positions owed.
+
+    **Charged after the fact rather than at a fill, because Nautilus has no
+    financing hook.** A `FeeModel` sees `(order, quantity, price)` and knows
+    nothing about how long a position will be held, so a swap charged there
+    would have to be the *planned* hold - the quantity the live gate prices -
+    rather than the one that happened. A closed position carries both
+    timestamps, so this charges what was actually owed.
+
+    `research/docs/carry.md` is the measurement: about the interbank
+    differential plus a markup on FX, and on the 24/7 synthetics an annual
+    rate on **both** sides - Boom 1000 36% a year, Crash 1000 about 5 bps a
+    night. `swap-does-not-cancel-in-a-long-short-basket` is the consequence
+    that catches people out: both legs of a market-neutral basket pay, so a
+    CFD basket that is market-neutral is not carry-neutral.
+
+    **It is a cost on top of the spread, not instead of it.** The catalogue's
+    quotes already straddle each close by the feed's measured median spread,
+    which is the round-trip cost; this is the cost of time. A 15-minute rule
+    crosses no rollover and owes nothing, which is the right answer and is
+    also why swap alone would make every intraday rule read as free.
+
+    **The catalogue has no broker swap, so most of the book owes nothing
+    here.** Its instruments are Nautilus's standard conventions - there is no
+    `symbol_info` without the terminal - so every rate comes from
+    `swap.DERIV_FALLBACK`, which covers the Deriv indices and not FX. An FX
+    backtest is charged zero, and `Swaps.unknown` counts the positions that
+    happened to, so the two readings of a zero stay apart.
+
+    Returns zeroes rather than raising where the engine kept no positions:
+    `dispose_on_completion=True` empties the cache, and a run reporting no
+    swap because its records were dropped must not look like a run that owed
+    none - so `positions` says which it was.
+    """
+    from ..domain import swap
+    from ..domain.models import Side
+    from ..strategies import sizes
+
+    cache = getattr(engine, "cache", None)
+    if cache is None:
+        return Swaps()
+    from ..domain.swap import _terms
+
+    total = 0.0
+    counted = 0
+    overnight = 0
+    unknown = 0
+    for position in cache.positions_closed():
+        counted += 1
+        opened = float(getattr(position, "ts_opened", 0) or 0) / 1e9
+        closed = float(getattr(position, "ts_closed", 0) or 0) / 1e9
+        if opened <= 0.0 or closed <= opened:
+            continue
+        instrument = cache.instrument(position.instrument_id)
+        if instrument is None:
+            continue
+        side = Side.BUY if position.side == PositionSide.LONG else Side.SELL
+        # In price units per unit held, which the corpus's instruments turn
+        # into quote-currency money by the quantity alone: both shapes it
+        # builds price one unit of the underlying - see `CONTRACTS`.
+        cost = swap.expected(
+            sizes.spec_of(instrument),
+            sizes.feed_of(position.instrument_id),
+            side,
+            float(position.avg_px_open or 0.0),
+            opened,
+            closed - opened,
+        )
+        if cost <= 0.0:
+            # A hold that crossed a rollover and was charged nothing is one of
+            # two different facts, and the total cannot tell them apart.
+            feed = sizes.feed_of(position.instrument_id)
+            if _terms(sizes.spec_of(instrument), feed) is None and swap.nights(
+                opened, closed - opened, swap.NO_TRIPLE
+            ):
+                unknown += 1
+            continue
+        overnight += 1
+        total += cost * float(position.quantity)
+    return Swaps(charged=total, positions=counted, overnight=overnight, unknown=unknown)
+
+
 def run(configs) -> list:
-    """Run them, having checked this is a host allowed to."""
+    """Run them, having checked this is a host allowed to.
+
+    The engines are kept (`dispose_on_completion=False`) so a caller can read
+    the closed positions a result does not carry - which is what
+    `swap_charged` needs and what `discovery.read` already does for returns.
+    """
     where()
-    return BacktestNode(configs=list(configs)).run()
+    node = BacktestNode(configs=list(configs))
+    results = node.run()
+    if charges():
+        for result in results:
+            found = swap_charged(node.get_engine(result.run_config_id))
+            if found.overnight:
+                print(f"{result.run_config_id}: {found}")
+    return results
+
+
+def charges() -> bool:
+    """Whether a run reports the swap its positions owed. `BACKTEST_SWAP`, on.
+
+    On by default, because the cost is real and was charged nowhere: a run
+    that silently omits a cost the live desk pays is the shape of measurement
+    this file's own docstring is about. Off is for reproducing a number
+    measured before it existed.
+    """
+    return (os.environ.get("BACKTEST_SWAP", "1").strip().lower()) not in ("0", "false", "no", "")
 
 
 def desk_config(
