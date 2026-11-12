@@ -104,7 +104,16 @@ def rows(path: Path) -> list[tuple[int, float, float, float, float, float, float
     return out
 
 
-def build(bars: Path, into: Path, interval: str = "5m") -> None:
+def build(bars: Path, into: Path, interval: str = "5m", *, costless: bool = False) -> None:
+    """Write the catalogue. `costless` sets the spread to zero.
+
+    **A zero-spread catalogue is a measuring instrument, not a market.** It
+    exists so a rule's gross edge can be separated from the round trip it
+    pays - if gross and net are both negative the costs were never the
+    problem, and if gross is positive the question becomes whether the
+    margin covers a spread that widens exactly when this rule trades.
+    Nothing sized or deployed off it is sized off a real price.
+    """
     spec = SPECS[interval]
     book = ParquetDataCatalog(str(into))
     for symbol, feed in FEEDS.items():
@@ -128,7 +137,7 @@ def build(bars: Path, into: Path, interval: str = "5m") -> None:
         if spread <= 0:
             print(f"  {symbol}: no recorded spread - skipped rather than guessed")
             continue
-        half = spread / 2.0
+        half = 0.0 if costless else spread / 2.0
         mid = statistics.median([r[4] for r in found])
 
         built_bars = [_bar(bar_type, instrument, r[:6]) for r in found]
@@ -137,10 +146,16 @@ def build(bars: Path, into: Path, interval: str = "5m") -> None:
         book.write_data(built_bars)
         book.write_data(built_quotes)
         span = (found[-1][0] - found[0][0]) / 86_400.0
+        # **The spread actually applied, not the one measured.** This printed
+        # the measured median even under `--costless`, where the quotes carry
+        # none of it - a line that says "0.172 bps" over a zero-spread
+        # catalogue is exactly how a costless run gets filed as a priced one.
+        applied = 0.0 if costless else spread
         print(
             f"  {instrument.id}: {len(built_bars)} bars over {span:.1f} days, "
-            f"{len(built_quotes)} quotes at a modelled {spread / mid * 10_000:.3f} bps "
-            f"({median_points:.1f} points)"
+            f"{len(built_quotes)} quotes at a modelled {applied / mid * 10_000:.3f} bps "
+            f"({0.0 if costless else median_points:.1f} points"
+            f"{', COSTLESS - measured ' + format(spread / mid * 10_000, '.3f') + ' bps discarded' if costless else ''})"
         )
 
 
@@ -149,9 +164,14 @@ def main() -> None:
     parser.add_argument("--bars", default=str(BARS))
     parser.add_argument("--into", default=str(INTO))
     parser.add_argument("--interval", default="5m")
+    parser.add_argument(
+        "--costless",
+        action="store_true",
+        help="zero spread, for measuring a rule's gross edge against its net one",
+    )
     args = parser.parse_args()
     print(f"from {args.bars} -> {args.into}")
-    build(Path(args.bars), Path(args.into), args.interval)
+    build(Path(args.bars), Path(args.into), args.interval, costless=args.costless)
     print(
         "\nthe bars are the broker's own bid series; the ask is modelled from the "
         "recorded spread, so cost is understated in the hours a spread widens"
