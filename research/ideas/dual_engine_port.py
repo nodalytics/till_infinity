@@ -370,6 +370,19 @@ class DualEngineConfig(StrategyConfig, frozen=True):
     min_risk_atr: float = MIN_RISK_ATR
     exhaustion: bool = True
     choppy: bool = True
+    #: Execution bars per structure bar. 16 is the specified 15m/4H pair; 4 on
+    #: a 15m feed is 15m/1H, and 4 on an hourly feed is 1h/4H.
+    #:
+    #: **The structure timeframe is what sets the cost of the rule**, because
+    #: the stop is drawn off the structure candle's own geometry. Measured on
+    #: this store, one round trip against a one-structure-bar stop costs 7.0%
+    #: of R on EURUSD at 4H, 12.5% at 1H and **29.1% at 15m** - 16x dearer
+    #: from 1d to 15m, which independently reproduces the 19x this desk has
+    #: already measured. The execution timeframe does not move that number.
+    bars_per_structure: int = BARS_PER_4H
+    #: Where the 50% partial is taken, in units of the initial risk. The
+    #: reward-to-risk axis: the remainder rides the ATR trail from there.
+    tp_trigger_r: float = TP_TRIGGER_R
     #: The null. Every signal's direction reversed and nothing else changed.
     flip: bool = False
 
@@ -475,7 +488,7 @@ class DualEngine(Strategy):
         self._attend(tr)
 
         self._forming.append(bar)
-        if len(self._forming) >= BARS_PER_4H:
+        if len(self._forming) >= self.config.bars_per_structure:
             self._close_4h()
 
         held = self.cache.positions_open(instrument_id=self.config.instrument_id)
@@ -724,10 +737,11 @@ class DualEngine(Strategy):
             self._count("entry:risk-under-atr")
             return
 
-        quantity = self._size(price, risk)
-        if quantity <= 0:
+        size = self._size(price, risk)
+        if size <= 0.0:
             self._count("entry:unaffordable")
             return
+        quantity = self._instrument.make_qty(size)
         side = OrderSide.BUY if found.direction > 0 else OrderSide.SELL
         self._trade = {
             "branch": found.branch,
@@ -749,8 +763,23 @@ class DualEngine(Strategy):
             )
         )
 
-    def _size(self, price: float, risk: float) -> Any:
-        """Risk a fraction of equity, capped by position and gross leverage."""
+    def _size(self, price: float, risk: float) -> float:
+        """Risk a fraction of equity, capped by position and gross leverage.
+
+        **Returns a float and floors it to the instrument's own increment**,
+        rather than handing the raw figure to `make_qty`. `make_qty` *raises*
+        on a value that rounds to zero - "0.0434 was rounded to zero due to
+        size increment 1" - so on a shared account, where the gross cap can
+        leave room for less than one unit, the sizer took the whole run down
+        with it. The original's `int(quantity)` then `if quantity < 1: return`
+        is the same two steps; this is that, with the increment read off the
+        instrument instead of assumed to be 1, because gold is quoted in
+        hundredths of an ounce in this catalogue.
+
+        `gross` walks **every** open position, not this instrument's. That is
+        the portfolio cap the original states and the thing an engine per
+        instrument cannot enforce.
+        """
         account = self.portfolio.account(self.config.instrument_id.venue)
         equity = float(account.balance_total(USD).as_double()) if account else EQUITY
         wanted = equity * self.config.risk_per_trade / risk
@@ -759,7 +788,11 @@ class DualEngine(Strategy):
             gross += abs(float(position.quantity)) * float(position.avg_px_open)
         room = max(equity * MAX_GROSS_LEVERAGE - gross, 0.0)
         ceiling = min(equity * MAX_LEVERAGE, room) / price
-        return self._instrument.make_qty(max(min(wanted, ceiling), 0.0))
+        raw = max(min(wanted, ceiling), 0.0)
+        increment = float(self._instrument.size_increment) or 1.0
+        size = math.floor(raw / increment) * increment
+        minimum = float(self._instrument.min_quantity or 0.0)
+        return 0.0 if size < max(increment, minimum) else size
 
     # ------------------------------------------------------------- management
 
@@ -787,7 +820,7 @@ class DualEngine(Strategy):
             )
             self._move_stop(target, is_long)
 
-        if not state["partial"] and moved >= TP_TRIGGER_R * state["risk"]:
+        if not state["partial"] and moved >= self.config.tp_trigger_r * state["risk"]:
             half = self._instrument.make_qty(float(position.quantity) * TP_FRACTION)
             if float(half) > 0:
                 state["partial"] = True
