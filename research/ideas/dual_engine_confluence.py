@@ -60,6 +60,67 @@ What would change that reading is `k = 2` showing a **larger** rule-minus-flip
 gap than `k = 1`, not merely a better R: a better R at a lower trade count is
 what selection looks like.
 
+## What it read, 2026-11-12
+
+Five instruments, 321 days, hourly execution.
+
+| arm | n | rule R | flip R | gap | drawdown | times the frames agreed |
+|---|---|---|---|---|---|---|
+| 1H+4H+1D k=1 | **190** | **-0.363** +/-0.126 | -0.364 | **+0.000** | 38.8% | 1 of 201 |
+| 1H+4H+1D k=2 | 4 | -1.589 | -0.226 | -1.363 | 5.8% | 8 |
+| 1H+4H+1D k=3 | **0** | - | - | - | - | **never** |
+| 4H+1D k=1 | 35 | -0.482 | -0.398 | -0.084 | 13.8% | 42 of 42 single |
+| 4H+1D k=2 | **0** | - | - | - | - | **never** |
+| 1H+4H k=2 | 4 | -1.589 | -0.226 | -1.363 | 5.8% | 8 |
+
+### The frames almost never agree, and that is the result
+
+Three frames produced **265 signals** across five instruments over 321 days.
+Two of them wanted the same direction inside a 24-hour window **eight times**.
+All three wanted it **zero times** - not rarely, never.
+
+The prediction above said raising `k` would cut the trade count and leave R
+where it was. It cut the trade count to nothing, and the reason is sharper than
+the prediction's: it is not that the frames are three correlated views of one
+thing, it is that **each one fires too seldom for confluence to be reachable**.
+265 signals over three frames and five instruments is about **18 per frame per
+instrument per year**. Asking two such processes to land within a day of each
+other is asking for a coincidence, and the arithmetic says it will not happen
+often enough to trade. It happened eight times.
+
+The `k = 3` and `4H+1D k = 2` arms are clean evidence for this because they took
+**no trades at all**: nothing was ever blocked by an open position and no
+signal was ever consumed by a firing trade, so their agreement counts are the
+unobstructed truth. The counts in the arms that do trade are depressed - a
+trade blocks signal generation and a fired agreement consumes its frames'
+signals - so they are a floor rather than a measurement.
+
+### The union is the best-sampled refutation in this line of work
+
+`k = 1` is the frequency lever and it works: **190 trades** over 321 days,
+comfortably past the 50-trade floor the constraints ask for. It also reads
+
+    rule -0.363 +/-0.126    flip -0.364    gap +0.000
+
+at n 190 against n 134 - the largest sample taken on this rule anywhere, and
+the rule is **indistinguishable from trading its own signals backwards to three
+decimal places**. The drawdown is 38.8%.
+
+That is the frequency question and the direction question answered in the same
+row. More trades were available the whole time, from the union rather than from
+loosening a tolerance; taking them delivers exactly zero directional
+information and a 38.8% drawdown.
+
+### What this does not rule out
+
+The soft version. v2's softmax weights each timeframe by `e^|Z|` and sums, so
+it produces a reading on **every** bar rather than a signal on a few - it can
+never fail to "agree" the way a hard vote does, because it never requires
+agreement. That is a different object and is not tested here; the spec at
+`docs/specs/2026-11-12-dual-engine-confluence-v2.md` says what it would take.
+What this file settles is that the **hard** k-of-n reading of "two or three
+structure timeframes that need not agree every time" has no trades in it.
+
 Run it as `uv run python research/ideas/dual_engine_confluence.py`.
 """
 
