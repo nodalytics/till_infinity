@@ -83,8 +83,10 @@ from nautilus_trader.model.enums import OrderSide, TimeInForce
 from nautilus_trader.model.position import Position as NautilusPosition
 
 from ..domain.models import Intent, Position, Refusal, Side
+from ..journal.actor import publish
+from ..journal.models import Entry, Kind
 from . import manage, turning
-from .config import Settings
+from .config import WRITER, Settings
 
 
 @dataclass(slots=True)
@@ -133,6 +135,14 @@ class Held:
     #: both off it would make every improvement look new and re-send the same
     #: modify on every quote.
     stop: float = 0.0
+    #: The id of the journal entry recording the decision this was opened on,
+    #: or "" where nothing here decided it - a position adopted on start-up.
+    #:
+    #: Kept on the position rather than in a map beside it because the map
+    #: would need its own eviction and this is already popped on close.
+    #: `JournalActor` drops an outcome with no parent, so an empty string here
+    #: means no outcome is published at all rather than one that never lands.
+    decision: str = ""
 
 
 @dataclass(frozen=True, slots=True)
@@ -223,13 +233,20 @@ class Exits:
 
     # ------------------------------------------------------------- the tracking
 
-    def opened(self, position_id: Any, intent: Intent, when: float) -> None:
-        """A position this strategy opened."""
-        self._held[position_id] = Held(
+    def opened(self, position_id: Any, intent: Intent, when: float) -> Held:
+        """A position this strategy opened, returned so the caller can mark it.
+
+        Returning the `Held` rather than keeping the book private: the journal
+        entry recording *why* this was opened is written by the mixin above,
+        after this call, and its id belongs on the position it judges. Reaching
+        back in through `_held` would make a private dict part of the contract.
+        """
+        held = self._held[position_id] = Held(
             intent=intent, best=intent.entry, opened=when, stop=intent.stop
         )
         if self.score_turn:
             self._ride(position_id, intent)
+        return held
 
     def closed(self, position_id: Any) -> Held | None:
         """Forget a position, returning what was known about it."""
@@ -771,7 +788,9 @@ class ExitMechanism:
         if intent.stop <= 0.0:
             self._orphan(event.position_id, f"its intent on {intent.feed} names no stop price")
             return
-        self.exits.opened(event.position_id, self._sided(intent), self.clock.timestamp())
+        sided = self._sided(intent)
+        held = self.exits.opened(event.position_id, sided, self.clock.timestamp())
+        held.decision = self._decided(event, sided)
         self._attach(event.position_id)
         self._announce(
             "opened",
@@ -789,6 +808,124 @@ class ExitMechanism:
             stop=round(float(intent.stop), 6),
             target=round(float(intent.target), 6) if getattr(intent, "target", 0) else None,
         )
+
+    def _decided(self, event: Any, intent: Intent) -> str:
+        """Record what this position was opened on, and return the entry's id.
+
+        **The parent half of every number `strategies/report.py` reports.** It
+        pairs an outcome to its decision because "the outcome carries what
+        happened and the decision carries what was intended - the strategy that
+        opened it, and the risk it was sized for, which is the denominator of
+        every number worth reporting". The legacy `strategies/service.py` wrote
+        this entry and was retired with the legacy desk on 2026-10-31; nothing
+        took the job on, so `report.trades()` returned an empty list on a desk
+        that had been trading for a fortnight, and `journal.ledger` - which
+        exists to add closed trades up against the level that produced them -
+        had no rows at all.
+
+        Returns `""` where nothing could be written, which is what
+        `on_position_closed` reads to stay silent: `JournalActor` drops an
+        outcome with no parent and counts it, so publishing one anyway turns a
+        restart into what looks like a journal fault.
+
+        Failures are swallowed for the reason `desk._journal` gives: Nautilus's
+        bus calls handlers inline, so this runs on the stack of a live fill and
+        a journal that cannot write must not take the position with it.
+        """
+        entry = Entry(
+            title=f"{intent.feed or self._feed_name()} opened",
+            kind=Kind.DECISION,
+            actor=WRITER,
+            rationale=intent.reason,
+            context={
+                "strategy": str(self.id),
+                "feed": intent.feed or self._feed_name(),
+                "side": "long" if intent.side is Side.BUY else "short",
+                "mode": self.settings.mode,
+                "interval": intent.interval,
+                "level_id": intent.level_id,
+                "level": round(float(intent.entry), 6),
+                # The figure the trade was *sized* for, not the fill: the report
+                # divides by it, and `report.trades` records that 839 of 1,486
+                # closed trades once carried a zero here and were dropped.
+                "risk_money": round(float(intent.risk_money), 6),
+                "risk_price": round(abs(float(intent.entry) - float(intent.stop)), 6),
+                "stop_vol": round(float(intent.stop_vol), 6),
+                "volume": round(float(intent.volume), 6),
+                "position_id": str(getattr(event, "position_id", "")),
+            },
+            tags=("trade", intent.feed or self._feed_name()),
+        )
+        try:
+            publish(self, entry)
+        except Exception as exc:  # a record that cannot be written is not a halt
+            self.log.debug(f"journal refused the opening of {intent.feed}: {exc}")
+            return ""
+        return entry.id
+
+    def _concluded(self, event: Any, held: Held) -> None:
+        """Record what happened to it, against the decision it was opened on.
+
+        **It has to stand alone, because one of its two readers never looks up
+        a parent.** `report.trades` pairs an outcome to its decision, but
+        `journal.ledger.outcomes` selects outcome contexts and nothing else -
+        so a trade whose feed and level live only on the parent is added up
+        under the empty level id, and every per-level number is wrong in a way
+        that reads as "this level was never traded".
+
+        So the identity travels on both and the **measurement travels on one**.
+        Repeating `feed`, `level_id` and the rest is safe because both are read
+        off the same `Intent` and cannot disagree; `risk_money` is deliberately
+        not repeated, because `report.trades` merges the two with the outcome
+        last and records that a zero spread that way once hid 839 of 1,486
+        closed trades from every report.
+
+        `reward_to_risk` is the realised one and not the planned one: the
+        planned figure is derivable from the parent's stop and target, and two
+        differently-computed numbers of that name is how a report comes to
+        disagree with itself.
+        """
+        if not held.decision:
+            return
+        intent = held.intent
+        profit = _money(getattr(event, "realized_pnl", 0.0))
+        risk = float(intent.risk_money)
+        entry = Entry(
+            title=f"{intent.feed or self._feed_name()} closed",
+            kind=Kind.OUTCOME,
+            actor=WRITER,
+            parent=held.decision,
+            rationale=held.closing,
+            context={
+                "strategy": str(self.id),
+                "feed": intent.feed or self._feed_name(),
+                "side": "long" if intent.side is Side.BUY else "short",
+                "mode": self.settings.mode,
+                "interval": intent.interval,
+                "level_id": intent.level_id,
+                "level": round(float(intent.entry), 6),
+                "profit": profit,
+                "seconds": round(float(getattr(event, "duration_ns", 0) or 0) / 1e9, 3),
+                "reason": held.closing,
+                "exit_source": "desk" if held.closing else "venue",
+                "reward_to_risk": round(profit / risk, 4) if risk > 0 else 0.0,
+                "quotes": int(held.quotes),
+                "scaled": bool(held.scaled),
+                # **Named, not omitted.** `report.trades` reads a trade as
+                # scored when `turn_suggested_r` is present and `turn_reason`
+                # is not, so leaving both out would report a turn section of
+                # zeroes that reads as "the model gained nothing" rather than
+                # "nothing was measured". `turning.score` and `TurnTally` have
+                # no caller in `till_infinity/`, and `_ride` stores the
+                # suggested *price* where the scorer wants a `TurnExit`, so
+                # there is nothing here to score with yet.
+                "turn_reason": "not scored: turning.score has no caller",
+            },
+        )
+        try:
+            publish(self, entry)
+        except Exception as exc:  # see `_decided`: a close must not fail on a record
+            self.log.debug(f"journal refused the close of {intent.feed}: {exc}")
 
     def _orphan(self, position_id: Any, why: str) -> None:
         """Close a position whose stop price cannot be reconstructed.
@@ -821,6 +958,8 @@ class ExitMechanism:
         held = self.exits.closed(event.position_id)
         if held is not None and held.ride is not None:
             self.log.info(f"{held.intent.feed} closed; the turn model wanted {held.ride}")
+        if held is not None:
+            self._concluded(event, held)
         self._announce(
             "closed",
             event,
@@ -920,6 +1059,23 @@ class ExitMechanism:
             )
             if getattr(order, "trigger_price", None) is not None and not order.is_closed
         ]
+
+
+def _money(value: Any) -> float:
+    """The number out of a `Money`, a string or a float, or 0.0.
+
+    `Money.__str__` is `"41.00 USD"`, and `float()` on it raises - so a close
+    whose P&L went through `str()` anywhere on the way would otherwise take the
+    whole outcome out with it. The currency is dropped rather than kept: an
+    account has one, it is on the account, and a second copy per trade is a
+    second thing that can disagree.
+    """
+    if isinstance(value, (int, float)):
+        return round(float(value), 6)
+    try:
+        return round(float(str(value).split()[0]), 6)
+    except (ValueError, IndexError):
+        return 0.0
 
 
 def _trail_vol_bps(intent: Any) -> float:

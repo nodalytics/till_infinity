@@ -874,7 +874,7 @@ def test_a_desk_level_refusal_is_published_to_the_journal():
     per-decision refusals stay at debug: hundreds a day, and journalling them
     would bury these.
     """
-    from till_infinity.journal.models import Entry
+    from till_infinity.journal.models import Entry, Kind
     from till_infinity.strategies.desk import Desk
     from till_infinity.utils.topics import JOURNAL
 
@@ -915,9 +915,24 @@ def test_a_desk_level_refusal_is_published_to_the_journal():
     assert entry.context["feed"] == "eurusd"
     assert entry.rationale == "no quote for EURUSD"
     assert "refusal" in entry.tags
-    # The strategy id, because `judge-the-desk-on-the-broker-not-the-journal`
-    # is about exactly this: a record whose actor is wrong is worse than none.
-    assert entry.actor == "EdgeEntry-EURUSD-E270"
+    # **An observation, not a decision.** A refusal is "we noticed something
+    # and did not act", which is what `Kind.OBSERVATION` is documented as, and
+    # it is also the only kind `report.declines` reads - so while these were
+    # written as decisions the gate tally counted none of them, and
+    # `report.trades` would have mixed them into its pool of parents as trades
+    # that never opened.
+    assert entry.kind is Kind.OBSERVATION
+    # **The strategy id is still pinned, in the column a reader looks in.**
+    # This asserted `entry.actor` until 2026-11-12, on the argument that "a
+    # record whose actor is wrong is worse than none" - which is right, and is
+    # why the identity had to move rather than go. Every reader
+    # (`report.trades`, `report.declines`, `journal.ledger.outcomes`) filters
+    # on `actor = 'trading'` exactly and then reads the strategy out of the
+    # context, so an entry signed with the strategy's own name was one no
+    # reader could see at all.
+    assert entry.actor == "trading"
+    assert entry.context["strategy"] == "EdgeEntry-EURUSD-E270"
+    assert entry.context["rule"] == "statespace-surprise"
 
 
 def test_a_journal_that_cannot_write_does_not_stop_a_decision():

@@ -235,6 +235,19 @@ HTTP = "mt5-http"
 #: the HTTP wrapper, then no terminal at all. See `broker.choose`.
 BACKENDS: tuple[str, ...] = (NATIVE, RPYC, HTTP, PAPER)
 
+#: The `actor` every trade record is journalled under - **not** the strategy's
+#: own id, which goes in the context as `strategy`.
+#:
+#: `report.trades`, `report.declines` and `journal.ledger.outcomes` each filter
+#: on `actor = 'trading'` exactly, so a writer that signs its own name is a
+#: writer no reader can see. The retired `strategies/service.py` wrote this
+#: name; keeping it means the record spans the 2026-10-31 cutover rather than
+#: starting a second one beside the first.
+#:
+#: Here rather than beside either writer because `desk.py` and `exits.py` both
+#: write under it and neither imports the other.
+WRITER = "trading"
+
 #: Every timeframe `structures` forms levels on. Imported rather than copied:
 #: a second list would go stale the first time a timeframe was added, and the
 #: symptom would be calls silently ignored.
