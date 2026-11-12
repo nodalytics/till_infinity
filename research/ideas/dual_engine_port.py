@@ -724,10 +724,11 @@ class DualEngine(Strategy):
             self._count("entry:risk-under-atr")
             return
 
-        quantity = self._size(price, risk)
-        if quantity <= 0:
+        size = self._size(price, risk)
+        if size <= 0.0:
             self._count("entry:unaffordable")
             return
+        quantity = self._instrument.make_qty(size)
         side = OrderSide.BUY if found.direction > 0 else OrderSide.SELL
         self._trade = {
             "branch": found.branch,
@@ -749,8 +750,23 @@ class DualEngine(Strategy):
             )
         )
 
-    def _size(self, price: float, risk: float) -> Any:
-        """Risk a fraction of equity, capped by position and gross leverage."""
+    def _size(self, price: float, risk: float) -> float:
+        """Risk a fraction of equity, capped by position and gross leverage.
+
+        **Returns a float and floors it to the instrument's own increment**,
+        rather than handing the raw figure to `make_qty`. `make_qty` *raises*
+        on a value that rounds to zero - "0.0434 was rounded to zero due to
+        size increment 1" - so on a shared account, where the gross cap can
+        leave room for less than one unit, the sizer took the whole run down
+        with it. The original's `int(quantity)` then `if quantity < 1: return`
+        is the same two steps; this is that, with the increment read off the
+        instrument instead of assumed to be 1, because gold is quoted in
+        hundredths of an ounce in this catalogue.
+
+        `gross` walks **every** open position, not this instrument's. That is
+        the portfolio cap the original states and the thing an engine per
+        instrument cannot enforce.
+        """
         account = self.portfolio.account(self.config.instrument_id.venue)
         equity = float(account.balance_total(USD).as_double()) if account else EQUITY
         wanted = equity * self.config.risk_per_trade / risk
@@ -759,7 +775,11 @@ class DualEngine(Strategy):
             gross += abs(float(position.quantity)) * float(position.avg_px_open)
         room = max(equity * MAX_GROSS_LEVERAGE - gross, 0.0)
         ceiling = min(equity * MAX_LEVERAGE, room) / price
-        return self._instrument.make_qty(max(min(wanted, ceiling), 0.0))
+        raw = max(min(wanted, ceiling), 0.0)
+        increment = float(self._instrument.size_increment) or 1.0
+        size = math.floor(raw / increment) * increment
+        minimum = float(self._instrument.min_quantity or 0.0)
+        return 0.0 if size < max(increment, minimum) else size
 
     # ------------------------------------------------------------- management
 
