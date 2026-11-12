@@ -2502,6 +2502,148 @@ class TestSubmittingAnOrder:
         assert str(accepted[0].venue_order_id) == "55-SL"
         assert rig.client._ticket(accepted[0].venue_order_id) == 55
 
+    async def test_an_unverified_stop_is_still_written_to_the_record(self, tmp_path, monkeypatch):
+        """**The hole that left two positions naked for six hours.**
+
+        `_protect` writes the record only where it could read the position back
+        and confirm the legs. On the third path - the modify was not refused and
+        the position cannot be read - it returns "nothing missing", so the order
+        is accepted and the stop is claimed as landed, and `_remember` never
+        runs.
+
+        That claim then has nothing behind it. The sweep's cache is empty after
+        any restart (reconciliation rebuilds a position without its bracket
+        legs), so the record is the only durable source, and the sweep says
+        exactly what it finds: "none on record to copy". On 2026-11-11 EURUSD
+        and Germany 40 sat stopless from 13:52 and 18:29 on that path.
+
+        **The optimistic verdict is kept**, because a missing row is not
+        evidence a position is naked and rejecting on one rejected the legs of
+        positions the broker was protecting. What changes is that the stop the
+        desk asked for is written down, so the next sweep has something to
+        repair a genuinely naked position with.
+        """
+        from till_infinity.adapters.mt5 import execution as mod
+
+        monkeypatch.setattr(mod, "PROTECTION_PATH", tmp_path / "protection.json")
+        # A terminal that takes the modify and then cannot show the position.
+        rig = make_exec(FakeBridge(positions=[], modify=DONE_ENVELOPE))
+        missing, why = await rig.client._protect(77, sl=1.07000, tp=1.09000, instrument=_eurusd())
+        assert missing == frozenset(), f"an unreadable position was called naked: {why}"
+
+        recorded = rig.client._protections()
+        assert "77" in recorded, "the stop was claimed as landed and written nowhere"
+        assert recorded["77"]["sl"] == pytest.approx(1.07000)
+        assert recorded["77"]["tp"] == pytest.approx(1.09000)
+        # Flagged, because a reader has to be able to tell a leg the broker
+        # confirmed from one this process only asked for.
+        assert recorded["77"].get("confirmed") is False
+
+    async def test_a_confirmed_stop_is_recorded_as_confirmed(self, tmp_path, monkeypatch):
+        """The control. Without it, "unverified legs are recorded" cannot be
+        told from "every leg is recorded as unverified", and the distinction is
+        the only thing the flag is for."""
+        from till_infinity.adapters.mt5 import execution as mod
+
+        monkeypatch.setattr(mod, "PROTECTION_PATH", tmp_path / "protection.json")
+        terminal = Terminal(positions=[_held(sl=0.0, tp=0.0)])
+        rig = make_exec(terminal.bridge)
+        missing, _ = await rig.client._protect(55, sl=1.07000, tp=1.09000, instrument=_eurusd())
+        assert missing == frozenset()
+        assert rig.client._protections()["55"].get("confirmed") is True
+
+    async def test_a_refused_modify_with_no_position_records_nothing(self, tmp_path, monkeypatch):
+        """A refusal with nothing to look at is already reported as
+        unprotected, and must not also leave a record implying a stop was
+        asked for and taken - the sweep would then copy a leg the terminal has
+        already said it would not take."""
+        from till_infinity.adapters.mt5 import execution as mod
+
+        monkeypatch.setattr(mod, "PROTECTION_PATH", tmp_path / "protection.json")
+        rig = make_exec(FakeBridge(positions=[], modify=BridgeError("Invalid stops")))
+        missing, why = await rig.client._protect(88, sl=1.07000, tp=0.0, instrument=_eurusd())
+        assert "sl" in missing, "a refused stop over an unreadable position read as landed"
+        assert "Invalid stops" in why, f"the refusal was not carried back: {why}"
+        assert "88" not in rig.client._protections()
+
+    async def test_the_sweep_repairs_from_an_unverified_record(self, tmp_path, monkeypatch):
+        """**End to end, and the whole point.** A naked position with nothing
+        in the cache is repaired from the record on the next pass, which is the
+        pass that did not happen for EURUSD and Germany 40."""
+        from till_infinity.adapters.mt5 import execution as mod
+
+        monkeypatch.setattr(mod, "PROTECTION_PATH", tmp_path / "protection.json")
+        # The attach happens against a terminal that cannot show the position.
+        rig = make_exec(FakeBridge(positions=[], modify=DONE_ENVELOPE))
+        await rig.client._protect(55, sl=1.07000, tp=0.0, instrument=_eurusd())
+
+        # The next sweep sees the position, naked, with an empty cache.
+        terminal = Terminal(positions=[_held(sl=0.0, tp=0.0)])
+        rig.client._bridge = terminal.bridge
+        repaired = await rig.client._repair_unprotected()
+
+        assert repaired == 1, "the sweep repaired nothing"
+        assert terminal.positions[0]["sl"] == pytest.approx(1.07000), "the record was not used"
+
+    async def test_an_attached_stop_goes_on_the_position_it_would_close(self):
+        """**Hedging holds a stack, and `next()` takes whichever comes first.**
+
+        A reduce-only SELL stop protects a *long*. With a short open on the
+        same symbol - which is normal on this account, and is exactly what the
+        close bug used to leave behind - the first matching row can be the
+        short, and the stop then lands on a position it would not close while
+        the one it was sized for stays bare.
+
+        Newest-first among the unprotected, because the stop arrives on the
+        fill of the entry that just opened.
+        """
+        terminal = Terminal(
+            positions=[
+                _held(ticket=30, type=1, sl=0.0, tp=0.0, time=100),  # a short
+                _held(ticket=31, type=0, sl=0.0, tp=0.0, time=200),  # the long
+            ]
+        )
+        rig = make_exec(terminal.bridge)
+        order = _factory().stop_market(
+            EURUSD_ID,
+            OrderSide.SELL,
+            Quantity.from_str("0.50"),
+            Price.from_str("1.07000"),
+            reduce_only=True,
+        )
+        await rig.client._submit_order(_submit(rig, order))
+
+        by = {r["ticket"]: r for r in terminal.positions}
+        assert by[31]["sl"] == pytest.approx(1.07000), "the long was left bare"
+        assert by[30]["sl"] == pytest.approx(0.0), "the stop landed on the short"
+        accepted = rig.events(OrderAccepted)
+        assert len(accepted) == 1, f"{rig.events(OrderRejected)}"
+        assert str(accepted[0].venue_order_id) == "31-SL"
+
+    async def test_an_attached_stop_prefers_a_position_that_has_none(self):
+        """Among several on the closing side, the bare one is the one that
+        needs it. Protecting an already-protected position would overwrite a
+        stop the desk is trailing and leave the new one naked."""
+        terminal = Terminal(
+            positions=[
+                _held(ticket=40, type=0, sl=1.0500, tp=0.0, time=100),
+                _held(ticket=41, type=0, sl=0.0, tp=0.0, time=200),
+            ]
+        )
+        rig = make_exec(terminal.bridge)
+        order = _factory().stop_market(
+            EURUSD_ID,
+            OrderSide.SELL,
+            Quantity.from_str("0.50"),
+            Price.from_str("1.07000"),
+            reduce_only=True,
+        )
+        await rig.client._submit_order(_submit(rig, order))
+
+        by = {r["ticket"]: r for r in terminal.positions}
+        assert by[41]["sl"] == pytest.approx(1.07000), "the bare position was skipped"
+        assert by[40]["sl"] == pytest.approx(1.0500), "a trailed stop was overwritten"
+
     async def test_a_reduce_only_stop_with_no_position_is_rejected_not_ignored(self):
         """This process believes it holds something the broker does not.
 
@@ -3586,6 +3728,52 @@ class TestFillReports:
         assert float(report.commission) == pytest.approx(-0.35)
         assert str(report.commission.currency) == "USD"
 
+    async def test_a_fill_carries_the_position_it_belongs_to(self):
+        """**Without this the position check cannot do its job.**
+
+        `LiveExecEngineConfig.position_check_interval_secs` works by spotting a
+        position the cache holds and the venue does not, then querying for the
+        fills that were lost. A fill report with no `venue_position_id` cannot
+        be attributed to a position on a hedging account, where one symbol can
+        carry several - so the query comes back and reconciles nothing.
+
+        That is the phantom: on 2026-11-11 ETHUSD, US Oil, XAUUSD and UK Brent
+        Oil all closed on their own stops before 11:00 UTC, and the desk was
+        still refusing entries on them as "already held by EXTERNAL" at 19:30,
+        because the engine never learned the broker had closed them. Five
+        instruments silently out of the book for most of a session.
+        """
+        rig = make_exec(FakeBridge(deals=[_deal(position_id=4242)]))
+        (report,) = await rig.client.generate_fill_reports()
+        assert report.venue_position_id is not None, "the fill named no position"
+        assert str(report.venue_position_id) == "4242"
+
+    async def test_a_deal_with_no_position_field_still_reports(self):
+        """A deal that names no position is still a fill. Dropping it to be
+        tidy would lose history the reconciliation reads."""
+        rig = make_exec(FakeBridge(deals=[_deal()]))
+        (report,) = await rig.client.generate_fill_reports()
+        assert report.venue_position_id is None
+        assert str(report.trade_id) == "5001"
+
+    async def test_a_fill_is_stamped_with_the_deals_own_time(self):
+        """**Not the clock.** `ts_event` is what orders fills and what the
+        lookback window is measured against, so stamping a day-old deal "now"
+        tells the engine a fill just happened - and on a reconciliation that
+        decides what state the desk is reported to be in."""
+        when = 1_762_866_000  # a real second, not this process's
+        rig = make_exec(FakeBridge(deals=[_deal(time=when)]))
+        (report,) = await rig.client.generate_fill_reports()
+        assert report.ts_event == when * 1_000_000_000, "the deal's own time was discarded"
+        assert report.ts_init >= report.ts_event
+
+    async def test_a_deal_with_no_time_falls_back_to_the_clock(self):
+        """A fill that cannot be dated is still a fill - the same argument the
+        bridge's own window applies - so it is stamped rather than dropped."""
+        rig = make_exec(FakeBridge(deals=[_deal()]))
+        (report,) = await rig.client.generate_fill_reports()
+        assert report.ts_event > 0
+
     async def test_the_window_is_the_last_day_plus_a_minute_of_slack(self):
         """The minute is on the *end* of the window, and it is for the
         terminal's clock rather than for the network.
@@ -4361,7 +4549,15 @@ class TestProtectionSurvivesARestart:
         assert missing == frozenset()
         import json
 
-        assert json.loads(path.read_text())["77"] == {"sl": 1.07, "tp": 1.09}
+        recorded = json.loads(path.read_text())["77"]
+        assert recorded["sl"] == pytest.approx(1.07)
+        assert recorded["tp"] == pytest.approx(1.09)
+        # **And flagged as confirmed**, which is the claim in this test's name.
+        # The flag exists because `_protect` has a third path - the modify was
+        # taken and the position cannot be read - that now records the stop it
+        # asked for, so the sweep has something to repair a naked position
+        # with. A reader has to be able to tell the two apart.
+        assert recorded["confirmed"] is True
 
     async def test_a_closed_ticket_is_forgotten(self, tmp_path, monkeypatch):
         """Pruned against the broker's open tickets rather than on a timer, so

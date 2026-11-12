@@ -571,13 +571,36 @@ class MT5ExecutionClient(LiveExecutionClient):
             )
         return None
 
-    def _remember(self, ticket: int, stop: float, target: float) -> None:
-        """Write down legs the **broker confirmed**, keyed by its own ticket.
+    def _remember(self, ticket: int, stop: float, target: float, confirmed: bool = True) -> None:
+        """Write down a position's legs, keyed by the broker's own ticket.
 
-        Called from `_protect` after it has re-read the position, so what is
-        recorded is what the venue holds and not what was asked for - the
-        distinction that `_report_legs` exists to make, since a retcode of
+        Usually called from `_protect` after it has re-read the position, so
+        what is recorded is what the venue holds and not what was asked for -
+        the distinction that `_report_legs` exists to make, since a retcode of
         10009 over a naked position has happened here.
+
+        **`confirmed=False` is the one case where what was asked for is worth
+        recording anyway**, and it is the hole that left two positions naked
+        for six hours. `_protect` has a third path: the modify was not refused
+        and the position cannot be read back. It returns "nothing missing"
+        there on purpose - a missing row is not evidence a position is naked,
+        and rejecting on one rejected the legs of positions the broker was
+        protecting - but it then wrote nothing, so the claim had nothing behind
+        it.
+
+        That matters because the record is the *only* durable source.
+        `_sweep_unprotected` prefers the live cache, and reconciliation rebuilds
+        a position without the bracket legs that protected it, so after any
+        restart the cache has nothing to copy. With no record either, the sweep
+        reports "none on record to copy" and repairs nothing, every minute,
+        forever. On 2026-11-11 EURUSD and Germany 40 sat stopless from 13:52
+        and 18:29 on exactly that path.
+
+        The flag is stored so a reader can tell a leg the broker confirmed from
+        one this process only asked for. The sweep treats them alike, which is
+        correct: it only copies a leg onto a position the broker is showing
+        with **no** stop, where the stop that was asked for is the right one to
+        put back.
 
         Atomic, because a crash between truncate and write would leave the
         fallback empty exactly when it is needed. Never raises: a desk that
@@ -588,7 +611,11 @@ class MT5ExecutionClient(LiveExecutionClient):
             return  # nothing worth remembering, and a zero is not a stop
         try:
             held = self._protections()
-            held[str(int(ticket))] = {"sl": float(stop), "tp": float(target or 0.0)}
+            held[str(int(ticket))] = {
+                "sl": float(stop),
+                "tp": float(target or 0.0),
+                "confirmed": bool(confirmed),
+            }
             PROTECTION_PATH.parent.mkdir(parents=True, exist_ok=True)
             temp = PROTECTION_PATH.with_suffix(".tmp")
             temp.write_text(json.dumps(held))
@@ -895,11 +922,35 @@ class MT5ExecutionClient(LiveExecutionClient):
                 )
                 continue
             now = self._clock.timestamp_ns()
+            # **The deal's own second, not the clock.** `ts_event` is what
+            # orders fills and what a lookback window is measured against, so
+            # stamping a day-old deal "now" tells the engine a fill has just
+            # happened - and on a reconciliation that decides the state the
+            # desk is reported to be in. A deal that cannot be dated is still a
+            # deal and keeps the clock, the same argument `Bridge.deals` makes
+            # about a row whose time will not parse.
+            try:
+                stamped = int(float(row.get("time") or 0.0) * 1e9) or now
+            except (TypeError, ValueError):
+                stamped = now
+            # **The position this deal belongs to, where the broker names it.**
+            # Without it `position_check_interval_secs` cannot do its job: it
+            # spots a position the cache holds and the venue does not, queries
+            # for the lost fills, and then cannot attribute them on a hedging
+            # account where one symbol carries several.
+            #
+            # That is the phantom. On 2026-11-11 ETHUSD, US Oil, XAUUSD and UK
+            # Brent Oil all closed on their own stops before 11:00 and the desk
+            # was still refusing entries on them as "already held by EXTERNAL"
+            # at 19:30 - five instruments out of the book for a session,
+            # because the engine never learned the broker had closed them.
+            position = row.get("position_id") or row.get("position") or 0
             reports.append(
                 FillReport(
                     account_id=self.account_id,
                     instrument_id=instrument_id,
                     venue_order_id=venue_order_id,
+                    venue_position_id=PositionId(str(int(position))) if position else None,
                     trade_id=TradeId(str(row.get("ticket"))),
                     order_side=_SIDES.get(int(row.get("type") or 0), OrderSide.BUY),
                     last_qty=Quantity(float(row.get("volume") or 0.0), instrument.size_precision),
@@ -909,8 +960,8 @@ class MT5ExecutionClient(LiveExecutionClient):
                     ),
                     liquidity_side=LiquiditySide.TAKER,
                     report_id=UUID4(),
-                    ts_event=now,
-                    ts_init=now,
+                    ts_event=stamped,
+                    ts_init=max(now, stamped),
                 )
             )
         return reports
@@ -1495,14 +1546,7 @@ class MT5ExecutionClient(LiveExecutionClient):
         )
         symbol = order.instrument_id.symbol.value
         try:
-            held = next(
-                (
-                    row
-                    for row in await self._bridge.positions()
-                    if self._ours(row) and str(row.get("symbol")) == symbol
-                ),
-                None,
-            )
+            held = self._protectable(order, symbol, await self._bridge.positions())
         except Exception as exc:
             self._reject(order, f"cannot read the terminal's book: {exc}")
             return True
@@ -1534,6 +1578,45 @@ class MT5ExecutionClient(LiveExecutionClient):
         )
         self._log.info(f"{order.client_order_id}: stop {trigger} set on position {ticket}")
         return True
+
+    def _protectable(self, order: Any, symbol: str, rows: Any) -> dict | None:
+        """The position an attached stop is for, or `None`.
+
+        **`next()` over the symbol was wrong on a hedging account**, and this
+        account is one. A reduce-only `SELL` stop protects a *long*; with a
+        short open on the same symbol - normal here, and exactly what the close
+        bug used to leave behind - the first matching row can be the short, so
+        the stop landed on a position it would not close while the one it was
+        sized for stayed bare.
+
+        Two orderings, both of which matter:
+
+        * **The closing side only.** A stop that cannot close the position it
+          is put on is not that position's stop.
+        * **Bare first, then newest.** Among several on that side, the one
+          without a stop is the one that needs this; overwriting a stop the
+          desk is trailing would move a live stop *and* leave the new position
+          naked. Newest breaks the remaining tie, because this arrives on the
+          fill of the entry that just opened.
+        """
+        want = 0 if order.side == OrderSide.SELL else 1
+        found = [
+            row
+            for row in rows or ()
+            if self._ours(row)
+            and str(row.get("symbol")) == symbol
+            and int(row.get("type") or 0) % 2 == want
+            and int(row.get("ticket") or 0)
+        ]
+        if not found:
+            return None
+        found.sort(
+            key=lambda row: (
+                float(row.get("sl") or 0.0) > 0.0,
+                -int(row.get("time") or row.get("ticket") or 0),
+            )
+        )
+        return found[0]
 
     async def _report_legs(
         self,
@@ -1652,7 +1735,17 @@ class MT5ExecutionClient(LiveExecutionClient):
         held = await self._held(ticket)
         if held is None:
             if refused:
+                # A refusal with nothing to look at is the one case that is
+                # reported as unprotected, and it records nothing: the terminal
+                # has said it will not take this stop, so a record of it would
+                # only have the sweep ask again for a leg already declined.
                 return both, f"the terminal would not put the stop on {ticket}: {refused}"
+            # **Optimistic verdict, pessimistic record.** The modify was taken
+            # and the position cannot be read, so this is still reported as
+            # landed - see `_remember`, where the whole argument is - but the
+            # stop is written down unconfirmed so the next sweep has something
+            # to repair with if it did not in fact land.
+            self._remember(ticket, stop, target, confirmed=False)
             return frozenset(), ""
         missing = self._shortfall(held, stop, target, digits)
         if not missing:
