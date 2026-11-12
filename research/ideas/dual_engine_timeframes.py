@@ -29,6 +29,27 @@ warming up:
 | 15m | 72-86 days | 5/5 | 1,569 bars | 269 bars |
 | 1h | 294-321 days | 5/5 | 6,899 bars | **1,602 bars** |
 
+> ## Retracted 2026-11-12, both of the above
+>
+> **The data table is out of date and the cost table below is the wrong
+> venue's.** `research/ideas/mt5_catalogue.py` pulls the terminal's own bars:
+> 90,000 M5 bars a symbol is **441-464 days on all five feeds**, against the
+> 6.5 days on three that this file calls untestable. Execution below 15m is
+> testable; it was the *store* that could not reach it, not the market.
+>
+> The cost table below is measured on **DERIV's** recorded spreads. The account
+> this desk trades is 4-6x tighter, so the same arithmetic gives EURUSD **1.2%**
+> at a 4H structure, **2.1%** at 1H and **4.8%** at 15m, and USDJPY **6.5%** at
+> 15m. **"A 15m structure is priced out in advance" does not hold for this
+> broker** - the conclusion was right about the arithmetic and wrong about
+> whose spread to put in it.
+>
+> What survives unchanged is the *ordering* - cost still rises as the structure
+> timeframe falls, by the same ratios - and every result below it, because
+> those were measured on the store's bars at the store's costs and are what
+> they are. The fine-structure arms were refused on a cost that does not apply
+> here, and `mt5_catalogue.py` is the run they were refused.
+
 **Cost is set by the structure timeframe, not the execution one**, because the
 stop is drawn off the structure candle's own geometry. Measured on this store,
 one round trip against a one-structure-bar stop:
