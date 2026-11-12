@@ -176,6 +176,11 @@ GRID_CATALOGUE = Path.home() / "till-data" / "grid5"
 #: Trading days in a year, for annualising a daily Sharpe.
 TRADING_DAYS = 252.0
 
+#: The execution bar this file's own grid reads. `dual_engine_timeframes.py`
+#: overrides it per pair, because cost is set by the structure timeframe and
+#: the execution one can be raised to buy sample without paying for it.
+SPEC = "15-MINUTE-LAST-EXTERNAL"
+
 
 @dataclass(frozen=True, slots=True)
 class Cell:
@@ -185,6 +190,17 @@ class Cell:
     percentile: float
     risk: float
     flip: bool
+    #: Execution bars per structure bar. Defaulted so the twelve-cell grid in
+    #: this file is unchanged by `dual_engine_timeframes.py` adding the axis.
+    bars_per_structure: int = 16
+    #: Where the 50% partial is taken, in units of initial risk.
+    tp_trigger_r: float = 2.0
+    #: The bar spec to read and trade, or None for 15-minute.
+    bar_spec: str | None = None
+
+    @property
+    def spec(self) -> str:
+        return self.bar_spec or SPEC
 
     @property
     def name(self) -> str:
@@ -228,7 +244,7 @@ class Result:
         )
 
 
-def load_all(where: Path) -> tuple[list[Any], list[Any]]:
+def load_all(where: Path, spec: str = SPEC) -> tuple[list[Any], list[Any]]:
     """Every instrument in the catalogue, and one stream of all their data.
 
     One stream and one engine, because the account is shared: a rule that is
@@ -240,10 +256,10 @@ def load_all(where: Path) -> tuple[list[Any], list[Any]]:
     rows: list[Any] = []
     for instrument in instruments:
         iid = str(instrument.id)
-        bars = book.bars(bar_types=[f"{iid}-15-MINUTE-LAST-EXTERNAL"])
+        bars = book.bars(bar_types=[f"{iid}-{spec}"])
         quotes = book.quote_ticks(instrument_ids=[iid])
         if not bars:
-            print(f"  {iid}: no 15m bars - skipped")
+            print(f"  {iid}: no {spec} bars - skipped")
             continue
         rows.extend(bars)
         rows.extend(quotes)
@@ -276,11 +292,13 @@ def run_cell(instruments: list[Any], data: list[Any], cell: Cell) -> list[Trade]
         strategy = DualEngine(
             DualEngineConfig(
                 instrument_id=instrument.id,
-                bar_type=BarType.from_str(f"{instrument.id}-15-MINUTE-LAST-EXTERNAL"),
+                bar_type=BarType.from_str(f"{instrument.id}-{cell.spec}"),
                 feed=str(instrument.id.symbol),
                 tolerance_mult=cell.tolerance,
                 z_pct=cell.percentile,
                 risk_per_trade=cell.risk,
+                bars_per_structure=cell.bars_per_structure,
+                tp_trigger_r=cell.tp_trigger_r,
                 flip=cell.flip,
                 # **Distinct per strategy.** `order-ids-namespace-on-the-last-hyphen`
                 # is a measured outage here: eighteen desks shared two id

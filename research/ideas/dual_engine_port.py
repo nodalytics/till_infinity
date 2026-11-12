@@ -370,6 +370,19 @@ class DualEngineConfig(StrategyConfig, frozen=True):
     min_risk_atr: float = MIN_RISK_ATR
     exhaustion: bool = True
     choppy: bool = True
+    #: Execution bars per structure bar. 16 is the specified 15m/4H pair; 4 on
+    #: a 15m feed is 15m/1H, and 4 on an hourly feed is 1h/4H.
+    #:
+    #: **The structure timeframe is what sets the cost of the rule**, because
+    #: the stop is drawn off the structure candle's own geometry. Measured on
+    #: this store, one round trip against a one-structure-bar stop costs 7.0%
+    #: of R on EURUSD at 4H, 12.5% at 1H and **29.1% at 15m** - 16x dearer
+    #: from 1d to 15m, which independently reproduces the 19x this desk has
+    #: already measured. The execution timeframe does not move that number.
+    bars_per_structure: int = BARS_PER_4H
+    #: Where the 50% partial is taken, in units of the initial risk. The
+    #: reward-to-risk axis: the remainder rides the ATR trail from there.
+    tp_trigger_r: float = TP_TRIGGER_R
     #: The null. Every signal's direction reversed and nothing else changed.
     flip: bool = False
 
@@ -475,7 +488,7 @@ class DualEngine(Strategy):
         self._attend(tr)
 
         self._forming.append(bar)
-        if len(self._forming) >= BARS_PER_4H:
+        if len(self._forming) >= self.config.bars_per_structure:
             self._close_4h()
 
         held = self.cache.positions_open(instrument_id=self.config.instrument_id)
@@ -807,7 +820,7 @@ class DualEngine(Strategy):
             )
             self._move_stop(target, is_long)
 
-        if not state["partial"] and moved >= TP_TRIGGER_R * state["risk"]:
+        if not state["partial"] and moved >= self.config.tp_trigger_r * state["risk"]:
             half = self._instrument.make_qty(float(position.quantity) * TP_FRACTION)
             if float(half) > 0:
                 state["partial"] = True
