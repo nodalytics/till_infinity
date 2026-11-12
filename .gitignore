@@ -80,3 +80,12 @@ till_infinity/models/retrain.last
 
 # Go build output from services/
 /services/*/bin/
+
+# Web dashboard (Next.js). The repo had no JS toolchain before `web/`, so none
+# of these were ignored and `node_modules/` would have been committed whole.
+node_modules/
+.next/
+out/
+next-env.d.ts
+.vercel
+*.tsbuildinfo
