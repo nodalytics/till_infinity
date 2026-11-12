@@ -17,6 +17,11 @@ on:
       - "research/**"
       - "**/*.md"
       - "LICENSE"
+      # The dashboard is a separate deployable that the trading image does not
+      # contain and the live node never imports. Without this line every commit
+      # to a stylesheet would rebuild the image and restart the desk, which is
+      # the exact cost the note above is about.
+      - "web/**"
   workflow_dispatch:
 
 concurrency:
