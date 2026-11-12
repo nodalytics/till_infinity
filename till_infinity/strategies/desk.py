@@ -72,7 +72,7 @@ from ..domain.models import Intent, Refusal, Side, SymbolSpec, Tick
 from ..risk import forecast, releases, sizing
 from ..utils.topics import EVENTS, PROPOSALS, VOLATILE, subscribe
 from . import sizes
-from .config import Settings
+from .config import WRITER, Settings
 from .counterfactual import Counterfactual, Resolved
 from .timeframes import Frames, seconds_of
 
@@ -706,13 +706,25 @@ class Desk(NautilusStrategy):
                 self,
                 Entry(
                     title=f"{refusal.gate} on {refusal.feed or self.label}",
-                    kind=Kind.DECISION,
-                    actor=str(self.id),
+                    # **An observation, because that is what a refusal is**:
+                    # `Kind.OBSERVATION` is "we noticed something and did not
+                    # act", and `Kind.DECISION` is the thing the desk chose to
+                    # do. It is not a taxonomy point. `report.declines`, the
+                    # only thing that tallies gates, reads observations and so
+                    # counted none of these; and `report.trades` builds its pool
+                    # of parents from `actor='trading'` decisions, which these
+                    # would have joined as trades that never opened.
+                    kind=Kind.OBSERVATION,
+                    # `WRITER`, not `self.id`, for the reason `exits.WRITER`
+                    # gives: every reader filters on it exactly, and the
+                    # strategy's own name goes in the context below.
+                    actor=WRITER,
                     rationale=refusal.detail,
                     context={
                         "gate": refusal.gate,
                         "feed": refusal.feed,
                         "rule": self.label,
+                        "strategy": str(self.id),
                         "interval": str(payload.get("interval") or ""),
                     },
                     tags=("refusal", refusal.gate),
