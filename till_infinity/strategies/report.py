@@ -250,7 +250,20 @@ def trades(path: Path | str = DEFAULT_DB, *, limit: int = 100_000) -> list[Trade
             # rather than counted with a zero risk, which would land as an
             # infinite R or a silent zero.
             continue
-        context = {**parent.context, **outcome.context}
+        # **The outcome spreads last, so its blanks would land on top.** A close
+        # built from a position this process did not open carries empty strings
+        # where the decision carried the truth, and the merge would let them
+        # win: 2 of 28 trades in the live journal read `strategy: "unknown"`
+        # with a named opening decision sitting right beside them.
+        #
+        # The `risk_money` fallback below was written for the same cause - "the
+        # close record spreads that intent last, so the zero lands on top of the
+        # figure the decision recorded" - and the cause was never specific to
+        # one field. A value the outcome does not state is not a value it
+        # disagrees about. Zero is left to that fallback, because `0.0` is a
+        # number an outcome can legitimately mean.
+        stated = {key: value for key, value in outcome.context.items() if value not in ("", None)}
+        context = {**parent.context, **stated}
         risk = _number(context, "risk_money")
         if risk <= 0:
             # **The one field an outcome can zero over a decision that knew it.**
