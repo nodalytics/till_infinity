@@ -36,7 +36,27 @@ export const API_TOKEN = (process.env.TILL_API_TOKEN ?? "").trim();
 const LOOPBACK = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
 
 /** True when the allowlist names anything that is not this machine. */
-export const EXPOSED = ALLOWED_HOSTS.some((host) => !LOOPBACK.has(host));
+const BIND = (process.env.TILL_WEB_BIND ?? "").trim().toLowerCase();
+
+/**
+ * Is this process reachable from somewhere other than this machine?
+ *
+ * **Two sources, because the `Host` header is not one of them.** `Host` is
+ * whatever the caller typed: a request from anywhere carrying
+ * `Host: 127.0.0.1` satisfies the allowlist, so the allowlist is a
+ * DNS-rebinding defence and never a proof of locality. It was the only input
+ * here, which meant a server bound to `0.0.0.0` with no caller secret served
+ * a live account to anyone who spelled the header correctly.
+ *
+ * So exposure is read from configuration the **operator** sets and the caller
+ * cannot: the hosts this answers to, and the address it was bound to.
+ * `TILL_WEB_BIND` is set by `package.json` and by the image, which are the
+ * supported ways to start it; binding off loopback by some other route and
+ * leaving it unset is the one gap left, and the README says so rather than
+ * implying otherwise.
+ */
+export const EXPOSED =
+  ALLOWED_HOSTS.some((host) => !LOOPBACK.has(host)) || (BIND !== "" && !LOOPBACK.has(BIND));
 
 /**
  * The Host header without its port, with a bracketed IPv6 literal kept whole.
@@ -105,6 +125,22 @@ export function refuse(request: Request, cookie: string): Refusal | null {
       detail:
         "TILL_WEB_HOSTS names a non-loopback host but TILL_DASHBOARD_SECRET is not " +
         "set, so there is no way to tell who is calling. Set it, or drop the host.",
+    };
+  }
+  if (API_TOKEN && !CLIENT_SECRET) {
+    // **Never lend a held credential to a caller nobody checked.** This is the
+    // confused deputy that shipped once already, in its general form: if the
+    // proxy holds something that grants access to the API, it may only pass it
+    // on behalf of someone it authenticated. With no caller secret configured
+    // there is no one to authenticate, so there is nothing this token may be
+    // used for.
+    return {
+      status: 503,
+      detail:
+        "TILL_API_TOKEN is set with no TILL_DASHBOARD_SECRET to check a caller " +
+        "against. The proxy will not present its credential for a caller it " +
+        "cannot authenticate. Set TILL_DASHBOARD_SECRET, or unset TILL_API_TOKEN " +
+        "and let the API enforce its own loopback-peer check.",
     };
   }
   if (!CLIENT_SECRET) return null;

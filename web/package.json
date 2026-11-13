@@ -4,9 +4,9 @@
   "private": true,
   "description": "Read-only dashboard for the till_infinity trading desk.",
   "scripts": {
-    "dev": "next dev -H 127.0.0.1 --port 3000",
+    "dev": "TILL_WEB_BIND=127.0.0.1 next dev -H 127.0.0.1 --port 3000",
     "build": "next build",
-    "start": "next start -H 127.0.0.1 --port 3000",
+    "start": "TILL_WEB_BIND=127.0.0.1 next start -H 127.0.0.1 --port 3000",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
