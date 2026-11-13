@@ -3,6 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Chart, { type Toggles } from "@/components/Chart";
 import Hollow from "@/components/Hollow";
+import SignIn from "@/components/SignIn";
 import Watchlist from "@/components/Watchlist";
 import Activity from "@/components/panels/Activity";
 import Levels from "@/components/panels/Levels";
@@ -18,6 +19,7 @@ import {
   fetchLevels,
   fetchOverview,
   fetchSeries,
+  needsSignIn,
 } from "@/lib/api";
 import { ago, percent, signedR, span, tone } from "@/lib/format";
 import * as theme from "@/lib/theme";
@@ -79,6 +81,8 @@ export default function Workspace() {
   const [activityHours, setActivityHours] = useState(6);
   const [refreshed, setRefreshed] = useState<number | null>(null);
   const [failed, setFailed] = useState("");
+  const [locked, setLocked] = useState(false);
+  const [attempt, setAttempt] = useState(0);
 
   const [feed, setFeed] = useState("");
   const [interval, setInterval] = useState("");
@@ -143,20 +147,27 @@ export default function Workspace() {
         setBook(open);
       })
       .catch((error: unknown) => {
-        if (!abort.signal.aborted) setFailed(describe(error));
+        if (abort.signal.aborted) return;
+        if (needsSignIn(error)) setLocked(true);
+        else setFailed(describe(error));
       });
     return () => abort.abort();
-  }, []);
+  }, [attempt]);
 
   useEffect(() => {
     const abort = new AbortController();
     fetchOverview(filters, abort.signal)
-      .then(setOverview)
+      .then((found) => {
+        setOverview(found);
+        setLocked(false);
+      })
       .catch((error: unknown) => {
-        if (!abort.signal.aborted) setFailed(describe(error));
+        if (abort.signal.aborted) return;
+        if (needsSignIn(error)) setLocked(true);
+        else setFailed(describe(error));
       });
     return () => abort.abort();
-  }, [filters]);
+  }, [filters, attempt]);
 
   // ---- the activity pulse ------------------------------------------------
   useEffect(() => {
@@ -224,10 +235,12 @@ export default function Workspace() {
     fetchChart(current, picked.interval, picked.source, filters, abort.signal)
       .then(setChart)
       .catch((error: unknown) => {
-        if (!abort.signal.aborted) setFailed(describe(error));
+        if (abort.signal.aborted) return;
+        if (needsSignIn(error)) setLocked(true);
+        else setFailed(describe(error));
       });
     return () => abort.abort();
-  }, [current, picked, filters]);
+  }, [current, picked, filters, attempt]);
 
   // ---- splitters ---------------------------------------------------------
   const dragBottom = (event: React.PointerEvent<HTMLDivElement>) => {
@@ -488,7 +501,15 @@ export default function Workspace() {
 
         <div className="stage" ref={stage}>
           <div className="chartwrap">
-            {failed ? (
+            {locked ? (
+              <SignIn
+                onDone={() => {
+                  setLocked(false);
+                  setFailed("");
+                  setAttempt((n) => n + 1);
+                }}
+              />
+            ) : failed ? (
               <div className="hollow">
                 <h2>The desk API is not answering.</h2>
                 <p>{failed}</p>
@@ -560,7 +581,9 @@ export default function Workspace() {
                 </div>
 
                 <div className="panel-body" role="tabpanel">
-                  {!overview ? (
+                  {locked ? (
+                    <p className="note">Sign in above to read this desk.</p>
+                  ) : !overview ? (
                     <p className="note">Reading the journal.</p>
                   ) : tab === "performance" ? (
                     <Performance overview={overview} theme={skin} />

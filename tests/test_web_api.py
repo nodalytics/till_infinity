@@ -215,3 +215,77 @@ def test_the_dashboard_imports_no_adapter_and_no_node():
         pytest.skip("fastapi is not installed; `uv sync --extra dashboard`")
     assert done.returncode == 0, done.stderr
     assert done.stdout.strip() == "[]", done.stdout
+
+
+def _guard():
+    """`web.api.main`, or a skip when the optional extra is not installed."""
+    pytest.importorskip("fastapi", reason="`uv sync --extra dashboard` installs it")
+    from web.api import main
+
+    return main
+
+
+def _request(peer: str | None, token: str = ""):
+    """A request that claims to arrive from `peer`, carrying `token` if given."""
+    from starlette.requests import Request
+
+    headers = [(b"authorization", f"Bearer {token}".encode())] if token else []
+    return Request(
+        {
+            "type": "http",
+            "method": "GET",
+            "path": "/api/overview",
+            "headers": headers,
+            "client": (peer, 54321) if peer else None,
+        }
+    )
+
+
+@pytest.mark.parametrize("peer", ["127.0.0.1", "127.1.2.3", "::1", "::ffff:127.0.0.1"])
+def test_a_local_connection_is_served_without_a_token(peer):
+    """The ordinary case: one operator, one laptop, no secret to manage.
+
+    Fails if the loopback set stops covering an address a local connection
+    actually arrives as - `::ffff:127.0.0.1` on a dual-stack listener, or
+    anything in 127/8 - which would lock the operator out of their own
+    dashboard with a 403 that reads like a bug in the browser.
+    """
+    main = _guard()
+    main.guard(_request(peer))
+
+
+@pytest.mark.parametrize("peer", ["10.0.0.4", "192.168.1.9", "203.0.113.7", None])
+def test_a_connection_from_elsewhere_is_refused_without_a_token(peer):
+    """Including `None`, which is the one that was wrong.
+
+    `LOOPBACK` contained `""` and `"localhost"`, and a request with no peer
+    address - a Unix socket, or a transport that reports none - produced `""`
+    and read as local. A UDS deployment with no token would have served a live
+    account's positions to anyone who could reach the socket. A peer address is
+    never a hostname and never empty, so neither belongs in that set.
+    """
+    main = _guard()
+    with pytest.raises(main.HTTPException) as raised:
+        main.guard(_request(peer))
+    assert raised.value.status_code == 403
+
+
+def test_a_token_is_required_from_every_caller_once_it_is_set(monkeypatch):
+    """With a token, locality stops being the question.
+
+    A local caller with the wrong token is refused and a remote caller with the
+    right one is served: the token is the check, not a second opinion on top of
+    the address. Fails if either half starts short-circuiting on `_local`.
+    """
+    main = _guard()
+    monkeypatch.setattr(main, "TOKEN", "a-shared-secret")
+
+    with pytest.raises(main.HTTPException) as raised:
+        main.guard(_request("127.0.0.1"))
+    assert raised.value.status_code == 401
+
+    with pytest.raises(main.HTTPException) as raised:
+        main.guard(_request("127.0.0.1", token="wrong"))
+    assert raised.value.status_code == 401
+
+    main.guard(_request("203.0.113.7", token="a-shared-secret"))
