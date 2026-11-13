@@ -79,6 +79,12 @@ train = ["scikit-learn>=1.5.0"]
 # this repository produced: a dependency that happens to be present is not one
 # the project has.
 contracts = ["jsonschema>=4.20.0"]
+# The read-only API behind `web/`. Optional because the desk does not need it
+# to trade and nothing in the package imports it: the dashboard reads the
+# journal and `strategies.report` and serves JSON, and runs as its own process
+# so that what can reach a broker and what answers a browser are different
+# import graphs.
+dashboard = ["fastapi>=0.115.0", "uvicorn>=0.32.0"]
 
 
 # **No console script.** The CLI is retired to `research/retire/bus/`: the
@@ -208,6 +214,11 @@ max-returns = 8
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+# `web/` is a folder, not a distribution: the dashboard's API runs from the
+# repository root as `web.api.main`, so the root has to be importable for
+# `test_web_api.py` to reach it. Nothing else in the suite needs it - the
+# package itself is installed.
+pythonpath = ["."]
 # **`not venue` is the point, not the `-ra`.** A test marked `venue` places a
 # real order through the bridge the live desk trades on, so it must never run
 # because somebody typed `pytest`. Select it deliberately:
