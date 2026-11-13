@@ -40,7 +40,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from till_infinity.journal import DEFAULT_DB, Entry, Kind, ledger, read, summary
+from till_infinity.journal import DEFAULT_DB, Entry, Kind, ledger, summary
+from till_infinity.journal import read as _read_entries
 from till_infinity.strategies import report
 
 #: Repository root, so a relative `TILL_JOURNAL_DB` resolves the same whether
@@ -51,6 +52,53 @@ ROOT = Path(__file__).resolve().parents[2]
 #: figure; a window narrows what is *scored*, not what is read, because an
 #: outcome's parent decision can sit well outside the window it closed in.
 LIMIT = 100_000
+
+
+#: How long a journal read is reused before the file is touched again.
+#:
+#: **This is not a latency optimisation, it is what keeps the dashboard off the
+#: desk's back.** The production journal is a single unindexed table of about
+#: 3.8GB, and `read` issues `WHERE actor = ? AND kind = ?` with an
+#: `ORDER BY time DESC LIMIT n`. With no index that is a full scan and a sort
+#: of the whole table, per call - and `journal-extraction-on-tis` records that
+#: a `WHERE` there un-bounds the rowid limit, which is the same finding from
+#: the other direction. The trading host has **two cores** and runs the live
+#: desk on them; `tis-research-jobs-starve-the-service` is a measured outage
+#: from exactly this shape of work.
+#:
+#: So every panel refresh must not re-scan. Thirty seconds is shorter than the
+#: journal actor's own flush interval, so nothing is served staler than it
+#: could have been written, and it turns a per-request scan into at most two a
+#: minute however many people are looking.
+READ_TTL_S = float(os.environ.get("TILL_WEB_READ_TTL", "30"))
+
+#: Keyed by the exact query, holding `(monotonic_deadline, entries)`.
+_READS: dict[tuple[Any, ...], tuple[float, list[Entry]]] = {}
+
+
+def read(path: Any = DEFAULT_DB, **kwargs: Any) -> list[Entry]:
+    """`journal.read`, memoised for `READ_TTL_S`.
+
+    Same signature and same answer; the only difference is that a second
+    identical question inside the window does not touch a 3.8GB file again.
+    The returned list is shared, so **callers must not mutate it** - nothing
+    here does, and the alternative is copying a hundred thousand entries to
+    defend against a bug that does not exist yet.
+    """
+    key = (str(path), tuple(sorted((k, str(v)) for k, v in kwargs.items())))
+    now = time.monotonic()
+    found = _READS.get(key)
+    if found is not None and found[0] > now:
+        return found[1]
+    entries = _read_entries(path, **kwargs)
+    _READS[key] = (now + READ_TTL_S, entries)
+    return entries
+
+
+def forget() -> None:
+    """Drop every memoised read. For tests, and for a manual refresh."""
+    _READS.clear()
+
 
 #: Interval names the bar stores use, in seconds. Markers are snapped to the
 #: bar they fall in, because a marker whose time is not a bar's time is drawn
