@@ -1,4 +1,4 @@
-# The dual-engine rule: v1's trigger is closed, v2's is open at 1.8 sigma
+# The dual-engine rule is closed: both triggers, on eight years
 
 Run: `python research/ideas/dual_engine_gross.py`, after
 `python research/ideas/mt5_catalogue.py` and the same with `--costless`.
@@ -17,7 +17,7 @@ partial at 2R, an ATR trail and a 48-hour time stop.
 | does more frequency help? | it is reachable and it does not help: 906 trades, -0.210R, **67.4% drawdown** |
 | does a longer reward target help? | no - 1.5R to 4.0R moves the trade count by <=5 and R by <=0.2 |
 | do several structure timeframes agreeing help? | they almost never agree: 265 signals, two agreed 8 times, three agreed **never** |
-| does **v2's** trigger change the answer? | **possibly** - +0.162R against a flip at -0.419R, but **+1.83 sigma on n 48**, under the bar |
+| does **v2's** trigger change the answer? | **no** - it read +0.162R on n 48 and **-0.127R on n 356**, reversing on 7.4x the sample |
 
 ## Gross against net
 
@@ -147,13 +147,37 @@ dismissed as fast as it is adopted:
   passing everything through;
 * the drawdown is **4.4%** against the flip's 9.5% and v1's 43-67%.
 
-**What settles it is more sample, and the sample exists.** The terminal's `MT5_MAX_BARS` is
-1,000,000 and this pulled 90,000 bars a symbol. Pulling the full depth takes the span from 464 days
-toward several years and n from 48 toward a few hundred, which is the range where every previous
-positive on this rule turned over. That is the next run and it is the one that decides this.
+### It reversed on eight years
 
-Until then: **do not size anything on +0.162R.** One arm at n 48 that misses its own pre-registered
-bar is a reason to get more data, not a reason to trade.
+The sample existed - `MT5_MAX_BARS` is 1,000,000 and the run above used 90,000 bars a symbol. The
+full depth is **600,000 a symbol, 3,111 days, 3,000,000 bars across the five**. The identical
+feature, the identical geometry, 7.4 times the span:
+
+| span | n | rule R | flip R | gap | sigma |
+|---|---|---|---|---|---|
+| 464 days | 48 | **+0.162** +/-0.266 | -0.419 | +0.581 | +1.83 |
+| **3,111 days** | **356** | **-0.127** +/-0.089 | -0.284 | **+0.158** | **+1.25** |
+
+**The rule's own expectancy went positive to negative**, and the gap moved *away* from the bar
+rather than toward it. The gate behaved - it fired at 14.7% against the 15% its percentile implies,
+closer than the 10.7% on the short sample - so this is not a feature that stopped working, it is a
+feature whose apparent edge was the sample.
+
+That completes the sequence the short-sample section predicted it would join:
+
+| n | R/trade |
+|---|---|
+| 7 | +0.164 |
+| 11 | +0.368 |
+| 13 | +0.279 |
+| **48** | **+0.162** |
+| **356** | **-0.127** |
+| 906 | -0.210 |
+
+**And the gap could not have paid even taken at face value.** +0.158R is below the **0.2R the exit
+stack costs**, measured separately. So the strongest reading available for v2 - treat 1.25 sigma as
+real, ignore that the rule itself loses - still describes an entry whose directional content cannot
+cover its own management. There is no configuration of this that reaches an account.
 
 One mechanical note for whoever repeats it. `exp(r_i)` is applied to a **raw** return, which on a
 5-minute FX bar is order 1e-4, so `exp(r_i) ~ 1 + r_i` and the softmax over returns is very nearly
@@ -164,9 +188,8 @@ reading - which is worth knowing before anything is built on the softmax specifi
 
 ## What is not closed
 
-**Measured above, and it did not pass** - +1.83 standard errors against a bar of two, on n 48. The
-section above has it. What remains open is whether that reading survives a larger sample, which is
-a pull away rather than a question.
+**Closed.** It read +1.83 standard errors on n 48 and **-0.127R on n 356** when the span went from
+464 days to 3,111. Nothing about the trigger remains open.
 
 v2's other two changes are **untested**: the breakout body ratio moving 0.50 to 0.60, and replacing
 v1's decline on a sub-ATR stop with a floor on the risk. Both were deliberately left at v1's values
