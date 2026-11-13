@@ -23,27 +23,43 @@ const TOKEN = process.env.TILL_API_TOKEN ?? "";
  * resolves to loopback reaches it from any page the operator's browser opens,
  * and this proxy forwards to an API whose own auth is skipped precisely
  * because it believed it was only reachable locally. So the proxy enforces the
- * same boundary the API assumes. With a token configured the API checks every
- * request itself, and the host check steps aside.
+ * same boundary the API assumes.
+ *
+ * **The check is unconditional, and an earlier version made it conditional on
+ * a token being set.** That was a confused deputy: `TILL_API_TOKEN` is a
+ * credential *this process* holds for its hop to the API, and attaching it to
+ * whoever happens to arrive grants them the API's whole authority. A token
+ * says the proxy may talk to the API. It says nothing about who is talking to
+ * the proxy, so it can never stand in for checking that.
+ *
+ * Deliberate exposure is therefore an explicit act: set `TILL_WEB_HOSTS` to
+ * the host names this should answer to. There is no client authentication at
+ * this layer yet, so anyone who can reach a listed host reaches the desk's
+ * record - the README says so rather than implying the token covers it.
  */
 const LOCAL = new Set(["127.0.0.1", "localhost", "::1", "[::1]"]);
+const ALLOWED = new Set(
+  (process.env.TILL_WEB_HOSTS ?? "")
+    .split(",")
+    .map((name) => name.trim().toLowerCase())
+    .filter(Boolean),
+);
 
 export const dynamic = "force-dynamic";
 
 export async function GET(request: Request, context: { params: Promise<{ path: string[] }> }) {
-  if (!TOKEN) {
-    const host = (request.headers.get("host") ?? "").split(":")[0] ?? "";
-    if (!LOCAL.has(host)) {
-      return NextResponse.json(
-        {
-          detail:
-            "This dashboard serves a live trading account and is loopback-only. " +
-            "To reach it from elsewhere set TILL_WEB_TOKEN on the API and " +
-            "TILL_API_TOKEN here.",
-        },
-        { status: 403 },
-      );
-    }
+  const host = (request.headers.get("host") ?? "").split(":")[0]?.toLowerCase() ?? "";
+  if (!LOCAL.has(host) && !ALLOWED.has(host)) {
+    return NextResponse.json(
+      {
+        detail:
+          "This dashboard serves a live trading account and answers on loopback " +
+          "only. Reaching it from elsewhere is a deliberate act: list the host " +
+          "names in TILL_WEB_HOSTS. Note that there is no client authentication " +
+          "at this layer, so anyone who can reach a listed host reaches the desk.",
+      },
+      { status: 403 },
+    );
   }
 
   const { path } = await context.params;

@@ -68,12 +68,15 @@ TOKEN = os.environ.get("TILL_WEB_TOKEN", "").strip()
 
 
 def _bound() -> None:
-    """Refuse to serve a live account's record to a network with no secret.
+    """Warn at start-up where the command line shows an off-loopback bind.
 
-    Read off the command line because uvicorn owns the socket and this module
-    never sees it. A missed bind argument is the mistake worth catching: the
-    difference between `--host 127.0.0.1` and `--host 0.0.0.0` is five
-    characters and a trading desk on the local network.
+    **Advisory only, and it used to be the whole defence.** It reads
+    `sys.argv` because uvicorn owns the socket and this module never sees it -
+    which means it is blind to every launch that is not that command line:
+    uvicorn called programmatically, gunicorn, a container whose entrypoint
+    differs, a unix socket. A check that fails open on four ordinary ways of
+    starting a server is not a check, so the real one is per-connection in
+    `guard` below and this stays as an early, louder version of it.
     """
     if TOKEN:
         return
@@ -90,9 +93,37 @@ def _bound() -> None:
         )
 
 
+def _local(request: Request) -> bool:
+    """Is this connection from this machine? Asked of the socket, not of a header.
+
+    `request.client.host` is the peer address the server accepted, which no
+    header can forge - unlike `Host`, which is whatever the caller typed, and
+    unlike `X-Forwarded-For`, which is deliberately not consulted here. A
+    reverse proxy in front of this would make every request look local, which
+    is exactly why putting one there has to be a deliberate act that brings a
+    token with it.
+    """
+    peer = (request.client.host if request.client else "") or ""
+    return peer in LOOPBACK or peer.startswith("127.")
+
+
 def guard(request: Request) -> None:
-    """Every route depends on this. No token set, no check - loopback only."""
+    """Every route depends on this.
+
+    With a token, the token decides. Without one, **the connection must be
+    local** - checked here per request rather than inferred from `sys.argv` at
+    start-up, because the argv check cannot see a programmatic uvicorn, a
+    gunicorn worker or a container entrypoint, and fails open on all three.
+    """
     if not TOKEN:
+        if not _local(request):
+            raise HTTPException(
+                status_code=403,
+                detail=(
+                    "This service shows a live account's activity and answers "
+                    "non-local connections only when TILL_WEB_TOKEN is set."
+                ),
+            )
         return
     header = request.headers.get("authorization", "")
     offered = header[7:] if header.lower().startswith("bearer ") else ""
