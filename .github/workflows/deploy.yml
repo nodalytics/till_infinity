@@ -22,6 +22,14 @@ on:
       # to a stylesheet would rebuild the image and restart the desk, which is
       # the exact cost the note above is about.
       - "web/**"
+      # **Its pipeline lives outside `web/`, and that gap cost a restart.** The
+      # commit that added `deploy-web.yml` - whose whole subject was that
+      # deploying the dashboard must not restart the desk - restarted the desk,
+      # because its own two files are not under `web/`. Neither can alter the
+      # trading image: one builds a different image, the other replaces a
+      # different container.
+      - "scripts/deploy-web.sh"
+      - ".github/workflows/deploy-web.yml"
   workflow_dispatch:
 
 concurrency:
