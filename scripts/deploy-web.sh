@@ -67,6 +67,9 @@ docker run -d \
   --tmpfs /tmp:rw,noexec,nosuid,size=64m \
   -p "$BIND:$PORT:3000" \
   -e TILL_WEB_READ_TTL="${TILL_WEB_READ_TTL:-30}" \
+  `# The host-side publish address, which is what decides exposure. The`\
+  `# container binds 0.0.0.0 so the published port can reach it at all.`\
+  -e TILL_WEB_BIND="$BIND" \
   -e TILL_JOURNAL_DB="${TILL_JOURNAL_DB:-/data/journal/journal.db}" \
   -v "$DATA:/data:ro" \
   "$IMAGE:$TAG" >/dev/null
