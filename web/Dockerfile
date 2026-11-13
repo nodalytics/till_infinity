@@ -109,8 +109,13 @@ USER desk
 #
 # The API keeps `127.0.0.1` and should: the only thing that talks to it is Next,
 # in this same namespace.
+# `TILL_WEB_BIND` is **deliberately non-loopback here**, so an image run
+# without `deploy-web.sh` demands a caller secret rather than serving a live
+# account to whoever reaches it. The deploy passes the real host-side publish
+# address, which can only narrow this.
 ENV TILL_API_URL=http://127.0.0.1:8787 \
     HOSTNAME=0.0.0.0 \
+    TILL_WEB_BIND=0.0.0.0 \
     PORT=3000
 
 EXPOSE 3000

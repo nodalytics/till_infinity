@@ -50,13 +50,19 @@ const BIND = (process.env.TILL_WEB_BIND ?? "").trim().toLowerCase();
  *
  * So exposure is read from configuration the **operator** sets and the caller
  * cannot: the hosts this answers to, and the address it was bound to.
- * `TILL_WEB_BIND` is set by `package.json` and by the image, which are the
- * supported ways to start it; binding off loopback by some other route and
- * leaving it unset is the one gap left, and the README says so rather than
- * implying otherwise.
+ *
+ * **An unset `TILL_WEB_BIND` counts as exposed.** It used to count as
+ * loopback, which made a missing variable grant access - the third time that
+ * shape has appeared in this file, after a token standing in for client auth
+ * and a `Host` header standing in for locality. A value that is absent is not
+ * a value that says "local"; it is a value nobody set. `package.json` sets it
+ * beside its `-H` flag, the image sets a deliberately non-loopback default,
+ * and `deploy-web.sh` passes the real host-side publish address - so every
+ * supported path states it, and anything that does not is asked for a caller
+ * secret.
  */
 export const EXPOSED =
-  ALLOWED_HOSTS.some((host) => !LOOPBACK.has(host)) || (BIND !== "" && !LOOPBACK.has(BIND));
+  ALLOWED_HOSTS.some((host) => !LOOPBACK.has(host)) || !LOOPBACK.has(BIND);
 
 /**
  * The Host header without its port, with a bracketed IPv6 literal kept whole.
