@@ -383,3 +383,86 @@ async def _rows(journal: Journal) -> int:
     from till_infinity.journal import read
 
     return len(read(journal.path, limit=50))
+
+
+def test_an_outcome_with_nothing_to_say_does_not_erase_what_the_decision_knew(tmp_path):
+    """**The outcome spreads last, so its blanks land on top of real values.**
+
+    `report.trades` merges `{**parent.context, **outcome.context}`, and an
+    outcome built from a position this process did not open carries empty
+    strings where the decision carried the truth. The strategy then reads
+    `"unknown"` for a trade whose opening decision names it - 2 of 28 trades in
+    the live journal, each with a named decision.
+
+    It is the same defect the `risk_money` fallback three lines below the merge
+    already guards against, and that comment explains the cause in full: "the
+    close record spreads that intent last, so the zero lands on top of the
+    figure the decision recorded". The guard was written for one field; the
+    cause is not specific to one field.
+    """
+    from till_infinity.journal import Entry, Journal, Kind
+    from till_infinity.strategies import report
+
+    path = tmp_path / "journal.db"
+    journal = Journal(path)
+    journal.connect()
+    decision = Entry(
+        title="eurusd opened",
+        kind=Kind.DECISION,
+        actor="trading",
+        context={
+            "strategy": "EdgeEntry-EURUSD-E270",
+            "feed": "eurusd",
+            "side": "long",
+            "risk_money": 100.0,
+        },
+    )
+    outcome = Entry(
+        title="eurusd closed",
+        kind=Kind.OUTCOME,
+        actor="trading",
+        parent=decision.id,
+        # Everything this close could not state, stated as empty - which is
+        # exactly what a position adopted on start-up produces.
+        context={"strategy": "", "feed": "", "side": "", "profit": 25.0, "seconds": 60.0},
+    )
+    journal.append([decision, outcome])
+
+    found = report.trades(path)
+
+    assert len(found) == 1, "the pair did not survive the merge at all"
+    assert found[0].strategy == "EdgeEntry-EURUSD-E270", "the outcome's blank won"
+    assert found[0].feed == "eurusd"
+    assert found[0].side == "long"
+    assert found[0].profit == 25.0, "the outcome's own figures must still win"
+
+
+def test_an_outcome_that_does_state_a_value_still_wins(tmp_path):
+    """The control. A fix that let the parent win everywhere would break the
+    close record, which is the half that knows what actually happened."""
+    from till_infinity.journal import Entry, Journal, Kind
+    from till_infinity.strategies import report
+
+    path = tmp_path / "journal.db"
+    journal = Journal(path)
+    journal.connect()
+    decision = Entry(
+        title="eurusd opened",
+        kind=Kind.DECISION,
+        actor="trading",
+        context={"strategy": "a", "feed": "eurusd", "reason": "intended", "risk_money": 100.0},
+    )
+    outcome = Entry(
+        title="eurusd closed",
+        kind=Kind.OUTCOME,
+        actor="trading",
+        parent=decision.id,
+        context={"reason": "time-stop", "profit": -10.0},
+    )
+    journal.append([decision, outcome])
+
+    found = report.trades(path)
+
+    assert len(found) == 1
+    assert found[0].reason == "time-stop", "the decision's intent overwrote the real ending"
+    assert found[0].profit == -10.0
