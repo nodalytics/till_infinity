@@ -1,0 +1,137 @@
+name: Deploy dashboard
+
+# **A separate pipeline, so a dashboard change never restarts the desk.**
+#
+# `deploy.yml` excludes `web/**`; this is the other half. It builds a different
+# image, deploys a different container, and the two trigger on disjoint paths,
+# so no commit can fire both. The trading node does not contain this and never
+# imports it, so the thing holding positions has no reason to be restarted for
+# a stylesheet - the cost of getting that wrong is in `deploy.yml`'s own note:
+# four deploys in an afternoon, each one a backfill, one of them for a
+# docs-only commit.
+on:
+  push:
+    branches: [main]
+    paths:
+      - "web/**"
+      - "scripts/deploy-web.sh"
+      - ".github/workflows/deploy-web.yml"
+      # The API imports these, so a change to either can break the dashboard
+      # without touching `web/`. It cannot break the desk: this workflow only
+      # ever replaces `till-web`.
+      - "till_infinity/strategies/report.py"
+      - "till_infinity/journal/**"
+  workflow_dispatch:
+
+# Its own group. Sharing the desk's would make a dashboard build block a
+# trading deploy behind it, which is the wrong way round.
+concurrency:
+  group: deploy-web
+  cancel-in-progress: true
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}-web
+
+jobs:
+  # The same suite the desk's pipeline runs. The dashboard imports
+  # `strategies.report` and `journal` directly, so a green suite is the thing
+  # that says those still mean what the panels claim.
+  test:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    needs: test
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      # **amd64 only, unlike the desk's image.** The trading image is built for
+      # both architectures because it has run on Graviton; this has only ever
+      # targeted the one host, and a second platform doubles a build that
+      # already carries a Node toolchain for nothing.
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: web/Dockerfile
+          platforms: linux/amd64
+          push: true
+          tags: |
+            ${{ env.IMAGE }}:latest
+            ${{ env.IMAGE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Open an SSH session
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.EC2_SSH_KEY }}" > ~/.ssh/deploy.pem
+          chmod 600 ~/.ssh/deploy.pem
+          ssh-keyscan -H "${{ secrets.EC2_HOST }}" >> ~/.ssh/known_hosts 2>/dev/null
+
+      # Images only, and never `container prune`: a stopped container on that
+      # box may be the desk's own `till-infinity-prev`, which is its rollback.
+      - name: Reclaim disk
+        env:
+          HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy.pem "$HOST" '
+            docker image prune -af >/dev/null 2>&1 || true
+            df -h / | awk "NR==2 {print \$4 \" free of \" \$2 \" (\" \$5 \" used)\"}"
+          '
+
+      # Every interpolation goes through `env:` rather than into the command
+      # string. Neither `github.sha` nor the image name is attacker-controlled,
+      # but a workflow that interpolates straight into a shell is the habit
+      # that eventually meets one that is.
+      - name: Deploy the dashboard
+        env:
+          HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
+          IMAGE: ${{ env.IMAGE }}
+          TAG: ${{ github.sha }}
+        run: |
+          scp -i ~/.ssh/deploy.pem scripts/deploy-web.sh "$HOST:/tmp/till-deploy-web.sh"
+          ssh -i ~/.ssh/deploy.pem "$HOST" \
+            "IMAGE='$IMAGE' TAG='$TAG' bash /tmp/till-deploy-web.sh"
+
+      # **The point of the whole file.** If a dashboard deploy ever restarts the
+      # desk, this is where it shows, and it fails the run rather than being
+      # noticed days later in a gap in the equity curve.
+      - name: Prove the desk was not touched
+        env:
+          HOST: ${{ secrets.EC2_USER }}@${{ secrets.EC2_HOST }}
+        run: |
+          ssh -i ~/.ssh/deploy.pem "$HOST" '
+            set -e
+            started="$(docker inspect -f "{{.State.StartedAt}}" till-infinity 2>/dev/null || echo missing)"
+            restarts="$(docker inspect -f "{{.RestartCount}}" till-infinity 2>/dev/null || echo 0)"
+            health="$(docker inspect -f "{{.State.Health.Status}}" till-infinity 2>/dev/null || echo none)"
+            echo "desk started $started, restarts $restarts, health $health"
+            if [ "$health" != "healthy" ] && [ "$health" != "none" ]; then
+              echo "the desk is not healthy after a dashboard deploy" >&2
+              exit 1
+            fi
+            age=$(( $(date +%s) - $(date -d "$started" +%s) ))
+            if [ "$age" -lt 120 ]; then
+              echo "the desk restarted ${age}s ago - a dashboard deploy must not do that" >&2
+              exit 1
+            fi
+          '
