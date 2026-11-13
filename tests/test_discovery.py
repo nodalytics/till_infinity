@@ -255,3 +255,75 @@ def test_a_trial_keeps_its_result_so_a_decision_can_be_reread():
     trial = trials.best()
     assert isinstance(trial, Trial)
     assert trial.result.total_positions == 41
+
+
+# ------------------------------------------------- PSR is the standard, DSR secondary
+
+
+def test_a_gate_is_decided_by_the_probabilistic_sharpe():
+    """**PSR gates and DSR is reported beside it.**
+
+    A deflated Sharpe needs `trial_sharpes` - the readings of everything the
+    search rejected - which most callers do not keep, and the gate used to fall
+    through to a bare boolean when they were missing. That verdict carried no
+    sample size at all. PSR needs only the candidate's own returns, so it
+    applies on every path, and the reason string now names it.
+    """
+    from till_infinity.node.promotion import required_psr
+
+    trials = read(proposals(4), list(results(4)), series(4))
+    gate = gate_from(trials, trials.best())
+
+    assert gate.probabilistic() is not None
+    passed, why = gate.verdict()
+    assert f"against {required_psr()}" in why, why
+    assert "PSR" in why
+    assert passed is (gate.probabilistic() >= required_psr() and gate.deflated() >= 0.60)
+
+
+def test_a_gate_with_too_few_returns_says_so_rather_than_inventing_a_psr():
+    """Below four returns the third and fourth moments are not estimable, and a
+    PSR computed from them would be a number rather than an estimate."""
+    trials = read(proposals(4), list(results(4)))
+    gate = gate_from(trials, trials.best())
+
+    assert gate.probabilistic() is None
+    passed, why = gate.verdict()
+    assert passed is False
+    assert "four are needed" in why, why
+
+
+def test_a_strong_psr_does_not_excuse_a_deflated_sharpe_below_its_floor():
+    """**The control that keeps the multiple-testing defence.** PSR asks
+    whether the record is long enough to mean something; DSR asks whether it is
+    simply the best of a wide search. Clearing one does not answer the other,
+    so a gate that can be asked both is asked both - and a candidate with a
+    fine PSR and a DSR under the floor must still fail."""
+    from till_infinity.node.promotion import Gate, required_dsr
+
+    # A **modest** per-period Sharpe over a long record: 0.001 mean against a
+    # 0.01 standard deviation is 0.1 a period, which over a thousand periods
+    # puts PSR past 0.99. The first draft used returns with a per-period Sharpe
+    # of about 123, which no deflation can touch and which proved nothing.
+    rows = tuple(0.011 if i % 2 else -0.009 for i in range(1000))
+    # A search wide enough that its expected best beats the candidate.
+    wide = tuple(x / 10.0 for x in range(40))
+    gate = Gate(
+        name="wide-search",
+        criterion="mean",
+        control="shuffle",
+        candidates=39,
+        passed=True,
+        episodes=400,
+        trial_sharpes=wide,
+        returns=rows,
+    )
+
+    assert gate.probabilistic() > 0.99, "the returns were meant to be unambiguous"
+    dsr = gate.deflated()
+    assert dsr is not None, "the search was meant to be wide enough to deflate"
+    assert dsr < required_dsr(), f"the spread did not bite: {dsr}"
+    passed, why = gate.verdict()
+    assert passed is False
+    assert "DSR" in why, why
+    assert "did not" in why, why

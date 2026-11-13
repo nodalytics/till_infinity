@@ -181,6 +181,42 @@ def required_dsr() -> float:
     return found
 
 
+def required_psr() -> float:
+    """The probabilistic Sharpe a promotion gate must clear. `TRADING_PSR_REQUIRED`, 0.85.
+
+    **This is the gate now, and the deflated Sharpe is reported beside it.**
+
+    The change is worth stating plainly because it cuts both ways. Where a DSR
+    *can* be computed it is the stronger test: it confronts the spread of what
+    was tried, so it answers "given this was the best of the search, is it
+    real" where PSR only answers "given this much data, is it real". Gating on
+    PSR gives that up.
+
+    Where a DSR *cannot* be computed - and it needs `trial_sharpes`, the
+    readings of everything the search rejected, which most callers do not keep
+    - the old gate fell through to a bare boolean that carried no sample size
+    at all. That was the common path, and on it this raises the floor rather
+    than lowering it.
+
+    So: PSR is required always, DSR is computed and reported whenever it can
+    be, and a candidate with a weak DSR is visible in the reason string even
+    though it no longer fails on it.
+    """
+    raw = os.environ.get("TRADING_PSR_REQUIRED")
+    if not raw:
+        return Gate.PSR_REQUIRED
+    try:
+        found = float(raw)
+    except ValueError as exc:
+        raise ValueError(f"TRADING_PSR_REQUIRED={raw!r} is not a probability") from exc
+    if not 0.0 < found < 1.0:
+        raise ValueError(
+            f"TRADING_PSR_REQUIRED={found} is not a probability. The "
+            f"probabilistic Sharpe is one, so this is strictly between 0 and 1."
+        )
+    return found
+
+
 def sample_for(rung: Rung) -> int:
     """The sample fixed when `rung` is entered.
 
@@ -264,25 +300,63 @@ class Gate:
     def underpowered(self) -> bool:
         return self.episodes < MIN_EPISODES
 
-    #: A gate passes on the deflated Sharpe, where one can be computed. The
-    #: default; `required_dsr` is what a gate actually reads, so a deploy can
-    #: move it.
-    DSR_REQUIRED = 0.95
+    #: The deflated Sharpe's own bar, **lowered from 0.95 when PSR became the
+    #: standard**. It is the secondary test now, not the primary one, so it
+    #: asks a weaker question of the same evidence: not "is this strong given
+    #: the search" but "is this not obviously an artefact of the search".
+    #: `required_dsr` reads it.
+    DSR_REQUIRED = 0.60
+
+    #: **The bar a gate passes on.** `required_psr` is what a gate reads, so a
+    #: deploy can move it.
+    PSR_REQUIRED = 0.85
+
+    def probabilistic(self) -> float | None:
+        """PSR for this gate's own returns, or `None` with too few to say.
+
+        Four is the floor because the third and fourth moments enter the
+        denominator, and below that a number would be an invention rather than
+        an estimate.
+        """
+        if len(self.returns) < 4:
+            return None
+        from .metrics import probabilistic_sharpe
+
+        return probabilistic_sharpe(self.returns)
 
     def verdict(self) -> tuple[bool, str]:
-        """Pass or fail, with the reason stated in the terms it was judged on."""
+        """Pass or fail, with the reason stated in the terms it was judged on.
+
+        **PSR decides; DSR is reported.** A deflated Sharpe needs the readings
+        of everything the search rejected, which most callers do not keep, and
+        the gate used to fall through to a bare boolean when they were missing
+        - a verdict carrying no sample size at all. PSR needs only the
+        candidate's own returns, so it applies on every path.
+
+        Where a DSR can be computed it is still the stronger statement, and it
+        is put in the reason so a candidate that clears PSR on a thin search is
+        visible as that.
+        """
+        psr = self.probabilistic()
         dsr = self.deflated()
-        if dsr is None:
+        floor = required_dsr()
+        beside = f", DSR {dsr:.3f}/{floor}" if dsr is not None else ""
+        if psr is None:
             return bool(self.passed), (
                 f"{self.name}: judged on {self.criterion} against {self.control}, with no "
-                f"deflated Sharpe - {len(self.trial_sharpes)} trial Sharpes and "
-                f"{len(self.returns)} returns were supplied"
+                f"probabilistic Sharpe - {len(self.returns)} returns were supplied, "
+                f"four are needed{beside}"
             )
-        wanted = required_dsr()
-        ok = dsr >= wanted
+        wanted = required_psr()
+        # **Both, where both can be asked.** PSR says the record is long enough
+        # to mean something; DSR says it is not simply the best of a wide
+        # search. They are different objections and clearing one does not
+        # answer the other, so a gate that can be asked both is asked both.
+        ok = psr >= wanted and (dsr is None or dsr >= floor)
+        why = "" if ok or psr < wanted else " - PSR cleared, DSR did not"
         return ok, (
-            f"{self.name}: DSR {dsr:.3f} against {wanted} over "
-            f"{len(self.trial_sharpes)} trials and {self.episodes} episodes"
+            f"{self.name}: PSR {psr:.3f} against {wanted} over "
+            f"{self.episodes} episodes{beside}{why}"
         )
 
 

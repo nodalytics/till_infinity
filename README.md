@@ -381,6 +381,84 @@ project. Re-running a collector is cheap and safe: bars key on their open time,
 headlines on their id, calendar events get rewritten in place when the print
 lands, and journal entries are content-addressed.
 
+## Backtests are reported on rolling recent windows
+
+**A single full-span number is not the result. The rolling series is.**
+
+Every backtest here reports **rolling 1, 2 and 3-year windows** alongside the
+full span, and reports *all* of them rather than the best. What is being looked
+for is what has worked in the **last one to three years**, because that is the
+only period a decision today can act on.
+
+The reason is measured rather than stylistic. Carver's framework on this desk's
+five instruments reads:
+
+| window | Sharpe | buy-and-hold |
+|---|---|---|
+| 8 years | **+0.14** | +0.28 |
+| 3 years | -0.04 | +0.43 |
+| 2 years | -0.11 | +0.35 |
+| 1 year | **-0.22** | +0.03 |
+
+A full-span run reports +0.14 and looks like a system. The rolling series shows
+it decaying monotonically into the present and turning negative, with its own
+flip crossing over it in the last year. **The single number was not wrong; it
+was an average over a regime that ended.**
+
+Two rules that come with this:
+
+* **Report every window, never the best one.** A rolling series is informative
+  because the whole series is visible. Choosing the window that pays is the
+  selection this repository has refuted two dozen ideas for.
+* **A short window is a small sample.** One year of a rule that fires weekly is
+  fifty trades and a standard error that covers almost anything, so the error
+  bar is printed beside every window and a positive one-year reading is a
+  reason to keep measuring rather than to deploy.
+
+## A result needs PSR above 85%
+
+A Sharpe ratio is a point estimate. It says nothing about how much data stands
+behind it, and **every reversal in this repository has been a flattering point
+estimate on a short sample** - +0.368R on 11 trades becoming -0.300R on 41,
++0.162R on 48 becoming -0.127R on 356.
+
+The **Probabilistic Sharpe Ratio** (Bailey and Lopez de Prado) makes the sample
+part of the answer: the probability that the *true* Sharpe is above zero, given
+this many observations with this skew and this kurtosis.
+
+    PSR = N[ (SR - SR*) * sqrt(n - 1) / sqrt(1 - g3*SR + (g4 - 1)/4 * SR^2) ]
+
+**The bar here is PSR > 0.85**, and it is checked alongside the Sharpe rather
+than instead of it. It is the **standard in `node/` too**: `promotion.Gate`
+decides on PSR, where it used to decide on the deflated Sharpe and fall through
+to a bare boolean whenever the search had not kept its losers.
+
+The deflated Sharpe is still asked, at a lower bar - **DSR > 0.60** - because
+the two answer different objections. PSR asks whether the record is long enough
+to mean anything; DSR asks whether it is simply the best of a wide search.
+Clearing one does not answer the other, so a gate that can be asked both is
+asked both, and a candidate with a fine PSR and a DSR under its floor still
+fails.
+
+What the PSR bar costs, measured on simulated series:
+
+| observations | annualised Sharpe 0.48 | annualised Sharpe 0.95 |
+|---|---|---|
+| 125 | 0.57 | 0.95 |
+| 250 | 0.51 | 0.98 |
+| 500 | 0.83 | 0.85 |
+| 1,000 | **0.85** | 0.91 |
+| 2,000 | 0.97 | 1.00 |
+
+A modest Sharpe needs about **a thousand observations** to clear the bar. That
+is the point: it is the test a one-year window of a weekly rule cannot pass, and
+it fails for the right reason rather than on taste.
+
+It is also strict about negative skew - the `-g3*SR` term grows the denominator
+when skew is negative - which is the shape a partial plus a trailing stop
+produces, since that cuts the right tail and keeps the left. That behaviour
+follows from the formula; the sample-size column above is measured.
+
 ## Development
 
 ```bash
