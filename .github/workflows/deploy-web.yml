@@ -39,9 +39,26 @@ jobs:
   test:
     uses: ./.github/workflows/ci.yml
 
+  # **Both architectures, on native runners.** This built amd64 only, on the
+  # reasoning that the dashboard targets one host - and that host is Graviton,
+  # so `docker pull` failed with exactly the error `deploy.yml` predicts three
+  # lines above its own matrix: "no matching manifest for linux/arm64/v8 - a
+  # clear message arriving at the least convenient moment". The comment was
+  # there to be read and was read as past tense.
+  #
+  # Native runners rather than QEMU: this image compiles a Next app and
+  # installs nautilus and pandas, and emulating that is minutes against hours.
   build:
     needs: test
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: linux/amd64
+            runner: ubuntu-latest
+          - platform: linux/arm64
+            runner: ubuntu-24.04-arm
+    runs-on: ${{ matrix.runner }}
     permissions:
       contents: read
       packages: write
@@ -56,25 +73,75 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      # **amd64 only, unlike the desk's image.** The trading image is built for
-      # both architectures because it has run on Graviton; this has only ever
-      # targeted the one host, and a second platform doubles a build that
-      # already carries a Node toolchain for nothing.
-      - name: Build and push
+      # **Pushed by digest, tagged by the merge below.** Two jobs cannot both
+      # write the same tag without one winning and the other's architecture
+      # disappearing - which would look exactly like a fix and leave the
+      # original bug. `deploy.yml` solved this already and this is its pattern,
+      # not a second one.
+      - id: build
         uses: docker/build-push-action@v6
         with:
           context: .
           file: web/Dockerfile
-          platforms: linux/amd64
-          push: true
-          tags: |
-            ${{ env.IMAGE }}:latest
-            ${{ env.IMAGE }}:${{ github.sha }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          platforms: ${{ matrix.platform }}
+          outputs: type=image,name=${{ env.IMAGE }},push-by-digest=true,name-canonical=true,push=true
+          # Per architecture, or the two jobs share a scope and each evicts the
+          # other's layers.
+          cache-from: type=gha,scope=${{ matrix.platform }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.platform }}
+
+      # The filename is the digest with `sha256:` stripped: `upload-artifact@v4`
+      # rejects a colon in a path, and the merge re-adds the prefix itself.
+      - name: Hand the digest to the merge
+        run: |
+          mkdir -p /tmp/digests
+          digest='${{ steps.build.outputs.digest }}'
+          touch "/tmp/digests/${digest#sha256:}"
+          echo "built ${{ matrix.platform }} as ${digest}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: digest-${{ strategy.job-index }}
+          path: /tmp/digests/*
+          retention-days: 1
+
+  # One manifest list over both digests, so `docker pull` resolves correctly on
+  # either architecture and the tag means the same thing everywhere.
+  manifest:
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: /tmp/digests
+          pattern: digest-*
+          merge-multiple: true
+
+      - uses: docker/setup-buildx-action@v3
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Create the manifest list
+        working-directory: /tmp/digests
+        env:
+          IMAGE: ${{ env.IMAGE }}
+          TAG: ${{ github.sha }}
+        run: |
+          docker buildx imagetools create \
+            -t "${IMAGE}:latest" -t "${IMAGE}:${TAG}" \
+            $(printf "${IMAGE}@sha256:%s " *)
+          docker buildx imagetools inspect "${IMAGE}:${TAG}" \
+            --format '{{json .Manifest}}' | head -c 400; echo
 
   deploy:
-    needs: build
+    needs: manifest
     runs-on: ubuntu-latest
     environment: production
     steps:
