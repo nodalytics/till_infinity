@@ -123,6 +123,18 @@ expires after a day. That is the limit of a shared secret and it is written
 down rather than implied. Anything beyond one operator wants a real identity
 provider in front of this, not a longer string.
 
+**The `Host` allowlist is not a locality check.** `Host` is whatever the caller
+typed, so a request from anywhere carrying `Host: 127.0.0.1` satisfies it. It
+is a DNS-rebinding defence and nothing more. What decides whether a caller
+secret is required is configuration the operator sets and the caller cannot:
+`TILL_WEB_HOSTS`, and `TILL_WEB_BIND`, which `npm run dev`, `npm start` and the
+image all set to the address they bind. **Start the server off loopback by some
+other route without setting `TILL_WEB_BIND` and nothing here will notice** -
+that is the one gap left, and the fix is to set it.
+
+The API behind the proxy does not share this limitation: it reads the peer
+address off the socket, which no header can forge.
+
 - **Nothing in `web/` imports a module that can place an order.** Importing
   `web.api.main` pulls 92 `till_infinity` modules and none is under
   `adapters/` or `node/`. `tests/test_web_api.py` asserts that in a
@@ -141,6 +153,7 @@ Every setting is read from the environment. Nothing is read from `.secrets/`.
 | `TILL_BOOK_SNAPSHOT` | `.data/live/book.json` | Where `snapshot.py` writes and the API reads. |
 | `TILL_MEASURED_JSON` | *(unset)* | Research figures for the live-against-measured panel. |
 | `TILL_DASHBOARD_SECRET` | *(unset)* | What a **caller** must present to the proxy. Unset means loopback-only. |
+| `TILL_WEB_BIND` | set by the scripts and the image | The address the server bound to. Off loopback makes a caller secret mandatory. |
 | `TILL_WEB_HOSTS` | `127.0.0.1,localhost,::1,[::1]` | Host headers the **proxy** answers to. |
 | `TILL_API_HOSTS` | `127.0.0.1,localhost,::1` | Host headers the **API** answers to. |
 | `TILL_WEB_TOKEN` | *(unset)* | The proxy-to-API hop, as the API reads it. |
