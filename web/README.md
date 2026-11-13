@@ -45,6 +45,11 @@ npm install
 npm run dev          # http://127.0.0.1:3000
 ```
 
+That is the whole of it for one operator on one machine: no secrets to set,
+nothing reachable from anywhere else. To reach it from another machine, see
+**Security** below — it needs a caller secret, and the dashboard refuses to
+serve a widened host list without one.
+
 `npm run build` does not need the API running: the page is a shell and every
 read happens in the browser.
 
@@ -54,24 +59,54 @@ deployment, which is the right size for one operator and one dashboard.
 ## Security
 
 This renders a live account's positions and P&L, so the defaults are closed.
+**Out of the box the dashboard is loopback-only**, and the two secrets below do
+different jobs — conflating them is the mistake this section exists to prevent.
+
+### Two credentials, two purposes
+
+| | what it is | who holds it |
+| --- | --- | --- |
+| `TILL_DASHBOARD_SECRET` | what a **caller** must present to the Next proxy | the person at the browser |
+| `TILL_WEB_TOKEN` / `TILL_API_TOKEN` | what the **proxy** presents to the API, one hop | the two server processes |
+
+`TILL_API_TOKEN` is **not** what makes remote access safe. It proves the proxy
+may call the API and says nothing about who called the proxy. An earlier
+version attached it to every request that arrived and skipped the host check
+whenever it was configured, so setting it handed the API's full authority to
+anyone who could reach Next — a confused deputy, where configuring a credential
+widened access. The caller is now authenticated first, with its own secret,
+and only then is the API token used.
+
+### What is enforced
 
 - **Both halves bind to loopback.** The API's run command names
   `--host 127.0.0.1`; `package.json` passes `-H 127.0.0.1` to `next dev` and
-  `next start`. `_bound()` refuses to start the API on a non-loopback host
-  unless a token is set, rather than leaving that to a reader of a docstring.
-- **A loopback bind is not a boundary on its own.** A hostname that resolves
-  to 127.0.0.1 reaches a loopback socket from whatever page the operator's
-  browser has open, so the API runs `TrustedHostMiddleware` over
-  `127.0.0.1, localhost, ::1`, and the Next proxy refuses any request whose
-  `Host` is not loopback.
-- **To expose it, set a shared secret.** `TILL_WEB_TOKEN` on the API makes
-  every request carry `Authorization: Bearer …`; `TILL_API_TOKEN` on the Next
-  side makes the proxy attach it **server-side**, so the secret never reaches
-  a browser or a screenshot. It is a shared secret, not a user system.
-- **The browser only ever talks to Next.** `app/api/[...path]/route.ts` is a
-  GET-only proxy — a POST to `/api/anything` is a 405 before it leaves the
-  Node process — so the read-only promise is in the route table and not in a
-  comment.
+  `next start`.
+- **The API decides locality from the connection, not from `argv`.** `guard()`
+  checks `request.client.host` per request. The previous version scanned
+  `sys.argv` for `--host`, which is a guess about how uvicorn was started and
+  fails open under a programmatic launch, gunicorn, a container entrypoint or
+  a Unix socket. A request with no peer address at all is refused rather than
+  assumed local, so a UDS deployment has to set a token deliberately.
+- **Host allowlists are always enforced, on both tiers, whatever else is set.**
+  A hostname that resolves to 127.0.0.1 reaches a loopback socket from whatever
+  page the operator's browser has open. The API runs `TrustedHostMiddleware`
+  over `TILL_API_HOSTS`; the proxy checks `TILL_WEB_HOSTS`. Both default to
+  loopback and neither is skipped as a side effect of another setting.
+- **Widening the allowlist without a caller secret fails closed.** If
+  `TILL_WEB_HOSTS` names anything off this machine and `TILL_DASHBOARD_SECRET`
+  is unset, every proxied request is a 503 that says so. There is no
+  configuration in which the proxy lends its API token to an unauthenticated
+  caller.
+- **Signing in.** With `TILL_DASHBOARD_SECRET` set, the page shows a sign-in;
+  `POST /session` compares the secret with `crypto.timingSafeEqual` over
+  SHA-256 digests (equal lengths, so the comparison cannot leak one) and sets
+  an `httpOnly`, `SameSite=Strict` cookie, `Secure` over https. `DELETE
+  /session` signs out. A client bearer works too, for `curl`.
+- **The browser only ever talks to Next.** `app/api/[...path]/route.ts`
+  exports `GET` and nothing else, so a POST to `/api/anything` is a 405 before
+  it leaves the Node process: the read-only promise is in the route table, not
+  in a comment.
 - **No credential is in the dashboard's half.** The one process that talks to
   a terminal is `web/api/snapshot.py`, started by hand on the host that
   already has the key.
@@ -79,6 +114,15 @@ This renders a live account's positions and P&L, so the defaults are closed.
   the server and the broker name and writes none of them. Balance, equity,
   margin and currency are written, because the exposure panel is arithmetic on
   them.
+
+### What this is not
+
+One shared secret is not a user system. There are no accounts, no rotation, no
+lockout and no rate limiting; a stolen cookie is a stolen secret until it
+expires after a day. That is the limit of a shared secret and it is written
+down rather than implied. Anything beyond one operator wants a real identity
+provider in front of this, not a longer string.
+
 - **Nothing in `web/` imports a module that can place an order.** Importing
   `web.api.main` pulls 92 `till_infinity` modules and none is under
   `adapters/` or `node/`. `tests/test_web_api.py` asserts that in a
@@ -96,11 +140,13 @@ Every setting is read from the environment. Nothing is read from `.secrets/`.
 | `TILL_MT5_CATALOG` | `~/till-data/mt5` | The 5-minute parquet catalogue. |
 | `TILL_BOOK_SNAPSHOT` | `.data/live/book.json` | Where `snapshot.py` writes and the API reads. |
 | `TILL_MEASURED_JSON` | *(unset)* | Research figures for the live-against-measured panel. |
-| `TILL_WEB_TOKEN` | *(unset)* | Shared secret the API requires when set. |
-| `TILL_WEB_HOSTS` | `127.0.0.1,localhost,::1` | Host headers the API answers to. |
+| `TILL_DASHBOARD_SECRET` | *(unset)* | What a **caller** must present to the proxy. Unset means loopback-only. |
+| `TILL_WEB_HOSTS` | `127.0.0.1,localhost,::1,[::1]` | Host headers the **proxy** answers to. |
+| `TILL_API_HOSTS` | `127.0.0.1,localhost,::1` | Host headers the **API** answers to. |
+| `TILL_WEB_TOKEN` | *(unset)* | The proxy-to-API hop, as the API reads it. |
+| `TILL_API_TOKEN` | *(unset)* | The same hop, as the proxy reads it. Never a caller credential. |
 | `TILL_WEB_ORIGINS` | `http://localhost:3000` | CORS origins, only used if a browser talks to the API directly. |
 | `TILL_API_URL` | `http://127.0.0.1:8787` | Where the Next proxy forwards. |
-| `TILL_API_TOKEN` | *(unset)* | Bearer the proxy attaches server-side. |
 | `TRADING_MT5_URL`, `TRADING_MT5_API_KEY`, `TRADING_MT5_API_PATH` | — | Read by `snapshot.py` only, on the desk's host. |
 
 ## The broker snapshot

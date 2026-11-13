@@ -1,11 +1,14 @@
 /**
  * Talking to the read-only Python service.
  *
- * Relative URLs throughout: `next.config.ts` proxies `/api` to the service, so
- * the browser never learns its address and nothing has to be configured in two
- * places. A failed request raises with the status and the body, because a
- * dashboard that silently renders zeros over a service that is down is the one
- * failure mode worth more than a blank panel.
+ * Relative URLs throughout: `app/api/[...path]/route.ts` proxies to the
+ * service, so the browser never learns its address and nothing has to be
+ * configured in two places. A failed request raises with the status and the
+ * body, because a dashboard that silently renders zeros over a service that is
+ * down is the one failure mode worth more than a blank panel.
+ *
+ * A 401 is its own case: the proxy is asking who is calling, and the page
+ * shows a sign-in rather than an error.
  */
 
 import type {
@@ -27,6 +30,15 @@ export class ApiError extends Error {
     super(`${status}: ${detail}`);
     this.name = "ApiError";
   }
+
+  /** The proxy wants a caller credential, not a different query. */
+  get needsSignIn(): boolean {
+    return this.status === 401;
+  }
+}
+
+export function needsSignIn(error: unknown): boolean {
+  return error instanceof ApiError && error.needsSignIn;
 }
 
 async function get<T>(path: string, params: Record<string, string> = {}, signal?: AbortSignal) {

@@ -15,21 +15,22 @@ separate from the node for that reason rather than for deployment's.
 
     uv run --extra dashboard uvicorn web.api.main:app --host 127.0.0.1 --port 8787
 
-This renders a live account's activity, so the moment it is reachable by more
-than the operator it needs a secret. Set `TILL_WEB_TOKEN` and every request
-must carry `Authorization: Bearer <token>`; `_bound` refuses to start a
-non-loopback bind without one rather than leaving it to a reader of this
-docstring. It is a shared secret and not a user system, which is the right
-size for one operator and one dashboard.
+**The bind is not the check, though.** `guard` reads the peer address off
+every request, so a service that ends up reachable - started programmatically,
+under gunicorn, from a container entrypoint - still refuses a non-local
+connection. Without `TILL_WEB_TOKEN` only local connections are served; with
+it, every request must carry `Authorization: Bearer <token>` wherever it came
+from.
 
-**Two things a loopback bind does not protect against, both handled.** A name
-that resolves to 127.0.0.1 reaches a loopback socket from whatever page the
-operator's browser has open, so `TrustedHostMiddleware` checks the `Host`
-header. And the Next process in front of this one is a second front door:
-`web/package.json` binds it with `-H 127.0.0.1`, and its proxy at
-`web/app/api/[...path]/route.ts` refuses any request whose Host is not
-loopback unless a token is configured, because a proxy that forwards to an
-unauthenticated API is that API's exposure.
+**And a loopback bind is not a boundary on its own.** A name that resolves to
+127.0.0.1 reaches a loopback socket from whatever page the operator's browser
+has open, so `TrustedHostMiddleware` checks the `Host` header too, always.
+
+**`TILL_WEB_TOKEN` authenticates one hop and nothing else.** It says the proxy
+in front may call this service; it says nothing about who called the proxy.
+That is the proxy's own question, answered with its own secret in
+`web/lib/gate.ts` - a proxy that attaches a credential on behalf of an
+unauthenticated caller is a confused deputy, and this pair used to be one.
 
 Reads are cached against the journal file's modification time. Entries are
 append-only and there is no update path, so a file that has not been written to
@@ -58,9 +59,15 @@ from . import data
 
 DAY = 86400.0
 
-#: Hosts that are only reachable from this machine. Anything else is a
-#: deliberate exposure and has to bring a token with it.
-LOOPBACK = frozenset({"127.0.0.1", "::1", "localhost", ""})
+#: Peer addresses that mean "this machine".
+#:
+#: **Not `""` and not `"localhost"`.** A peer address is never a hostname, and
+#: an empty one means the connection has no address at all - a Unix socket, or
+#: a transport that did not report one. Both were in this set and both made
+#: `_local` return True, so a UDS deployment with no token would have served
+#: everything to anyone who could reach the socket. `::ffff:127.0.0.1` is here
+#: because that is how a local connection arrives on a dual-stack listener.
+LOOPBACK = frozenset({"127.0.0.1", "::1", "::ffff:127.0.0.1"})
 
 #: The shared secret, if the operator set one. Compared with `hmac.compare_digest`
 #: so a wrong token takes the same time to reject as a right one.
@@ -104,6 +111,11 @@ def _local(request: Request) -> bool:
     token with it.
     """
     peer = (request.client.host if request.client else "") or ""
+    if not peer:
+        # No peer address: a Unix socket, or a transport that did not report
+        # one. Refused rather than assumed local, so such a deployment has to
+        # set a token deliberately.
+        return False
     return peer in LOOPBACK or peer.startswith("127.")
 
 
@@ -159,12 +171,16 @@ app = FastAPI(
     dependencies=[Depends(guard)],
 )
 
-#: Host headers this service answers to. **Binding to loopback is not a
-#: boundary on its own**: a name that resolves to 127.0.0.1 reaches a
-#: loopback socket from any page the operator's browser happens to open, and
+#: Host headers this service answers to, **always enforced**. A loopback bind
+#: is not a boundary on its own: a name that resolves to 127.0.0.1 reaches a
+#: loopback socket from whatever page the operator's browser has open, and
 #: this one renders a live account's positions. Starlette strips the port
 #: before matching, so a host is named without one.
-HOSTS = [h.strip() for h in os.environ.get("TILL_WEB_HOSTS", "").split(",") if h.strip()]
+#:
+#: Named `TILL_API_HOSTS` and not `TILL_WEB_HOSTS`: the proxy in front has its
+#: own allowlist, they are different tiers, and one variable for both reads as
+#: one boundary when there are two.
+HOSTS = [h.strip() for h in os.environ.get("TILL_API_HOSTS", "").split(",") if h.strip()]
 app.add_middleware(TrustedHostMiddleware, allowed_hosts=HOSTS or ["127.0.0.1", "localhost", "::1"])
 
 #: Where the browser talks to this service from. Only needed when it does so
