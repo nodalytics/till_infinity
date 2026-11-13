@@ -168,6 +168,23 @@ MIN_SHARPE = 0.5
 MAX_DRAWDOWN = 0.15
 MIN_TRADES = 50
 
+#: The probability the true Sharpe is above zero, required before a result is
+#: treated as one.
+#:
+#: **This is the statistic that answers what has been wrong all along here.** A
+#: Sharpe is a point estimate and says nothing about how much data stands
+#: behind it; PSR (Bailey and Lopez de Prado) folds in the sample length, the
+#: skew and the kurtosis and returns a probability. Every reversal in this
+#: repository has been a short sample with a flattering point estimate -
+#: +0.368R on 11 trades becoming -0.300R on 41 - and a rule that cleared 0.5
+#: Sharpe on fifty observations would have had a PSR nowhere near this.
+#:
+#: It is strict about exactly the shape these strategies have: a trailing stop
+#: with a partial cuts the right tail and keeps the left, which is negative
+#: skew, and negative skew lowers PSR for the same Sharpe. That is correct and
+#: is the point.
+MIN_PSR = 0.85
+
 #: Where `node/corpus.py` was asked to write the five-instrument catalogue.
 #: Separate from the shared one so adding USDJPY and AUDUSD does not change
 #: what every other script in `research/ideas/` reads.
@@ -222,6 +239,9 @@ class Result:
     drawdown: float
     days: float
     wins: int
+    #: Probabilistic Sharpe Ratio: the probability the **true** Sharpe exceeds
+    #: zero, given this many observations with this skew and this kurtosis.
+    psr: float = float("nan")
 
     @property
     def passes(self) -> bool:
@@ -229,6 +249,7 @@ class Result:
             self.trades >= MIN_TRADES
             and self.sharpe > MIN_SHARPE
             and self.drawdown < MAX_DRAWDOWN
+            and (math.isnan(self.psr) or self.psr > MIN_PSR)
         )
 
     def __str__(self) -> str:
@@ -368,6 +389,55 @@ def sharpe_of(rows: list[tuple[int, float]], start: float = EQUITY) -> tuple[flo
     return (mean / sd * math.sqrt(TRADING_DAYS), math.sqrt(TRADING_DAYS / n))
 
 
+def _moments(returns: list[float]) -> tuple[float, float, float, float]:
+    """Mean, standard deviation, skewness and **non-excess** kurtosis."""
+    n = len(returns)
+    mean = sum(returns) / n
+    centred = [r - mean for r in returns]
+    variance = sum(c * c for c in centred) / (n - 1)
+    sd = math.sqrt(variance) if variance > 0 else 0.0
+    if sd <= 0:
+        return mean, 0.0, 0.0, 3.0
+    skew = (sum(c**3 for c in centred) / n) / sd**3
+    kurtosis = (sum(c**4 for c in centred) / n) / sd**4
+    return mean, sd, skew, kurtosis
+
+
+def probabilistic_sharpe(returns: list[float], benchmark: float = 0.0) -> float:
+    """The probability that the true Sharpe exceeds `benchmark`.
+
+    Bailey and Lopez de Prado's PSR:
+
+        PSR = N[ (SR - SR*) * sqrt(n - 1) /
+                 sqrt(1 - g3*SR + (g4 - 1)/4 * SR^2) ]
+
+    with `SR` the observed Sharpe **per period** - not annualised, because the
+    sample size and the Sharpe have to be in the same units - `g3` the skew and
+    `g4` the non-excess kurtosis.
+
+    Why it belongs on every row here: a Sharpe is a point estimate that says
+    nothing about how much data stands behind it, and every reversal in this
+    repository has been a flattering point estimate on a short sample. PSR
+    makes the sample size part of the answer, and it is harsh on negative skew
+    - which is precisely the shape a partial-plus-trailing-stop produces, since
+    that cuts the right tail and keeps the left.
+
+    Returns `nan` below four observations, where the third and fourth moments
+    are not estimable and a number would be an invention.
+    """
+    if len(returns) < 4:
+        return float("nan")
+    mean, sd, skew, kurtosis = _moments(returns)
+    if sd <= 0:
+        return float("nan")
+    sharpe = mean / sd
+    lower = 1.0 - skew * sharpe + (kurtosis - 1.0) / 4.0 * sharpe**2
+    if lower <= 0:
+        return float("nan")
+    z = (sharpe - benchmark) * math.sqrt(len(returns) - 1) / math.sqrt(lower)
+    return 0.5 * (1.0 + math.erf(z / math.sqrt(2.0)))
+
+
 def measure(cell: Cell, trades: list[Trade], days: float) -> Result:
     if not trades:
         return Result(cell, 0, 0.0, 0.0, 0.0, 0.0, 0.0, float("nan"), 0.0, days, 0)
@@ -382,6 +452,11 @@ def measure(cell: Cell, trades: list[Trade], days: float) -> Result:
     # the error as faithfully as to the return.
     car = (final / EQUITY) ** (365.0 / days) - 1.0 if final > 0 and days > 0 else -1.0
     sharpe, sharpe_se = sharpe_of(rows)
+    previous = EQUITY
+    daily = []
+    for _, equity in rows:
+        daily.append((equity - previous) / previous if previous > 0 else 0.0)
+        previous = equity
     return Result(
         cell=cell,
         trades=n,
@@ -394,7 +469,49 @@ def measure(cell: Cell, trades: list[Trade], days: float) -> Result:
         drawdown=drawdown_of(rows),
         days=days,
         wins=sum(1 for r in rewards if r > 0),
+        psr=probabilistic_sharpe(daily),
     )
+
+
+#: Rolling windows every backtest reports, in years, newest-anchored.
+WINDOWS: tuple[int, ...] = (1, 2, 3)
+
+
+def rolling(trades: list[Trade], days: float, windows: tuple[int, ...] = WINDOWS) -> list[Any]:
+    """One `Result` per recent window, newest-anchored, plus the full span.
+
+    **A single full-span number is not the result; the series is.** Measured on
+    this desk: Carver's framework reads +0.14 Sharpe over eight years, -0.04
+    over three, -0.11 over two and **-0.22 over one** - decaying monotonically
+    into the present, with its own flip crossing over it in the final year. The
+    full-span figure was not wrong, it was an average over a regime that ended,
+    and only the series shows that.
+
+    Every window is returned, never the best one. Choosing the window that pays
+    is the selection this repository has refuted two dozen ideas for, and a
+    rolling series is informative precisely because the whole of it is visible.
+
+    A window shorter than the data is still a **small sample** - a rule firing
+    weekly gives fifty trades a year - so each `Result` carries its own standard
+    error and a positive one-year reading is a reason to keep measuring.
+    """
+    if not trades:
+        return []
+    newest = max(t.day + t.seconds / 86_400.0 for t in trades)
+    out = [("all", measure(_ANY, trades, days))]
+    for years in windows:
+        span = 365.0 * years
+        if days < span * 1.05:
+            continue  # the data does not cover it; say nothing rather than a part-window
+        cut = newest - span
+        kept = [t for t in trades if t.day + t.seconds / 86_400.0 >= cut]
+        out.append((f"{years}y", measure(_ANY, kept, span)))
+    return out
+
+
+#: A placeholder cell: `measure` only reads it back out onto the `Result`, and
+#: a window is not a parameter choice.
+_ANY = Cell(0.0, 0.0, 0.0, False)
 
 
 def span_days(data: list[Any]) -> float:

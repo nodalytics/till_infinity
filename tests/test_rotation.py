@@ -154,8 +154,14 @@ def test_the_deflated_sharpe_bar_can_be_moved_and_stays_a_probability(monkeypatc
     """Movable because a looser bar on a bounded allocation is a decision
     somebody may make. Bounded to (0, 1) because the deflated Sharpe **is** a
     probability, and a threshold outside that range is not a weaker gate - it
-    is a gate that always passes or never does."""
-    assert required_dsr() == pytest.approx(0.95)
+    is a gate that always passes or never does.
+
+    **The default moved from 0.95 to 0.60** when PSR became the standard the
+    gate decides on. The deflated Sharpe is the secondary test now, asking a
+    weaker question of the same evidence - not "is this strong given the
+    search" but "is this not obviously an artefact of it" - and a gate that can
+    be asked both is still asked both."""
+    assert required_dsr() == pytest.approx(0.60)
     monkeypatch.setenv("TRADING_DSR_REQUIRED", "0.90")
     assert required_dsr() == pytest.approx(0.90)
     for bad in ("1.0", "0", "-0.5", "95"):
