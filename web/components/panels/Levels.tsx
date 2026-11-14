@@ -1,3 +1,4 @@
+import { Empty } from "@/components/bits";
 import { money, percent } from "@/lib/format";
 import type { Levels as LevelsData } from "@/lib/types";
 
@@ -16,7 +17,7 @@ export default function Levels({ levels }: { levels: LevelsData }) {
   const totals = levels.totals;
 
   if (levels.message || levels.records.length === 0) {
-    return <p className="note">{levels.message || "No closed trades recorded."}</p>;
+    return <Empty>{levels.message || "No closed trades recorded."}</Empty>;
   }
 
   return (

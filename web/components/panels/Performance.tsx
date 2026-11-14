@@ -2,7 +2,7 @@
 
 import { useState } from "react";
 import Equity from "@/components/Equity";
-import { Groups, Stat, Verdict } from "@/components/bits";
+import { Empty, Groups, Stat, Ticker, Verdict } from "@/components/bits";
 import { duration, money, percent, signedR, span, tone } from "@/lib/format";
 import type { Measured, Overview } from "@/lib/types";
 
@@ -23,24 +23,40 @@ export default function Performance({ overview, theme }: { overview: Overview; t
 
   return (
     <>
+      {/*
+        The six figures travel to their new values rather than jumping, which
+        is only safe because `Ticker` reserves the destination's width first:
+        counting 0 to 1,486 across a row of six would otherwise push the five
+        beside it along as the digits arrived. An em dash is a string and
+        stays one - there is nothing to count to.
+      */}
       <div className="stats">
-        <Stat value={String(overall.count)} label={`closed, ${span(window.first, window.last)}`} />
         <Stat
-          value={overall.count ? percent(overall.win_rate) : "—"}
+          value={<Ticker value={overall.count} format={(n) => String(Math.round(n))} />}
+          label={`closed, ${span(window.first, window.last)}`}
+        />
+        <Stat
+          value={
+            overall.count ? <Ticker value={overall.win_rate} format={(n) => percent(n)} /> : "—"
+          }
           label={`won, ${overall.wins} of ${overall.count}`}
         />
         <Stat
-          value={overall.count ? signedR(overall.mean_r) : "—"}
+          value={
+            overall.count ? <Ticker value={overall.mean_r} format={(n) => signedR(n)} /> : "—"
+          }
           label={overall.se_r == null ? "mean R a trade" : `mean R a trade, ± ${overall.se_r.toFixed(2)}`}
           colour={tone(overall.mean_r)}
         />
         <Stat
-          value={overall.count ? signedR(overall.total_r, 1) : "—"}
+          value={
+            overall.count ? <Ticker value={overall.total_r} format={(n) => signedR(n, 1)} /> : "—"
+          }
           label="realised, in units of risk"
           colour={tone(overall.total_r)}
         />
         <Stat
-          value={overall.count ? money(overall.profit) : "—"}
+          value={overall.count ? <Ticker value={overall.profit} format={(n) => money(n)} /> : "—"}
           label="realised, account currency"
           colour={tone(overall.profit)}
         />
@@ -86,7 +102,7 @@ export default function Performance({ overview, theme }: { overview: Overview; t
             </p>
           </>
         ) : (
-          <p className="note">No closed trades in this window.</p>
+          <Empty>No closed trades in this window.</Empty>
         )}
       </div>
 
@@ -136,7 +152,7 @@ export default function Performance({ overview, theme }: { overview: Overview; t
           <span>per feed, never pooled</span>
         </h3>
         {overview.costs.length === 0 ? (
-          <p className="note">No decision in this window recorded a spread at entry.</p>
+          <Empty>No decision in this window recorded a spread at entry.</Empty>
         ) : (
           <table className="grid">
             <thead>

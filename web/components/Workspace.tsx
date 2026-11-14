@@ -2,9 +2,12 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import Chart, { type Toggles } from "@/components/Chart";
+import Fault from "@/components/Fault";
 import Hollow from "@/components/Hollow";
 import SignIn from "@/components/SignIn";
+import { SkeletonChart, SkeletonPanel } from "@/components/Skeleton";
 import Watchlist from "@/components/Watchlist";
+import { Flash } from "@/components/bits";
 import Activity from "@/components/panels/Activity";
 import Levels from "@/components/panels/Levels";
 import Performance from "@/components/panels/Performance";
@@ -83,6 +86,16 @@ export default function Workspace() {
   const [failed, setFailed] = useState("");
   const [locked, setLocked] = useState(false);
   const [attempt, setAttempt] = useState(0);
+  /**
+   * Has the catalogue listing come back yet?
+   *
+   * `series` starts empty and is also empty when this machine holds no bars,
+   * so the two cannot be told apart from its length. Without this the chart
+   * pane asserts "no bar catalogue on this machine" for the second or two
+   * before the listing arrives - a settled answer, stated while the question
+   * is still open, and `data.series()` groups a 300MB table to answer it.
+   */
+  const [sourced, setSourced] = useState(false);
 
   const [feed, setFeed] = useState("");
   const [interval, setInterval] = useState("");
@@ -112,7 +125,7 @@ export default function Workspace() {
     const follow = () => {
       if (theme.stored()) return;
       const next = theme.system();
-      theme.apply(next);
+      theme.crossfade(next);
       setSkin(next);
     };
     try {
@@ -126,7 +139,11 @@ export default function Workspace() {
 
   const flip = useCallback(() => {
     const next: theme.Theme = theme.current() === "dark" ? "light" : "dark";
-    theme.apply(next);
+    // `crossfade` rather than `apply`: it turns a colour transition on for the
+    // length of the flip and off again, so the surfaces travel between the two
+    // palettes instead of cutting. The chart's canvas recolours in its own
+    // effect and lands inside the same window.
+    theme.crossfade(next);
     theme.remember(next);
     setSkin(next);
   }, []);
@@ -145,6 +162,7 @@ export default function Workspace() {
         setSeries(rows);
         setLevels(ledger);
         setBook(open);
+        setSourced(true);
       })
       .catch((error: unknown) => {
         if (abort.signal.aborted) return;
@@ -276,12 +294,24 @@ export default function Workspace() {
   const hollow = health != null && health.trades === 0;
   const unprotected = book?.unprotected.length ?? 0;
   const mismatches = book?.mismatches.length ?? 0;
+  // Three states, not two. A journal that has not been read yet is neither
+  // stale nor current, and colouring it amber while the first read is in
+  // flight is a false alarm on a strip whose whole job is to be believed.
+  const journalStale = activity != null && (activity.age == null || activity.age > 3600);
+  const journalFresh = activity != null && activity.age != null && activity.age <= 3600;
 
   return (
     <div className="workspace">
-      <header className="topbar">
+      <header className="topbar enter" style={{ "--i": 0 } as React.CSSProperties}>
         <h1 className="wordmark">
-          till_infinity <span>/ desk</span>
+          {/* The mark is a CSS background on this span, so the variant follows
+              `data-theme` with no React involved and the right one is painted
+              first. `aria-label` carries the name the `<svg>`'s own title
+              would have, which a background image does not expose. */}
+          <span className="mark" role="img" aria-label="Till Infinity" />
+          <span>
+            till_infinity <span className="soft">/ desk</span>
+          </span>
         </h1>
 
         <span className="sep" />
@@ -295,7 +325,11 @@ export default function Workspace() {
             setInterval("");
           }}
         >
-          {feeds.length === 0 && <option value="">no catalogue</option>}
+          {feeds.length === 0 && (
+            <option value="">
+              {sourced || failed ? "no catalogue" : "reading catalogues"}
+            </option>
+          )}
           {[...feeds]
             .sort((a, b) => (traded.get(b) ?? 0) - (traded.get(a) ?? 0) || a.localeCompare(b))
             .map((name) => (
@@ -394,7 +428,7 @@ export default function Workspace() {
       </header>
 
       {book && (
-        <div className="alarms">
+        <div className="alarms enter" style={{ "--i": 1 } as React.CSSProperties}>
           <span
             className={`alarm-cell ${unprotected ? "hot" : "ok"}`}
             title="A position with no stop at the broker"
@@ -403,7 +437,9 @@ export default function Workspace() {
             {book.present ? (
               <>
                 <b>
-                  {unprotected} of {book.positions.length}
+                  <Flash on={`${unprotected}/${book.positions.length}`}>
+                    {unprotected} of {book.positions.length}
+                  </Flash>
                 </b>{" "}
                 positions carry no stop
               </>
@@ -413,18 +449,24 @@ export default function Workspace() {
           </span>
           <span className={`alarm-cell ${mismatches ? "hot" : "ok"}`}>
             <span className="dot" />
-            <b>{mismatches}</b> broker-engine disagreements
+            <b>
+              <Flash on={mismatches}>{mismatches}</Flash>
+            </b>{" "}
+            broker-engine disagreements
           </span>
           <span className={`alarm-cell ${book.present && book.stale ? "warm" : "ok"}`}>
             <span className="dot" />
             snapshot <b>{book.age == null ? "absent" : ago(book.age)}</b>
           </span>
           <span
-            className={`alarm-cell ${activity && (activity.age == null || activity.age > 3600) ? "warm" : "ok"}`}
+            className={`alarm-cell ${journalStale ? "warm" : "ok"}`}
           >
-            <span className="dot" />
-            journal{" "}
-            <b>{activity?.age == null ? "silent" : ago(activity.age)}</b>
+            {/* The halo is on this dot alone, and only while the journal is
+                current. It is the one thing on the page that says the file
+                underneath is still moving - the desk has already paid once for
+                a panel that looked live over a component that had stopped. */}
+            <span className={journalFresh ? "dot live-dot" : "dot"} />
+            journal <b>{activity?.age == null ? "silent" : ago(activity.age)}</b>
           </span>
           {book.caps
             .filter((cap) => cap.binding)
@@ -438,7 +480,7 @@ export default function Workspace() {
       )}
 
       <div className="middle">
-        <nav className="rail" aria-label="Chart layers">
+        <nav className="rail enter" aria-label="Chart layers" style={{ "--i": 2 } as React.CSSProperties}>
           <Toggle
             on={toggles.markers}
             label="Trade entries and exits"
@@ -499,7 +541,7 @@ export default function Workspace() {
           </Toggle>
         </nav>
 
-        <div className="stage" ref={stage}>
+        <div className="stage enter" ref={stage} style={{ "--i": 3 } as React.CSSProperties}>
           <div className="chartwrap">
             {locked ? (
               <SignIn
@@ -510,28 +552,36 @@ export default function Workspace() {
                 }}
               />
             ) : failed ? (
-              <div className="hollow">
-                <h2>The desk API is not answering.</h2>
-                <p>{failed}</p>
-                <p>
-                  Start it from the repository root with{" "}
-                  <code>
-                    uv run --extra dashboard uvicorn web.api.main:app --host 127.0.0.1 --port 8787
-                  </code>
-                  , then reload.
-                </p>
-              </div>
+              <Fault
+                detail={failed}
+                onRetry={() => {
+                  setFailed("");
+                  setAttempt((n) => n + 1);
+                }}
+              />
             ) : hollow && health ? (
               <Hollow health={health} />
             ) : chart && chart.bars.length > 0 ? (
-              <Chart data={chart} theme={skin} toggles={toggles} />
+              <div className="chart-fade">
+                <Chart data={chart} theme={skin} toggles={toggles} />
+              </div>
+            ) : chart?.message || (sourced && series.length === 0) ? (
+              // A named reason, not a skeleton: this is a settled state, and a
+              // placeholder that pulses for ever reads as a read that never
+              // finishes.
+              <div className="state">
+                <div className="card">
+                  <h2>
+                    <span className="card-glyph" aria-hidden="true">
+                      <NoBars />
+                    </span>
+                    No candles to draw
+                  </h2>
+                  <p>{chart?.message || "No bar catalogue on this machine."}</p>
+                </div>
+              </div>
             ) : (
-              <p className="note" style={{ padding: 16 }}>
-                {chart?.message ||
-                  (series.length === 0
-                    ? "No bar catalogue on this machine."
-                    : "Loading candles.")}
-              </p>
+              <SkeletonChart caption={`Reading candles for ${current || "this feed"}`} />
             )}
           </div>
 
@@ -568,50 +618,73 @@ export default function Workspace() {
                   <span className="spacer" />
                   {overview && (
                     <span className="tab" style={{ cursor: "default", gap: 12 }}>
-                      <span className="dim">{overview.overall.count} closed</span>
-                      <span className="dim">{percent(overview.overall.win_rate)} won</span>
+                      <span className="dim">
+                        <Flash on={overview.overall.count}>{overview.overall.count} closed</Flash>
+                      </span>
+                      <span className="dim">
+                        <Flash on={overview.overall.win_rate}>
+                          {percent(overview.overall.win_rate)} won
+                        </Flash>
+                      </span>
                       <span className={tone(overview.overall.mean_r)}>
-                        {signedR(overview.overall.mean_r)} mean
+                        <Flash on={overview.overall.mean_r}>
+                          {signedR(overview.overall.mean_r)} mean
+                        </Flash>
                       </span>
                       <span className={tone(overview.overall.total_r)}>
-                        {signedR(overview.overall.total_r, 1)} total
+                        <Flash on={overview.overall.total_r}>
+                          {signedR(overview.overall.total_r, 1)} total
+                        </Flash>
                       </span>
                     </span>
                   )}
                 </div>
 
-                <div className="panel-body" role="tabpanel">
+                {/* Keyed on the tab, so the content fades in rather than
+                    cutting. React remounts the subtree on a new key, which is
+                    what replays the animation; without the key it plays once
+                    on load and never again. */}
+                <div className="panel-body" role="tabpanel" key={tab}>
                   {locked ? (
                     <p className="note">Sign in above to read this desk.</p>
+                  ) : failed ? (
+                    <p className="note alarm">
+                      The desk API is not answering, so there is nothing to show here. The chart
+                      pane above says what to start.
+                    </p>
                   ) : !overview ? (
-                    <p className="note">Reading the journal.</p>
-                  ) : tab === "performance" ? (
-                    <Performance overview={overview} theme={skin} />
-                  ) : tab === "trades" ? (
-                    <Trades trades={overview.trades} />
-                  ) : tab === "refusals" ? (
-                    <Refusals declines={overview.declines} taken={overview.overall.count} />
-                  ) : tab === "activity" ? (
-                    activity ? (
-                      <Activity
-                        activity={activity}
-                        hours={activityHours}
-                        onHours={setActivityHours}
-                        refreshed={refreshed}
-                      />
-                    ) : (
-                      <p className="note">Reading the journal.</p>
-                    )
-                  ) : tab === "positions" ? (
-                    book ? (
-                      <Positions book={book} />
-                    ) : (
-                      <p className="note">Reading the snapshot.</p>
-                    )
-                  ) : levels ? (
-                    <Levels levels={levels} />
+                    <SkeletonPanel caption="Reading the journal" />
                   ) : (
-                    <p className="note">Reading the ledger.</p>
+                    <div className="panel-swap">
+                      {tab === "performance" ? (
+                        <Performance overview={overview} theme={skin} />
+                      ) : tab === "trades" ? (
+                        <Trades trades={overview.trades} />
+                      ) : tab === "refusals" ? (
+                        <Refusals declines={overview.declines} taken={overview.overall.count} />
+                      ) : tab === "activity" ? (
+                        activity ? (
+                          <Activity
+                            activity={activity}
+                            hours={activityHours}
+                            onHours={setActivityHours}
+                            refreshed={refreshed}
+                          />
+                        ) : (
+                          <SkeletonPanel caption="Reading the journal" stats={3} rows={5} />
+                        )
+                      ) : tab === "positions" ? (
+                        book ? (
+                          <Positions book={book} />
+                        ) : (
+                          <SkeletonPanel caption="Reading the broker snapshot" stats={0} rows={4} />
+                        )
+                      ) : levels ? (
+                        <Levels levels={levels} />
+                      ) : (
+                        <SkeletonPanel caption="Reading the ledger" stats={0} rows={6} />
+                      )}
+                    </div>
                   )}
                 </div>
               </section>
@@ -628,12 +701,20 @@ export default function Workspace() {
               aria-orientation="vertical"
               aria-label="Resize the watchlist"
             />
-            <aside className="aside" style={{ width: asideWidth }}>
+            <aside
+              className="aside enter"
+              style={{ width: asideWidth, "--i": 4 } as React.CSSProperties}
+            >
               <div className="aside-head">
                 <span>Feeds</span>
                 <span>{overview ? span(overview.window.first, overview.window.last) : ""}</span>
               </div>
               <div className="aside-body">
+                {!overview && !failed && (
+                  <div style={{ padding: "var(--s-3)" }}>
+                    <SkeletonPanel caption="Reading the feeds" stats={0} rows={8} cells={4} />
+                  </div>
+                )}
                 {overview && (
                   <Watchlist
                     feeds={overview.by_feed}
@@ -652,7 +733,7 @@ export default function Workspace() {
         )}
       </div>
 
-      <footer className="status">
+      <footer className="status enter" style={{ "--i": 5 } as React.CSSProperties}>
         {picked && (
           <span>
             <b>{current}</b> {picked.interval} · {picked.venue.toLowerCase()} · {picked.source}
@@ -809,5 +890,11 @@ const Sun = () => (
 const Moon = () => (
   <svg {...stroke}>
     <path d="M13 9.6A5.6 5.6 0 016.4 3 5.6 5.6 0 108 14a5.6 5.6 0 005-4.4z" />
+  </svg>
+);
+const NoBars = () => (
+  <svg {...stroke} width="13" height="13">
+    <path d="M3 13V8.5M7 13V6M11 13v-2.5" />
+    <path d="M2 2.4l12 11.2" />
   </svg>
 );

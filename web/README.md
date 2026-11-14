@@ -33,28 +33,50 @@ at the full window.
 
 ## Running it
 
-Two processes, both on loopback.
+One command, from the repository root.
 
 ```sh
-# 1. the API, from the repository root
-uv sync --extra dashboard
-uv run --extra dashboard uvicorn web.api.main:app --host 127.0.0.1 --port 8787
-
-# 2. the app, from web/
-npm install
-npm run dev          # http://127.0.0.1:3000
+bash web/dev.sh      # or: npm run dev, from web/
 ```
 
-That is the whole of it for one operator on one machine: no secrets to set,
-nothing reachable from anywhere else. To reach it from another machine, see
-**Security** below — it needs a caller secret, and the dashboard refuses to
-serve a widened host list without one.
+It starts both halves, prints the two addresses and the journal it is about to
+read, and takes both down together on `^C`.
+
+**Both halves, because one of them is useless.** The page is a shell: every
+figure on it is a browser read through the Next proxy to the Python service.
+Start `next dev` alone and the app loads, the chrome is right, and every panel
+is a 502 — which is a report this repository has had, from somebody who ran
+the documented command. `web/dev.sh` is `entrypoint.sh`'s local twin and works
+the same way: `wait -n` returns on whichever half exits first and the trap
+takes the other down with it, so there is no state in which half of this is
+running.
+
+```sh
+npm run dev:api      # the service alone, from web/ (it cd's to the root)
+npm run dev:web      # the app alone
+```
+
+Those are the escape hatches, for a debugger or a profiler on one half.
+
+**Which journal it reads is printed, every time.** `TILL_JOURNAL_DB` is left
+alone if you set it; unset, the script defaults to this repository's own
+`.data/journal/journal.db` and says so, with the file's modification date.
+A dashboard rendering a file from three months ago looks exactly like a
+dashboard rendering the desk, and the only difference on screen is a date
+nobody reads unless it is put in front of them.
+
+The defaults are closed: loopback only, no secrets to set, nothing reachable
+from anywhere else. To reach it from another machine, see **Security** below —
+it needs a caller secret, and the dashboard refuses to serve a widened host
+list without one.
 
 `npm run build` does not need the API running: the page is a shell and every
-read happens in the browser.
+read happens in the browser. `npm start` does, for the same reason every
+panel does.
 
-There is no console script and no process manager. Two terminals is the whole
-deployment, which is the right size for one operator and one dashboard.
+There is no console script and no process manager. One script and `wait -n` is
+the whole deployment, which is the right size for one operator and one
+dashboard.
 
 ## Security
 
@@ -238,8 +260,23 @@ defaults for the grid, scale border and crosshair.
 
 The candle green is **not** used for text: `#089981` is 3.2:1 on white and
 `#f23645` is 3.9:1, both under the 4.5:1 a figure in a table needs, so each
-theme carries a separate `--up-ink` / `--down-ink` at 5.3:1 and 5.0:1 on
-white. The candles keep the measured values, which is where they belong.
+theme carries a separate `--up-ink` / `--down-ink`. The candles keep the
+measured values, which is where they belong.
+
+**That rule was right and the measurement behind it was short.** Each ink was
+compared with the *page* colour, and no panel is the page colour: a figure in
+a table sits on `--panel`, a hovered row on `--hover`, and a pressed button's
+label on `--accent-wash` composited over `--panel`. Against those three,
+**eight tokens were under 4.5:1** — dark `--up-ink` at 4.45 on a panel and
+**3.80 on a hovered row**, dark `--down-ink` at 4.08 and 3.48, dark `--ink-3`
+at 3.76, light `--ink-3` at 4.22 on white, light `--ink-2` at 4.42 on hover,
+light `--signal` at 4.35, and `--accent` at 4.27 on its own wash. All eight
+are ordinary dashboard text: a column head, a mean R, a refusal count.
+
+Each was raised at constant hue to the smallest value clearing 4.5:1 on all
+three surfaces, so the palette is still the measured one and the type on it is
+legible. `--accent` keeps `#2962ff` for lines, fills and the chart, and a new
+`--accent-ink` carries the type — the same split `--up-ink` already was.
 
 The choice is stored in `localStorage` and applied by a small script in
 `<head>` before first paint, so there is no flash of the wrong theme. Every
@@ -256,6 +293,82 @@ toggles, a watchlist on the right and a tabbed panel below, both draggable and
 both collapsible from the rail. Hairline borders, no elevation, radius only on
 buttons and inputs, tabular figures everywhere. Readable from about 820px
 wide, below which the rail and the watchlist fold away.
+
+## The mark
+
+`docs/logo.svg` and its two theme variants, copied into `web/public/` rather
+than linked — three files of 344 bytes each, so a copy costs less than the
+build configuration a symlink would need.
+
+- **In the top bar**, as a CSS `background-image` on a 20px span, not an
+  `<img>`. The variant follows `data-theme`, which the boot script sets before
+  first paint, so the right mark is the first one painted; an `<img>` whose
+  `src` an effect corrects paints the wrong one and swaps it. `logo-light` is
+  the one with the *dark* ink — it is named for the theme it belongs to, and
+  the two readings invert.
+- **As the favicon**, the brand-green `logo.svg`, which is the one variant
+  that works against both a light and a dark tab strip, plus a 1.6KB
+  `favicon.ico` because a browser asks for `/favicon.ico` whether a page
+  declares one or not and a 404 on every load is noise in the console somebody
+  is reading to debug something else.
+- **As the apple-touch icon**, 180px on the dark ground, because iOS
+  composites a transparent icon onto black.
+
+Both the stylesheet and `layout.tsx`'s `metadata.icons` reference `public/`,
+which is what makes it reach the standalone output. **A `public/` nothing
+references is a `public/` that quietly fails to ship**, and the production
+build is the place that bites rather than `next dev`, which serves the
+directory either way. `Dockerfile` copies it explicitly for the same reason:
+measured against the standalone server, the logo is a 200 with that directory
+in place and a **500** with it moved aside.
+
+## Motion
+
+The page should feel alive and must never move while somebody is reading a
+number. Those are not in tension if the moving parts are chosen carefully.
+
+- **Entrances**, once, staggered 45ms apart down the chrome, on `opacity` and
+  `transform` only. Both are composited, so an arriving panel never reflows
+  the one beside it. The chart is sized by a `ResizeObserver` and a transform
+  does not change the box it observes.
+- **Figures travel to their new values** in the stats row, over 420ms. Safe
+  only because `Ticker` reserves the *destination's* width in `ch` before the
+  first frame: `font-variant-numeric: tabular-nums` is already on `body`, so a
+  digit is one `ch` wide and the box is the size of the final string
+  throughout. Counting 0 → 1,486 without that would shove the five figures
+  beside it along the row as the digits arrived.
+- **Everything else that changes is marked, not moved** — a background wash
+  that fades out, which costs no geometry. That is what a figure inside a
+  table row gets, where reserving a width in `ch` would unalign the column.
+- **Theme changes crossfade** by turning a colour transition on for 200ms and
+  off again. Not a view transition: that snapshots the page *before* the
+  chart's own recolour effect runs, so the "new" snapshot holds the old canvas
+  pixels and the chart pops a frame after the crossfade ends.
+- **Skeletons, not blank panels.** The first read is not instant — the journal
+  read behind `/api/overview` cannot use a composite index, and `series()`
+  groups a 300MB bar table — and for those seconds an empty panel is
+  indistinguishable from a panel whose source is missing. A skeleton has the
+  shape of the table it stands for and a caption naming what is being read.
+  Nothing here is a spinner: a spinner says "wait" and not what for.
+- **Every animation is behind `@media (prefers-reduced-motion: reduce)`.**
+  Each keyframe set is declared with `both`, so collapsing the duration lands
+  on the final frame rather than leaving an element at `opacity: 0`. The two
+  that loop — a skeleton's sheen and the live dot's halo — are switched off
+  outright, because an indefinite animation never reaches a final frame.
+
+## Nothing to show
+
+Three states, each designed, because they are the ones an operator meets first
+and the ones that were least finished.
+
+- **A failed read.** Start `next dev` without the service and *every* panel is
+  this. It names what failed, gives both ways to start the missing half as
+  something you can copy, and retries in place rather than making you reload
+  and lose the window you had selected.
+- **An empty journal.** Names what the journal does hold, because an empty
+  dashboard over a journal full of `structures` rows is a different problem
+  from an empty dashboard over a missing file.
+- **A window with nothing in it**, which is neither of the above and says so.
 
 ## Tests and lint
 

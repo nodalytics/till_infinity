@@ -23,10 +23,27 @@
  * **Their green is not a text colour.** `#089981` is 3.2:1 on white and
  * `#f23645` is 3.9:1 - both under the 4.5:1 a figure in a table needs, and
  * the real site does print them at that size. Each theme therefore carries a
- * separate `--up-ink` / `--down-ink` for type: 5.3:1 and 5.0:1 on white,
- * 5.5:1 and 4.6:1 on `#131722`. The candles keep the measured values, which
- * is where they belong. Red and green mean P&L, blue means selected, amber
- * means refused, and nothing else is coloured at all.
+ * separate `--up-ink` / `--down-ink` for type. The candles keep the measured
+ * values, which is where they belong. Red and green mean P&L, blue means
+ * selected, amber means refused, and nothing else is coloured at all.
+ *
+ * **The same rule, applied to every ink, against every surface type sits on.**
+ * The separate inks were right and the measurement behind them was short: it
+ * compared each ink to the *page* colour, and no panel is the page colour. A
+ * figure in a table sits on `--panel`, a hovered row sits on `--hover`, and a
+ * pressed button's label sits on `--accent-wash` composited over `--panel`.
+ * Measured against those three, eight tokens were under 4.5:1 - dark
+ * `--up-ink` at 4.45 on `--panel` and **3.80 on a hovered row**, dark
+ * `--down-ink` at 4.08 and 3.48, dark `--ink-3` at 3.76, light `--ink-3` at
+ * 4.22 on white, light `--ink-2` at 4.42 on hover, light `--signal` at 4.35,
+ * and `--accent` at 4.27 on its own wash. Every one of those is ordinary
+ * dashboard text: a dim column head, a mean R, a refusal count.
+ *
+ * Each was raised at constant hue to the smallest value clearing 4.5:1 on all
+ * three, so the palette is still the measured one and the type is legible on
+ * it. `--accent` keeps its measured `#2962ff` for lines, fills and the chart,
+ * and a new `--accent-ink` carries the type - the same split `--up-ink`
+ * already was.
  */
 
 :root,
@@ -42,8 +59,11 @@
   --rule-strong: #c9cdd8;
 
   --ink: #131722;
-  --ink-2: #707070;
-  --ink-3: #787b86;
+  /* 6.40:1 on --panel, 5.71 on --hover. Was #707070, which read 4.42 on a
+     hovered row - and a hovered row is where half this type is read. */
+  --ink-2: #5c5f66;
+  /* 5.09:1 on --panel, 4.55 on --hover. Was #787b86 at 4.22 and 3.77. */
+  --ink-3: #6b6e78;
 
   --up: #089981;
   --down: #f23645;
@@ -52,8 +72,10 @@
   --wick: #737375;
 
   --accent: #2962ff;
+  --accent-ink: #1a4fd6;
   --accent-wash: rgba(41, 98, 255, 0.1);
-  --signal: #9a6700;
+  /* 5.81:1 on --panel, 5.22 on --signal-wash. Was #9a6700 at 4.87 and 4.35. */
+  --signal: #8a5c00;
   --signal-fill: #e3a008;
   --signal-wash: rgba(227, 160, 8, 0.14);
   --alarm: #c0392b;
@@ -78,15 +100,20 @@
 
     --ink: #d1d4dc;
     --ink-2: #b2b5be;
-    --ink-3: #787b86;
+    /* 5.51:1 on --panel, 4.70 on --hover. Was #787b86 at 3.76 and 3.21. */
+    --ink-3: #9598a1;
 
     --up: #089981;
     --down: #f23645;
-    --up-ink: #089981;
-    --down-ink: #f23645;
+    /* Lifted at constant hue until both clear 4.75:1 on --panel, --panel-sunk,
+       --app and --hover. The candle values read 4.45/4.08 on --panel and
+       3.80/3.48 on a hovered row, which is where every mean R is read. */
+    --up-ink: #09ae93;
+    --down-ink: #f66e78;
     --wick: #737375;
 
     --accent: #4d8aff;
+    --accent-ink: #6ba0ff;
     --accent-wash: rgba(77, 138, 255, 0.16);
     --signal: #e3b341;
     --signal-fill: #e3b341;
@@ -113,15 +140,18 @@
 
   --ink: #d1d4dc;
   --ink-2: #b2b5be;
-  --ink-3: #787b86;
+  /* Keep in step with the `prefers-color-scheme` block above: the two say the
+     same thing because one answers the system and the other a stored choice. */
+  --ink-3: #9598a1;
 
   --up: #089981;
   --down: #f23645;
-  --up-ink: #089981;
-  --down-ink: #f23645;
+  --up-ink: #09ae93;
+  --down-ink: #f66e78;
   --wick: #737375;
 
   --accent: #4d8aff;
+  --accent-ink: #6ba0ff;
   --accent-wash: rgba(77, 138, 255, 0.16);
   --signal: #e3b341;
   --signal-fill: #e3b341;
@@ -157,6 +187,25 @@
   --row: 30px;
   --bar: 38px;
   --radius: 4px;
+
+  /*
+   * Three durations and two curves, because a dashboard that animates at six
+   * different speeds reads as six different products.
+   *
+   * **Nothing here may move while somebody is reading a number.** Every
+   * animation below is either an entrance (it happens once, as a panel
+   * arrives), a state change the viewer asked for (a hover, a tab, a theme),
+   * or a mark on a figure that has just changed - and all of them run on
+   * `opacity`, `transform`, `background-color` and `color`, which the
+   * compositor handles without reflowing a table row. No duration animates a
+   * width, a height, a margin or a font size.
+   */
+  --t-fast: 110ms;
+  --t-mid: 200ms;
+  --t-slow: 300ms;
+  /* Decelerating, so a panel arrives rather than being thrown. */
+  --ease-out: cubic-bezier(0.16, 1, 0.3, 1);
+  --ease: cubic-bezier(0.33, 0, 0.2, 1);
 }
 
 *,
@@ -195,10 +244,48 @@ input {
   outline-offset: -2px;
 }
 
+/* A ring rather than a wider outline: `box-shadow` takes no space, so a
+   focused control in a 30px row does not push its neighbours along. */
+.btn:focus-visible,
+.tab:focus-visible,
+.pick:focus-visible,
+.field:focus-visible,
+.copy:focus-visible {
+  box-shadow: 0 0 0 3px var(--accent-wash);
+}
+
+/*
+ * **Every animation in this file is behind this.**
+ *
+ * `both` fill on each keyframe set means a near-zero duration lands on the
+ * final frame, so a reduced-motion viewer gets the finished state rather than
+ * an element stuck mid-fade at `opacity: 0`. The named exceptions are the two
+ * that loop: a skeleton's sheen and the live dot, which are turned off
+ * outright because an indefinite animation never reaches a final frame.
+ */
 @media (prefers-reduced-motion: reduce) {
-  * {
+  *,
+  *::before,
+  *::after {
     transition-duration: 0.01ms !important;
     animation-duration: 0.01ms !important;
+    animation-delay: 0ms !important;
+    scroll-behavior: auto !important;
+  }
+
+  .skel,
+  .skel-chart,
+  .live-dot::after {
+    animation: none !important;
+  }
+
+  .live-dot::after {
+    display: none;
+  }
+
+  .skel {
+    background: var(--panel-sunk);
+    opacity: 0.8;
   }
 }
 
@@ -289,6 +376,9 @@ input {
 }
 
 .wordmark {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
   font-family: ui-monospace, Menlo, Consolas, monospace;
   font-size: var(--t-13);
   font-weight: 500;
@@ -296,8 +386,43 @@ input {
   white-space: nowrap;
 }
 
-.wordmark span {
+/* `.soft`, not `.wordmark span`: the mark is a span too, and so is the
+   wrapper that keeps the flex gap off the two halves of the name. */
+.wordmark .soft {
   color: var(--ink-3);
+}
+
+/*
+ * The mark, as a background image rather than an `<img>` or an inlined path.
+ *
+ * Two reasons. The variant follows `data-theme`, which the boot script sets
+ * before first paint, so the correct one is the first one painted - an `<img>`
+ * whose `src` a React effect corrects paints the wrong mark and then swaps it.
+ * And a `url()` in this stylesheet is a reference the build can see, which is
+ * what makes `public/` arrive in the standalone output; a logo that only
+ * resolves under `next dev` is a bug this image has shipped before.
+ *
+ * `logo-light` is the one with the dark ink - it is named for the theme it
+ * belongs to, not for its own colour, and the two readings invert.
+ */
+.mark {
+  width: 20px;
+  height: 20px;
+  flex: 0 0 20px;
+  background-image: url("/till-infinity-logo-light.svg");
+  background-repeat: no-repeat;
+  background-position: center;
+  background-size: contain;
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme="light"]) .mark {
+    background-image: url("/till-infinity-logo-dark.svg");
+  }
+}
+
+:root[data-theme="dark"] .mark {
+  background-image: url("/till-infinity-logo-dark.svg");
 }
 
 .sep {
@@ -335,7 +460,7 @@ input {
 .btn[aria-pressed="true"],
 .btn.on {
   background: var(--accent-wash);
-  color: var(--accent);
+  color: var(--accent-ink);
   font-weight: 500;
 }
 
@@ -371,6 +496,13 @@ input {
   background-position: calc(100% - 12px) 52%, calc(100% - 8px) 52%;
   background-size: 4px 4px, 4px 4px;
   background-repeat: no-repeat;
+  transition:
+    border-color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+
+.pick:hover {
+  border-color: var(--rule-strong);
 }
 
 .pick option {
@@ -385,6 +517,20 @@ input {
   height: 24px;
   padding: 0 var(--s-2);
   min-width: 150px;
+  transition:
+    border-color var(--t-fast) var(--ease),
+    background-color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+
+.field:hover {
+  border-color: var(--rule-strong);
+}
+
+.field:focus {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--accent-wash);
 }
 
 .field::placeholder {
@@ -424,6 +570,11 @@ input {
   flex: 0 0 6px;
   cursor: col-resize;
   background: var(--panel);
+}
+
+.hsplit,
+.vsplit {
+  transition: background-color var(--t-fast) var(--ease);
 }
 
 .hsplit:hover,
@@ -491,6 +642,12 @@ input {
   text-align: right;
   border-bottom: 1px solid var(--rule);
   white-space: nowrap;
+  /* Background and the selected row's inset marker only. A row that animated
+     its own geometry would move the twenty rows under it, and the whole point
+     of a watchlist is that a price stays where your eye left it. */
+  transition:
+    background-color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
 
 .watch td:first-child {
@@ -557,6 +714,13 @@ input {
   display: inline-flex;
   align-items: center;
   gap: 6px;
+}
+
+.tab {
+  transition:
+    color var(--t-fast) var(--ease),
+    border-color var(--t-mid) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
 }
 
 .tab:hover {
@@ -648,6 +812,7 @@ input {
   padding: 3px var(--s-2) 3px 0;
   border-bottom: 1px solid var(--rule);
   white-space: nowrap;
+  transition: background-color var(--t-fast) var(--ease);
 }
 
 .grid th.r,
@@ -681,13 +846,13 @@ input {
 
 .sortable[aria-sort="ascending"]::after {
   content: " \25B2";
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: 8px;
 }
 
 .sortable[aria-sort="descending"]::after {
   content: " \25BC";
-  color: var(--accent);
+  color: var(--accent-ink);
   font-size: 8px;
 }
 
@@ -762,6 +927,24 @@ input {
   max-width: 78ch;
 }
 
+/* "Nothing here", given a shape so it does not read as a caption that has
+   drifted away from its table. */
+.empty {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  font-size: var(--t-12);
+  padding: var(--s-3) 0;
+  animation: fade var(--t-mid) var(--ease) both;
+}
+
+.empty-rule {
+  width: 18px;
+  height: 1px;
+  flex: 0 0 18px;
+  background: var(--rule-strong);
+}
+
 .heading {
   font-size: var(--t-12);
   font-weight: 500;
@@ -807,6 +990,9 @@ input {
   border-right: 1px solid var(--rule);
   white-space: nowrap;
   font-size: var(--t-12);
+  transition:
+    background-color var(--t-mid) var(--ease),
+    color var(--t-mid) var(--ease);
 }
 
 .alarm-cell b {
@@ -928,20 +1114,416 @@ input {
   max-width: 70%;
 }
 
-.hollow {
+/* ------------------------------------------- empty, failed and signed-out */
+
+/*
+ * The three surfaces that say "there is nothing here", designed rather than
+ * left as a paragraph in the corner.
+ *
+ * The 502 was the least finished thing in this app and the most likely to be
+ * the first thing a new operator saw: start `next dev` on its own and *every*
+ * panel is that error. It now says what failed, what starts the missing half,
+ * and gives the command as something you can copy rather than something you
+ * have to retype out of a sentence.
+ */
+.state {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
   padding: var(--s-6);
-  max-width: 70ch;
+  overflow: auto;
 }
 
-.hollow h2 {
+.card {
+  width: 100%;
+  max-width: 62ch;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: 6px;
+  padding: var(--s-6);
+  animation: rise var(--t-slow) var(--ease-out) both;
+}
+
+.card-wide {
+  max-width: 86ch;
+}
+
+.card h2 {
   font-size: var(--t-14);
   font-weight: 500;
   margin: 0 0 var(--s-2);
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
 }
 
-.hollow p {
+.card p {
   color: var(--ink-2);
   margin: 0 0 var(--s-3);
+  font-size: var(--t-12);
+  line-height: 1.55;
+}
+
+.card p:last-child {
+  margin-bottom: 0;
+}
+
+/* The glyph beside the heading. A 22px square so the heading's baseline does
+   not shift when one state replaces another. */
+.card-glyph {
+  width: 22px;
+  height: 22px;
+  flex: 0 0 22px;
+  border-radius: 50%;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--panel-sunk);
+  border: 1px solid var(--rule);
+  color: var(--ink-3);
+}
+
+.card-glyph.hot {
+  background: var(--alarm-wash);
+  border-color: transparent;
+  color: var(--alarm);
+}
+
+.card-detail {
+  font-size: var(--t-12);
+  color: var(--ink-2);
+  background: var(--panel-sunk);
+  border: 1px solid var(--rule);
+  border-left: 2px solid var(--alarm);
+  border-radius: 0 var(--radius) var(--radius) 0;
+  padding: var(--s-2) var(--s-3);
+  margin: 0 0 var(--s-3);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+/* A command you copy, not one you retype. The row is `grid` rather than
+   `flex` so the long command wraps inside its own track instead of pushing
+   the button off the card. */
+.cmd {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: start;
+  gap: var(--s-2);
+  background: var(--panel-sunk);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  padding: var(--s-2);
+  margin: 0 0 var(--s-2);
+}
+
+.cmd code {
+  background: transparent;
+  border: 0;
+  padding: 0;
+  font-size: var(--t-11);
+  line-height: 1.6;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+  white-space: pre-wrap;
+}
+
+.copy {
+  appearance: none;
+  background: var(--panel);
+  border: 1px solid var(--rule);
+  border-radius: var(--radius);
+  color: var(--ink-2);
+  font-size: var(--t-11);
+  height: 22px;
+  padding: 0 var(--s-2);
+  cursor: pointer;
+  white-space: nowrap;
+  transition:
+    background-color var(--t-fast) var(--ease),
+    color var(--t-fast) var(--ease),
+    border-color var(--t-fast) var(--ease),
+    box-shadow var(--t-fast) var(--ease);
+}
+
+.copy:hover {
+  background: var(--hover);
+  color: var(--ink);
+  border-color: var(--rule-strong);
+}
+
+.copy[data-done="true"] {
+  color: var(--up-ink);
+  border-color: var(--up-ink);
+}
+
+.card-actions {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  margin-top: var(--s-4);
+}
+
+.btn-solid {
+  border-color: var(--rule);
+  background: var(--panel-sunk);
+  color: var(--ink);
+}
+
+.btn-solid:hover {
+  background: var(--hover);
+}
+
+/* ------------------------------------------------------------- animation */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(6px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes sheen {
+  from {
+    background-position: 180% 0;
+  }
+  to {
+    background-position: -80% 0;
+  }
+}
+
+@keyframes halo {
+  0% {
+    transform: scale(1);
+    opacity: 0.5;
+  }
+  70%,
+  100% {
+    transform: scale(2.6);
+    opacity: 0;
+  }
+}
+
+/*
+ * One entrance, staggered by `--i`.
+ *
+ * `translateY` and `opacity` only: both are composited, so a panel arriving
+ * never reflows the one beside it. The chart's own canvas is sized by a
+ * `ResizeObserver`, and a transform does not change the box it observes - an
+ * entrance that animated `height` would resize the chart six times on load.
+ */
+.enter {
+  animation: rise var(--t-slow) var(--ease-out) both;
+  animation-delay: calc(var(--i, 0) * 45ms);
+}
+
+/* Tab content, re-keyed on the tab, so switching fades instead of cutting. */
+.panel-swap {
+  animation: fade var(--t-mid) var(--ease) both;
+}
+
+/*
+ * The canvas arrives with its first bars rather than flicking into place.
+ *
+ * A wrapper rather than a class on the chart's own root, so the fade plays
+ * when candles first exist and not on every fifteen-second re-read: the
+ * wrapper stays mounted while the data under it changes.
+ */
+.chart-fade {
+  position: absolute;
+  inset: 0;
+  animation: fade var(--t-slow) var(--ease) both;
+}
+
+/*
+ * The theme crossfade.
+ *
+ * A class on `<html>` for the length of the flip, rather than a view
+ * transition. A view transition snapshots the page *before* the chart's own
+ * recolour effect runs, so the "new" snapshot still holds the old canvas
+ * pixels and the chart pops a frame after the crossfade finishes. Letting the
+ * colours transition in place lets the canvas repaint into the same window.
+ *
+ * It is a universal selector, which is why it is scoped to one class that
+ * `lib/theme.ts` removes again: a permanent `* { transition: color }` would
+ * make every hover in the app lag.
+ */
+:root.theming *,
+:root.theming *::before,
+:root.theming *::after {
+  transition:
+    background-color var(--t-mid) var(--ease),
+    border-color var(--t-mid) var(--ease),
+    color var(--t-mid) var(--ease),
+    fill var(--t-mid) var(--ease),
+    box-shadow var(--t-mid) var(--ease) !important;
+}
+
+/*
+ * A figure that has just changed, marked rather than moved.
+ *
+ * `background-color` and nothing else. Growing a number, sliding it or
+ * swapping its font would all change the width of a cell in a table that is
+ * re-read every fifteen seconds, and a column that twitches is worse than one
+ * that updates silently.
+ */
+.tick {
+  border-radius: 2px;
+  background-color: transparent;
+}
+
+.tick-changed {
+  animation: tick-mark 900ms var(--ease) both;
+}
+
+@keyframes tick-mark {
+  0% {
+    background-color: var(--accent-wash);
+  }
+  100% {
+    background-color: transparent;
+  }
+}
+
+/* A dot that says the reading underneath it is current. The halo is a
+   pseudo-element, so it costs no layout and overflows nothing. */
+.live-dot {
+  position: relative;
+}
+
+/* `--up` outright, not `inherit`: `background: inherit` on a pseudo-element
+   takes the *parent's* background, which is the alarm cell, not the dot. The
+   class is only ever put on a dot that means "current", which is the green. */
+.live-dot::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  border-radius: 50%;
+  background: var(--up);
+  animation: halo 2.6s var(--ease-out) infinite;
+}
+
+/* ------------------------------------------------------------- skeletons */
+
+/*
+ * A shape where the data will be, not a blank panel and not a spinner.
+ *
+ * The desk's first read can take a few seconds - `series()` groups a 300MB
+ * bar table - and a panel that is empty for those seconds is indistinguishable
+ * from a panel whose source is missing. These say "a table is coming" and the
+ * caption under them says what is being read.
+ */
+.skel {
+  border-radius: 3px;
+  background-image: linear-gradient(
+    90deg,
+    var(--panel-sunk) 0%,
+    var(--hover) 45%,
+    var(--panel-sunk) 90%
+  );
+  background-size: 220% 100%;
+  background-color: var(--panel-sunk);
+  animation: sheen 1.5s linear infinite;
+}
+
+.skel-line {
+  height: 9px;
+}
+
+.skel-stats {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--s-6);
+  margin-bottom: var(--s-4);
+}
+
+.skel-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-width: 92px;
+}
+
+.skel-rows {
+  display: flex;
+  flex-direction: column;
+  gap: 9px;
+  margin-top: var(--s-2);
+}
+
+.skel-row {
+  display: grid;
+  gap: var(--s-3);
+  align-items: center;
+}
+
+.skel-caption {
+  color: var(--ink-3);
+  font-size: var(--t-11);
+  margin: var(--s-3) 0 0;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+
+/*
+ * The chart's own skeleton: a row of bars at a plausible height, breathing.
+ *
+ * The sheen gradient above is for a block wide enough to carry it; a 4px
+ * candle is not, so this pulses as one shape instead. Heights come from a
+ * fixed sequence rather than `Math.random`, because a re-render would
+ * otherwise reshuffle the whole series under the reader.
+ */
+.skel-chart {
+  position: absolute;
+  inset: 0;
+  padding: var(--s-6) 76px var(--s-6) var(--s-4);
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  animation: breathe 2.2s var(--ease) infinite;
+}
+
+@keyframes breathe {
+  0%,
+  100% {
+    opacity: 0.5;
+  }
+  50% {
+    opacity: 0.95;
+  }
+}
+
+/* One full-height column, which is the containing block its bar is placed
+   against: a percentage `bottom` resolves against a height, a percentage
+   margin would not. */
+.skel-chart span {
+  flex: 1 1 auto;
+  min-width: 2px;
+  position: relative;
+}
+
+.skel-chart i {
+  position: absolute;
+  left: 0;
+  right: 0;
+  border-radius: 1px;
+  background: var(--hover);
 }
 
 code {

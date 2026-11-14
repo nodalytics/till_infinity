@@ -1,5 +1,6 @@
 "use client";
 
+import { Empty } from "@/components/bits";
 import { ago, percent, stamp } from "@/lib/format";
 import type { Activity as ActivityData } from "@/lib/types";
 
@@ -78,7 +79,7 @@ export default function Activity({
             <span>what it wanted, and what stopped it</span>
           </h3>
           {activity.strategies.length === 0 ? (
-            <p className="note">Nothing recorded in this window.</p>
+            <Empty>Nothing recorded in this window.</Empty>
           ) : (
             <table className="grid">
               <thead>
@@ -120,7 +121,7 @@ export default function Activity({
             <span>decisions, outcomes and refusals, newest first</span>
           </h3>
           {activity.recent.length === 0 ? (
-            <p className="note">Nothing recorded in this window.</p>
+            <Empty>Nothing recorded in this window.</Empty>
           ) : (
             <table className="grid">
               <thead>
