@@ -46,7 +46,17 @@ docker pull "$IMAGE:$TAG"
 # floored: the journal it reads is a 3.8GB file on the same disk the desk
 # writes to, and starving that disk is the failure this is sized to avoid.
 CPUS="${CPUS:-0.25}"
-MEMORY="${MEMORY:-384m}"
+#: **1g, because 384m was not enough to import the API at all.**
+#:
+#: `uvicorn web.api.main:app` pulls 92 `till_infinity` modules including
+#: nautilus and pandas, and at 384m the kernel killed it mid-import every
+#: time - `dashboard: line 24: 7 Killed` in the logs, then `wait -n` took Next
+#: down with it, and `--restart unless-stopped` turned that into a loop: **73
+#: restarts**, with the page serving a 502 throughout. Measured 325MB resident
+#: once it is up, so this is roughly a factor of three of headroom for the
+#: journal reads on top. The instance has 3.8GB and the desk's own container
+#: is limited to 2.6GB of it and uses 295MB.
+MEMORY="${MEMORY:-1g}"
 BLKIO="${BLKIO:-100}"
 
 echo "==> replacing $NAME (cpus=$CPUS memory=$MEMORY bind=$BIND:$PORT)"
