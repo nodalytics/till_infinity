@@ -640,3 +640,58 @@ def test_the_example_env_pairs_its_rules_with_an_entry_that_exists():
         f".env.example pairs {dead}, which `leaves.of` refuses. Valid pairings: "
         f"{', '.join(f'{r}/{e}' for r, e in sorted(LEAVES))}."
     )
+
+
+class _Trader:
+    def __init__(self, running: bool) -> None:
+        self.is_running = running
+
+
+class _Node:
+    def __init__(self, running: bool) -> None:
+        self.trader = _Trader(running)
+
+
+def test_a_node_that_never_started_its_trader_leaves_the_process():
+    """**A node that comes up empty must not stay up.**
+
+    Nautilus returns from its start sequence before `trader.start()` when the
+    engines miss their connect timeout - `if not await
+    self._await_engines_connected(): return` - so the process keeps running,
+    answers the venue and trades nothing. On 2026-11-14 that happened on two
+    consecutive deploys, 78 and 85 seconds of instrument loading against a
+    60-second wait, and the desk sat empty for thirteen minutes: the
+    healthcheck saw it, Docker does not act on an unhealthy container, and the
+    actor that would have said so was one of the things that never started.
+    """
+    from till_infinity.node import live
+
+    left: list[int] = []
+    assert live.abandon_unstarted(_Node(running=False), 420.0, quit_=left.append) is True
+    assert left == [70], "an empty node stayed up"
+
+
+def test_a_running_node_is_left_alone():
+    """The control, and the reason this test matters more than the one above.
+
+    This calls `os._exit` in production. A predicate that is wrong in this
+    direction does not leave a desk idle - it takes down a desk that is
+    working, on a timer, every seven minutes.
+    """
+    from till_infinity.node import live
+
+    left: list[int] = []
+    assert live.abandon_unstarted(_Node(running=True), 420.0, quit_=left.append) is False
+    assert left == [], "a running node was killed"
+
+
+def test_a_node_that_cannot_be_asked_counts_as_unstarted():
+    """`started` must not raise on a node whose trader is not there yet.
+
+    It runs on a timer against an object another library owns, so the one
+    thing it cannot do is raise inside a daemon thread where nothing is
+    waiting to catch it.
+    """
+    from till_infinity.node import live
+
+    assert live.started(object()) is False

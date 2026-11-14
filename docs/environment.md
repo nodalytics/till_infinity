@@ -98,7 +98,8 @@ actor subscribed to nothing is a fold that never runs pretending to be a model t
 | `ALERTS_MINIMUM_LEVEL` | `WARNING` | The lowest level the notifier delivers. | restart |
 | `STATESPACE_BARS` | *(unset: no statespace)* | Bar types the statespace actor folds, space- or comma-separated. Unset means the actor is **not added at all**. | restart |
 | `STATESPACE_INDICATORS` | *(empty)* | Indicators the statespace actor registers. | restart |
-| `NODE_CONNECT_TIMEOUT` | `60` | Seconds to wait for the clients to connect. | restart |
+| `NODE_CONNECT_TIMEOUT` | `240` | Seconds to wait for the clients to connect. **Miss it and the node starts no strategy at all** - Nautilus returns from its start sequence before `trader.start()` - so this is sized against the measured 78-85s this venue takes to load 728 instruments, not against the usual case. | restart |
+| `NODE_START_DEADLINE` | `420` | Seconds before a node that never started its trader leaves the process, so the restart policy replaces it. `0` disables. | restart |
 | `NODE_RECONCILE_TIMEOUT` | `30` | Seconds to wait for execution reconciliation. | restart |
 | `NODE_PORTFOLIO_TIMEOUT` | `30` | Seconds to wait for the portfolio to initialise. | restart |
 | `NODE_DISCONNECT_TIMEOUT` | `30` | Seconds to wait on a clean stop. | restart |
