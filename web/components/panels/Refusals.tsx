@@ -1,3 +1,4 @@
+import { Empty } from "@/components/bits";
 import { percent } from "@/lib/format";
 import type { Decline } from "@/lib/types";
 
@@ -22,11 +23,11 @@ export default function Refusals({
 
   if (declines.length === 0) {
     return (
-      <p className="note">
+      <Empty>
         No refusals recorded in this window. Strategy-level refusals are not journalled - there are
         hundreds a day and they are the filter working - so this counts the account saying no to
         something a strategy wanted.
-      </p>
+      </Empty>
     );
   }
 

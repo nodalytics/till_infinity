@@ -260,8 +260,23 @@ defaults for the grid, scale border and crosshair.
 
 The candle green is **not** used for text: `#089981` is 3.2:1 on white and
 `#f23645` is 3.9:1, both under the 4.5:1 a figure in a table needs, so each
-theme carries a separate `--up-ink` / `--down-ink` at 5.3:1 and 5.0:1 on
-white. The candles keep the measured values, which is where they belong.
+theme carries a separate `--up-ink` / `--down-ink`. The candles keep the
+measured values, which is where they belong.
+
+**That rule was right and the measurement behind it was short.** Each ink was
+compared with the *page* colour, and no panel is the page colour: a figure in
+a table sits on `--panel`, a hovered row on `--hover`, and a pressed button's
+label on `--accent-wash` composited over `--panel`. Against those three,
+**eight tokens were under 4.5:1** — dark `--up-ink` at 4.45 on a panel and
+**3.80 on a hovered row**, dark `--down-ink` at 4.08 and 3.48, dark `--ink-3`
+at 3.76, light `--ink-3` at 4.22 on white, light `--ink-2` at 4.42 on hover,
+light `--signal` at 4.35, and `--accent` at 4.27 on its own wash. All eight
+are ordinary dashboard text: a column head, a mean R, a refusal count.
+
+Each was raised at constant hue to the smallest value clearing 4.5:1 on all
+three surfaces, so the palette is still the measured one and the type on it is
+legible. `--accent` keeps `#2962ff` for lines, fills and the chart, and a new
+`--accent-ink` carries the type — the same split `--up-ink` already was.
 
 The choice is stored in `localStorage` and applied by a small script in
 `<head>` before first paint, so there is no flash of the wrong theme. Every
@@ -306,6 +321,54 @@ build is the place that bites rather than `next dev`, which serves the
 directory either way. `Dockerfile` copies it explicitly for the same reason:
 measured against the standalone server, the logo is a 200 with that directory
 in place and a **500** with it moved aside.
+
+## Motion
+
+The page should feel alive and must never move while somebody is reading a
+number. Those are not in tension if the moving parts are chosen carefully.
+
+- **Entrances**, once, staggered 45ms apart down the chrome, on `opacity` and
+  `transform` only. Both are composited, so an arriving panel never reflows
+  the one beside it. The chart is sized by a `ResizeObserver` and a transform
+  does not change the box it observes.
+- **Figures travel to their new values** in the stats row, over 420ms. Safe
+  only because `Ticker` reserves the *destination's* width in `ch` before the
+  first frame: `font-variant-numeric: tabular-nums` is already on `body`, so a
+  digit is one `ch` wide and the box is the size of the final string
+  throughout. Counting 0 → 1,486 without that would shove the five figures
+  beside it along the row as the digits arrived.
+- **Everything else that changes is marked, not moved** — a background wash
+  that fades out, which costs no geometry. That is what a figure inside a
+  table row gets, where reserving a width in `ch` would unalign the column.
+- **Theme changes crossfade** by turning a colour transition on for 200ms and
+  off again. Not a view transition: that snapshots the page *before* the
+  chart's own recolour effect runs, so the "new" snapshot holds the old canvas
+  pixels and the chart pops a frame after the crossfade ends.
+- **Skeletons, not blank panels.** The first read is not instant — the journal
+  read behind `/api/overview` cannot use a composite index, and `series()`
+  groups a 300MB bar table — and for those seconds an empty panel is
+  indistinguishable from a panel whose source is missing. A skeleton has the
+  shape of the table it stands for and a caption naming what is being read.
+  Nothing here is a spinner: a spinner says "wait" and not what for.
+- **Every animation is behind `@media (prefers-reduced-motion: reduce)`.**
+  Each keyframe set is declared with `both`, so collapsing the duration lands
+  on the final frame rather than leaving an element at `opacity: 0`. The two
+  that loop — a skeleton's sheen and the live dot's halo — are switched off
+  outright, because an indefinite animation never reaches a final frame.
+
+## Nothing to show
+
+Three states, each designed, because they are the ones an operator meets first
+and the ones that were least finished.
+
+- **A failed read.** Start `next dev` without the service and *every* panel is
+  this. It names what failed, gives both ways to start the missing half as
+  something you can copy, and retries in place rather than making you reload
+  and lose the window you had selected.
+- **An empty journal.** Names what the journal does hold, because an empty
+  dashboard over a journal full of `structures` rows is a different problem
+  from an empty dashboard over a missing file.
+- **A window with nothing in it**, which is neither of the above and says so.
 
 ## Tests and lint
 

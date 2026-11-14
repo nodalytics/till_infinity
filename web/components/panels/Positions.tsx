@@ -1,3 +1,4 @@
+import { Empty } from "@/components/bits";
 import { ago, money, stamp } from "@/lib/format";
 import type { Book } from "@/lib/types";
 
@@ -69,7 +70,7 @@ export default function Positions({ book }: { book: Book }) {
           <span>from the broker</span>
         </h3>
         {book.positions.length === 0 ? (
-          <p className="note">The snapshot says the account is flat.</p>
+          <Empty>The snapshot says the account is flat.</Empty>
         ) : (
           <table className="grid">
             <thead>
@@ -114,7 +115,7 @@ export default function Positions({ book }: { book: Book }) {
           <span>matched on symbol and side</span>
         </h3>
         {book.mismatches.length === 0 ? (
-          <p className="note">The two agree on every open position.</p>
+          <Empty>The two agree on every open position.</Empty>
         ) : (
           <table className="grid">
             <thead>

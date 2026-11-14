@@ -1,6 +1,7 @@
 "use client";
 
 import { useMemo, useState } from "react";
+import { Empty } from "@/components/bits";
 import { duration, money, signedR, stamp, tone } from "@/lib/format";
 import type { Trade } from "@/lib/types";
 
@@ -142,9 +143,9 @@ export default function Trades({ trades }: { trades: Trade[] }) {
       </div>
 
       {rows.length === 0 ? (
-        <p className="note">
+        <Empty>
           {trades.length === 0 ? "No closed trades in this window." : "Nothing matches that filter."}
-        </p>
+        </Empty>
       ) : (
         <table className="grid sticky">
           <thead>

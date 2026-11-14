@@ -60,3 +60,43 @@ export function current(): Theme {
 export function apply(theme: Theme): void {
   document.documentElement.setAttribute("data-theme", theme);
 }
+
+/** How long `.theming` stays on. Matches `--t-mid` in `globals.css`. */
+const CROSSFADE = 200;
+
+let settle: number | null = null;
+
+/**
+ * Apply a theme, with the surfaces crossfading rather than cutting.
+ *
+ * `.theming` turns on a colour transition for every element for the length of
+ * the flip and then takes it off again. It is deliberately not permanent: a
+ * standing `* { transition: color }` makes every hover in the app lag by the
+ * same amount.
+ *
+ * **Respects the viewer's setting without asking the stylesheet to.** The
+ * reduced-motion media query in `globals.css` already collapses the duration,
+ * but adding and removing a class on `<html>` 200ms apart is a DOM write
+ * either way, so it is skipped outright here.
+ */
+export function crossfade(theme: Theme): void {
+  if (typeof document === "undefined") return;
+  const root = document.documentElement;
+  let still = false;
+  try {
+    still = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+  } catch {
+    still = false;
+  }
+  if (still) {
+    apply(theme);
+    return;
+  }
+  root.classList.add("theming");
+  apply(theme);
+  if (settle != null) window.clearTimeout(settle);
+  settle = window.setTimeout(() => {
+    root.classList.remove("theming");
+    settle = null;
+  }, CROSSFADE);
+}
