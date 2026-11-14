@@ -236,9 +236,7 @@ def test_closing_a_position_records_an_outcome_pointing_at_that_decision():
     assert entry["context"]["feed"] == "eurusd"
 
 
-def test_an_outcome_is_not_written_for_a_position_this_process_did_not_open(
-    tmp_path, monkeypatch
-):
+def test_an_outcome_is_not_written_for_a_position_this_process_did_not_open(tmp_path, monkeypatch):
     """The control, and the reason it is not just tidiness.
 
     A position with no decision anywhere - here or in the journal - has nothing
