@@ -74,6 +74,8 @@ replaces rather than a translation of it.
 
 from __future__ import annotations
 
+import os
+import time as clock
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from typing import Any, ClassVar
@@ -85,8 +87,33 @@ from nautilus_trader.model.position import Position as NautilusPosition
 from ..domain.models import Intent, Position, Refusal, Side
 from ..journal.actor import publish
 from ..journal.models import Entry, Kind
+from ..journal.store import DEFAULT_DB
+from ..journal.store import read as read_entries
 from . import manage, turning
 from .config import WRITER, Settings
+
+#: How far back a close looks for the decision that opened it, and how many
+#: entries it takes.
+#:
+#: **Because `Held` lives in memory and every deploy empties it.** A position
+#: opened before a restart closes after it with nothing here remembering why,
+#: so `_concluded` returned without writing and the trade left a decision and
+#: no outcome. Measured on the live journal on 2026-11-14: **38 decisions and
+#: zero outcomes** in the preceding fortnight, with the last outcome of any
+#: kind on 2026-10-28 - so `report.trades` paired nothing, the dashboard
+#: scored nothing, and every per-rule number for the fortnight was blank while
+#: the desk was trading. The decision already records `position_id`, so the
+#: pairing is recovered exactly rather than guessed at.
+#:
+#: 96 hours because that spans a weekend, which is the longest a position can
+#: sit between a Friday open and a Monday close on this book.
+RECOVERY_HOURS = 96.0
+RECOVERY_LIMIT = 5_000
+
+#: Seconds before a miss is allowed to re-read. Without it every close that
+#: cannot be recovered - an adopted position, a decision older than the window
+#: - re-reads the journal on the stack of a live close.
+RECOVERY_COOLDOWN_S = 300.0
 
 
 @dataclass(slots=True)
@@ -927,6 +954,102 @@ class ExitMechanism:
         except Exception as exc:  # see `_decided`: a close must not fail on a record
             self.log.debug(f"journal refused the close of {intent.feed}: {exc}")
 
+    def _decision_for(self, position_id: Any) -> Entry | None:
+        """The decision that opened this position, read back from the journal.
+
+        **`kind` and `since`, never `actor`.** With `kind = 'decision' AND
+        time >= ?` sqlite walks `entries_kind`, which is `(kind, time DESC)`,
+        and answers in milliseconds. Adding `actor = 'trading'` makes it pick
+        `entries_actor` instead and test `kind` per row: measured at **28.7
+        seconds** on the live 3.87GB journal, which is not a thing to do on the
+        stack of a live close. The actor is filtered here instead, where it
+        costs a comparison.
+        """
+        want = str(position_id or "")
+        if not want:
+            return None
+        found = getattr(self, "_recovered", None)
+        now = clock.monotonic()
+        stale = now - float(getattr(self, "_recovered_at", 0.0)) > RECOVERY_COOLDOWN_S
+        if found is None or (want not in found and stale):
+            found = self._recover(now)
+        return found.get(want)
+
+    def _recover(self, now: float) -> dict[str, Entry]:
+        """Rebuild the position-to-decision map. Empty on any failure."""
+        found: dict[str, Entry] = {}
+        try:
+            entries = read_entries(
+                os.environ.get("JOURNAL_DB") or DEFAULT_DB,
+                kind=Kind.DECISION,
+                hours=RECOVERY_HOURS,
+                limit=RECOVERY_LIMIT,
+            )
+        except Exception as exc:  # see `_decided`: a close must not fail on a record
+            self.log.debug(f"journal could not be read to recover a decision: {exc}")
+            entries = []
+        for entry in entries:
+            if entry.actor != WRITER:
+                continue
+            at = str(entry.context.get("position_id", ""))
+            # Newest first, so the first id seen wins: a venue that reuses a
+            # position id must pair with the trade that is closing now.
+            if at and at not in found:
+                found[at] = entry
+        self._recovered = found
+        self._recovered_at = now
+        return found
+
+    def _concluded_elsewhere(self, event: Any) -> None:
+        """Record a close for a position this process has no `Held` for.
+
+        Two ways that happens and both are ordinary: the position was opened
+        before the last deploy, or it was adopted by reconciliation at
+        start-up. Neither is a reason for the trade to go unscored, and the
+        decision names the `position_id` precisely so that it does not have to.
+
+        **What is not claimed here.** No `quotes`, no `scaled`, no closing
+        reason: this process did not watch the position, and a zero that reads
+        as "no quotes arrived" is worse than an absent field. `exit_source` is
+        `venue` because by construction the desk did not do the closing, and
+        `recovered` marks the row so a reader can tell a reconstructed pairing
+        from a watched one. `risk_money` stays off the outcome for the reason
+        `_concluded` gives.
+        """
+        decision = self._decision_for(getattr(event, "position_id", ""))
+        if decision is None:
+            return
+        context = dict(decision.context)
+        profit = _money(getattr(event, "realized_pnl", 0.0))
+        risk = float(context.get("risk_money") or 0.0)
+        feed = str(context.get("feed", "")) or self._feed_name()
+        entry = Entry(
+            title=f"{feed} closed",
+            kind=Kind.OUTCOME,
+            actor=WRITER,
+            parent=decision.id,
+            rationale="closed with no local record of the position",
+            context={
+                "strategy": str(self.id),
+                "feed": feed,
+                "side": str(context.get("side", "")),
+                "mode": self.settings.mode,
+                "interval": str(context.get("interval", "")),
+                "level_id": str(context.get("level_id", "")),
+                "level": context.get("level", 0.0),
+                "profit": profit,
+                "seconds": round(float(getattr(event, "duration_ns", 0) or 0) / 1e9, 3),
+                "exit_source": "venue",
+                "reward_to_risk": round(profit / risk, 4) if risk > 0 else 0.0,
+                "recovered": True,
+                "turn_reason": "not scored: this process did not hold the position",
+            },
+        )
+        try:
+            publish(self, entry)
+        except Exception as exc:  # see `_decided`
+            self.log.debug(f"journal refused the recovered close of {feed}: {exc}")
+
     def _orphan(self, position_id: Any, why: str) -> None:
         """Close a position whose stop price cannot be reconstructed.
 
@@ -960,6 +1083,11 @@ class ExitMechanism:
             self.log.info(f"{held.intent.feed} closed; the turn model wanted {held.ride}")
         if held is not None:
             self._concluded(event, held)
+        else:
+            # Not silence. A position opened before the last deploy closes
+            # here with nothing in memory about it, and that was every trade
+            # the desk took in the fortnight to 2026-11-14 going unscored.
+            self._concluded_elsewhere(event)
         self._announce(
             "closed",
             event,
