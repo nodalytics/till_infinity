@@ -84,6 +84,15 @@ COPY --from=web --chown=desk:desk /build/web/.next/standalone ./
 # The standalone server serves these from `<app>/.next/static`; they are the
 # one thing the trace deliberately leaves behind.
 COPY --from=web --chown=desk:desk /build/web/.next/static ./web/.next/static
+# **And `public/`, which the trace also leaves behind.** Referencing an asset
+# is not enough: the mark is loaded from a `url()` in `globals.css` and the
+# icons are named in `layout.tsx`'s metadata, and `.next/standalone` still
+# contains no `public/` - checked on this build rather than assumed. Measured
+# both ways against the standalone server: with this directory in place
+# `/till-infinity-logo-dark.svg` is a 200, and with it moved aside the same
+# request is a **500**. `next dev` serves it either way, which is why this is
+# the shape of bug that ships.
+COPY --from=web --chown=desk:desk /build/web/public ./web/public
 
 USER root
 COPY --chmod=755 web/entrypoint.sh /usr/local/bin/dashboard

@@ -279,6 +279,34 @@ both collapsible from the rail. Hairline borders, no elevation, radius only on
 buttons and inputs, tabular figures everywhere. Readable from about 820px
 wide, below which the rail and the watchlist fold away.
 
+## The mark
+
+`docs/logo.svg` and its two theme variants, copied into `web/public/` rather
+than linked — three files of 344 bytes each, so a copy costs less than the
+build configuration a symlink would need.
+
+- **In the top bar**, as a CSS `background-image` on a 20px span, not an
+  `<img>`. The variant follows `data-theme`, which the boot script sets before
+  first paint, so the right mark is the first one painted; an `<img>` whose
+  `src` an effect corrects paints the wrong one and swaps it. `logo-light` is
+  the one with the *dark* ink — it is named for the theme it belongs to, and
+  the two readings invert.
+- **As the favicon**, the brand-green `logo.svg`, which is the one variant
+  that works against both a light and a dark tab strip, plus a 1.6KB
+  `favicon.ico` because a browser asks for `/favicon.ico` whether a page
+  declares one or not and a 404 on every load is noise in the console somebody
+  is reading to debug something else.
+- **As the apple-touch icon**, 180px on the dark ground, because iOS
+  composites a transparent icon onto black.
+
+Both the stylesheet and `layout.tsx`'s `metadata.icons` reference `public/`,
+which is what makes it reach the standalone output. **A `public/` nothing
+references is a `public/` that quietly fails to ship**, and the production
+build is the place that bites rather than `next dev`, which serves the
+directory either way. `Dockerfile` copies it explicitly for the same reason:
+measured against the standalone server, the logo is a 200 with that directory
+in place and a **500** with it moved aside.
+
 ## Tests and lint
 
 `tests/test_web_api.py` runs in the repository's own suite. It writes its own
