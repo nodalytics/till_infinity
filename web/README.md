@@ -33,28 +33,50 @@ at the full window.
 
 ## Running it
 
-Two processes, both on loopback.
+One command, from the repository root.
 
 ```sh
-# 1. the API, from the repository root
-uv sync --extra dashboard
-uv run --extra dashboard uvicorn web.api.main:app --host 127.0.0.1 --port 8787
-
-# 2. the app, from web/
-npm install
-npm run dev          # http://127.0.0.1:3000
+bash web/dev.sh      # or: npm run dev, from web/
 ```
 
-That is the whole of it for one operator on one machine: no secrets to set,
-nothing reachable from anywhere else. To reach it from another machine, see
-**Security** below — it needs a caller secret, and the dashboard refuses to
-serve a widened host list without one.
+It starts both halves, prints the two addresses and the journal it is about to
+read, and takes both down together on `^C`.
+
+**Both halves, because one of them is useless.** The page is a shell: every
+figure on it is a browser read through the Next proxy to the Python service.
+Start `next dev` alone and the app loads, the chrome is right, and every panel
+is a 502 — which is a report this repository has had, from somebody who ran
+the documented command. `web/dev.sh` is `entrypoint.sh`'s local twin and works
+the same way: `wait -n` returns on whichever half exits first and the trap
+takes the other down with it, so there is no state in which half of this is
+running.
+
+```sh
+npm run dev:api      # the service alone, from web/ (it cd's to the root)
+npm run dev:web      # the app alone
+```
+
+Those are the escape hatches, for a debugger or a profiler on one half.
+
+**Which journal it reads is printed, every time.** `TILL_JOURNAL_DB` is left
+alone if you set it; unset, the script defaults to this repository's own
+`.data/journal/journal.db` and says so, with the file's modification date.
+A dashboard rendering a file from three months ago looks exactly like a
+dashboard rendering the desk, and the only difference on screen is a date
+nobody reads unless it is put in front of them.
+
+The defaults are closed: loopback only, no secrets to set, nothing reachable
+from anywhere else. To reach it from another machine, see **Security** below —
+it needs a caller secret, and the dashboard refuses to serve a widened host
+list without one.
 
 `npm run build` does not need the API running: the page is a shell and every
-read happens in the browser.
+read happens in the browser. `npm start` does, for the same reason every
+panel does.
 
-There is no console script and no process manager. Two terminals is the whole
-deployment, which is the right size for one operator and one dashboard.
+There is no console script and no process manager. One script and `wait -n` is
+the whole deployment, which is the right size for one operator and one
+dashboard.
 
 ## Security
 
