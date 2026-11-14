@@ -236,19 +236,94 @@ def test_closing_a_position_records_an_outcome_pointing_at_that_decision():
     assert entry["context"]["feed"] == "eurusd"
 
 
-def test_an_outcome_is_not_written_for_a_position_this_process_did_not_open():
+def test_an_outcome_is_not_written_for_a_position_this_process_did_not_open(
+    tmp_path, monkeypatch
+):
     """The control, and the reason it is not just tidiness.
 
-    A position adopted on start-up has no decision here to point at, so an
-    outcome for it would be refused by the actor and counted as dropped - a
-    number that then reads as a journal fault rather than as a restart.
+    A position with no decision anywhere - here or in the journal - has nothing
+    to point at, so an outcome for it would be refused by the actor and counted
+    as dropped: a number that then reads as a journal fault rather than as a
+    restart. The journal is pointed at an empty path so that this cannot pass
+    by accidentally reading a real one.
     """
+    monkeypatch.setenv("JOURNAL_DB", str(tmp_path / "nothing.db"))
     strategy, scribe = desk()
     scribe.seen.clear()
 
     close(strategy, type("Gone", (), {"id": "SIM-UNKNOWN", "instrument_id": EURUSD.id})())
 
     assert kinds(scribe, Kind.OUTCOME) == [], "an unpairable outcome was published anyway"
+
+
+def test_a_close_the_desk_has_forgotten_is_still_scored(tmp_path, monkeypatch):
+    """**The fortnight the desk traded and scored nothing.**
+
+    `Held` lives in memory, so a deploy empties it, and a position opened
+    before a restart closes after one with nothing here remembering why. The
+    close then wrote no outcome at all - measured on the live journal on
+    2026-11-14 as **38 decisions and zero outcomes** in the preceding
+    fortnight, the last outcome of any kind on 2026-10-28, while the desk was
+    opening positions throughout. Every per-rule and per-level number was blank
+    for that fortnight and nothing said so.
+
+    The decision records `position_id`, so the pairing is recoverable exactly.
+    This asserts the recovered outcome names the same decision the watched one
+    would have named - the link is the whole point, since `JournalActor` drops
+    a parentless outcome.
+    """
+    strategy, scribe = desk()
+    position = strategy.cache.positions_open(strategy_id=strategy.id)[0]
+    opened = kinds(scribe, Kind.DECISION)[0]
+    path = tmp_path / "journal.db"
+    written(scribe, path)
+    monkeypatch.setenv("JOURNAL_DB", str(path))
+
+    # The restart: the book is in memory and the process no longer has it.
+    assert strategy.exits.closed(position.id) is not None, "nothing was being held"
+    scribe.seen.clear()
+
+    close(strategy, position, pnl="41.00", seconds=900.0)
+
+    found = kinds(scribe, Kind.OUTCOME)
+    assert len(found) == 1, f"a forgotten close went unrecorded: {scribe.seen}"
+    entry = found[0]
+    assert entry["parent"] == opened["id"], "the recovered outcome names the wrong decision"
+    assert entry["actor"] == "trading", "report.trades reads actor='trading' and nothing else"
+    context = entry["context"]
+    assert context["profit"] == 41.0
+    assert context["feed"] == "eurusd"
+    assert context["recovered"] is True, "a reconstructed pairing must be marked as one"
+    assert context["exit_source"] == "venue", "the desk did not do this closing"
+    assert "risk_money" not in context, "the outcome must not spread a risk over the decision"
+
+
+def test_a_recovered_close_reaches_the_report(tmp_path, monkeypatch):
+    """And it has to survive the pairing, not just the publish.
+
+    `report.trades` merges the outcome onto its decision and divides by
+    `risk_money`, so an outcome that lands but cannot be paired, or that pairs
+    with a zero denominator, is the same blank page from the reader's side.
+    """
+    from till_infinity.strategies import report
+
+    strategy, scribe = desk()
+    position = strategy.cache.positions_open(strategy_id=strategy.id)[0]
+    path = tmp_path / "journal.db"
+    written(scribe, path)
+    monkeypatch.setenv("JOURNAL_DB", str(path))
+    strategy.exits.closed(position.id)
+    scribe.seen.clear()
+
+    close(strategy, position, pnl="41.00", seconds=900.0)
+    written(scribe, path)
+
+    trades = report.trades(path)
+    assert len(trades) == 1, f"the recovered close did not reach the report: {trades}"
+    trade = trades[0]
+    assert trade.profit == 41.0
+    assert trade.feed == "eurusd"
+    assert trade.risk_money > 0.0, "the R denominator came from the decision"
 
 
 # ------------------------------------------------------- read back by the report
