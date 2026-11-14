@@ -306,10 +306,27 @@ def classic_engulfing(bars: Candles) -> np.ndarray:
 def sequential_parts(bars: Candles, atr_values: np.ndarray, k: int = K) -> dict[str, np.ndarray]:
     """The four clauses of the sequential impulse leg, each on its own.
 
-    Separately because the spec's finding is about one of them: as written, the
-    efficiency numerator spans `C_t - C_{t-k+1}` - two bars for k=3 - while the
-    denominator sums `k` bodies, so a perfect gapless three-bar run scores
-    **2/3 = 0.667** against a 0.70 threshold and fails its own definition.
+    Separately because the spec's finding is about one of them, and it is
+    computed **both ways** here so the difference is a number rather than an
+    argument.
+
+    * `literal` is the blueprint as written: `|C_t - C_{t-k+1}| / sum B`. The
+      numerator spans `k - 1` bars - two for k=3 - while the denominator sums
+      `k` bodies, so a perfect gapless three-bar run scores **2/3 = 0.667**
+      against a 0.70 threshold and fails its own definition. Gaps enter the
+      numerator and not the denominator, so it is also not bounded by 1.
+    * `efficiency` is the clause **anchored on the leg's first open** and
+      charged for the gaps it crossed: `|C_t - O_{t-k+1}| / (sum B + sum G)`,
+      where `G` is each close-to-next-open distance inside the leg. Both ends
+      of the numerator are now the ends of the span the denominator measures.
+
+    The anchored form is the one that behaves like a share. Writing the span as
+    a path, `C_t - O_{t-k+1} = sum(body) + sum(gap)`, so the numerator is the
+    *net* of the same terms the denominator sums in absolute value: it is
+    bounded by 1, it reaches exactly **1.000** when every body and gap pushes
+    the same way - which is what "the move was efficient" means - and it falls
+    only for backtracking. The literal form instead rewards a gap, because a
+    gap grows the numerator and nothing else.
     """
     n = len(bars)
     body, close, open_ = bars.body, bars.close, bars.open
@@ -317,6 +334,7 @@ def sequential_parts(bars: Candles, atr_values: np.ndarray, k: int = K) -> dict[
 
     push = np.full(n, np.nan)
     efficiency = np.full(n, np.nan)
+    literal = np.full(n, np.nan)
     consistent_up = np.zeros(n, dtype=bool)
     consistent_down = np.zeros(n, dtype=bool)
     stacked_up = np.zeros(n, dtype=bool)
@@ -325,13 +343,27 @@ def sequential_parts(bars: Candles, atr_values: np.ndarray, k: int = K) -> dict[
     bodies = np.zeros(n)
     for i in range(k):
         bodies[first:] += body[first - i : n - i]
+    # The `k - 1` gaps inside the leg, each the distance from one candle's
+    # close to the next one's open. They are in the denominator because price
+    # traversed them: a leg that gapped a long way did not get there for free,
+    # and leaving them out is what let the literal ratio reach 79.2.
+    gaps = np.zeros(n)
+    for i in range(k - 1):
+        gaps[first:] += np.abs(open_[first - i : n - i] - close[first - i - 1 : n - i - 1])
+    travelled = bodies + gaps
     with np.errstate(invalid="ignore"):
         push[first:] = np.abs(close[first:] - open_[: n - first])
-        efficiency[first:] = np.divide(
+        literal[first:] = np.divide(
             np.abs(close[first:] - close[: n - first]),
             bodies[first:],
             out=np.full(n - first, np.nan),
             where=bodies[first:] > 0,
+        )
+        efficiency[first:] = np.divide(
+            push[first:],
+            travelled[first:],
+            out=np.full(n - first, np.nan),
+            where=travelled[first:] > 0,
         )
     bullish = (close > open_).astype(int)
     bearish = (close < open_).astype(int)
@@ -350,8 +382,11 @@ def sequential_parts(bars: Candles, atr_values: np.ndarray, k: int = K) -> dict[
     return {
         "push": push,
         "efficiency": efficiency,
+        "literal": literal,
+        "travelled": travelled,
         "big": big,
         "efficient": efficient,
+        "efficient_literal": literal >= 0.70,
         "consistent_up": consistent_up,
         "consistent_down": consistent_down,
         "stacked_up": stacked_up,
@@ -709,10 +744,13 @@ def rates(where: Path, symbols: tuple[str, ...]) -> None:
             )
             legs = np.count_nonzero(leg["up"] | leg["down"])
             best = np.nanmax(leg["efficiency"]) if n > K else float("nan")
+            worst = np.nanmax(leg["literal"]) if n > K else float("nan")
             classic = classic_engulfing(bars)
             # Does the efficiency clause reject legs for being *too* decisive?
-            # Three strong bodies with no gaps cannot reach 0.70, so count the
-            # runs that pass every other clause and fail only on efficiency.
+            # Under the literal ratio three strong bodies with no gaps cannot
+            # reach 0.70 at all, so this counted runs rejected for being clean.
+            # Both forms are printed: the anchored one is what gates, and the
+            # literal column is what the blueprint as written would have done.
             nearly = (
                 leg["big"]
                 & ((leg["consistent_up"] & leg["stacked_up"]) | (leg["consistent_down"] & leg["stacked_down"]))
@@ -722,6 +760,9 @@ def rates(where: Path, symbols: tuple[str, ...]) -> None:
                 f" eff>=0.70 {np.count_nonzero(leg['efficient']) * per_k:>6.1f}"
                 f" max eff {best:>7.3f}"
                 f" fail-only-on-eff {np.count_nonzero(nearly & ~leg['efficient']) * per_k:>6.3f})"
+                f" | as-written eff>=0.70 {np.count_nonzero(leg['efficient_literal']) * per_k:>6.1f}"
+                f" max {worst:>7.3f}"
+                f" fail-only {np.count_nonzero(nearly & ~leg['efficient_literal']) * per_k:>6.3f}"
                 f" | block {np.count_nonzero(block['block']) * per_k:>6.1f}"
             )
             print(
@@ -953,9 +994,12 @@ def figure_leg(base: Candles, frame: str, out: Path) -> list[str]:
         note = (
             f"{base.symbol} {frame} {when(bars.ts[at])}, k {K}\n"
             f"net push |C_t - O_(t-2)| = {leg['push'][at] / a[at]:.2f} ATR   (needs >= 2.00)\n"
-            f"efficiency |C_t - C_(t-2)| / sum B = "
-            f"{abs(bars.close[at] - bars.close[first]):.5f} / {bodies:.5f} = "
+            f"efficiency |C_t - O_(t-2)| / (sum B + sum G) = "
+            f"{leg['push'][at]:.5f} / {leg['travelled'][at]:.5f} = "
             f"{leg['efficiency'][at]:.3f}   (needs >= 0.70)\n"
+            f"as written |C_t - C_(t-2)| / sum B = "
+            f"{abs(bars.close[at] - bars.close[first]):.5f} / {bodies:.5f} = "
+            f"{leg['literal'][at]:.3f}   (ceiling 0.667 on a gapless leg)\n"
             f"stacked FVG {'yes' if (leg['stacked_up'][at] or leg['stacked_down'][at]) else 'no'}, "
             f"consistency {'yes' if (leg['consistent_up'][at] or leg['consistent_down'][at]) else 'no'}"
         )
