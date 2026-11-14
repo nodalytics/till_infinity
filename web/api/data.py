@@ -40,7 +40,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
-from till_infinity.journal import DEFAULT_DB, Entry, Kind, ledger, summary
+from till_infinity.journal import DEFAULT_DB, Entry, Kind, ledger, read_only, summary
 from till_infinity.journal import read as _read_entries
 from till_infinity.strategies import report
 
@@ -482,6 +482,10 @@ class Health:
     an empty dashboard over a journal that is full of `structures` rows is a
     different problem from an empty dashboard over a missing file, and the
     reader should not have to guess which.
+
+    **It is populated only when `trades` is zero**, which is the case it was
+    written for. `summary` scans the entire journal, and `health` is what the
+    container healthcheck polls; see the note in `health` itself.
     """
 
     sources: list[SourceState]
@@ -1435,6 +1439,23 @@ def _recent(
 # ------------------------------------------------------------------- health
 
 
+def _trading_entries(db: Path) -> int:
+    """How many entries the trading actor has written, off the actor index.
+
+    `entries_actor` is `(actor, time DESC)`, so this is a range scan over one
+    actor's rows and never a table lookup: about a second on a 3.87GB journal
+    against minutes for the `GROUP BY` it replaces in `health`.
+    """
+    try:
+        with read_only(db) as conn:
+            row = conn.execute(
+                "SELECT COUNT(*) FROM entries WHERE actor = ?", ("trading",)
+            ).fetchone()
+    except (FileNotFoundError, sqlite3.Error):
+        return 0
+    return int(row[0]) if row else 0
+
+
 def health() -> Health:
     """Which of the four sources this machine has, and what the journal holds."""
     db = journal_path()
@@ -1472,8 +1493,26 @@ def health() -> Health:
             message=f"No journal at {db}. Set TILL_JOURNAL_DB to the desk's journal.",
         )
 
-    entries = summary(db)
-    trading = sum(row["entries"] for row in entries if row["actor"] == "trading")
+    # **The count comes off an index. The breakdown is only for the empty
+    # case, because it reads the whole file.**
+    #
+    # `summary` is `GROUP BY actor, kind` with no window, and on the live
+    # journal sqlite plans it as `SCAN entries USING INDEX entries_actor` plus
+    # a temp B-tree - 945,007 pages, 3.87GB, every page of it. This endpoint is
+    # what the container healthcheck probes **every 60 seconds**, so that scan
+    # ran on a loop beside the desk, on the same disk the desk writes to, and
+    # `tis-research-jobs-starve-the-service` is a measured outage from exactly
+    # that. The probe timed out at 15s each time and the container was marked
+    # unhealthy while the query it had abandoned kept reading.
+    #
+    # The one thing the page needs from it is whether there are trading
+    # entries at all, and `entries_actor` answers that in about a second
+    # without touching the table. The full breakdown exists to diagnose a
+    # journal pointed at the wrong file - which is precisely the case where
+    # `trading` is zero - so it is read **only then**, and on a journal that
+    # has trades in it the scan never happens.
+    trading = _trading_entries(db)
+    entries = summary(db) if not trading else []
     note = ""
     if not trading:
         actors = ", ".join(sorted({str(row["actor"]) for row in entries})) or "nothing"

@@ -289,3 +289,59 @@ def test_a_token_is_required_from_every_caller_once_it_is_set(monkeypatch):
     assert raised.value.status_code == 401
 
     main.guard(_request("203.0.113.7", token="a-shared-secret"))
+
+
+def test_health_does_not_scan_the_journal_when_it_has_trades(journal, monkeypatch):
+    """`health` must not call `journal.summary` on a populated journal.
+
+    `summary` is `GROUP BY actor, kind` with no window. On the live journal
+    sqlite plans it as a scan of `entries_actor` plus a temp B-tree - 3.87GB,
+    every page - and `/api/health` is what the container healthcheck polls
+    **every 60 seconds**. That ran on a loop beside the desk, on the desk's own
+    disk, while each probe timed out at 15s and left the query it had abandoned
+    still reading. The page needs one fact from it, and the actor index
+    answers that without touching the table.
+    """
+    monkeypatch.setenv("TILL_JOURNAL_DB", str(journal))
+
+    def refuse(*_args, **_kwargs):
+        raise AssertionError("health scanned the journal")
+
+    monkeypatch.setattr(data, "summary", refuse)
+    found = data.health()
+
+    assert found.trades > 0, "the fixture journal holds trading entries"
+    assert found.entries == [], "the breakdown is for the empty case only"
+    assert found.message == ""
+
+
+def test_health_still_names_the_actors_when_there_are_no_trades(tmp_path, monkeypatch):
+    """The empty case is the one the breakdown was written for, so it runs there.
+
+    A journal full of `structures` rows and no `trading` rows is a different
+    problem from a missing file, and naming the actors is how the reader tells
+    them apart. That diagnosis is worth a scan precisely because it happens on
+    a journal that has nothing in it to scan.
+    """
+    path = tmp_path / "journal.db"
+    writer = Journal(path)
+    writer.connect()
+    writer.append(
+        [
+            Entry(
+                title="levels: eurusd",
+                kind=Kind.OBSERVATION,
+                actor="structures",
+                context={"feed": "eurusd"},
+                time=START,
+            )
+        ]
+    )
+    writer.shut()
+    monkeypatch.setenv("TILL_JOURNAL_DB", str(path))
+
+    found = data.health()
+
+    assert found.trades == 0
+    assert [row["actor"] for row in found.entries] == ["structures"]
+    assert "structures" in found.message
