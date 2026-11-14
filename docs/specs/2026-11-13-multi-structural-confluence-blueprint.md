@@ -56,6 +56,31 @@ $$P_q = \text{Percentile}_q(B_{t-1}, \dots, B_{t-N})$$
 
 $$P_{q_{chop}} = \text{Percentile}_{q_{chop}}(R_{t-1}, \dots, R_{t-N})$$
 
+**The attention gate, $\text{Attended\_Z}$.** The blueprint names it and does not define it, but the
+definition is not missing - **it was given with the engine this one grew out of**, and it is
+transcribed here so that nothing downstream is guessing. Over the last $N = 70$ closes of each
+timeframe in $\{15m, 1H, 4H, 1D\}$, newest first:
+
+$$r_i = \left|\frac{P_i}{P_{i+1}} - 1\right| \qquad w_i = \frac{e^{r_i}}{\sum_j e^{r_j}}$$
+
+$$\mu_w = \sum_i w_i P_i \qquad \sigma_w = \sqrt{\sum_i w_i (P_i - \mu_w)^2} \qquad Z_{tf} = \frac{P_0 - \mu_w}{\sigma_w}$$
+
+and then across the four frames, a second softmax over the absolute scores:
+
+$$\alpha_{tf} = \frac{e^{|Z_{tf}|}}{\sum_k e^{|Z_k|}} \qquad \text{Attended\_Z} = \sum_{tf} \alpha_{tf} Z_{tf}$$
+
+$Z_{crit}$ is $\text{Percentile}_{85}$ of the **absolute** values of the last 200 readings, and the
+gate is two-sided: long below $-Z_{crit}$, short above $+Z_{crit}$.
+
+Two things that formulation leaves open were decided when it was implemented, and are restated here
+rather than re-decided: a reading is recorded **once per structure bar** (200 readings is then about
+33 days at a 4H structure, where sampling per execution bar would make the threshold track the thing
+it thresholds); and $e^{r_i}$ is applied to a **raw** return, which for an intraday FX bar is order
+$10^{-4}$, so $e^{r_i} \approx 1 + r_i$ and the softmax is very nearly uniform - the feature is
+close to a plain 70-bar price z-score, which is worth knowing before reading any result from it.
+Both are recorded with the implementation in [`research/ideas/dual_engine_v2.py`](../../research/ideas/dual_engine_v2.py)
+and [`research/docs/dual-engine-confluence.md`](../../research/docs/dual-engine-confluence.md).
+
 ### II. Single-candle anatomy
 
 **Impulse** - no FVG required:
@@ -229,7 +254,8 @@ least `PUSH_BODY` of its own range, all in one direction", with `CHAIN_GAP = 1` 
 allowed in the middle, and names the candle before the chain as its `origin` - which is the
 blueprint's origin zone for the sequence case, the one `v7` does not implement. What the blueprint
 adds to that existing primitive is **two clauses**: the efficiency ratio (section 3 shows it does
-not do what it says) and the stacked FVG across the leg. The directional-consistency clause is a
+not do what it says as written, and gives the anchored form that does) and the stacked FVG across
+the leg. The directional-consistency clause is a
 *looser* version of what `chains` already requires, since it allows one close against the move where
 `chains` requires every candle to be impulsive and one-sided.
 
@@ -288,8 +314,9 @@ compares the candidate to exactly two bars. It marks **48-50% of all bars** a pi
 against 8.4-9.5% for the full-window swing `v6.pivots` already implements - **5.3 times as many
 levels**. Any statement about "a pivot aligning" means something materially weaker here than in v6.
 
-**The sequential impulse leg fires 20-31 times per 1,000**, which is the one new primitive with a
-plausible rate. Its efficiency clause is examined below and does not do what it says.
+**The sequential impulse leg fires 20-31 times per 1,000** as the blueprint writes it, and
+**40.7-54.2** with the efficiency clause anchored (below) - either way the one new primitive with a
+plausible rate.
 
 **The pin bar, by contrast, selects what it describes.** The median qualifying bar has a range of
 **0.75 to 0.85 ATR** - an ordinary bar, not a dead one - and a body of **0.10 ATR**. It is the one
@@ -299,7 +326,7 @@ rather than divided by, because a weekend of flat bars would otherwise arm every
 
 ![Section 2, single-candle anatomy](img/multi-structural-confluence/single-candle-anatomy.png)
 
-### The efficiency ratio is backwards, and unbounded
+### The efficiency ratio is backwards and unbounded - and what it should be
 
 $$\frac{|C_t - C_{t-k+1}|}{\sum_{i=0}^{k-1} B_{t-i}} \ge 0.70$$
 
@@ -312,8 +339,7 @@ of body $b$: the numerator is $2b$, the denominator $3b$. The clause is only rea
 leg's **first** body is small relative to the other two, or when there are gaps - so it rejects legs
 for being too uniformly decisive and accepts legs that started weakly. Measured over three-bar runs
 that pass the push, the consistency and the stacked-FVG clauses, **31.9% to 54.4% fail on efficiency
-alone**, on every one of the twenty instrument-frames. The two panels below are both real legs that
-pass everything else: the left scores 0.870 and trades, the right scores 0.545 and does not.
+alone**, on every one of the twenty instrument-frames.
 
 **It is not bounded by 1.** A true efficiency ratio is a share and lives in $[0, 1]$. This one puts
 gaps in the numerator and bodies in the denominator, so three dojis separated by gaps score
@@ -321,7 +347,37 @@ arbitrarily high: the maximum observed is **79.2** on GOLD 15m, **23.4** on EURU
 1.00 on every frame of every instrument. Whatever the clause is selecting at $\ge 0.70$, it is not
 "the move was efficient".
 
+**Both faults are one fault, and anchoring fixes them together.** The numerator's two ends should be
+the two ends of the span the denominator measures. Anchor it on the leg's **first open** and charge
+the leg for the gaps it crossed:
+
+$$\frac{|C_t - O_{t-k+1}|}{\sum_{i=0}^{k-1} B_{t-i} \ + \sum_{i=0}^{k-2} |O_{t-i} - C_{t-i-1}|} \ge 0.70$$
+
+Written as a path, $C_t - O_{t-k+1} = \sum \text{body} + \sum \text{gap}$, so the numerator is the
+**net** of exactly the terms the denominator sums in absolute value. It is therefore bounded by 1;
+it reaches **1.000** when every body and every gap pushes the same way, which is what "efficient"
+means; and it falls only for backtracking. The literal form instead pays a leg for gapping, which is
+why it could reach 79.2.
+
+Measured over the same twenty instrument-frames, 3M five-minute bars per instrument:
+
+| | as written | anchored |
+|---|---:|---:|
+| maximum observed | 1.000 - **79.212** | **1.000**, every frame |
+| fires, per 1,000 candles | 248.2 - 283.9 | 403.5 - 446.0 |
+| of legs passing every *other* clause, share rejected on efficiency alone | **31.9% - 54.4%** | **2.0% - 4.7%** |
+
+The two panels below are both real legs that pass everything else. The left one is a flawless leg
+and scores exactly **1.000** anchored - and **0.608** as written, failing its own definition. The
+right one fails on efficiency under both readings, which is the clause doing its job.
+
 ![The sequential impulse leg](img/multi-structural-confluence/sequential-impulse-leg.png)
+
+**What this does not change is the conclusion.** The complete leg fires 40.7-54.2 per 1,000 candles
+anchored against 20-31 as written, and the blueprint's total signal count moves by about **one
+signal in eight years** (section 4.4), because the leg is almost never the binding clause: engine 1
+takes `IsImpulse` **or** the leg, and `IsImpulse` alone fires at 125-158 per 1,000. A clause can be
+arithmetically wrong, fixed, and still not be what decides anything.
 
 ### The choppy block does what it says
 
@@ -335,10 +391,10 @@ intended behaviour.
 
 ![Engine 1, statistical exhaustion](img/multi-structural-confluence/engine-exhaustion.png)
 
-The left panel is the median structural hit for engine 1 on EURUSD: a 2.54-ATR 4H anchor whose
-close sits within $\tau$ of a Bjorgum pivot. **$\tau$ is $0.6\%$ of the anchor's own body** - 0.000045
-against 0.0075. The execution zone, which is the band price must touch for the trade to trigger, is
-that whole body, about **170 times $\tau$**. The gate that decides whether a setup exists is two
+The left panel is the median structural hit for engine 1 on EURUSD: a 2.06-ATR 4H anchor whose
+close sits within $\tau$ of a Bjorgum pivot. **$\tau$ is $0.7\%$ of the anchor's own body** - 0.000060
+against 0.0086. The execution zone, which is the band price must touch for the trade to trigger, is
+that whole body, about **140 times $\tau$**. The gate that decides whether a setup exists is two
 orders of magnitude finer than the entry it gates, so $\tau$ is selecting *which* setups exist and
 contributing nothing to *where* the trade goes on.
 
@@ -346,9 +402,11 @@ Section 4 of the formulation compounds this by giving the same level **two** wid
 $P_H \pm 0.5\,\text{ATR}_{4H}$ for the zone and $\pm 0.015\,\text{ATR}_{4H}$ for alignment. They
 differ by a factor of 33 and the document does not say which governs.
 
-The right panel is the 48 hours the 1H pin gate has to fire in: 48 hourly candles, 2 of which are a
-pin bar touching the zone. That is the gate working - but note that "touching the zone" is nearly
-free when the zone is a whole 4H body.
+The right panel is the 48 hours the 1H pin gate has to fire in: 48 hourly candles, **none** of them
+a pin bar touching the zone. This median setup therefore never became a trade - which is what the
+48.3% pass rate in section 4.4 looks like from the inside of one setup. Note also that "touching the
+zone" is nearly free when the zone is a whole 4H body, so what the gate is actually testing is the
+pin shape, not the location.
 
 ### Engine 5 - the pattern this repository has already refuted
 
@@ -468,13 +526,18 @@ no attention gate? Over the full catalogue, five instruments, 3,111 days:
 
 | engine | structural hits | + a 1H pin bar in the zone within 48h | pass | with the full-window swing pivot instead |
 |---|---:|---:|---:|---:|
-| 1, statistical exhaustion | 394 | 195 | 49.5% | 339 |
+| 1, statistical exhaustion | 418 | 202 | 48.3% | 362 |
 | 2, choppy breakout | **3** | 1 | - | 2 |
 | 3, daily engulfing | 194 | 114 | 58.8% | 79 |
 | 4, CRT | 1,503 | 495 | 32.9% | 954 |
 | 5, displacement, phase 1 (15m, as `v7`) | 147 | 45 | 30.6% | 122 |
 | 5, displacement, phase 1 (**1H, as written**) | **36** | - | - | - |
-| **total** | **2,241** | **850** | 37.9% | 1,496 |
+| **total** | **2,265** | **857** | 37.8% | 1,519 |
+
+Engine 1 is the only row the anchored efficiency ratio (section 3) moves: 394 structural hits
+became 418, and 195 confirmed became **202**. A clause that fires 1.6 times as often changed the
+engine it belongs to by 3.6%, because engine 1 takes `IsImpulse` **or** the leg and `IsImpulse`
+alone fires at 125-158 per 1,000.
 
 Engine 3's confirmation column counts a 1H pin bar, which is `v6`'s gate; the blueprint's gate for
 that engine is a leg or a displacement instead, so 114 stands in for a number this document has not
@@ -500,7 +563,7 @@ measurable - it is short by three orders of magnitude.
 gate, which fires at 10.7-14.7% as measured on this same data, to engines 1 and 4 - the two the
 formulation gates on $\text{Attended\_Z}$ - and taking engine 5 on the 1H frame it names:
 
-$$195 \times 0.15 \ +\ 1 \ +\ 114 \ +\ 495 \times 0.15 \ +\ 36 \times 0.31 \ \approx\ 230$$
+$$202 \times 0.15 \ +\ 1 \ +\ 114 \ +\ 495 \times 0.15 \ +\ 36 \times 0.31 \ \approx\ 230$$
 
 Engine 5 on `v7`'s 15m frame takes that to about 264. Either way it is an **upper bound**, because
 `v6` holds one position at a time, because a trade also needs price to touch the zone on 15m, and
@@ -568,18 +631,27 @@ AND is dominated by the one that was already in `v7`.
 
 ## 5. Ten things in the formulation that are contradictory or underspecified
 
-1. **`Attended_Z` is never defined.** Engines 1 and 4 gate on it at an 85th percentile and sections
-   1-4 contain no z-score. By inheritance it is v2's softmax-weighted price z-score, which is
-   **closed at -0.127R on n 356 over 3,111 days**. If it is that feature, the engines that use it
-   are gated on a refuted one. If it is a different feature, it has to be written down.
-2. **It is written one-sided.** $\text{Attended\_Z} > Z_{crit}$ against a percentile of *absolute*
-   consensus scores fires only on the upper breach, so read literally engine 1 produces shorts and
-   never longs. `v6._breach` compares $|Z|$ and takes the sign.
+1. **`Attended_Z` is defined - in the engine this blueprint grew out of, not in the blueprint.**
+   The definition is now carried in section 1 above, taken from where it was given. It is **v2's
+   softmax-weighted multi-timeframe price z-score**, and the consequence is not that the engines
+   are underspecified, it is that they are **gated on a feature already measured and closed:
+   -0.127R on n 356 over 3,111 days**, with its own gate firing at 10.7-14.7% of bars on this same
+   store. Engines 1 and 4 therefore do not need a new measurement of their trigger. They inherit
+   one. Writing the definition down is what makes that inheritance visible rather than a guess, and
+   it is why the frequency arithmetic in section 4.4 can use the measured firing rate.
+2. **The blueprint writes it one-sided; the engine it came from is two-sided.** $\text{Attended\_Z}
+   > Z_{crit}$ against a percentile of *absolute* consensus scores fires only on the upper breach,
+   so engine 1 as transcribed produces shorts and never longs. The original states both legs - long
+   below $-Z_{crit}$, short above $+Z_{crit}$ - so this is a transcription loss in the blueprint
+   rather than an ambiguity in the feature, and the fix is the one `v6._breach` already implements:
+   compare $|Z|$ and take the sign.
 3. **The efficiency ratio's numerator and denominator span different bars** (§3, clause 2), so a
-   gapless three-bar leg of equal bodies maxes out at 0.667 against a 0.70 threshold, and 32-54% of
-   otherwise-qualifying legs are rejected by it.
+   gapless three-bar leg of equal bodies maxes out at 0.667 against a 0.70 threshold, and 31.9-54.4%
+   of otherwise-qualifying legs are rejected by it. **Fixed in §3**: anchored on the leg's first
+   open, the same legs are rejected at 2.0-4.7%.
 4. **The efficiency ratio is not bounded by 1** - maximum observed 79.2 - because gaps enter the
-   numerator and not the denominator.
+   numerator and not the denominator. **Fixed by the same change**: the gaps are in the denominator
+   too, so the maximum observed is 1.000 on every one of the twenty instrument-frames.
 5. **The same level carries two widths**: $P_H \pm 0.5\,\text{ATR}_{4H}$ and
    $\tau = \pm 0.015\,\text{ATR}_{4H}$, a factor of 33 apart, with no statement of which governs.
 6. **The grid's $k$ does not cover the $k$ the definitions use.** §3 fixes $k = 3$ for the leg and
@@ -630,8 +702,9 @@ found the operator's own three-bar run **null as direction** (49.5% against 49.4
 instruments, breakeven 55.0%) and **real as volatility** (1.17× the move, 1.21× the range, 30 of 37).
 The FVG clause has its own: [`imbalance.md`](../../research/docs/imbalance.md) found a gap edge worth
 +0.6% ± 0.4% against a 51.5% breakeven on 603,375 visits, and found that **a big displacement candle
-into a gap makes it a worse level**, 49.1% against 50.1%. The efficiency clause needs rewriting
-before it can be tested at all, and the rewrite is a different clause, so it gets nulled on its own.
+into a gap makes it a worse level**, 49.1% against 50.1%. The efficiency clause is now rewritten
+(§3) rather than needing it - and the rewrite is a different clause from what was proposed, so it
+gets nulled on its own rather than inheriting any result about the leg.
 
 **3. The three-way choppy definition is broader - and that is the problem, not the feature.** At 72-77%
 of all candles it is not a gate. The statistical-smallness branch alone (138-171 per 1,000) is the
@@ -660,9 +733,11 @@ along.
 Before any of this is worth an account, in order. None of it is expensive; all of it is the standing
 method.
 
-1. **Fix the four defects in section 5 that are arithmetic rather than taste** - the efficiency
-   ratio's span and its unboundedness, the two level widths, the undefined `Attended_Z`. A
-   measurement of a self-contradicting definition measures the implementer's reading of it.
+1. **Fix the defects in section 5 that are arithmetic rather than taste** - the two level widths,
+   and engine 1's missing long leg. A measurement of a self-contradicting definition measures the
+   implementer's reading of it. Two are already fixed in this document: `Attended_Z` now carries
+   the definition it was given with, and the efficiency ratio is anchored on the leg's first open
+   and charged for its gaps, which bounds it at 1 and scores a flawless leg 1.000.
 2. **Null each new clause on its own, before any engine, and marginally.** The efficiency ratio, the
    stacked FVG and the percentile thresholds are the new detectors, and the control for the first
    two is `levels.chains` **without** them - the leg they decorate is already in production, so
