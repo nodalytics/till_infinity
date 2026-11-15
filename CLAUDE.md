@@ -98,6 +98,14 @@ actually happen here. The short version:
   fundamentals, so what they isolate is whether a structure needs news to
   exist. A rule that works on a real market and on `Volatility 75` is not
   news-driven; one that works only on the real market is.
+- **And they are traded, so being a control does not demote them.** Measured
+  2026-11-15: changes in `Volatility 75`'s hourly ATR correlate **+0.006 with
+  EURUSD's and +0.005 with gold's**, where EURUSD and gold correlate +0.512
+  with each other. That independence is an argument *for* carrying it - a
+  return stream whose risk moves with nothing else in the book is worth more
+  per unit of it - and it never closes, so on a weekend it and the Boom/Crash
+  family are the only things on the account that quote. A control and a
+  position are not exclusive.
 
 ## The data ceiling
 

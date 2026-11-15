@@ -829,6 +829,35 @@ and the differences here are taken in each series' own order with any step
 that is not a true one-hour gap dropped, so a session break cannot become a
 fake change.
 
+### Orthogonal is an argument for trading it, not against
+
+To be explicit, because the previous section reads as if it demoted
+Volatility 75 to a measuring instrument: **it is traded here**, and the
+operator's position on 2026-11-15 is that it stays traded. It went onto the
+live desk on 2026-11-14 alongside Boom 1000.
+
+Nothing measured above argues otherwise, and the orthogonality argues *for* it:
+
+* **Independence is a portfolio property.** A return stream whose risk moves
+  with nothing else in the book is worth more per unit of it than one that
+  moves with everything, which is the whole of why the correlation was worth
+  measuring. `swap-does-not-cancel-in-a-long-short-basket` is the standing
+  caution about what independence does *not* buy, and it is about carry rather
+  than about risk.
+* **A control and a traded instrument are not exclusive.** What makes V75 a
+  control is what it isolates - no news - not an absence of structure. The
+  same feed can answer "does this rule need a calendar" and carry a position.
+* **It never closes.** On a Saturday or a Sunday it and the Boom/Crash family
+  are the only things on the account that quote at all, which is a real
+  property of the book rather than a statistical one.
+
+What the measurements *do* say is narrower: the sequence rule read +0.52 to
++0.62 on V75 at tight drift thresholds and **its own family did not replicate
+it** - Volatility 75 (1s), Volatility 100 and Volatility 100 (1s) are flat to
+negative at the same thresholds. That is a verdict on the rule, not on the
+instrument. No rule measured in this document has an edge on V75; no
+measurement here says one cannot.
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts
