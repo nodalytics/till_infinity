@@ -18,7 +18,10 @@ import contextlib
 import logging
 import os
 import sys
+import threading
+import time
 from decimal import Decimal
+from typing import Any
 
 from nautilus_trader.common.actor import Actor
 from nautilus_trader.config import (
@@ -134,7 +137,22 @@ def settings() -> TradingNodeConfig:
         # both on MT5.
         data_clients={venue: venues.configs(venues.kind(venue), venue)[0] for venue in _wanted()},
         exec_clients={venue: venues.configs(venues.kind(venue), venue)[1] for venue in _wanted()},
-        timeout_connection=float(os.environ.get("NODE_CONNECT_TIMEOUT", "60")),
+        # **240, because 60 let the node come up with nothing running.**
+        #
+        # On a connect timeout Nautilus's kernel does not carry on degraded -
+        # `if not await self._await_engines_connected(): return`, three steps
+        # above `self._trader.start()`. So the node logs RUNNING, holds a
+        # connected execution client, and has started **no strategy and no
+        # actor at all**, including the heartbeat the container healthcheck
+        # reads. It is the failure `node/probe.py` exists to name: "0
+        # strategies: the node is up and trading nothing".
+        #
+        # Measured twice on 2026-11-14, on consecutive deploys: this venue
+        # takes **78 and 85 seconds** to load its 728 instruments, against a
+        # 60-second wait. Both nodes came up empty and stayed that way, and
+        # both deploys failed their own verification. The ceiling is a wait,
+        # not a cost: a node that connects in 20 seconds waits 20 seconds.
+        timeout_connection=float(os.environ.get("NODE_CONNECT_TIMEOUT", "240")),
         timeout_reconciliation=float(os.environ.get("NODE_RECONCILE_TIMEOUT", "30")),
         timeout_portfolio=float(os.environ.get("NODE_PORTFOLIO_TIMEOUT", "30")),
         timeout_disconnection=float(os.environ.get("NODE_DISCONNECT_TIMEOUT", "30")),
@@ -687,10 +705,68 @@ def check() -> int:
     return 0
 
 
+#: How long the node may take to start its trader before this gives up on it.
+#:
+#: Generous against `NODE_CONNECT_TIMEOUT` plus reconciliation and portfolio
+#: initialisation, because the only mistake this must never make is killing a
+#: node that was going to come up.
+START_DEADLINE = float(os.environ.get("NODE_START_DEADLINE", "420"))
+
+
+def started(node: Any) -> bool:
+    """Has the trader started? False where it cannot be asked."""
+    try:
+        return bool(node.trader.is_running)
+    except Exception:
+        return False
+
+
+def abandon_unstarted(node: Any, deadline: float, quit_: Any = None) -> bool:
+    """Leave the process if the trader never started. Returns whether it did.
+
+    **A node that comes up empty must not stay up.** Nautilus returns from its
+    start sequence before `trader.start()` when the engines miss their connect
+    timeout, so the process keeps running, answers the venue, and trades
+    nothing - and nothing in it notices, because the actor that would report
+    the state is one of the things that never started. The healthcheck does
+    notice, and Docker does not act on an unhealthy container, so the desk sat
+    empty for thirteen minutes on 2026-11-14 across two deploys.
+
+    `os._exit`, not `stop()` or an exception: the asyncio loop belongs to the
+    node and the thread this runs on does not own it, so the one reliable
+    action is to leave and let `--restart unless-stopped` build a new one.
+    """
+    if started(node):
+        return False
+    logging.getLogger(__name__).error(
+        "the node has not started its trader after %.0fs - leaving so the "
+        "restart policy replaces it rather than leaving a node that answers "
+        "the venue and trades nothing",
+        deadline,
+    )
+    (quit_ or os._exit)(70)
+    return True
+
+
+def _watch_start(node: Any, deadline: float = START_DEADLINE) -> threading.Thread | None:
+    """Arm `abandon_unstarted` on a daemon thread. Off when the deadline is 0."""
+    if deadline <= 0:
+        return None
+
+    def watch() -> None:
+        time.sleep(deadline)
+        abandon_unstarted(node, deadline)
+
+    thread = threading.Thread(target=watch, name="till-start-watchdog", daemon=True)
+    thread.start()
+    return thread
+
+
 def main() -> None:
     if "--check" in sys.argv[1:]:
         raise SystemExit(check())
     node = build()
+    _watch_start(node)
     try:
         node.run()
     finally:
