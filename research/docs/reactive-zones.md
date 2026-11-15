@@ -575,6 +575,43 @@ untouched data rather than two halves of what you already looked at.
 The synthetic family said the same thing a different way an hour earlier, and
 was right.
 
+## ATR's shape is stable and its level is not
+
+Measured on the five majors, 15m ATR(30) over price, by year. Reusable past
+this study, which is why it is here rather than in the run log.
+
+| | 2019 | 2020 | 2022 | 2024 | 2026 |
+|---|---:|---:|---:|---:|---:|
+| EURUSD median | 4.13bp | 6.03 | 8.38 | 4.49 | 4.64 |
+| GOLD median | 8.65bp | 15.00 | 12.26 | 11.64 | **20.36** |
+| USDJPY median | 4.50bp | 5.05 | 8.03 | 7.18 | 5.34 |
+| **p75 / p25**, any instrument, any year | **1.42 - 1.94** | | | | |
+
+**The level swings by a factor of two and the dispersion does not move at
+all.** Within any year, for any of these instruments, the 75th percentile of
+ATR is 1.4 to 1.9 times the 25th - 2019 and 2022 and 2026 all look the same in
+that ratio, while the median between them doubles.
+
+The vivid version: **gold's quietest decile of 2026, at 15.65bp, is louder
+than its loudest decile of 2019, at 15.19bp.** A threshold set in 2019 gold
+would, in 2026, admit everything.
+
+Two consequences, and they are why the adaptive band is not a preference:
+
+1. **A threshold in ATR units is comparable across years; a threshold in price
+   units is not.** That much was already assumed here. What is new is the
+   second half:
+2. **A quantile of trailing ATR is comparable and a multiple of its mean is
+   less so.** Because the shape holds, the 25th percentile means the same
+   thing about a market in every year measured - which is exactly the property
+   a fixed multiple of a 30-bar mean does not have, since that mean inherits
+   whichever few bars made it.
+
+This is also why the regime shift does *not* explain the held-out reversal
+above. The measure was ATR-normalised and the trailing window adapts inside
+two days at 15m; the fixed-denominator arm read the same numbers. The reversal
+is noise, not a regime.
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts
