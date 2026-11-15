@@ -484,6 +484,47 @@ honest next step is the one the real-market section already names - a
 pre-registered threshold, per instrument, with enough trades to carry it -
 rather than another family.
 
+## The held-out test, registered before it was run
+
+**This section was written and committed while the run was still going.** The
+git history carries the ordering, which is the only thing that makes a
+pre-registration worth anything.
+
+Everything above was found on **2024-11-12 to 2026-11-12**. The deep catalogue
+holds bars back to 2018, so there are **six years the detector has never
+touched**. The parameters are fixed at what the discovery window used, with no
+tuning of any kind:
+
+| | |
+|---|---|
+| window | 2018-11 to 2024-11, the two recent years held out |
+| frames | 4h structure, 1h middle, 15m execution |
+| band | 25th percentile of the structure frame's trailing ranges |
+| pull-back | 0.25 of the move away from the level |
+| horizon | 16 execution bars |
+| **threshold** | **1.00 ATR** - a round number, and the one the earlier confirmation split was run at, chosen *not* to be the strongest cell (0.50 was) |
+| arms | real, and the day-block shuffle |
+
+**What the discovery window said**, at that threshold: pooled **+0.456**, and
+per instrument EURUSD +0.820, USDJPY +1.129, GOLD +0.544, AUDUSD -0.101,
+GBPUSD -0.205 - three of five positive.
+
+**The predictions:**
+
+1. The pooled held-out mean at 1.00 is **positive**. If the effect is real this
+   is the minimum it must do.
+2. The shuffle arm is **not** positive. If both move together the effect is in
+   the selection, not the level.
+3. **More than three of five instruments are positive.** Three of five in
+   discovery is what chance gives on a coin, so a repeat of exactly three is
+   not evidence; the claim is that the method travels rather than that those
+   three instruments do.
+4. The sweep stays **monotone** - tighter drift, larger reading.
+
+Anything else - a positive pooled mean carried by one instrument, or a sweep
+that peaks in the middle - is a failure to confirm, and will be written here as
+one.
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts
