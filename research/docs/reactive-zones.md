@@ -397,6 +397,93 @@ the thing to worry about.
 
 Per-cell n is 21 to 61. These are three feeds, not a sample.
 
+## The family check, which is where it falls over
+
+Volatility 75 was one feed. Run its own family - the same generator at another
+volatility parameter, and the same generator ticking once a second - and only
+one member shows anything:
+
+| real arm | < 0.75 | < 1.00 | < 1.50 | < 2.00 |
+|---|---:|---:|---:|---:|
+| Volatility 75 | **+0.582** (28) | **+0.518** (33) | +0.558 (43) | +0.169 (70) |
+| Volatility 75 (1s) | **-0.683** (25) | **-0.375** (31) | -0.483 (49) | -0.260 (60) |
+| Volatility 100 | +0.028 (26) | -0.145 (33) | -0.174 (49) | -0.213 (60) |
+| Volatility 100 (1s) | -0.419 (26) | -0.282 (31) | -0.082 (50) | -0.018 (68) |
+| Crash 1000 | - | -0.211 (20) | -0.381 (31) | +0.015 (38) |
+| **pooled** | **-0.069** (122) | **-0.083** (148) | -0.109 (222) | -0.058 (296) |
+
+**The same generator at a different parameter fails. The same generator
+ticking faster fails with the opposite sign.** That is what a cell picked out
+of many looks like when the family is asked.
+
+Crash 1000 reads negative like Boom 1000 rather than mirroring it, which does
+*not* support the drift-phase story told above for Boom - on Crash the drift
+phase is upward and the mirror would have been positive. Both are negative, so
+whatever they share is not the direction of the spike.
+
+Step Index is noise (+0.29, +0.17, -0.27, +0.07) and Step 200 produces fewer
+than twenty entries per bucket on its 2.5 years of hourly data. Step 300, 400
+and 500 are held no finer than 4h locally, and 97 weekly structure bars cannot
+carry a 20-bar pivot window plus a 200-bar adaptive band, so the detector
+finds nothing at all there. That is a data limit, not a result.
+
+### "Account for the extra volatility" - measured
+
+The proposal was that the faster feeds need a wider threshold: if Volatility 75
+reads at 0.5, take Volatility 75 (1s) at 1.0 or 1.5. It is the right question
+and it has an answer in the data:
+
+| feed | median bar range / price | x V75 | ATR / price |
+|---|---:|---:|---:|
+| Volatility 75 | 0.01190 | 1.00 | 0.01259 |
+| Volatility 75 (1s) | 0.01197 | **1.01** | 0.01258 |
+| Volatility 100 | 0.01589 | 1.33 | 0.01684 |
+| Volatility 100 (1s) | 0.01597 | 1.34 | 0.01677 |
+| Crash 1000 | 0.00281 | 0.24 | 0.00313 |
+
+**The 1s variant carries the same price action per hourly bar as the standard
+one - 1.01x, not 2x.** The "1s" names the tick generation rate; the hourly
+bar's realised range is unchanged by it. So between those two there is nothing
+extra to account for, and they still disagree in sign at the same threshold.
+Volatility 100 does carry 1.33x, and shifting its thresholds by that still
+leaves it flat.
+
+The threshold is already in ATR units, which is why: it was scale-free before
+the rescaling was proposed.
+
+### The denominator is not the cause
+
+`gross` divides by the ATR of the entry bar, and the drift arm selects quiet
+windows - so a smaller denominator could have manufactured the whole effect.
+The same move over a **fixed** unit, the instrument's trailing median ATR,
+which this selection cannot move:
+
+| threshold | over the entry bar's ATR | over a fixed unit |
+|---|---:|---:|
+| < 0.50 | +0.764 | +0.800 |
+| < 0.75 | +0.519 | +0.534 |
+| < 1.00 | +0.456 | +0.456 |
+| < 1.50 | +0.242 | +0.226 |
+| < 2.00 | +0.123 | +0.094 |
+
+Identical to two decimal places where it matters. One mechanical cause ruled
+out; the effect is in the price, not in the unit.
+
+### Where that leaves it
+
+On the five real markets the approach effect has a monotone sweep, a flat
+shuffle, a placebo worth about 40% of it, a confirmation split that holds, a
+denominator that is not the cause, and a spread that is 2 to 9% of its size.
+On the synthetic family it is one feed in five.
+
+Both can be true: the real-market result is pooled over five instruments and
+the synthetic result is five separate cells of 20 to 70 trades each, which is
+not enough to refute it and not enough to support it. What it does mean is
+that **Volatility 75 matching EURUSD was a coincidence of two cells**, and the
+honest next step is the one the real-market section already names - a
+pre-registered threshold, per instrument, with enough trades to carry it -
+rather than another family.
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts

@@ -83,6 +83,10 @@ SYMBOLS = ("EURUSD", "GBPUSD", "GOLD", "USDJPY", "AUDUSD")
 RATIOS = {
     "5m": {"15m": 3, "1h": 12, "4h": 48, "1d": 288},
     "1h": {"1h": 1, "4h": 4, "1d": 24},
+    # For the feeds held no finer than 4h. A week is 42 of them because these
+    # never close; on a real market it would be 30 and the two tables are not
+    # interchangeable.
+    "4h": {"4h": 1, "1d": 6, "1w": 42},
 }
 FRAMES = RATIOS["5m"]
 
@@ -542,6 +546,15 @@ class Trade:
     #: Day index, for the block bootstrap: trades cluster in days and an
     #: ordinary standard error over trades is far too narrow.
     day: int
+    #: The same move over a **fixed** unit - the instrument's trailing median
+    #: ATR - rather than over the ATR at entry.
+    #:
+    #: **The denominator is the first cause to rule out.** `gross` divides by
+    #: the ATR of the entry bar, and the drift arm selects quiet windows, so a
+    #: smaller denominator would manufacture the effect out of nothing. This
+    #: is the same move measured against a unit the selection cannot move. If
+    #: the effect is in `gross` and not here, it was the denominator.
+    steady: float = float("nan")
     #: What armed the sequence - `bounce` or `sweep`. Two shapes, kept apart
     #: rather than pooled: `two detectors with the same name are usually two
     #: detectors`, and these two are not even the same name.
@@ -700,7 +713,14 @@ def sequence(
                 unit = float(fast_band[at])
                 if not np.isfinite(unit) or unit <= 0:
                     return
-                move = (float(fast.close[at + horizon]) - close) * side / unit
+                raw = (float(fast.close[at + horizon]) - close) * side
+                move = raw / unit
+                steady_unit = typical[at] if at < typical.size else float("nan")
+                steady = (
+                    raw / float(steady_unit)
+                    if np.isfinite(steady_unit) and steady_unit > 0
+                    else float("nan")
+                )
                 # **The last *closed* bar of each slower frame, never the one
                 # in progress.** `at // ratio` is the bar this entry sits
                 # inside, and reading it would be lookahead of up to a whole
@@ -716,6 +736,7 @@ def sequence(
                         at=at,
                         side=side,
                         gross=move,
+                        steady=steady,
                         stage=stage_name,
                         tsi_slow=bool(slow_ok and slow_tsi[slow_at] * side > 0),
                         tsi_mid=bool(mid_ok and mid_tsi[mid_at] * side > 0),
@@ -1086,14 +1107,23 @@ def drift_table(found: dict[str, list[Trade]], label: str, thresholds=(0.5, 0.75
         print(f"  {label}: no entries")
         return
     print(f"  {label}: {len(rows):,} entries")
-    header = "    threshold  " + "".join(f"{t:>10.2f}" for t in thresholds)
+    header = "    threshold  " + "".join(f"{t:>20.2f}" for t in thresholds)
     print(header)
     for feed in sorted({row.feed for row in rows}) + ["POOLED"]:
         picked = rows if feed == "POOLED" else [row for row in rows if row.feed == feed]
         line = f"    {feed:<10}"
         for t in thresholds:
-            under = [row.gross for row in picked if row.approach < t]
-            line += f"  {np.mean(under):+6.3f}/{len(under):<3d}" if len(under) >= 20 else "      -/-   "
+            under = [row for row in picked if row.approach < t]
+            if len(under) < 20:
+                line += "      -/-   "
+                continue
+            own = float(np.mean([row.gross for row in under]))
+            fixed = [row.steady for row in under if np.isfinite(row.steady)]
+            # **Both denominators, side by side.** The left number divides by
+            # the ATR of the entry bar and the right by a unit this selection
+            # cannot move. A gap between them is the denominator talking.
+            other = float(np.mean(fixed)) if fixed else float("nan")
+            line += f"  {own:+6.3f}|{other:+6.3f}/{len(under):<3d}"
         print(line)
     print()
 
