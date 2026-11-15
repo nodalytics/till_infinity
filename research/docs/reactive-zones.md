@@ -700,6 +700,57 @@ So, of the three:
 | trailing quantile of range | fine, and the shape is stable so a percentile means one thing | same caveat | fine |
 | cumulative mean | **no** | no | **wrong by 2.8x on gold** |
 
+## The retail lens: where do the stops rest?
+
+Every course teaches the same stop: **just beyond the swing**. If that is what
+most people do, the distance past a level where stops rest is predictable, and
+excursions beyond a level should *end* there more often than anywhere else.
+
+There is no DOM here and `real_volume` is zero, so positioning cannot be seen
+directly. What can be seen is where excursions terminate. Measured as a
+**hazard** - the chance an excursion that got this far turns here - rather than
+as a histogram, because the raw distribution falls away for the trivial reason
+that fewer excursions travel further.
+
+Eight years, five instruments, 15m execution against 4h levels:
+
+| beyond the level, in ATR | real | day-shuffled |
+|---|---:|---:|
+| 0.00 - 0.25 | 7.1% | 7.3% |
+| 0.25 - 0.50 | 13.3% | 12.8% |
+| **0.50 - 0.75** | **13.9%** | **13.5%** |
+| 0.75 - 1.00 | 12.8% | 13.3% |
+| 1.00 - 1.25 | 12.3% | 11.8% |
+| 1.25 - 1.50 | 11.1% | 10.9% |
+| 1.50 - 1.75 | 10.3% | 10.1% |
+| 1.75 - 2.00 | 9.4% | 9.1% |
+| 2.00 - 2.25 | 8.2% | 8.6% |
+| 2.50 - 2.75 | 7.5% | 7.0% |
+| 3.00 - 3.25 | 6.1% | 6.3% |
+| 3.75 - 4.00 | 5.3% | 5.3% |
+| **excursions** | **73,871** | 76,187 |
+| **came back at all** | **96.3%** | 96.5% |
+
+**No bump anywhere.** The hazard rises to about 14% at half an ATR beyond the
+level and decays monotonically after it, and the shuffled series - where the
+level is a price nothing was drawn at - does the same thing to within half a
+percentage point, with no systematic sign across sixteen buckets of 17,000 to
+74,000 observations each.
+
+So the shape is what a walk does on crossing a boundary, and **the level
+contributes nothing to where an excursion ends**. The same goes for the 96.3%
+that come back, which `a-return-rate-is-geometry` already recorded from the
+other side: the shuffled arm returns 96.5%.
+
+**What this does and does not close.** It is a measurement about *these*
+levels - Bjorgum pivots on a 4h frame with a quantile band. Retail does not
+draw those. It draws the raw swing high and low, the previous day's extremes,
+the round number, the session open. If stops cluster, they cluster beyond
+*those*, and the one such proxy already in this harness - distance to a round
+number - is the single cut that was negative in both halves of the discovery
+window, at -0.363 and -0.465. That is where the retail lens has something and
+it is the next thing to measure, not this.
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts

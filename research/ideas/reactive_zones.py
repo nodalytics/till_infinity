@@ -237,12 +237,19 @@ def load_csv(path: Path, symbol: str, frame: str) -> Candles:
     )
 
 
-def window(bars: Candles, years: float) -> Candles:
-    """The last `years` of bars. The operator's standing limit is two."""
-    if years <= 0:
+def window(bars: Candles, years: float, before: float = 0.0) -> Candles:
+    """The last `years` of bars, optionally ending `before` years ago.
+
+    **`before` is what makes a held-out test possible here.** Everything in
+    `reactive-zones.md` was found on the most recent two years; setting
+    `before=2` runs the same detector on data that search never touched, which
+    is the only confirmation available without waiting for more of it.
+    """
+    if years <= 0 and before <= 0:
         return bars
-    cut = bars.ts[-1] - int(years * 365.25 * 86_400 * 1e9)
-    keep = bars.ts >= cut
+    end = bars.ts[-1] - int(before * 365.25 * 86_400 * 1e9)
+    start = end - int(years * 365.25 * 86_400 * 1e9) if years > 0 else bars.ts[0]
+    keep = (bars.ts >= start) & (bars.ts <= end)
     return Candles(
         symbol=bars.symbol,
         frame=bars.frame,
@@ -1140,11 +1147,23 @@ def main() -> None:
     )
     parser.add_argument("--unit", default="5m", choices=tuple(RATIOS))
     parser.add_argument("--years", type=float, default=2.0)
+    parser.add_argument(
+        "--before",
+        type=float,
+        default=0.0,
+        help="end the window this many years before the last bar, so the "
+        "search window can be held out",
+    )
     parser.add_argument("--slow", default="4h")
     parser.add_argument("--middle", default="1h")
     parser.add_argument("--fast", default="15m")
     parser.add_argument("--horizon", type=int, default=HORIZON)
     parser.add_argument("--band", default="fixed", choices=("fixed", "quantile"))
+    parser.add_argument(
+        "--overshoot",
+        action="store_true",
+        help="measure where excursions beyond a level end, instead of trading it",
+    )
     parser.add_argument(
         "--arms",
         default="real",
@@ -1180,7 +1199,7 @@ def main() -> None:
     folded = {}
     raw: dict[str, Candles] = {}
     for symbol, loaded in sources:
-        base = window(loaded, args.years)
+        base = window(loaded, args.years, args.before)
         raw[symbol] = base
         start = datetime.fromtimestamp(base.ts[0] / 1e9, UTC).date()
         end = datetime.fromtimestamp(base.ts[-1] / 1e9, UTC).date()
@@ -1191,6 +1210,22 @@ def main() -> None:
             f"{symbol}: {len(base):,} {args.unit} bars {start} to {end}, "
             f"{len(folded[symbol][0]):,} {args.slow} / {len(folded[symbol][2]):,} {args.fast}"
         )
+
+    if args.overshoot:
+        print("\n=== how far beyond a level an excursion gets before it turns\n")
+        for arm in ("real", "shuffled"):
+            rows: list[tuple] = []
+            for symbol, frames in folded.items():
+                use = frames
+                if arm == "shuffled":
+                    use = tuple(
+                        fold(shuffled(raw[symbol], seed=11), name, args.unit)
+                        for name in (args.slow, args.middle, args.fast)
+                    )
+                rows += overshoots(use[0], use[2], args.band, args.percentile, args.unit)
+            hazard(rows, arm)
+            print()
+        return
 
     arms = [name.strip() for name in args.arms.split(",") if name.strip()]
     for share in shares:
@@ -1225,6 +1260,86 @@ def main() -> None:
             report(per_arm["real"], args.horizon)
             microscope(per_arm["real"])
             halves(per_arm["real"])
+
+
+
+
+# --- the retail lens: where do stops rest? -----------------------------------
+
+
+def overshoots(slow: Candles, fast: Candles, band: str, percentile: float, unit: str) -> list[tuple]:
+    """Every excursion beyond a level, and how far it got before coming back.
+
+    **The only trace stop clustering leaves in bars.** There is no DOM here and
+    `real_volume` is zero, so positioning cannot be observed directly. What can
+    be observed is where excursions *end*: if retail stops rest just beyond the
+    obvious level - which is what every course teaches - then excursions should
+    terminate at that distance more often than at any other, and the hazard of
+    reversal as a function of overshoot should have a bump in it.
+
+    Returns `(feed, reach, returned)` per excursion: how far beyond the band
+    price got, in ATR of the execution frame, and whether it came back inside.
+    """
+    slow_band = atr(slow, ATR_LEN)
+    fast_band = atr(fast, ATR_LEN)
+    widths = slow_band if band == "fixed" else adaptive_band(slow, percentile)
+    scale = MULT if band == "fixed" else 1.0
+    table = RATIOS[unit]
+    ratio = table[slow.frame] // table[fast.frame]
+
+    out: list[tuple] = []
+    for zone in zones_of(slow, widths, scale):
+        start = (zone.at + 1) * ratio
+        if start >= len(fast) - 2:
+            continue
+        edge = zone.top if zone.resistance else zone.bottom
+        sign = 1.0 if zone.resistance else -1.0
+        inside = True
+        reach = 0.0
+        for i in range(start, min(len(fast), start + ratio * 200)):
+            unit_now = float(fast_band[i])
+            if not np.isfinite(unit_now) or unit_now <= 0:
+                continue
+            beyond = (float(fast.close[i]) - edge) * sign
+            extreme = (float(fast.high[i] if zone.resistance else fast.low[i]) - edge) * sign
+            if beyond > 0:
+                inside = False
+                reach = max(reach, extreme / unit_now)
+                continue
+            if not inside and reach > 0:
+                # Closed back inside: the excursion ended and it reversed.
+                out.append((fast.symbol, reach, True))
+                inside, reach = True, 0.0
+        if not inside and reach > 0:
+            # Still out at the end of the window: it never came back.
+            out.append((fast.symbol, reach, False))
+    return out
+
+
+def hazard(rows: list[tuple], label: str, step: float = 0.25, top: float = 4.0) -> None:
+    """P(this excursion ends here | it got this far), by distance beyond.
+
+    **A hazard and not a histogram.** The raw distribution of overshoots falls
+    away for the trivial reason that fewer excursions travel further. The
+    hazard conditions on having got there, so a flat line means "no distance is
+    special" and a bump means excursions are ending at one - which is what a
+    shelf of resting stops would look like from the outside.
+    """
+    if not rows:
+        print(f"  {label}: nothing")
+        return
+    reach = np.array([row[1] for row in rows])
+    back = np.array([row[2] for row in rows], dtype=bool)
+    print(f"  {label}: {len(rows):,} excursions, {back.mean():.1%} came back")
+    edges = np.arange(0.0, top + step, step)
+    for lo in edges[:-1]:
+        hi = lo + step
+        got = reach >= lo
+        if got.sum() < 30:
+            continue
+        ends = got & (reach < hi) & back
+        bar = "#" * int(round(60 * ends.sum() / max(1, got.sum())))
+        print(f"    {lo:4.2f}-{hi:4.2f}  n {got.sum():>6,}  {ends.sum() / got.sum():6.1%} {bar}")
 
 
 if __name__ == "__main__":
