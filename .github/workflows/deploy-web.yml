@@ -9,18 +9,19 @@ name: Deploy dashboard
 # a stylesheet - the cost of getting that wrong is in `deploy.yml`'s own note:
 # four deploys in an afternoon, each one a backfill, one of them for a
 # docs-only commit.
+# **Paused on 2026-11-15: nothing deploys to the trading host from here.**
+#
+# The dashboard is moving off that box - the Next front end to Vercel, and the
+# read-only API behind a tunnel - so a push must not start a `till-web`
+# container beside the desk again. The container has been stopped on the
+# instance and its restart policy cleared; this is the other half, because a
+# merge to `web/**` would otherwise put it straight back.
+#
+# `workflow_dispatch` only, deliberately. The build below still works and can
+# be run by hand, which is what the API container will need once the tunnel
+# exists. Deleting the file instead would lose the push-by-digest and manifest
+# work that took two attempts to get right on a Graviton host.
 on:
-  push:
-    branches: [main]
-    paths:
-      - "web/**"
-      - "scripts/deploy-web.sh"
-      - ".github/workflows/deploy-web.yml"
-      # The API imports these, so a change to either can break the dashboard
-      # without touching `web/`. It cannot break the desk: this workflow only
-      # ever replaces `till-web`.
-      - "till_infinity/strategies/report.py"
-      - "till_infinity/journal/**"
   workflow_dispatch:
 
 # Its own group. Sharing the desk's would make a dashboard build block a
