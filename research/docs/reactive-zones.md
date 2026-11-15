@@ -612,6 +612,66 @@ above. The measure was ATR-normalised and the trailing window adapts inside
 two days at 15m; the fixed-denominator arm read the same numbers. The reversal
 is noise, not a regime.
 
+## ATR across frames, and the thing that looks like trending
+
+The same measurement on 15m, 1h, 4h and 1d. Growth is against the 15m median;
+a random walk gives the square root of the bar ratio.
+
+| | 15m | 1h | 4h | 1d | H |
+|---|---:|---:|---:|---:|---:|
+| EURUSD, ATR/price | 5.34bp | 11.19 | 23.43 | 62.77 | 0.533 - 0.540 |
+| GOLD | 11.94bp | 24.73 | 52.27 | 139.49 | 0.525 - 0.539 |
+| USDJPY | 5.95bp | 12.45 | 26.25 | 71.68 | 0.532 - 0.545 |
+| a random walk would give | | 2.00x | 4.00x | 9.80x | 0.500 |
+
+Daily ATR is **11.4 to 12.0 times** the 15m where a walk gives 9.80, and `H`
+lands at **0.523 to 0.545** on every instrument and every frame pair. That
+reads as trending. It is not.
+
+**Close-to-close volatility scales at exactly a half.** The standard deviation
+of log returns on the same bars gives `H` of **0.482 to 0.502**, a random walk
+to three decimals, with a gap to the range measure of +0.034 to +0.055 that is
+identical across instruments.
+
+**The gap is the return distribution changing shape, not the market trending.**
+
+| | kurtosis 15m -> 1d | mean\|r\|/sd 15m -> 1d |
+|---|---|---|
+| EURUSD | 29.1 -> 5.2 | 0.637 -> 0.747 |
+| GOLD | 55.8 -> 8.7 | 0.612 -> 0.698 |
+| USDJPY | **105.1** -> 8.9 | 0.606 -> 0.695 |
+
+Gaussian is 0.798. Intraday returns are violently fat-tailed and daily ones
+much less so, so a **mean-absolute** dispersion grows faster under aggregation
+than a **second-moment** one. ATR is the first kind and the standard deviation
+is the second, and they diverge by exactly as much as the shape moves: the
+measured shape change implies an extra exponent of **0.029 to 0.035** against
+an observed gap of **0.041 to 0.055**. About seventy percent of the gap is
+aggregational Gaussianity; the remainder is plausibly the range estimator,
+since a 15m bar's high-low misses more of its own path than a daily bar's does.
+
+Neither reading is trending. Both are a random walk whose steps are fat-tailed
+at short horizons - which is `how-markets-differ-from-every-simple-process`
+measured from the other side.
+
+### ATR is twice the mean close-to-close move, everywhere
+
+| | 15m | 1h | 4h | 1d |
+|---|---:|---:|---:|---:|
+| mean \|close-to-close\| / ATR, EURUSD | 0.504 | 0.488 | 0.486 | 0.487 |
+| GOLD | 0.493 | 0.486 | 0.491 | 0.510 |
+| USDJPY | 0.501 | 0.490 | 0.487 | 0.504 |
+| wick share of the range | ~0.50 | ~0.51 | ~0.51 | ~0.50 |
+
+**0.486 to 0.510 in every cell**, and the body is the same share, so half of
+every bar's range is wick on every frame of every instrument measured.
+
+The practical consequence is that **ATR and a close-based scale are
+interchangeable as normalisers up to a factor of two**. Every threshold in
+this document would be halved and nothing else would move. What is *not*
+interchangeable is using one to scale the other across frames, which is where
+the 0.04 of exponent above comes from.
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts
