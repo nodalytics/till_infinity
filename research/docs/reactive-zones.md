@@ -672,6 +672,34 @@ this document would be halved and nothing else would move. What is *not*
 interchangeable is using one to scale the other across frames, which is where
 the 0.04 of exponent above comes from.
 
+### A cumulative mean cannot follow a regime
+
+The third normaliser: an **expanding** mean of true range, against the rolling
+ATR(30), by year.
+
+| ATR30 / cumulative mean | 2019 | 2020 | 2021 | 2022 | 2023 | 2024 | 2025 | 2026 |
+|---|---:|---:|---:|---:|---:|---:|---:|---:|
+| EURUSD | 0.80 | 1.14 | 0.86 | 1.36 | 0.91 | 0.73 | 1.02 | 0.80 |
+| GOLD | 1.11 | 1.62 | 1.01 | 1.07 | 0.96 | 1.34 | 2.04 | **2.82** |
+
+**It works where volatility oscillates and fails where volatility trends.**
+EURUSD's ATR swings around a level, so an expanding mean stays within about
+thirty percent of the rolling one for eight years. Gold's has risen and kept
+rising, so by 2026 the rolling ATR is **2.82 times** the cumulative mean and
+anything normalised that way reads nearly three times too large.
+
+That is not a tuning problem. An expanding mean weights every bar it has ever
+seen equally, so its lag behind a persistent shift grows without bound - by
+construction, and worst exactly when the market has changed most.
+
+So, of the three:
+
+| normaliser | across years | across frames | in a trending regime |
+|---|---|---|---|
+| rolling ATR(30) | fine, adapts in ~2 days at 15m | mind the 0.04 of exponent above | fine |
+| trailing quantile of range | fine, and the shape is stable so a percentile means one thing | same caveat | fine |
+| cumulative mean | **no** | no | **wrong by 2.8x on gold** |
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts
