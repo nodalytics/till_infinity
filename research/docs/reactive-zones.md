@@ -751,6 +751,84 @@ number - is the single cut that was negative in both halves of the discovery
 window, at -0.363 and -0.465. That is where the retail lens has something and
 it is the next thing to measure, not this.
 
+## Does a quantile of ATR give regimes?
+
+Yes, at a **daily** horizon and not below it. Terciles of where ATR(30) sits in
+its own trailing 200 bars, and the chance of still being in the loud tercile
+`h` bars later:
+
+| | base rate | h = 1 | h = 16 (4h) | **h = 96 (1 day)** | median dwell |
+|---|---:|---:|---:|---:|---:|
+| EURUSD, real | 0.323 | 0.961 | 0.583 | **0.553** | 23 bars |
+| EURUSD, day-shuffled | 0.345 | 0.970 | 0.679 | **0.388** | 28 |
+| GOLD, real | 0.323 | 0.957 | 0.581 | **0.482** | 18 |
+| GOLD, day-shuffled | 0.354 | 0.978 | 0.777 | **0.306** | 29 |
+
+**At h = 1 the 0.96 is mechanical** - ATR(30) shares twenty-nine of its thirty
+bars with itself - and the shuffle matches it. **At four hours the shuffle is
+*more* persistent than the real series**, because shuffling whole days leaves
+each day internally intact, so a loud day stays loud for its own 96 bars.
+Only at a full day does the real series separate: 0.55 and 0.48 against a
+shuffle that has fallen to 0.39 and 0.31, over a base rate of 0.32.
+
+So the state is real and the horizon to act on it is **a day**, not a bar.
+
+### The clustering, against what is mechanical
+
+Autocorrelation of log ATR, real against the day shuffle:
+
+| lag | 1 | 16 (4h) | 96 (1d) | 480 (5d) |
+|---|---:|---:|---:|---:|
+| real, across five majors | 0.998 - 1.000 | 0.851 - 0.969 | **0.798 - 0.943** | **0.679 - 0.876** |
+| day-shuffled | 0.998 - 0.999 | 0.798 - 0.915 | 0.204 - 0.310 | **-0.030 - +0.119** |
+
+**Volatility clustering runs at least five days** and the shuffle prices the
+mechanical part of it exactly: identical at lag 1, close at four hours, and
+gone by a day. There is no ambiguity in this one - it is the largest
+real-against-control gap measured anywhere in this document.
+
+### PCA, and the correlation that was not there
+
+On the five majors, log ATR: **PC1 is 57.5%** and loads EURUSD +0.56, GBPUSD
++0.51, AUDUSD +0.53, USDJPY +0.38 and **GOLD +0.01**. It is a *currency*
+volatility factor with gold sitting out; PC2 at 23.6% is gold against the
+dollar bloc. Interpretable loadings are what separate this from "PCA always
+returns a PC1".
+
+Then the three key instruments - one major, one metal, one synthetic - on a
+common hourly clock, 43,248 aligned changes:
+
+| correlation of **changes** in log ATR | EURUSD | GOLD | V75 |
+|---|---:|---:|---:|
+| EURUSD | 1.000 | **+0.512** | +0.006 |
+| GOLD | +0.512 | 1.000 | +0.005 |
+| V75 | +0.006 | +0.005 | 1.000 |
+
+PC1 at 50.4% is EURUSD -0.71, GOLD -0.71, V75 -0.01 - a real-market
+volatility factor - and PC2 at 33.3% is V75 +1.00, entirely its own axis.
+
+**This is the news thesis, measured.** EURUSD and gold share sessions and
+releases and their volatilities move together at +0.51. Volatility 75 has no
+news and sits at **zero** against both. That is also what makes it a usable
+control rather than a correlated echo.
+
+### And the spurious correlation it nearly became
+
+The same three instruments, correlated on **levels** instead of changes:
+
+| levels | EURUSD | GOLD | V75 |
+|---|---:|---:|---:|
+| GOLD | +0.255 | 1.000 | **-0.612** |
+
+**-0.612 against a true +0.005.** Gold's ATR/price has risen from 8.65bp to
+20.36bp over this window while V75's is engineered near-constant, and two
+series trending oppositely correlate strongly without co-moving at all. Read
+off the levels it is a finding - synthetic volatility rises when gold's falls -
+and it is nothing. `difference-before-aligning` is the rule that catches it,
+and the differences here are taken in each series' own order with any step
+that is not a true one-hour gap dropped, so a session break cannot become a
+fake change.
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts
