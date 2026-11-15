@@ -65,6 +65,40 @@ actually happen here. The short version:
 - A clean null is the valued result. Two dozen ideas have been refuted here and
   written up; that record is the asset.
 
+### The operator's standing instructions, 2026-11-15
+
+- **Measure gross first.** "We are looking at before costs." A rule with no
+  edge before costs cannot have one after, and costing a rule that has no side
+  wastes the run. Price it once a side exists to pay for it.
+- **Break everything down. "We want to look at things from a microscopic
+  view."** A pooled mean hides its parts: cut by instrument, by what triggered
+  it, by shape, by session, by how long it took. On this desk a pooled median
+  once agreed with a claim every subgroup refuted, and a two-way split of one
+  rule read +0.335 and -0.292 where the pooled number was -0.144.
+- **Ask what *differentiates*, not only whether the rule works.** Volatility is
+  one lens and usually the wrong one - measured around a level sequence, ATR
+  *rises* into the setup and separates winners from losers by 0.02. The
+  approach, the age, the watchedness proxies and the position in the range are
+  different questions and one of them confirmed where the rule itself did not.
+- **A null's job is attribution, not permission.** The operator's position is
+  that a result on shuffled or placebo data should not by itself veto a
+  decision, "cause the data and movements are different" - and that is right
+  about what a null *cannot* do. What it does do is say **which part of the
+  machine produced the number**: run the same detector with only the level
+  relationship removed, and whatever survives belonged to the selection rather
+  than to the level. Every branch changes what gets built, which is why the arm
+  is worth its compute.
+- **The Deriv synthetics are a different lens, not more instruments - and the
+  thing they control for is news.** The operator's correction, 2026-11-15:
+  *"people trade deriv synthetics, so part of our test is to see if levels work
+  there as well like they do for the real markets; the great separator is just
+  news, everything else is mostly the same."* They are traded by humans drawing
+  the same levels with the same tools, so they are **not** a control for
+  watchedness or for participants. They have no scheduled releases and no
+  fundamentals, so what they isolate is whether a structure needs news to
+  exist. A rule that works on a real market and on `Volatility 75` is not
+  news-driven; one that works only on the real market is.
+
 ## The data ceiling
 
 `node/corpus.py` fills the catalogue from the local store. It holds about **76

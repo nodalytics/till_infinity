@@ -72,8 +72,19 @@ PRICE_SCALE = 1e16
 
 SYMBOLS = ("EURUSD", "GBPUSD", "GOLD", "USDJPY", "AUDUSD")
 
-#: Execution bars per frame, matching `dual_engine_v6.Frame.fold`.
-FRAMES = {"15m": 3, "1h": 12, "4h": 48, "1d": 288}
+#: Bars per frame, in units of the base series. The catalogue's base is 5m and
+#: matches `dual_engine_v6.Frame.fold`; an hourly source folds the same shape
+#: one step slower, which is what the synthetic feeds are kept at.
+#:
+#: **24 bars to the day on the hourly table, deliberately.** The Deriv
+#: synthetics never close - measured quoting normally on a Saturday with every
+#: real market on the account hours stale - so a day really is 24 of their
+#: bars, where an FX day is not.
+RATIOS = {
+    "5m": {"15m": 3, "1h": 12, "4h": 48, "1d": 288},
+    "1h": {"1h": 1, "4h": 4, "1d": 24},
+}
+FRAMES = RATIOS["5m"]
 
 #: The `desk` preset, the one `zones.DESK` carries.
 LEFT, RIGHT, KEEP = 15, 5, 1
@@ -191,6 +202,37 @@ def load(where: Path, symbol: str) -> Candles:
     )
 
 
+def load_csv(path: Path, symbol: str, frame: str) -> Candles:
+    """`ts,open,high,low,close,volume` from a gzipped broker export.
+
+    Kept beside the parquet loader rather than folded into it: the synthetic
+    feeds are only held at hourly and coarser, so they are read at their own
+    base frame and folded from there. The path is an argument and never a
+    literal - this file is public and the exports are not.
+    """
+    import csv
+    import gzip
+
+    ts, opens, highs, lows, closes = [], [], [], [], []
+    with gzip.open(path, "rt") as handle:
+        for row in csv.DictReader(handle):
+            ts.append(int(float(row["ts"])) * 1_000_000_000)
+            opens.append(float(row["open"]))
+            highs.append(float(row["high"]))
+            lows.append(float(row["low"]))
+            closes.append(float(row["close"]))
+    order = np.argsort(np.asarray(ts), kind="stable")
+    return Candles(
+        symbol=symbol,
+        frame=frame,
+        ts=np.asarray(ts)[order],
+        open=np.asarray(opens)[order],
+        high=np.asarray(highs)[order],
+        low=np.asarray(lows)[order],
+        close=np.asarray(closes)[order],
+    )
+
+
 def window(bars: Candles, years: float) -> Candles:
     """The last `years` of bars. The operator's standing limit is two."""
     if years <= 0:
@@ -208,13 +250,13 @@ def window(bars: Candles, years: float) -> Candles:
     )
 
 
-def fold(base: Candles, frame: str) -> Candles:
-    """Fold 5m bars into `frame` by bar count, as the live `Frame.fold` does.
+def fold(base: Candles, frame: str, unit: str = "5m") -> Candles:
+    """Fold base bars into `frame` by bar count, as the live `Frame.fold` does.
 
     By count and not by calendar: a calendar fold gives different candles
     across a weekend and the two are not interchangeable.
     """
-    step = FRAMES[frame]
+    step = RATIOS[unit][frame]
     usable = (len(base) // step) * step
     shape = (usable // step, step)
     return Candles(
@@ -554,6 +596,7 @@ def sequence(
     band: str = "fixed",
     percentile: float = 25.0,
     placebo: bool = False,
+    unit: str = "5m",
 ) -> list[Trade]:
     """Every completed sequence on this pair of frames.
 
@@ -603,9 +646,10 @@ def sequence(
         if not np.isfinite(unit) or unit <= 0 or not np.isfinite(fast_band[at]):
             return float("nan")
         return float(fast_band[at] / unit)
-    step = FRAMES[fast.frame]
-    ratio = FRAMES[slow.frame] // step
-    mid_ratio = FRAMES[middle.frame] // step
+    table = RATIOS[unit]
+    step = table[fast.frame]
+    ratio = table[slow.frame] // step
+    mid_ratio = table[middle.frame] // step
 
     out: list[Trade] = []
     # **The band, chosen two ways and reported as two cells.** `fixed` is the
@@ -1058,6 +1102,13 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalogue", default=str(CATALOGUE))
     parser.add_argument("--symbols", default=",".join(SYMBOLS))
+    parser.add_argument(
+        "--csv",
+        default="",
+        help="name=path,name=path - read these instead of the catalogue, at "
+        "--unit, which is how the synthetic feeds are held",
+    )
+    parser.add_argument("--unit", default="5m", choices=tuple(RATIOS))
     parser.add_argument("--years", type=float, default=2.0)
     parser.add_argument("--slow", default="4h")
     parser.add_argument("--middle", default="1h")
@@ -1087,16 +1138,27 @@ def main() -> None:
 
     where = Path(args.catalogue)
     shares = [float(part) for part in str(args.pullback).split(",") if part.strip()]
+    sources: list[tuple[str, Candles]] = []
+    if args.csv:
+        for pair in args.csv.split(","):
+            name, _, path = pair.partition("=")
+            sources.append((name, load_csv(Path(path), name, args.unit)))
+    else:
+        for symbol in (s for s in args.symbols.split(",") if s):
+            sources.append((symbol, load(where, symbol)))
+
     folded = {}
     raw: dict[str, Candles] = {}
-    for symbol in (s for s in args.symbols.split(",") if s):
-        base = window(load(where, symbol), args.years)
+    for symbol, loaded in sources:
+        base = window(loaded, args.years)
         raw[symbol] = base
         start = datetime.fromtimestamp(base.ts[0] / 1e9, UTC).date()
         end = datetime.fromtimestamp(base.ts[-1] / 1e9, UTC).date()
-        folded[symbol] = tuple(fold(base, name) for name in (args.slow, args.middle, args.fast))
+        folded[symbol] = tuple(
+            fold(base, name, args.unit) for name in (args.slow, args.middle, args.fast)
+        )
         print(
-            f"{symbol}: {len(base):,} 5m bars {start} to {end}, "
+            f"{symbol}: {len(base):,} {args.unit} bars {start} to {end}, "
             f"{len(folded[symbol][0]):,} {args.slow} / {len(folded[symbol][2]):,} {args.fast}"
         )
 
@@ -1111,7 +1173,7 @@ def main() -> None:
                 use = frames
                 if arm == "shuffled":
                     use = tuple(
-                        fold(shuffled(raw[symbol], seed=11), name)
+                        fold(shuffled(raw[symbol], seed=11), name, args.unit)
                         for name in (args.slow, args.middle, args.fast)
                     )
                 found[symbol] = sequence(
@@ -1121,6 +1183,7 @@ def main() -> None:
                     band=args.band,
                     percentile=args.percentile,
                     placebo=(arm == "placebo"),
+                    unit=args.unit,
                 )
             per_arm[arm] = found
 

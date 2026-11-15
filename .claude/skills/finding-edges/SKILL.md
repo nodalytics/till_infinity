@@ -133,6 +133,39 @@ What is *not* acceptable is deploying across a disagreement without naming it:
 a rule that pays in one regime and loses in the other, run blind, is a bet on
 the regime and not on the edge, and it should be sized as one.
 
+**The microscope, before any verdict.** A pooled mean hides its parts, and the
+operator's standing instruction is to break every result down - by instrument,
+by what triggered it, by shape, by session, by how long the setup took. Two
+things come out of this reliably: a pooled number that inverts in its subgroups
+(a level rule read -0.144 pooled, +0.335 and -0.292 on its two triggers), and a
+cut that turns out to be a property of the measurement rather than the market
+(that same split was mostly band *width*: 207 of 271 entries were "sweeps" at a
+narrow band and 10 of 963 at a wide one).
+
+**Ask what differentiates, not only whether it works.** A rule that is flat
+overall can still have a reading that separates its own outcomes. Volatility is
+the first thing everyone reaches for and is usually the wrong lens - measured
+around one level sequence, ATR *rises* into the setup and separates winners
+from losers by 0.02 of its own median. The approach (how far price travelled to
+arrive), the level's age, its distance to a round number, and where it sits in
+the range are all cheap to record and one of them confirmed out of sample where
+the rule itself did not.
+
+**What a null decides, and what it does not.** A null cannot tell you an effect
+is absent, and a result on shuffled or placebo data does not by itself veto a
+decision - the data and the movements are different, which is the operator's
+own objection and it is correct. What a null does is **attribute**: it runs the
+same detector with exactly one property removed, so whatever survives belonged
+to the selection and not to the thing. Name the property in the arm's label.
+Each branch changes what gets built:
+
+- the effect survives the shuffle -> it is the selection, so keep the selection
+  and drop the apparatus around it, which is a cheaper rule;
+- a distance-matched placebo takes most of it -> the geometry is doing the
+  work and the structure is decorative;
+- both arms go flat and the real one holds -> the structure is earning its
+  keep and is worth building properly.
+
 **Block bootstrap when the rows are not independent.** Regime labels persist for
 hours and trades cluster in days, so an ordinary standard error is far too
 narrow. Resample whole days.

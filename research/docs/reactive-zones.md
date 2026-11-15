@@ -355,6 +355,48 @@ Everything above is still one cut of about forty-five, and the split was run
    what separates "this level" from "this approach".
 4. **Per instrument**, which 328 trades over five instruments cannot yet carry.
 
+## The synthetics, and what they actually control for
+
+**Not participants - news.** The operator's correction: people trade the Deriv
+synthetics with the same tools and draw the same levels, so these feeds are not
+a control for watchedness. What they have is **no scheduled releases and no
+fundamentals**, which makes them the control for whether a structure needs news
+to exist.
+
+Six years of hourly bars, the same three-frame shape one step slower - 1d
+structure, 4h middle, 1h execution - and the same three arms. 24 bars to the
+day, because these feeds never close.
+
+| drift threshold | | < 0.50 | < 0.75 | < 1.00 | < 1.50 | < 2.00 |
+|---|---|---:|---:|---:|---:|---:|
+| **Volatility 75** | real | **+0.670** (22) | **+0.531** (28) | **+0.622** (33) | +0.284 (48) | +0.233 (61) |
+| | placebo | - | +0.219 (21) | **-0.175** (23) | -0.474 (40) | -0.628 (56) |
+| **Step** | real | - | +0.289 (21) | +0.169 (26) | -0.270 (37) | +0.071 (49) |
+| **Boom 1000** | real | - | **-0.363** (21) | **-0.589** (29) | **-0.609** (38) | -0.351 (47) |
+| | placebo | - | - | +0.614 (22) | +0.295 (30) | +0.156 (44) |
+| pooled | real | +0.155 (46) | +0.190 (70) | +0.089 (88) | -0.158 (123) | +0.007 (157) |
+| | shuffled | -0.090 (47) | +0.006 (69) | +0.035 (100) | +0.026 (151) | -0.045 (196) |
+
+**Volatility 75 replicates the majors.** +0.62 at the 1.00 threshold against
++0.46 pooled on the real markets, positive at every threshold, with its own
+**placebo negative** at the same thresholds and its shuffle flat. On a feed
+with no news at all. Whatever the approach effect is, it does not need a
+calendar.
+
+**Boom 1000 inverts it**, -0.36 to -0.61, with its placebo *positive*. That is
+the generator showing through rather than a contradiction: Boom spikes upward
+rarely and drifts down in between, so a slow approach to a level is the drift
+phase and what follows it is more drift, not a reversal. `CLAUDE.md` already
+records Boom/Crash spikes as flat across every bucket; this is the same
+asymmetry seen from the entry side.
+
+**Step Index says nothing, which is the expected answer.** Its step size is
+constant by construction, so "price travelled less than 1 ATR" barely varies
+and the selection is close to a no-op. A strong reading there would have been
+the thing to worry about.
+
+Per-cell n is 21 to 61. These are three feeds, not a sample.
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts
