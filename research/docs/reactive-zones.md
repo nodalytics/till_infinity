@@ -288,6 +288,55 @@ A round trip is **2 to 9 percent** of the drift arm's +0.456. Whatever is wrong
 with this family, the spread is not it - which is unusual here and worth saying
 plainly.
 
+### The three arms, and what each one moved
+
+The approach effect, swept on the mean, against a **placebo level** - the same
+distance the other way, with no pivot behind it - and a **day-block shuffle** -
+the same bars with their days reordered and re-based, so every wick, range and
+ATR is exactly as the market made it and only the relationship between a level
+drawn earlier and price arriving later is destroyed.
+
+| drift threshold, ATR over 12 bars | real | placebo | day-shuffled |
+|---|---:|---:|---:|
+| < 0.50 | **+0.764** (n 168) | +0.303 (162) | **-0.114** (142) |
+| < 0.75 | **+0.519** (249) | +0.311 (232) | -0.072 (230) |
+| < 1.00 | **+0.456** (328) | +0.209 (300) | +0.066 (305) |
+| < 1.50 | +0.242 (458) | +0.080 (455) | +0.082 (451) |
+| < 2.00 | +0.123 (583) | +0.083 (573) | +0.177 (575) |
+
+**The real arm is monotone in the threshold.** +0.764, +0.519, +0.456, +0.242,
++0.123: the tighter the drift, the larger the reading, with no ridge at any
+particular value. That is the grid `sweep-thresholds-on-the-mean` asks for, and
+it is the shape a z-grid fakes and a mean-grid does not.
+
+**The shuffle is flat to negative where the real arm is strongest.** At the
+0.50 threshold the real arm reads +0.764 and the shuffled arm **-0.114**. So
+this is *not* the mechanical statistics of selecting quiet windows: that
+selection is applied identically to both, and only the shuffled series has had
+the level relationship removed. The difference, +0.878, is what the level is
+worth here.
+
+**The placebo takes about 40% of it.** +0.303 against +0.764 at the tightest
+threshold, +0.209 against +0.456 at 1.00. A price the same distance away with
+no pivot behind it collects a real share of the effect - so part of what is
+being measured is the geometry of approaching *any* price slowly - and the
+pivot roughly doubles what the geometry alone gives.
+
+Per instrument, at the tightest threshold, **all five are positive**:
+
+| | AUDUSD | EURUSD | GBPUSD | GOLD | USDJPY |
+|---|---:|---:|---:|---:|---:|
+| < 0.50 | +0.109 (39) | +0.898 (44) | +0.458 (22) | +0.619 (33) | +1.803 (30) |
+| < 1.00 | -0.101 (80) | +0.820 (77) | -0.205 (44) | +0.544 (68) | +1.129 (59) |
+
+Five of five positive at 0.50 and three of five at 1.00, on 22 to 44 trades
+each. USDJPY carries more than its share at both.
+
+**This is the first thing in this study that survived its own nulls.** It is
+also still one measure, chosen after looking, on 168 trades at the threshold
+where it is strongest, with the confirmation split run at the 1.00 threshold
+(+0.308 then +0.596) rather than at 0.50.
+
 ### What would actually establish it
 
 Everything above is still one cut of about forty-five, and the split was run

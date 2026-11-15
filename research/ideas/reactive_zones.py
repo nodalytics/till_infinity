@@ -328,6 +328,47 @@ def pin_like(bars: Candles) -> tuple[np.ndarray, np.ndarray]:
     return side, kind
 
 
+def shuffled(base: Candles, seed: int) -> Candles:
+    """The same bars, their **days** reordered and re-based to join up.
+
+    **Whole days of real bars, not a generated path.**
+    `re-hung-bar-shapes-break-bar-derived-nulls` is explicit that a null built
+    by re-hanging bar shapes is invalid for anything read off a wick - and this
+    rule reads pin bars, ranges and ATR off wicks. Shuffling whole days keeps
+    every bar's own geometry exactly as the market made it and destroys only
+    the thing under test: that a level drawn on one day has anything to do with
+    price arriving at it on another.
+
+    Each day is re-based to continue from the previous day's close, so the
+    joins do not manufacture gaps the detector would read as displacement.
+    """
+    day = base.ts // 86_400_000_000_000
+    edges = np.flatnonzero(np.diff(day)) + 1
+    blocks = np.split(np.arange(base.ts.size), edges)
+    rng = np.random.default_rng(seed)
+    order = rng.permutation(len(blocks))
+
+    opens, highs, lows, closes = [], [], [], []
+    carry = float(base.close[0])
+    for index in order:
+        block = blocks[index]
+        shift = carry - float(base.open[block[0]])
+        opens.append(base.open[block] + shift)
+        highs.append(base.high[block] + shift)
+        lows.append(base.low[block] + shift)
+        closes.append(base.close[block] + shift)
+        carry = float(closes[-1][-1])
+    return Candles(
+        symbol=f"{base.symbol}~shuffled",
+        frame=base.frame,
+        ts=base.ts,
+        open=np.concatenate(opens),
+        high=np.concatenate(highs),
+        low=np.concatenate(lows),
+        close=np.concatenate(closes),
+    )
+
+
 @dataclass(slots=True)
 class Zone:
     """One Bjorgum level, with the band the preset gives it."""
@@ -364,7 +405,9 @@ def adaptive_band(bars: Candles, percentile: float, window: int = QUIET_WINDOW) 
     return out
 
 
-def zones_of(bars: Candles, band: np.ndarray, scale: float = MULT) -> list[Zone]:
+def zones_of(
+    bars: Candles, band: np.ndarray, scale: float = MULT, *, placebo: bool = False
+) -> list[Zone]:
     """Bjorgum pivots on this frame, `keep` of each side kept.
 
     The pivot is **asymmetric**: a high is a pivot when it is the highest of
@@ -383,7 +426,28 @@ def zones_of(bars: Candles, band: np.ndarray, scale: float = MULT) -> list[Zone]
             found.append(Zone(index + RIGHT, high[index] + half, high[index] - half, True))
         if low[index] == low[index - LEFT : index + RIGHT + 1].min():
             found.append(Zone(index + RIGHT, low[index] + half, low[index] - half, False))
-    return found
+    if not placebo:
+        return found
+
+    # **The placebo: the same distance, the other way, with no pivot behind
+    # it.** `a-return-rate-is-geometry` records that an origin's 82% return
+    # rate was matched by a distance-matched placebo on every class, and
+    # `the-placebo-arm-selects-the-null` that a block of 8 found structure in
+    # 27 of 36 placebo pools. Without this arm a level study measures the
+    # geometry of approaching *any* price at that distance and reports it as
+    # structure.
+    #
+    # Mirrored about the close that confirmed the pivot: a resistance 3 ATR
+    # above becomes a band 3 ATR below, which price can reach and bounce from
+    # the same way, and the role flips with it so the geometry is consistent.
+    mirrored: list[Zone] = []
+    for zone in found:
+        anchor = float(bars.close[min(zone.at, len(bars) - 1)])
+        centre = (zone.top + zone.bottom) / 2.0
+        half = (zone.top - zone.bottom) / 2.0
+        other = anchor - (centre - anchor)
+        mirrored.append(Zone(zone.at, other + half, other - half, not zone.resistance))
+    return mirrored
 
 
 def _roundness(zone: "Zone", step, unit: float) -> float:
@@ -489,6 +553,7 @@ def sequence(
     share: float = PULLBACK_SHARE,
     band: str = "fixed",
     percentile: float = 25.0,
+    placebo: bool = False,
 ) -> list[Trade]:
     """Every completed sequence on this pair of frames.
 
@@ -561,7 +626,7 @@ def sequence(
 
     widths = slow_band if band == "fixed" else adaptive_band(slow, percentile)
     scale = MULT if band == "fixed" else 1.0
-    for zone in zones_of(slow, widths, scale):
+    for zone in zones_of(slow, widths, scale, placebo=placebo):
         # The zone exists from the bar that confirms it, in fast-frame bars.
         start = (zone.at + 1) * ratio
         if start >= len(fast) - horizon:
@@ -963,6 +1028,32 @@ def report(found: dict[str, list[Trade]], horizon: int) -> None:
         )
 
 
+def drift_table(found: dict[str, list[Trade]], label: str, thresholds=(0.5, 0.75, 1.0, 1.5, 2.0)):
+    """The approach effect across thresholds, per instrument and pooled.
+
+    **Swept on the mean and not on a z.** `sweep-thresholds-on-the-mean`
+    records a z grid faking a ridge exactly at the chosen threshold where the
+    mean grid was monotone; a mean grid that is not monotone is itself the
+    finding, and here it was not.
+    """
+    rows = [row for rows_ in found.values() for row in rows_ if row.stage == "pattern"]
+    rows = [row for row in rows if np.isfinite(row.approach)]
+    if not rows:
+        print(f"  {label}: no entries")
+        return
+    print(f"  {label}: {len(rows):,} entries")
+    header = "    threshold  " + "".join(f"{t:>10.2f}" for t in thresholds)
+    print(header)
+    for feed in sorted({row.feed for row in rows}) + ["POOLED"]:
+        picked = rows if feed == "POOLED" else [row for row in rows if row.feed == feed]
+        line = f"    {feed:<10}"
+        for t in thresholds:
+            under = [row.gross for row in picked if row.approach < t]
+            line += f"  {np.mean(under):+6.3f}/{len(under):<3d}" if len(under) >= 20 else "      -/-   "
+        print(line)
+    print()
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--catalogue", default=str(CATALOGUE))
@@ -973,6 +1064,13 @@ def main() -> None:
     parser.add_argument("--fast", default="15m")
     parser.add_argument("--horizon", type=int, default=HORIZON)
     parser.add_argument("--band", default="fixed", choices=("fixed", "quantile"))
+    parser.add_argument(
+        "--arms",
+        default="real",
+        help="comma-separated: real, placebo, shuffled - the level, a "
+        "distance-matched price with no pivot behind it, and the same bars "
+        "with their days reordered",
+    )
     parser.add_argument(
         "--percentile",
         type=float,
@@ -990,8 +1088,10 @@ def main() -> None:
     where = Path(args.catalogue)
     shares = [float(part) for part in str(args.pullback).split(",") if part.strip()]
     folded = {}
+    raw: dict[str, Candles] = {}
     for symbol in (s for s in args.symbols.split(",") if s):
         base = window(load(where, symbol), args.years)
+        raw[symbol] = base
         start = datetime.fromtimestamp(base.ts[0] / 1e9, UTC).date()
         end = datetime.fromtimestamp(base.ts[-1] / 1e9, UTC).date()
         folded[symbol] = tuple(fold(base, name) for name in (args.slow, args.middle, args.fast))
@@ -1000,24 +1100,38 @@ def main() -> None:
             f"{len(folded[symbol][0]):,} {args.slow} / {len(folded[symbol][2]):,} {args.fast}"
         )
 
+    arms = [name.strip() for name in args.arms.split(",") if name.strip()]
     for share in shares:
-        found: dict[str, list[Trade]] = {}
-        for symbol, frames in folded.items():
-            found[symbol] = sequence(
-                *frames,
-                horizon=args.horizon,
-                share=share,
-                band=args.band,
-                percentile=args.percentile,
-            )
         if len(shares) > 1:
-            # **Swept on the mean, not on a z.** `sweep-thresholds-on-the-mean`
-            # records a z grid faking a ridge at the chosen threshold where the
-            # mean grid was monotone.
             print(f"\n################ pull-back share {share:.2f}")
-        report(found, args.horizon)
-        microscope(found)
-        halves(found)
+        per_arm: dict[str, dict[str, list[Trade]]] = {}
+        for arm in arms:
+            found: dict[str, list[Trade]] = {}
+            for symbol, frames in folded.items():
+                use = frames
+                if arm == "shuffled":
+                    use = tuple(
+                        fold(shuffled(raw[symbol], seed=11), name)
+                        for name in (args.slow, args.middle, args.fast)
+                    )
+                found[symbol] = sequence(
+                    *use,
+                    horizon=args.horizon,
+                    share=share,
+                    band=args.band,
+                    percentile=args.percentile,
+                    placebo=(arm == "placebo"),
+                )
+            per_arm[arm] = found
+
+        print("\n=== the approach effect, swept, per instrument, every arm\n")
+        for arm, found in per_arm.items():
+            drift_table(found, arm)
+
+        if "real" in per_arm:
+            report(per_arm["real"], args.horizon)
+            microscope(per_arm["real"])
+            halves(per_arm["real"])
 
 
 if __name__ == "__main__":
