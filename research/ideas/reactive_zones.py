@@ -338,7 +338,33 @@ class Zone:
     resistance: bool
 
 
-def zones_of(bars: Candles, band: np.ndarray) -> list[Zone]:
+def adaptive_band(bars: Candles, percentile: float, window: int = QUIET_WINDOW) -> np.ndarray:
+    """Band half-width from a **quantile of the frame's own recent ranges**.
+
+    The fixed form is `ATR(30) * 0.015`, which is a multiple of a mean - so it
+    inherits the mean's sensitivity to the few bars that made it. A quantile of
+    the trailing ranges asks a different question: how wide is a *typical* bar
+    here lately, where typical is chosen rather than averaged.
+
+    **Trailing and closed**, ending at the previous bar, for the reason
+    `quiet_mask` gives: a quantile that includes the bar being measured is a
+    comparison with itself.
+
+    Returned as the full band, to be halved by the caller exactly as the ATR
+    form is - so the two are the same quantity and the only difference is how
+    the width was chosen.
+    """
+    span = bars.span
+    out = np.full(span.size, np.nan)
+    for i in range(window, span.size):
+        past = span[i - window : i]
+        past = past[np.isfinite(past)]
+        if past.size >= window // 2:
+            out[i] = np.percentile(past, percentile)
+    return out
+
+
+def zones_of(bars: Candles, band: np.ndarray, scale: float = MULT) -> list[Zone]:
     """Bjorgum pivots on this frame, `keep` of each side kept.
 
     The pivot is **asymmetric**: a high is a pivot when it is the highest of
@@ -350,7 +376,7 @@ def zones_of(bars: Candles, band: np.ndarray) -> list[Zone]:
     low = np.minimum(bars.open, bars.close)
     found: list[Zone] = []
     for index in range(LEFT, len(bars) - RIGHT):
-        half = float(band[index]) * MULT / 2.0
+        half = float(band[index]) * scale / 2.0
         if not np.isfinite(half) or half <= 0:
             continue
         if high[index] == high[index - LEFT : index + RIGHT + 1].max():
@@ -358,6 +384,29 @@ def zones_of(bars: Candles, band: np.ndarray) -> list[Zone]:
         if low[index] == low[index - LEFT : index + RIGHT + 1].min():
             found.append(Zone(index + RIGHT, low[index] + half, low[index] - half, False))
     return found
+
+
+def _roundness(zone: "Zone", step, unit: float) -> float:
+    """Distance from the level's centre to the nearest round number, in ATR."""
+    centre = (zone.top + zone.bottom) / 2.0
+    spacing = step(centre)
+    if not np.isfinite(spacing) or spacing <= 0 or not np.isfinite(unit) or unit <= 0:
+        return float("nan")
+    nearest = round(centre / spacing) * spacing
+    return float(abs(centre - nearest) / unit)
+
+
+def _perch(frame: "Candles", zone: "Zone", at: int, look: int = 50) -> float:
+    """Where the level sits in the frame's trailing range: 0 low, 1 high."""
+    start = max(0, at - look)
+    if at <= start:
+        return float("nan")
+    low = float(frame.low[start:at].min())
+    high = float(frame.high[start:at].max())
+    if not np.isfinite(low) or high <= low:
+        return float("nan")
+    centre = (zone.top + zone.bottom) / 2.0
+    return float((centre - low) / (high - low))
 
 
 @dataclass(slots=True)
@@ -411,6 +460,23 @@ class Trade:
     depth: float = 0.0
     #: Support or resistance, which is also long or short.
     role: str = ""
+    #: Structure-frame bars from the pivot to the touch. A level's age is the
+    #: one property of it that needs no theory.
+    age: int = 0
+    #: How far price travelled to reach the level, over the 12 execution bars
+    #: before the trigger, in ATR. An arrival, not a drift.
+    approach: float = float("nan")
+    #: Distance from the level to the nearest round number, in ATR.
+    #: **The watchedness proxy.** `a-magnet-is-a-shared-reference`: liquidity
+    #: rests where many participants compute the same price, which is a claim
+    #: about agreement rather than attraction - and a round number is the one
+    #: price everybody computes identically. `magnet.md` closed attraction; it
+    #: did not close agreement.
+    roundness: float = float("nan")
+    #: Where the level sits in the structure frame's trailing 50-bar range:
+    #: 0 at the low, 1 at the high. A level at an extreme and a level in the
+    #: middle of a range are different objects.
+    perch: float = float("nan")
 
 
 def sequence(
@@ -421,6 +487,8 @@ def sequence(
     patience: int = PATIENCE,
     horizon: int = HORIZON,
     share: float = PULLBACK_SHARE,
+    band: str = "fixed",
+    percentile: float = 25.0,
 ) -> list[Trade]:
     """Every completed sequence on this pair of frames.
 
@@ -475,7 +543,25 @@ def sequence(
     mid_ratio = FRAMES[middle.frame] // step
 
     out: list[Trade] = []
-    for zone in zones_of(slow, slow_band):
+    # **The band, chosen two ways and reported as two cells.** `fixed` is the
+    # preset's `ATR(30) * 0.015`; `quantile` is the q-th percentile of the
+    # structure frame's own trailing ranges, which adapts to the instrument
+    # and to the regime without a constant anybody picked.
+    def round_step(price: float) -> float:
+        """The spacing of the round numbers a human would draw on this price.
+
+        Decided by the price's own magnitude rather than by instrument: 1.0850
+        rounds at 0.0050 and 4,100 rounds at 50. One rule, no table to go
+        stale when an instrument is added.
+        """
+        if not np.isfinite(price) or price <= 0:
+            return float("nan")
+        decade = 10.0 ** np.floor(np.log10(abs(price)))
+        return float(decade / 200.0)
+
+    widths = slow_band if band == "fixed" else adaptive_band(slow, percentile)
+    scale = MULT if band == "fixed" else 1.0
+    for zone in zones_of(slow, widths, scale):
         # The zone exists from the bar that confirms it, in fast-frame bars.
         start = (zone.at + 1) * ratio
         if start >= len(fast) - horizon:
@@ -539,6 +625,15 @@ def sequence(
                         waited=int(at - armed_at) if armed_at >= 0 else 0,
                         depth=float(1.0 - (away / best)) if best > 0 else 0.0,
                         role="resistance" if zone.resistance else "support",
+                        age=int(at // ratio - zone.at) if at // ratio > zone.at else 0,
+                        approach=(
+                            abs(float(fast.close[at]) - float(fast.close[max(0, at - 12)]))
+                            / float(fast_band[at])
+                            if np.isfinite(fast_band[at]) and fast_band[at] > 0
+                            else float("nan")
+                        ),
+                        roundness=_roundness(zone, round_step, fast_band[at]),
+                        perch=_perch(slow, zone, min(at // ratio, len(slow) - 1)),
                     )
                 )
 
@@ -697,10 +792,80 @@ def microscope(found: dict[str, list[Trade]]) -> None:
     )
     cut(
         rows,
+        "level age, structure bars",
+        lambda t: "new <5" if t.age < 5 else ("5-20" if t.age < 20 else "old 20+"),
+    )
+    cut(
+        rows,
+        "how hard price arrived (ATR over 12 bars)",
+        lambda t: "unknown"
+        if not np.isfinite(t.approach)
+        else ("drift <1" if t.approach < 1 else ("1-2" if t.approach < 2 else "hard 2+")),
+    )
+    cut(
+        rows,
+        "distance to a round number (ATR)",
+        lambda t: "unknown"
+        if not np.isfinite(t.roundness)
+        else ("on it <0.1" if t.roundness < 0.1 else ("0.1-0.4" if t.roundness < 0.4 else "away 0.4+")),
+    )
+    cut(
+        rows,
+        "where it perches in the range",
+        lambda t: "unknown"
+        if not np.isfinite(t.perch)
+        else ("low <0.25" if t.perch < 0.25 else ("middle" if t.perch < 0.75 else "high >0.75")),
+    )
+    cut(
+        rows,
         "how deep the pull-back went",
         lambda t: "shallow <0.4" if t.depth < 0.4 else ("0.4-0.7" if t.depth < 0.7 else "deep >0.7"),
     )
     print()
+
+
+def halves(found: dict[str, list[Trade]]) -> None:
+    """The two candidates, found on the first half and confirmed on the second.
+
+    **A tail picked out of many cells looks good by chance**, and the two cuts
+    below were picked out of about thirty-five. Fixing the date and asking the
+    other half is the cheapest thing that can embarrass them.
+
+    A disagreement is reported as information, not as a verdict: the operator's
+    standing instruction is that findings may be regime-specific, so the
+    question a split raises is "which half are we in now, and is there anything
+    observable that says so" rather than "is this real".
+    """
+    rows = [row for rows_ in found.values() for row in rows_ if row.stage == "pattern"]
+    if len(rows) < 40:
+        print("too few pattern entries to split\n")
+        return
+    rows.sort(key=lambda t: t.day)
+    middle = rows[len(rows) // 2].day
+    first = [row for row in rows if row.day < middle]
+    second = [row for row in rows if row.day >= middle]
+    print("=== discovery and confirmation, split at the median trading day\n")
+    for label, pick in (
+        ("armed by a hold", lambda t: t.trigger == "bounce"),
+        ("armed by a sweep", lambda t: t.trigger == "sweep"),
+        ("waited 0-3 bars", lambda t: t.waited <= 3),
+        ("waited 4-11 bars", lambda t: 4 <= t.waited <= 11),
+        ("waited 12+ bars", lambda t: t.waited >= 12),
+        ("arrived on a drift", lambda t: np.isfinite(t.approach) and t.approach < 1.0),
+        ("arrived hard 2+", lambda t: np.isfinite(t.approach) and t.approach >= 2.0),
+        ("on a round number", lambda t: np.isfinite(t.roundness) and t.roundness < 0.1),
+        ("fresh level <5", lambda t: t.age < 5),
+    ):
+        line = f"  {label:<18}"
+        for half in (first, second):
+            picked = [row for row in half if pick(row)]
+            if len(picked) < 10:
+                line += f"  n {len(picked):>3} (thin)      "
+                continue
+            mean = float(np.mean([row.gross for row in picked]))
+            line += f"  n {len(picked):>3}  {mean:+7.4f} +/- {block_error(picked):.3f}"
+        print(line)
+    print(f"\n  first half {len(first)} entries, second half {len(second)}\n")
 
 
 def report(found: dict[str, list[Trade]], horizon: int) -> None:
@@ -807,6 +972,13 @@ def main() -> None:
     parser.add_argument("--middle", default="1h")
     parser.add_argument("--fast", default="15m")
     parser.add_argument("--horizon", type=int, default=HORIZON)
+    parser.add_argument("--band", default="fixed", choices=("fixed", "quantile"))
+    parser.add_argument(
+        "--percentile",
+        type=float,
+        default=25.0,
+        help="percentile of the structure frame's trailing ranges, for --band quantile",
+    )
     parser.add_argument(
         "--pullback",
         default=str(PULLBACK_SHARE),
@@ -831,7 +1003,13 @@ def main() -> None:
     for share in shares:
         found: dict[str, list[Trade]] = {}
         for symbol, frames in folded.items():
-            found[symbol] = sequence(*frames, horizon=args.horizon, share=share)
+            found[symbol] = sequence(
+                *frames,
+                horizon=args.horizon,
+                share=share,
+                band=args.band,
+                percentile=args.percentile,
+            )
         if len(shares) > 1:
             # **Swept on the mean, not on a z.** `sweep-thresholds-on-the-mean`
             # records a z grid faking a ridge at the chosen threshold where the
@@ -839,6 +1017,7 @@ def main() -> None:
             print(f"\n################ pull-back share {share:.2f}")
         report(found, args.horizon)
         microscope(found)
+        halves(found)
 
 
 if __name__ == "__main__":

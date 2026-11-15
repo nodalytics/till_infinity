@@ -211,6 +211,101 @@ split are the two **hypotheses worth a dedicated run**, with their own
 discovery/confirmation split and their own nulls, and that nothing here is a
 result yet.
 
+## The adaptive band is a better instrument, and it reads zero
+
+Replacing the preset's `ATR(30) * 0.015` with the **25th percentile of the
+structure frame's own trailing ranges** - a width chosen by quantile rather
+than by a constant - takes the sample from 271 pattern entries to **963**, and
+with it the pooled reading to:
+
+    +0.0045 +/- 0.1376
+
+That is zero, measured with enough n to say so rather than enough to shrug.
+Every stage agrees: +0.032 at the bounce (n 1,227), +0.055 at the pull-back,
++0.004 at the pattern.
+
+**And it exposes the hold-versus-sweep split as a property of the band.** At
+the narrow fixed band, 207 of 271 entries were "sweeps"; at the adaptive band,
+**10 of 963**. A wick only goes beyond a band that is narrow enough to be
+jumped, so the trigger classification was measuring the width, not the market.
+The +0.335 against -0.292 from the fixed run should be read as a statement
+about 0.015 ATR, not about liquidity grabs.
+
+## Four differentiators, and one of them confirms
+
+Asked of 963 entries: what about a level, other than volatility, separates one
+that pays from one that does not?
+
+| cut | bucket | n | gross |
+|---|---|---:|---:|
+| **how hard price arrived**, ATR travelled over the 12 bars before the trigger | **drift < 1** | 328 | **+0.456** ± 0.182 |
+| | 1 - 2 | 255 | -0.306 ± 0.257 |
+| | hard 2+ | 380 | -0.177 ± 0.233 |
+| distance to a round number | on it < 0.1 ATR | 118 | **-0.420** ± 0.317 |
+| | 0.1 - 0.4 | 298 | +0.191 ± 0.222 |
+| | away 0.4+ | 547 | -0.006 ± 0.196 |
+| level age, structure bars | new < 5 | 478 | +0.144 ± 0.167 |
+| | 5 - 20 | 275 | -0.194 ± 0.307 |
+| | old 20+ | 210 | -0.052 ± 0.282 |
+| where it perches in the range | low / middle / high | 317/216/430 | +0.087 / -0.145 / +0.019 |
+
+**Approach speed is not volatility.** ATR rises into every one of these setups;
+*displacement* into the level is a different quantity, and a market can be loud
+and go nowhere. What this says is that a level reached by **drifting** pays and
+a level reached by a **thrust** does not.
+
+### The confirmation split, which killed the previous two candidates
+
+Split at the median trading day, five cuts:
+
+| cut | first half | second half |
+|---|---:|---:|
+| **arrived on a drift** | **+0.308** ± 0.266 (n 159) | **+0.596** ± 0.249 (n 169) |
+| arrived hard 2+ | -0.236 ± 0.245 | -0.110 ± 0.448 |
+| **on a round number** | **-0.363** ± 0.298 | **-0.465** ± 0.498 |
+| fresh level < 5 | +0.323 ± 0.232 | **-0.061** ± 0.258 |
+| waited 12+ bars | -0.003 ± 0.245 | **-0.200** ± 0.400 |
+| armed by a hold | -0.011 ± 0.152 | +0.046 ± 0.221 |
+
+**The drift arm is positive in both halves and stronger in the second**, with
+its complement negative in both. Round numbers are negative in both halves -
+which is a watchedness reading with the **opposite sign to the naive prior**:
+`magnet.md` closed attraction, and this says the prices everybody computes are
+where this rule does worst.
+
+The two candidates from the fixed-band run - the hold trigger and the wait-time
+gradient - do not confirm. That is what the split is for.
+
+### It is not a cost problem
+
+The catalogue's own median spread, in ATR of the execution frame:
+
+| | EURUSD | GBPUSD | GOLD | USDJPY | AUDUSD |
+|---|---:|---:|---:|---:|---:|
+| spread / ATR(15m) | 0.032 | 0.040 | 0.011 | 0.029 | 0.041 |
+
+A round trip is **2 to 9 percent** of the drift arm's +0.456. Whatever is wrong
+with this family, the spread is not it - which is unusual here and worth saying
+plainly.
+
+### What would actually establish it
+
+Everything above is still one cut of about forty-five, and the split was run
+*after* the cut was chosen. The standing method asks for more than that:
+
+1. **Pre-register the drift threshold and sweep it on the mean**, not on a z -
+   `sweep-thresholds-on-the-mean` records a z grid faking a ridge at the chosen
+   threshold where the mean grid was monotone. Here the buckets are not
+   monotone (drift +0.46, middle -0.31, hard -0.18), which is the first thing
+   to explain.
+2. **Null it against the same detector on a walk**, with the same bar geometry
+   and the same approach measure. A slow arrival is a low-displacement window,
+   and low-displacement windows have their own forward statistics on any
+   series.
+3. **A placebo level** at the same distance with no pivot behind it, which is
+   what separates "this level" from "this approach".
+4. **Per instrument**, which 328 trades over five instruments cannot yet carry.
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts
