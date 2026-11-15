@@ -525,6 +525,56 @@ Anything else - a positive pooled mean carried by one instrument, or a sweep
 that peaks in the middle - is a failure to confirm, and will be written here as
 one.
 
+### The result: it does not confirm
+
+**2,675 entries over the six held-out years, against 963 in discovery.** Three
+of the four predictions fail, and the fourth passes only trivially.
+
+| threshold | real, pooled | shuffled, pooled |
+|---|---:|---:|
+| < 0.50 | **-0.405** (476) | -0.108 (447) |
+| < 0.75 | **-0.220** (719) | -0.039 (697) |
+| < 1.00 | **-0.115** (958) | -0.042 (867) |
+| < 1.50 | -0.210 (1,366) | -0.037 (1,269) |
+| < 2.00 | -0.197 (1,711) | +0.017 (1,601) |
+
+| prediction | outcome |
+|---|---|
+| 1. pooled mean at 1.00 is positive | **-0.115. Failed.** |
+| 2. the shuffle is not positive | -0.042. Passes, but both arms are negative, so it carries no information |
+| 3. more than three of five instruments positive | **two of five - GOLD +0.045, USDJPY +0.137. Failed.** |
+| 4. the sweep stays monotone | **-0.405, -0.220, -0.115, -0.210, -0.197. Failed,** and the tightest threshold is now the *worst* where it was the best |
+
+Per instrument at 1.00, held out against discovery:
+
+| | held out | discovery |
+|---|---:|---:|
+| EURUSD | **-0.680** (177) | +0.820 (77) |
+| USDJPY | +0.137 (217) | +1.129 (59) |
+| GOLD | +0.045 (190) | +0.544 (68) |
+| GBPUSD | -0.051 (189) | -0.205 (44) |
+| AUDUSD | -0.102 (185) | -0.101 (80) |
+
+**EURUSD, which carried the discovery result at +0.820, reads -0.680 on three
+times the sample.** The sign of the sweep inverts: in discovery the tighter the
+drift the better, out of sample the tighter the drift the worse.
+
+### So the approach effect is closed
+
+It had a monotone sweep, a flat shuffle, a placebo worth 40%, a confirmation
+split that held, a denominator that was not the cause, and a spread at 2 to 9%
+of its size. Every one of those was computed on the window it was found in.
+Given six years it had never seen, it reversed.
+
+That is the whole lesson of the section above it, arriving on schedule: **nine
+cuts of three to six buckets on 271 trades is about thirty-five cells**, and
+the best of them was EURUSD. The split that "held" was a split of the same
+discovery window, which is why `finding-edges` asks for a fixed date and
+untouched data rather than two halves of what you already looked at.
+
+The synthetic family said the same thing a different way an hour earlier, and
+was right.
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts
