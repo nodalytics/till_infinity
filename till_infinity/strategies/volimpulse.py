@@ -608,12 +608,9 @@ class VolImpulse(WarmFromHistory):
         #: states and a trade count of zero does not tell them apart.
         self.warmed: dict[str, int] = {"bars": 0, "fired": 0}
         super().on_start()
-        inert = feed not in self.profile.feeds or HAR.get(feed) is None
+        inert = bool(self.inert_reason())
         if inert:
-            self.log.warning(
-                f"{self.profile.description} has no frozen HAR for {feed}; this desk "
-                f"can never fire. Modelled: {sorted(self.profile.feeds)}"
-            )
+            self.log.warning(f"{self.inert_reason()}; this desk can never fire")
         if not str(self._cfg.bar_type.spec).startswith("15-MINUTE"):
             # Said out loud rather than refused: a sweep may deliberately run
             # the rule on another clock, and a deploy that did so by accident
@@ -629,6 +626,20 @@ class VolImpulse(WarmFromHistory):
         # split and the one-bar-per-call delivery shape. This was the third
         # copy of the same forty lines; it checks `warm_bars_request` itself.
         self.start_warming()
+
+    def inert_reason(self) -> str:
+        """A frozen HAR, or nothing to forecast with. See `Desk.inert_reason`.
+
+        30 of 40 desks on the live node on 2026-11-15: the HAR is fitted per
+        feed and most feeds have none.
+        """
+        feed = self._feed_name()
+        if feed in self.profile.feeds and HAR.get(feed) is not None:
+            return ""
+        return (
+            f"{self.profile.description} has no frozen HAR for {feed}; "
+            f"modelled: {sorted(self.profile.feeds)}"
+        )
 
     def _bar_seconds(self) -> float:
         """This bar type's interval in seconds. `warming.bar_seconds`.
