@@ -858,6 +858,64 @@ negative at the same thresholds. That is a verdict on the rule, not on the
 instrument. No rule measured in this document has an edge on V75; no
 measurement here says one cannot.
 
+## Six kinds of level, ordered by how many people compute the price
+
+The retail lens asked where stops rest and the hazard said nowhere, on
+Bjorgum pivots. But retail does not draw Bjorgum pivots. So: the same
+measurement on six level kinds, band width held identical across all of them
+so the comparison is about *which price* and never about how wide a zone is.
+
+| kind | who computes it | excursions | came back | hazard at 0.50 ATR, real / shuffled |
+|---|---|---:|---:|---|
+| `bjorgum` | whoever runs that script | 34,199 | 96.4% | 14.2 / 13.4 |
+| `swing` | the obvious line on any chart | 32,247 | 96.2% | 13.8 / 13.6 |
+| `prior_day` | the platform draws it | 37,995 | 96.5% | 14.2 / 13.3 |
+| `round` | everyone who looks | 2,881 | **70.7%** | 10.4 / 8.8 |
+| `bollinger` | every default chart | 76,190 | **100%** | 21.9 / 21.4 |
+| `twap` | every default chart | 104,190 | **100%** | 18.4 / 18.4 |
+
+**The three static levels are their own shuffles, within 0.9 points of
+hazard at every distance.** That spans the entire ladder from a price almost
+nobody computes to one the platform draws unbidden, which is the comparison
+`a-magnet-is-a-shared-reference` proposes - and it does not separate.
+
+### The two readings that are not what they look like
+
+**`round` returns 70.7% where every other static kind returns 96%**, and that
+is geometry rather than a property of round numbers. A pivot and a prior-day
+extreme sit near recent price by construction; a round-number grid has members
+everywhere, including far above and below, and an excursion past a distant one
+simply keeps going. `a-return-rate-is-geometry` is the same finding from the
+other side, and it is why the 96% figure should never have been read as "price
+comes back to levels".
+
+**`bollinger` and `twap` return 100% of the time by construction.** Their
+boundary follows price, so it is always re-crossed - these are not levels in
+the sense the other four are, and their higher hazards (18-24% against 8-14%)
+say only that price re-crosses its own moving average constantly. Bollinger's
+real-against-shuffled gap of +1.4 and +1.5 at the far distances, on 76,190
+excursions, is the one number here that would repay a second look - but the
+quantity is "how far price gets from its own mean", which is the trailing
+z-score family, and `trailing-zscores-fake-reversion` records a shuffled twin
+taking +0.111 of a +0.137 effect there. One shuffle draw cannot separate
+those; several would be needed, and that is the follow-up rather than a
+finding.
+
+### So the levels study closes
+
+Across this document a level has now been asked six questions - does trading
+it pay, does an excursion past it end anywhere special, does it matter who
+computes it, does it matter how the approach looked, does a pattern at it
+help, do the frames agree - and the answer to each is no, with the control
+matching the real arm every time. Taken with `magnet.md` on attraction,
+`level-shield.md` on blocking and `gap-levels.md` on grading, the geometry of
+levels is measured out on this data.
+
+What is **not** closed is what a level *is for*: `levels.py` and the zones
+rule use them to nominate prices, and nominating is not predicting. A rule
+that uses a level to decide *where* to act, having decided *whether* on other
+grounds, is untouched by any of this.
+
 ## What this does not settle
 
 * **Costs.** Gross by instruction. `a-shorter-clock-multiplies-cost-in-r` puts

@@ -115,6 +115,11 @@ PULLBACK_SHARE = 0.33
 #: Bars the outcome is measured over, on the execution frame.
 HORIZON = 16
 
+#: Most levels of one kind to scan per instrument. `round` generates one per
+#: step across the whole price range and `prior_day` two per day, which is
+#: thousands of scans of 3,200 bars each in Python for no extra information.
+MAX_ZONES = 600
+
 #: TSI, Bjorgum's slow speed. The fast pair is 13/7.
 TSI_LONG, TSI_SHORT = 25, 13
 
@@ -1165,6 +1170,11 @@ def main() -> None:
         help="measure where excursions beyond a level end, instead of trading it",
     )
     parser.add_argument(
+        "--kinds",
+        default="bjorgum,swing,prior_day,round,bollinger,twap",
+        help="which level kinds to compare",
+    )
+    parser.add_argument(
         "--arms",
         default="real",
         help="comma-separated: real, placebo, shuffled - the level, a "
@@ -1212,18 +1222,29 @@ def main() -> None:
         )
 
     if args.overshoot:
-        print("\n=== how far beyond a level an excursion gets before it turns\n")
-        for arm in ("real", "shuffled"):
-            rows: list[tuple] = []
-            for symbol, frames in folded.items():
-                use = frames
-                if arm == "shuffled":
-                    use = tuple(
-                        fold(shuffled(raw[symbol], seed=11), name, args.unit)
-                        for name in (args.slow, args.middle, args.fast)
-                    )
-                rows += overshoots(use[0], use[2], args.band, args.percentile, args.unit)
-            hazard(rows, arm)
+        print("\n=== how far beyond a level an excursion gets before it turns")
+        print("    ordered by how many people compute that price identically\n")
+        for kind in args.kinds.split(","):
+            kind = kind.strip()
+            if not kind:
+                continue
+            print(f"-- {kind}")
+            for arm in ("real", "shuffled"):
+                rows: list[tuple] = []
+                for symbol, frames in folded.items():
+                    use = frames
+                    if arm == "shuffled":
+                        use = tuple(
+                            fold(shuffled(raw[symbol], seed=11), name, args.unit)
+                            for name in (args.slow, args.middle, args.fast)
+                        )
+                    if kind in ("bollinger", "twap"):
+                        rows += moving_overshoots(use[2], kind)
+                    else:
+                        rows += overshoots(
+                            use[0], use[2], args.band, args.percentile, args.unit, kind
+                        )
+                hazard(rows, arm)
             print()
         return
 
@@ -1267,7 +1288,85 @@ def main() -> None:
 # --- the retail lens: where do stops rest? -----------------------------------
 
 
-def overshoots(slow: Candles, fast: Candles, band: str, percentile: float, unit: str) -> list[tuple]:
+def levels_of(kind: str, slow: Candles, fast: Candles, widths: np.ndarray, scale: float, ratio: int) -> list[Zone]:
+    """Levels of one kind, as zones on the execution frame's index.
+
+    **The point of the list is that the kinds differ in who computes them.**
+    `magnet.md` closed attraction and `level-shield.md` closed blocking, but
+    neither tested *agreement* - and a level is only a shared reference if many
+    participants arrive at the same price independently. These are ordered by
+    how many do:
+
+    * `bjorgum` - a 15/5 pivot on body extremes with a quantile band. Whoever
+      runs that script, which is approximately nobody.
+    * `swing` - the raw high and low of the same pivot. The obvious line on any
+      chart, drawn by many.
+    * `prior_day` - yesterday's high and low. Drawn by very many, and the
+      platform marks them.
+    * `round` - the round number. Computed identically by everyone who looks,
+      which is the maximum this data can express.
+
+    Band width is the same for all of them, so the comparison is about *which
+    price* and never about how wide a zone is - the hold-versus-sweep split
+    earlier in this work turned out to be width and nothing else.
+    """
+    if kind in ("bjorgum", "swing"):
+        high = np.maximum(slow.open, slow.close) if kind == "bjorgum" else slow.high
+        low = np.minimum(slow.open, slow.close) if kind == "bjorgum" else slow.low
+        found: list[Zone] = []
+        for index in range(LEFT, len(slow) - RIGHT):
+            half = float(widths[index]) * scale / 2.0
+            if not np.isfinite(half) or half <= 0:
+                continue
+            if high[index] == high[index - LEFT : index + RIGHT + 1].max():
+                found.append(Zone(index + RIGHT, high[index] + half, high[index] - half, True))
+            if low[index] == low[index - LEFT : index + RIGHT + 1].min():
+                found.append(Zone(index + RIGHT, low[index] + half, low[index] - half, False))
+        return found
+
+    if kind == "prior_day":
+        day = fast.ts // 86_400_000_000_000
+        edges = np.flatnonzero(np.diff(day)) + 1
+        found = []
+        for start, stop in zip(np.concatenate(([0], edges)), edges, strict=False):
+            half = float(widths[min(stop // ratio, widths.size - 1)]) * scale / 2.0
+            if not np.isfinite(half) or half <= 0:
+                continue
+            top = float(fast.high[start:stop].max())
+            bottom = float(fast.low[start:stop].min())
+            # Dated to the first bar of the *next* day, which is when it exists.
+            found.append(Zone(stop // ratio, top + half, top - half, True))
+            found.append(Zone(stop // ratio, bottom + half, bottom - half, False))
+        return found
+
+    if kind == "round":
+        price = float(np.median(fast.close))
+        decade = 10.0 ** np.floor(np.log10(abs(price)))
+        step = float(decade / 200.0)
+        lo, hi = float(fast.low.min()), float(fast.high.max())
+        half = float(np.nanmedian(widths)) * scale / 2.0
+        found = []
+        level = np.ceil(lo / step) * step
+        while level <= hi and len(found) < 4000:
+            # A round number is both support and resistance depending on where
+            # price is, so it is entered twice and the detector takes whichever
+            # side price approaches from.
+            found.append(Zone(LEFT + RIGHT, level + half, level - half, True))
+            found.append(Zone(LEFT + RIGHT, level + half, level - half, False))
+            level += step
+        return found
+
+    raise ValueError(f"{kind!r} is not a level kind")
+
+
+def overshoots(
+    slow: Candles,
+    fast: Candles,
+    band: str,
+    percentile: float,
+    unit: str,
+    kind: str = "bjorgum",
+) -> list[tuple]:
     """Every excursion beyond a level, and how far it got before coming back.
 
     **The only trace stop clustering leaves in bars.** There is no DOM here and
@@ -1287,8 +1386,17 @@ def overshoots(slow: Candles, fast: Candles, band: str, percentile: float, unit:
     table = RATIOS[unit]
     ratio = table[slow.frame] // table[fast.frame]
 
+    found = levels_of(kind, slow, fast, widths, scale, ratio)
+    if len(found) > MAX_ZONES:
+        # **Sampled, evenly across the series, not truncated.** The hazard
+        # needs excursions and not every level: `bjorgum` alone produced
+        # 73,871 of them. Taking the first N would weight the earliest years,
+        # which on gold is a different volatility regime entirely - its ATR
+        # has risen 2.35x across this window.
+        step = len(found) / MAX_ZONES
+        found = [found[int(i * step)] for i in range(MAX_ZONES)]
     out: list[tuple] = []
-    for zone in zones_of(slow, widths, scale):
+    for zone in found:
         start = (zone.at + 1) * ratio
         if start >= len(fast) - 2:
             continue
@@ -1313,6 +1421,74 @@ def overshoots(slow: Candles, fast: Candles, band: str, percentile: float, unit:
         if not inside and reach > 0:
             # Still out at the end of the window: it never came back.
             out.append((fast.symbol, reach, False))
+    return out
+
+
+def moving_level(bars: Candles, kind: str) -> tuple[np.ndarray, np.ndarray]:
+    """Upper and lower boundaries for a level that moves every bar.
+
+    **These are the lines on a default chart**, which is the whole reason they
+    are in this comparison: a Bjorgum pivot is computed by whoever runs that
+    script, and `BB(20, 2)` is computed identically by everyone who opens a
+    platform. If watchedness is the live reformulation of a magnet, this end of
+    the ladder is where it should show.
+
+    `twap` is a session-anchored **mean price, not a VWAP**. This venue reports
+    `real_volume` as zero and its `tick_volume` is a quote count, so a true
+    volume weighting is not available at all - stating that rather than
+    weighting by a quote count and calling it VWAP, which would be a different
+    quantity wearing a familiar name.
+    """
+    if kind == "bollinger":
+        window = 20
+        mean = np.full(bars.close.size, np.nan)
+        sd = np.full(bars.close.size, np.nan)
+        for i in range(window, bars.close.size):
+            past = bars.close[i - window : i]
+            mean[i] = past.mean()
+            sd[i] = past.std(ddof=0)
+        return mean + 2.0 * sd, mean - 2.0 * sd
+    if kind == "twap":
+        day = bars.ts // 86_400_000_000_000
+        out = np.full(bars.close.size, np.nan)
+        start = 0
+        for i in range(1, bars.close.size):
+            if day[i] != day[i - 1]:
+                start = i
+            out[i] = bars.close[start : i + 1].mean()
+        # A single line, so the "band" is the line itself: price is either side.
+        return out, out
+    raise ValueError(f"{kind!r} is not a moving level")
+
+
+def moving_overshoots(bars: Candles, kind: str) -> list[tuple]:
+    """The same hazard as `overshoots`, on a boundary that moves each bar.
+
+    One excursion is a run of bars closed beyond the boundary; its reach is the
+    furthest the bar extremes got, in ATR, and it `returned` if a later close
+    came back inside. The boundary is re-read every bar, which is the whole
+    difference from the static case.
+    """
+    upper, lower = moving_level(bars, kind)
+    band = atr(bars)
+    out: list[tuple] = []
+    for side, edge in ((+1, upper), (-1, lower)):
+        inside, reach = True, 0.0
+        for i in range(bars.close.size):
+            unit = float(band[i])
+            if not np.isfinite(unit) or unit <= 0 or not np.isfinite(edge[i]):
+                continue
+            beyond = (float(bars.close[i]) - float(edge[i])) * side
+            extreme = (float(bars.high[i] if side > 0 else bars.low[i]) - float(edge[i])) * side
+            if beyond > 0:
+                inside = False
+                reach = max(reach, extreme / unit)
+                continue
+            if not inside and reach > 0:
+                out.append((bars.symbol, reach, True))
+                inside, reach = True, 0.0
+        if not inside and reach > 0:
+            out.append((bars.symbol, reach, False))
     return out
 
 
