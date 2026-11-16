@@ -107,6 +107,27 @@ class Candles:
 # --- loading -----------------------------------------------------------------
 
 
+def _prices(raw: list[bytes]) -> np.ndarray:
+    """Nautilus's 128-bit fixed-point price column, as floats.
+
+    **Both words, and the low one unsigned.** This read the low `int64` alone,
+    which is correct only while the value fits in a *signed* 64-bit integer -
+    that is, below `2**63 / 1e16 = 922.3`. EURUSD, GBPUSD and AUDUSD are under
+    one and USDJPY is about 150, so the error was invisible on four of five
+    instruments; gold at 1,313 wrapped to **-531.28**, and every gold figure
+    taken through this loader was computed on negative prices.
+
+    Found by a mean that was too good: a sequence rule read `+2.92` units a
+    trade on gold against `-0.15` to `-0.85` on everything else, and its top
+    two trades were `+204` and `+129` units. A number that size is a defect
+    before it is an edge.
+    """
+    pair = np.frombuffer(b"".join(raw), dtype=np.int64).reshape(-1, 2)
+    low = pair[:, 0].view(np.uint64).astype(np.float64)
+    high = pair[:, 1].astype(np.float64)
+    return (low + high * 2.0**64) / PRICE_SCALE
+
+
 def load(where: Path, symbol: str) -> Candles:
     """5-minute bars for one symbol, straight out of the parquet."""
     import pyarrow.parquet as pq
@@ -119,10 +140,7 @@ def load(where: Path, symbol: str) -> Candles:
     for path in files:
         table = pq.read_table(path)
         for name in ("open", "high", "low", "close"):
-            raw = np.frombuffer(
-                b"".join(table.column(name).to_pylist()), dtype=np.int64
-            ).reshape(-1, 2)[:, 0]
-            columns[name].append(raw.astype(np.float64) / PRICE_SCALE)
+            columns[name].append(_prices(table.column(name).to_pylist()))
         columns["ts"].append(np.asarray(table.column("ts_event").to_pylist(), dtype=np.int64))
     joined = {k: np.concatenate(v) for k, v in columns.items()}
     order = np.argsort(joined["ts"], kind="stable")
