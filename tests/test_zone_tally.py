@@ -12,6 +12,7 @@ records the cost: on 2026-11-07 all 32 feeds had zero confirmed swings after
 
 from __future__ import annotations
 
+import os
 from types import SimpleNamespace
 
 from till_infinity.strategies.zones import Zones
@@ -116,3 +117,94 @@ def test_foreign_and_repeated_history_are_reported_only_when_they_happen():
     )
     assert "foreign=208" in noisy
     assert "repeat=416" in noisy
+
+
+# ------------------------------------------------- the operator's configuration
+
+
+def _tuning(monkeypatch, **env):
+    from till_infinity.strategies import zones
+
+    for key in list(os.environ):
+        if key.startswith("TRADING_ZONE_"):
+            monkeypatch.delenv(key, raising=False)
+    for key, value in env.items():
+        monkeypatch.setenv(key, value)
+    return zones.Tuning.read()
+
+
+def test_the_desk_preset_carries_every_setting_it_was_given(monkeypatch):
+    """**A named configuration, so a result can be quoted against it.**
+
+    `script` is the published indicator's defaults and `measured` is what
+    `bjorgum.md` was run on; mixing them gives numbers belonging to neither,
+    which is how a figure ends up quoted for a configuration it was never run
+    on. This is the third, asked for on 2026-11-15, and it is asserted here
+    rather than left to a sweep's flags.
+    """
+    from till_infinity.indicators.levels import PivotSource
+
+    built = _tuning(monkeypatch, TRADING_ZONE_PRESET="desk").build()
+
+    assert built.left == 15
+    assert built.right == 5
+    assert built.atr_len == 30
+    assert built.keep == 1
+    assert float(built.mult.shared) == 0.015
+    assert built.pivots is PivotSource.HIGH_LOW_BODY
+
+
+def test_an_explicit_pivot_source_beats_the_preset_and_the_default(monkeypatch):
+    """**`pivots` cannot say "unset" the way the integers can.**
+
+    The other knobs use `0` for "keep the preset's own value". A pivot source
+    has no such value, so without `pivots_named` the preset would either
+    override an operator who asked for Heikin-Ashi or be overridden by the
+    module default they never set - and both of those are silent.
+    """
+    from till_infinity.indicators.levels import PivotSource
+
+    asked = _tuning(monkeypatch, TRADING_ZONE_PRESET="desk", TRADING_ZONE_PIVOTS="ha").build()
+    assert asked.pivots is PivotSource.HA, "the operator's choice was overridden"
+
+    silent = _tuning(monkeypatch, TRADING_ZONE_PRESET="desk").build()
+    assert silent.pivots is PivotSource.HIGH_LOW_BODY, "the preset's choice was overridden"
+
+
+def test_a_knob_still_beats_the_preset(monkeypatch):
+    """A sweep varies one parameter and leaves the rest where the preset put
+    them - which is the property that makes a preset worth naming."""
+    built = _tuning(monkeypatch, TRADING_ZONE_PRESET="desk", TRADING_ZONE_KEEP="4").build()
+
+    assert built.keep == 4
+    assert built.left == 15, "varying one knob moved another"
+
+
+def test_every_detection_at_once_needs_the_readings_to_agree():
+    """**`all` is not the union of the four, because two of them disagree.**
+
+    The script draws all four and the checkbox list reads as a union. As a
+    trade rule it is not one: `reject` is a *reversal* and `break`, `retest`
+    and `flip` are *continuations*, so a bar can carry two readings pointing
+    opposite ways. Taking the first in list order would be inventing the sign
+    the family is supposed to assert, so a disagreement is no signal.
+    """
+    from till_infinity.strategies.crossing import side_of
+
+    class _Zone:
+        at = 1
+        top = 110.0
+        bottom = 100.0
+        resistance = True
+        flipped = True
+
+    zone = _Zone()
+    # Left the zone downward: `reject` says sell. The role has just changed,
+    # so `flip` says buy. They disagree, so the zone says nothing.
+    assert side_of(zone, "reject", was=True, now=False, close=99.0, seen=False) == -1
+    assert side_of(zone, "flip", was=True, now=False, close=99.0, seen=False) == +1
+    assert side_of(zone, "all", was=True, now=False, close=99.0, seen=False) == 0
+
+    # Closed through from outside and the flip is already reported: only
+    # `break` fires, and `all` is that one reading.
+    assert side_of(zone, "all", was=False, now=False, close=120.0, seen=True) == +1

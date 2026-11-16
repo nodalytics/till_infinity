@@ -40,6 +40,13 @@ from typing import Any, Protocol
 #:   whatever broke it.
 MODES: tuple[str, ...] = ("reject", "break", "retest", "flip")
 
+#: Every reading at once, which is what the script's detection checkboxes are:
+#: it draws all four. As a *trade* rule it is not their union - `reject` is a
+#: reversal and the other three are continuations - so `side_of` takes the side
+#: only when the ones that fired agree. Named apart from `MODES` because it is
+#: a policy over them rather than a fifth reading.
+EVERY = "all"
+
 #: The two that need a zone to remember having been broken. A nominator whose
 #: zones carry no break history can offer `reject` and `break` - which are
 #: already exact opposites, so both signs are on the table - and must refuse
@@ -106,7 +113,25 @@ def side_of(zone: Any, mode: str, *, was: bool, now: bool, close: float, seen: b
         # The bar the role changes on. Read against `seen`, because a role
         # change is an **edge** and `flipped` is a state that stays true.
         return 0 if (not zone.flipped or seen) else with_role
+    if mode == "all":
+        # **Every reading at once, and a disagreement is not a signal.**
+        #
+        # The script draws all four and the operator asked for all four. As a
+        # trade rule that is not a union, because `reject` is a *reversal* and
+        # `break`, `retest` and `flip` are *continuations* - two of them can
+        # fire on one bar pointing opposite ways, and picking by list order
+        # would be inventing the sign the family is supposed to assert.
+        #
+        # So: the sides that fired must agree. They disagree rarely, and when
+        # they do the honest answer is that this zone says nothing on this
+        # bar. `0` is what a caller already handles.
+        sides = {
+            side_of(zone, name, was=was, now=now, close=close, seen=seen)
+            for name in ("reject", "break", "retest", "flip")
+        }
+        sides.discard(0)
+        return sides.pop() if len(sides) == 1 else 0
     raise ValueError(f"{mode!r} is in MODES and has no branch here")
 
 
-__all__ = ["MODES", "NEEDS_HISTORY", "Zone", "side_of"]
+__all__ = ["EVERY", "MODES", "NEEDS_HISTORY", "Zone", "side_of"]

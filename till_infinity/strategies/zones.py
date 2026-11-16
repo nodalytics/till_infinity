@@ -54,16 +54,41 @@ from nautilus_trader.model.data import Bar
 
 from ..domain.models import Intent, Refusal, Side
 from ..indicators.levels import BjorgumLevels, PivotSource, Sided
-from .crossing import side_of
+from .crossing import EVERY, side_of
 from .desk import guarded
 from .entries import ArrivalEntry, EdgeEntry, RestingEntry
 from .exits import ManagedExit
 from .profile import Profile
 from .warming import WarmFromHistory
 
-#: The two published configurations. `script` is `BjorgumLevels()`'s own
-#: defaults; `measured` is what every number in `bjorgum.md` was run on.
-PRESETS: tuple[str, ...] = ("script", "measured")
+#: The published configurations. `script` is `BjorgumLevels()`'s own defaults;
+#: `measured` is what every number in `bjorgum.md` was run on; `desk` is the
+#: one the operator asked for on 2026-11-15.
+PRESETS: tuple[str, ...] = ("script", "measured", "desk")
+
+#: The operator's configuration, named rather than left to a sweep's flags so
+#: that a result can be quoted against it.
+#:
+#: **The zone is 1/33 of the script's width and that is the number to watch.**
+#: `mult` is the band from box bottom to box top in ATR, so 0.015 is a band of
+#: 0.015 ATR against the script's 0.5. The same constant appears in the
+#: confluence blueprint as an alignment tolerance and was measured there at
+#: **0.7% of the anchor candle's own body** - "two orders of magnitude finer
+#: than the entry it gates". A band that narrow is touched rarely, so expect
+#: the signal count to fall with it; that is the setting doing what it says,
+#: not a fault.
+#:
+#: `keep=1` is one zone a side against the script's four, and an asymmetric
+#: 15/5 pivot confirms in five bars where the script takes fifteen - so this
+#: configuration nominates fewer levels, sooner, and bands them tighter.
+DESK: dict[str, Any] = {
+    "left": 15,
+    "right": 5,
+    "atr_len": 30,
+    "keep": 1,
+    "mult": 0.015,
+    "pivots": PivotSource.HIGH_LOW_BODY.value,
+}
 
 #: The four readings a key level offers, and they are not variations - two
 #: are **reversal** trades and two are **continuation** trades, so a rule that
@@ -134,11 +159,19 @@ class Tuning:
     preset: str = DEFAULT_PRESET
     mode: str = DEFAULT_MODE
     pivots: str = PivotSource.HA.value
+    #: Whether the environment named the pivot source. **A preset carries one
+    #: and `pivots` cannot say "unset" the way the integers below do**, so
+    #: without this the `desk` preset's `high_low_body` would either override
+    #: an operator who asked for Heikin-Ashi, or be overridden by the module
+    #: default they never set.
+    pivots_named: bool = False
     #: `0` keeps the preset's own value, so a sweep can vary one knob without
     #: silently pinning the rest to this module's opinion.
     left: int = 0
     right: int = 0
     atr_len: int = 0
+    #: Zones tracked per side - the script's `nPiv`. `0` keeps the preset's.
+    keep: int = 0
     mult: float = 0.0
     #: Resistance-to-support ratio for the zone width, in `Sided`'s sense.
     mult_tilt: float = 1.0
@@ -176,9 +209,10 @@ class Tuning:
         if preset not in PRESETS:
             raise ValueError(f"{preset!r} is not a preset: {', '.join(PRESETS)}.")
         mode = (os.environ.get("TRADING_ZONE_MODE") or DEFAULT_MODE).strip().lower()
-        if mode not in MODES:
-            raise ValueError(f"{mode!r} is not a mode: {', '.join(MODES)}.")
-        source = (os.environ.get("TRADING_ZONE_PIVOTS") or PivotSource.HA.value).strip().lower()
+        if mode not in (*MODES, EVERY):
+            raise ValueError(f"{mode!r} is not a mode: {', '.join((*MODES, EVERY))}.")
+        asked = (os.environ.get("TRADING_ZONE_PIVOTS") or "").strip().lower()
+        source = asked or PivotSource.HA.value
         if source not in {s.value for s in PivotSource}:
             known = ", ".join(s.value for s in PivotSource)
             raise ValueError(f"{source!r} is not a pivot source: {known}.")
@@ -186,9 +220,11 @@ class Tuning:
             preset=preset,
             mode=mode,
             pivots=source,
+            pivots_named=bool(asked),
             left=max(0, _int("TRADING_ZONE_LEFT", 0)),
             right=max(0, _int("TRADING_ZONE_RIGHT", 0)),
             atr_len=max(0, _int("TRADING_ZONE_ATR", 0)),
+            keep=max(0, _int("TRADING_ZONE_KEEP", 0)),
             mult=max(0.0, _float("TRADING_ZONE_MULT", 0.0)),
             mult_tilt=max(1e-6, _float("TRADING_ZONE_MULT_TILT", 1.0)),
             stop_vol=max(0.0, _float("TRADING_ZONE_STOP_VOL", DEFAULT_STOP_VOL)),
@@ -210,14 +246,23 @@ class Tuning:
         sweep that varies only `mult_tilt` leaves every other number at the
         configuration it named rather than at this module's defaults.
         """
-        kwargs: dict[str, Any] = {"pivots": self.pivots}
+        # The named configuration first, so an explicit knob below still wins
+        # and a sweep over one parameter leaves the rest where the preset put
+        # them.
+        kwargs: dict[str, Any] = dict(DESK) if self.preset == "desk" else {}
+        if self.pivots_named or "pivots" not in kwargs:
+            kwargs["pivots"] = self.pivots
         if self.left:
             kwargs["left"] = self.left
         if self.right:
             kwargs["right"] = self.right
         if self.atr_len:
             kwargs["atr_len"] = self.atr_len
+        if self.keep:
+            kwargs["keep"] = self.keep
         shared = self.mult or None
+        if self.preset == "desk":
+            shared = shared or float(DESK["mult"])
         if self.preset == "measured":
             found = BjorgumLevels.measured(**kwargs)
             shared = shared or float(found.mult.shared)
