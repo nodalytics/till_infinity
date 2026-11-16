@@ -222,6 +222,12 @@ def test_one_node_holds_two_venues(monkeypatch, loop):
     monkeypatch.setenv("TRADING_SYMBOLS_MT5", "EURUSD")
     monkeypatch.setenv("TRADING_SYMBOLS_DERIV", "Volatility 75 Index,")
     monkeypatch.setenv("TRADING_ENTRIES", "edge")
+    # **`zones`, because the feed decides which rules may trade it.** The
+    # default rule is `statespace-surprise`, whose allowlist carries no
+    # synthetic, so the node now declines to register that desk - and this
+    # test's subject, one kernel holding two venues, would otherwise be
+    # asserted against a desk that could never trade. `zones` has no scope.
+    monkeypatch.setenv("TRADING_STRATEGIES", "zones")
 
     from till_infinity.node import live
 
@@ -309,6 +315,12 @@ def test_a_real_second_broker_builds_beside_mt5(monkeypatch, loop, venue, kind, 
     monkeypatch.setenv("TRADING_SYMBOLS_MT5", "EURUSD")
     monkeypatch.setenv(f"TRADING_SYMBOLS_{venue}", symbol)
     monkeypatch.setenv("TRADING_ENTRIES", "edge")
+    # **`zones`, because the feed decides which rules may trade it.** The
+    # default rule is `statespace-surprise`, whose allowlist carries no
+    # synthetic, so the node now declines to register that desk - and this
+    # test's subject, one kernel holding two venues, would otherwise be
+    # asserted against a desk that could never trade. `zones` has no scope.
+    monkeypatch.setenv("TRADING_STRATEGIES", "zones")
     for name in (f"{keys}_API_KEY", f"{keys}_TESTNET_API_KEY"):
         monkeypatch.setenv(name, "placeholder-not-a-real-key")
     for name in (f"{keys}_API_SECRET", f"{keys}_TESTNET_API_SECRET"):
@@ -419,6 +431,12 @@ def test_two_accounts_on_one_broker_are_two_venues(monkeypatch, loop):
     monkeypatch.setenv("TRADING_SYMBOLS_BINANCE_A", "ETHUSDT-PERP")
     monkeypatch.setenv("TRADING_SYMBOLS_BINANCE_B", "BTCUSDT-PERP")
     monkeypatch.setenv("TRADING_ENTRIES", "edge")
+    # **`zones`, because the feed decides which rules may trade it.** The
+    # default rule is `statespace-surprise`, whose allowlist carries no
+    # synthetic, so the node now declines to register that desk - and this
+    # test's subject, one kernel holding two venues, would otherwise be
+    # asserted against a desk that could never trade. `zones` has no scope.
+    monkeypatch.setenv("TRADING_STRATEGIES", "zones")
 
     first = venues.configs("binance", "BINANCE_A")[1]
     second = venues.configs("binance", "BINANCE_B")[1]
@@ -589,3 +607,87 @@ def test_an_adapter_without_a_venue_field_is_one_account_per_node():
     fields = set(BybitExecClientConfig.__struct_fields__)
     assert "venue" not in fields, "Bybit gained a venue field - multi-account now works"
     assert "api_key" in fields, "and its credentials are still per-config"
+
+
+def test_a_desk_whose_rule_cannot_trade_the_feed_is_not_registered(monkeypatch, loop):
+    """**106 of 192 live desks could never produce a trade.**
+
+    Measured on the node on 2026-11-15. Three rules carry a hard scope -
+    `statespace-surprise` an allowlist, `vol-impulse` a frozen HAR per feed,
+    `identity-arb` a currency triangle - and each one said so from its own
+    `on_start` while being registered anyway. A desk that cannot fire and a
+    desk with no setups write the same report line, so the silence read as a
+    quiet market either way, and the dead desks spent budget against the
+    machine's ceiling.
+
+    Both halves are asserted here, because a filter with no control is
+    indistinguishable from a filter that refuses everything.
+    """
+    from till_infinity.node import live
+
+    monkeypatch.setenv("TRADING_VENUES", "MT5")
+    monkeypatch.setenv("TRADING_SYMBOLS", "Volatility 75 Index,")
+    monkeypatch.setenv("TRADING_ENTRIES", "edge")
+
+    # The control first: a rule with no feed scope is registered as before.
+    monkeypatch.setenv("TRADING_STRATEGIES", "zones")
+    node = live.build()
+    try:
+        held = {str(strategy.id) for strategy in node.trader.strategies()}
+        assert held, "a rule that can trade this feed was dropped"
+        assert all("Zones" in name for name in held)
+    finally:
+        node.dispose()
+
+    # And the rule whose allowlist excludes this feed reaches no node. With
+    # nothing left to register, `build` refuses rather than starting empty -
+    # which is the louder half of the same failure.
+    monkeypatch.setenv("TRADING_STRATEGIES", "statespace-surprise")
+    with pytest.raises(ValueError, match="no desks"):
+        live.build().dispose()
+
+
+def test_the_refusal_names_the_desk_and_the_reason():
+    """The list is returned rather than printed, so the caller can say it.
+
+    A set silently smaller than the one asked for is the shape of bug this
+    repository has paid for repeatedly; `desks.build`'s clip list carries the
+    same contract for the same reason.
+    """
+    from till_infinity.node import live
+
+    class _Desk:
+        def __init__(self, name, why):
+            self.id = name
+            self._why = why
+
+        def inert_reason(self):
+            return self._why
+
+    alive, refused = live._registrable(
+        [_Desk("ZonesEdge-X", ""), _Desk("SurpriseEdge-Y", "not allowed on y")]
+    )
+
+    assert [desk.id for desk in alive] == ["ZonesEdge-X"]
+    assert refused == ["SurpriseEdge-Y (not allowed on y)"]
+
+
+def test_a_predicate_that_raises_does_not_stop_the_node():
+    """A desk is registered when its own answer cannot be had.
+
+    The node starting is worth more than the filter: a rule that raises here
+    gets its desk built and says so, rather than taking the node down for a
+    question about tidiness.
+    """
+    from till_infinity.node import live
+
+    class _Angry:
+        id = "AngryEdge-Z"
+
+        def inert_reason(self):
+            raise RuntimeError("no")
+
+    alive, refused = live._registrable([_Angry()])
+
+    assert len(alive) == 1, "a desk was dropped over an unanswerable question"
+    assert refused == []

@@ -288,6 +288,35 @@ class Desk(NautilusStrategy):
                 f"the same one. Sizing and holds follow {traded}."
             )
 
+    def inert_reason(self) -> str:
+        """Why this desk could never trade on this feed, or `""` if it could.
+
+        **Answerable before the node starts, which is the whole point.** Three
+        rules carry a hard scope - `statespace-surprise` an allowlist,
+        `vol-impulse` a frozen HAR per feed, `identity-arb` a currency triangle
+        - and each said so in its own `on_start` while being registered
+        anyway. Measured on the live node on 2026-11-15: **106 of 192 desks**
+        could never produce a trade, every one of them having logged the
+        reason at start-up and been built regardless.
+
+        That is not only waste. A 15m desk costs one unit against
+        `ceiling()` and a 5m desk costs three, so the dead ones spend a real
+        share of the budget; and a desk that cannot fire and a desk with no
+        setups write the *same* report line, so the silence reads as a quiet
+        market either way. `desks.build` asks this and declines to register
+        what answers.
+
+        It is deliberately **not** about the clock. `volimpulse` and
+        `structure` both say an M15 rule on another timeframe is "said out
+        loud rather than refused: a sweep may deliberately run the rule on
+        another clock", and that decision stands - a sweep is a legitimate
+        caller and the deploy-time mistake is fixed by naming the right rules
+        per clock, not by a strategy refusing to exist.
+
+        Reads config and class state only: no bus, no cache, no clock.
+        """
+        return ""
+
     def on_start(self) -> None:
         """Build the rule, register the detectors, then subscribe.
 
