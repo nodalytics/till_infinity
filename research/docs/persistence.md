@@ -203,6 +203,37 @@ position in the range, the distance to a round number, the recent path and the
 hour, together, are worth less than nothing once the arithmetic is accounted
 for.
 
+### Where this goes blind
+
+A null is worth nothing without a size, so an effect of known strength is
+planted **on the columns `base` cannot see** - the candle, the approach, the
+path, the position - as a readable function of a fixed random direction,
+governing a given share of the rows. Pooled over the five markets, 32,005 test
+rows:
+
+| share of rows the planted effect governs | `full - base` within strata, day-block 90% |
+|---:|---:|
+| 0.00 | `[-0.0018, +0.0008]` |
+| 0.02 | `[-0.0027, +0.0008]` |
+| 0.05 | `[+0.0007, +0.0061]` |
+| 0.10 | `[+0.0101, +0.0169]` |
+| 0.20 | `[+0.0433, +0.0509]` |
+
+So the null has a resolution: **an effect governing 2% of candidates is
+invisible here, 5% is exactly at the threshold, and 10% is seen clearly.**
+Pooled, that is - the per-instrument intervals are about six times wider
+(`[-0.0196, -0.0026]` and the like), so one market alone would need something
+nearer 20%.
+
+What the measured nulls say, then, is not that the candle and the approach
+carry nothing. It is that whatever they carry governs **under one candidate in
+twenty**, and at that frequency it is both invisible to this harness and
+marginal against a spread of 0.011 to 0.041 ATR.
+
+On the continuity side the same plant barely registers - `[+0.3271, +0.3400]`
+unplanted against `[+0.3347, +0.3459]` at a 20% plant - which is what a plant
+does when the real effect already dominates it.
+
 ### And the thing that predicts it is the thing you pay for it
 
 The cushion is the **risk**: a stop sits beyond the origin, so entering at the
