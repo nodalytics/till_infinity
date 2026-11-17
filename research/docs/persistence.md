@@ -249,11 +249,12 @@ bar that touches it. Those are counted and dropped: scoring them divides a
 three-ATR reward by a risk of almost nothing, and one row then carries an
 instrument.
 
-## Four faults found on the way, each bigger than any effect here
+## Six faults found on the way, each bigger than any effect here
 
-Written up in full in the `finding-edges` skill under *Race labels, and five
-ways the accounting lies*. None was a coding error; all four were design faults
-in the mapping from a trade to a number.
+Written up in full in the `finding-edges` skill under *Race labels, and six
+ways the accounting lies*. None was a coding error; all six were design faults
+in the mapping from a trade to a number - four in the market measurement, two
+in the power curve that was supposed to bound it.
 
 1. **The label's arithmetic outside the incumbent** - candle geometry at +0.15
    AUC, which became a negative lift once `cushion` joined the baseline.
@@ -264,6 +265,14 @@ in the mapping from a trade to a number.
    that the clause loop `break`s at is unreachable, so the padded arm was
    bit-identical to the unpadded one and read as perfect agreement.
 4. **An entry already past its own stop** - 22% of returns, above.
+5. **A power curve planted on the baseline's own columns** - the planted
+   direction spanned the whole feature set, so both arms rose together and the
+   difference under test stayed flat at every strength.
+6. **A model fitted on one label and scored against another** - the planted
+   sweep's interval was computed against the real label. At a plant governing
+   20% of rows the AUCs read `base` 0.7008 and `full` 0.7466 while the interval
+   printed `[-0.0481, -0.0258]`. Invisible at plant 0, so no published figure
+   moved; the *power curve* was wrong in the direction that flatters a null.
 
 ## What this closes, and what it does not
 

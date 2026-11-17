@@ -193,7 +193,7 @@ So when a rule loses, separate the three causes before proposing a fix:
   and worth fixing: see `Strategy.reward_floor`, which moves a target out and
   refuses nothing.
 
-## Race labels, and five ways the accounting lies
+## Race labels, and six ways the accounting lies
 
 Most labels on this desk are races: did price reach A before B, inside N bars.
 Every one of the following was found in a **single day** of measuring one
@@ -234,6 +234,22 @@ harness that scores a barrier.
    *inverse* signal that is pure definition. `strata_auc` in
    `research/ideas/persistence.py` is the fix: compute inside volatility
    strata, where the same feature reads 0.47.
+
+6. **Score the label you fitted.** A planted-effect power sweep fitted its
+   models on the planted label and then computed the headline interval against
+   the **real** one. At a plant governing 20% of rows the per-set AUCs read
+   `base` 0.7008 and `full` 0.7466 while the interval beside them printed
+   `[-0.0481, -0.0258]` - the right sign for a model being graded on a
+   different exam. It is invisible at plant 0, where the two labels are the
+   same array, so every published figure was unaffected and the *power curve*
+   was wrong in the direction that makes a null look safer. Build the
+   evaluation label once, outside the loop, and pass that one everywhere.
+
+   The same sweep had a second fault worth naming: the planted direction was
+   drawn over the **whole** feature set, which includes every baseline column,
+   so a planted effect lifted both arms together and the difference under test
+   stayed flat at every strength. **Plant on the columns the baseline cannot
+   see**, or the curve measures a claim nobody made.
 
 The common shape: **every one of these makes the harness look better or worse
 than the market, and none of them is a coding error.** They are design faults

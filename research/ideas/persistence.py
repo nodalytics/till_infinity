@@ -758,6 +758,14 @@ def planted(
     own median. Nothing in a null is worth reporting without this: it says what
     size of effect the harness would have seen, and `atr-ml.md` found its own
     models blind to 0.02 ATR and recovering about a third of 0.05.
+
+    **Planted on the columns the baseline cannot see.** The first version drew
+    its direction over the whole `full` set, which includes every `base`
+    column - so a planted effect lifted both arms together and `full - base`
+    stayed flat at every strength. That is not a power curve for the claim
+    being tested; it is a power curve for a claim nobody made. The caller
+    passes the set difference, and the planted effect is then something only
+    the geometry can represent.
     """
     if strength <= 0:
         return label
@@ -1037,8 +1045,18 @@ def report(pooled: dict[str, np.ndarray], args: argparse.Namespace, title: str) 
                 print(f"    {name}: n {pick.sum():,}, rate {label[pick].mean():.4f}")
 
     scores: dict[str, tuple[np.ndarray, np.ndarray]] = {}
+    # **One label, built once.** Each set used to plant its own copy inside the
+    # loop and the interval below then scored them against the *unplanted*
+    # label - so at a 0.20 plant the per-set AUCs read base 0.7008 and full
+    # 0.7466 while the interval printed `[-0.0481, -0.0258]`. A model fitted
+    # on one label and scored against another is not a measurement of
+    # anything. Unaffected at `--plant 0`, where the two are the same array.
+    if args.plant > 0:
+        spare = tuple(n for n in SETS[args.target]["full"] if n not in SETS[args.target]["base"])
+        wanted = planted(pooled, label, spare, args.plant)
+    else:
+        wanted = label
     for name, names in SETS[args.target].items():
-        wanted = planted(pooled, label, names, args.plant) if args.plant > 0 else label
         score, used = fitted(pooled, wanted, names, train, test)
         if score.size == 0:
             print(f"    {name:<6} not fitted")
@@ -1064,10 +1082,10 @@ def report(pooled: dict[str, np.ndarray], args: argparse.Namespace, title: str) 
             b = np.full(both.sum(), np.nan)
             a[:] = full_score[both[full_used]]
             b[:] = base_score[both[base_used]]
-            lo, hi = day_block_interval(a, b, label[both], stratum[both], pooled["_day"][both])
+            lo, hi = day_block_interval(a, b, wanted[both], stratum[both], pooled["_day"][both])
             print(f"    full - base within strata, day-block 90%: [{lo:+.4f}, {hi:+.4f}]")
 
-    if args.target == "pull" and "_padded" in pooled:
+    if args.target == "pull" and args.plant <= 0 and "_padded" in pooled:
         economics(pooled, args)
         round_trip(pooled, args)
 
