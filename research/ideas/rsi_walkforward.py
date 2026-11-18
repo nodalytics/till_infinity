@@ -45,14 +45,20 @@ sys.path.insert(0, str(Path(__file__).resolve().parent))
 from reactive_zones import CATALOGUE, atr, fold, load, shuffled, window  # noqa: E402
 from rsi_momentum import SPREADS, SYMBOLS, Cell, Readings, cells, race, sided  # noqa: E402
 
-WEEK = 7 * 86_400_000_000_000
+DAY = 86_400_000_000_000
 
 
 @dataclass(slots=True)
 class Ledger:
-    """Every trade a cell made, with the week it was entered in."""
+    """Every trade a cell made, with the entry timestamp.
 
-    week: np.ndarray
+    Bucketed by the caller rather than here, so one race serves every window
+    length in a sweep - a 3-day bucketing and a 14-day one are the same trades
+    counted differently, and re-racing them per window would be three times
+    the work for identical outcomes.
+    """
+
+    ts: np.ndarray
     net: np.ndarray
 
 
@@ -74,16 +80,18 @@ def ledger(symbol: str, frame: str, arm: str, args: argparse.Namespace) -> dict[
         got = race(bars, band, side, args.stop, cell.reward, args.patience, cost)
         if got.trades == 0:
             continue
-        out[index] = Ledger(week=(bars.ts[got.at] // WEEK).astype(np.int64), net=got.values)
+        out[index] = Ledger(ts=bars.ts[got.at].astype(np.int64), net=got.values)
     return out
 
 
-def weekly(book: dict[int, Ledger]) -> dict[int, dict[int, tuple[int, float]]]:
-    """`{week: {cell: (trades, mean net)}}`."""
+def bucketed(book: dict[int, Ledger], days: float) -> dict[int, dict[int, tuple[int, float]]]:
+    """`{window: {cell: (trades, mean net)}}` at a window of `days`."""
+    width = int(days * DAY)
     out: dict[int, dict[int, tuple[int, float]]] = {}
     for index, rows in book.items():
-        for w in np.unique(rows.week):
-            pick = rows.week == w
+        keys = rows.ts // width
+        for w in np.unique(keys):
+            pick = keys == w
             out.setdefault(int(w), {})[index] = (int(pick.sum()), float(rows.net[pick].mean()))
     return out
 
@@ -120,20 +128,20 @@ def walk(
 
 def report(name: str, chosen: list[float], worst: list[float], average: list[float], ceiling: list[float]) -> None:
     if len(chosen) < 8:
-        print(f"  {name}: {len(chosen)} usable week pairs, too few")
+        print(f"  {name}: {len(chosen)} usable window pairs, too few")
         return
     picked, tail, mean, top = (np.asarray(v) for v in (chosen, worst, average, ceiling))
     lift = picked - mean
     spread = lift.std(ddof=1) / np.sqrt(lift.size)
     print(
-        f"  {name}: {picked.size} week pairs\n"
-        f"    last week's top k, next week   {picked.mean():+.4f}R\n"
-        f"    last week's bottom k, next     {tail.mean():+.4f}R\n"
-        f"    every cell, next week          {mean.mean():+.4f}R\n"
-        f"    the best cell of next week     {top.mean():+.4f}R   (hindsight ceiling)\n"
-        f"    top k minus every cell         {lift.mean():+.4f}R +/- {1.96 * spread:.4f}, "
-        f"beat it in {int((lift > 0).sum())} of {lift.size} weeks\n"
-        f"    top k minus bottom k           {(picked - tail).mean():+.4f}R"
+        f"  {name}: {picked.size} window pairs\n"
+        f"    the window's top k, the next     {picked.mean():+.4f}R\n"
+        f"    the window's bottom k, the next  {tail.mean():+.4f}R\n"
+        f"    every cell, the next window      {mean.mean():+.4f}R\n"
+        f"    the best cell of the next        {top.mean():+.4f}R   (hindsight ceiling)\n"
+        f"    top k minus every cell           {lift.mean():+.4f}R +/- {1.96 * spread:.4f}, "
+        f"beat it in {int((lift > 0).sum())} of {lift.size} windows\n"
+        f"    top k minus bottom k             {(picked - tail).mean():+.4f}R"
     )
 
 
@@ -146,7 +154,17 @@ def main() -> None:
     parser.add_argument("--years", type=float, default=2.0)
     parser.add_argument("--arms", default="real,shuffled")
     parser.add_argument("--top", default="1,3,10")
-    parser.add_argument("--least", type=int, default=8, help="trades a cell needs to be ranked in a week")
+    parser.add_argument(
+        "--windows",
+        default="14,7,3",
+        help="ranking window lengths in days; the same races are bucketed at each",
+    )
+    parser.add_argument(
+        "--least",
+        type=int,
+        default=8,
+        help="trades a cell needs to be ranked, scaled down with the window",
+    )
     parser.add_argument("--families", default="rsi,ma")
     parser.add_argument("--rsi", default="7,14,21")
     parser.add_argument("--ma", default="20,50,100")
@@ -163,7 +181,10 @@ def main() -> None:
     names = [s for s in args.symbols.split(",") if s]
     frames = [f.strip() for f in args.frames.split(",") if f.strip()]
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
-    print(f"{len(cells(args))} cells  {args.years:g}y  frames {','.join(frames)}  top {args.top}")
+    print(
+        f"{len(cells(args))} cells  {args.years:g}y  frames {','.join(frames)}  top {args.top}  "
+        f"windows {args.windows}d"
+    )
 
     jobs = [(s, f, a) for f in frames for a in arms for s in names]
     if args.workers > 1:
@@ -179,19 +200,26 @@ def main() -> None:
 
     for frame in frames:
         for arm in arms:
-            print(f"\n=== {frame} {arm}")
-            merged: dict[int, dict[int, tuple[int, float]]] = {}
-            for (s, f, a), book in zip(jobs, books, strict=False):
-                if f != frame or a != arm:
-                    continue
-                for w, row in weekly(book).items():
-                    into = merged.setdefault(w, {})
-                    for index, (n, net) in row.items():
-                        had_n, had_net = into.get(index, (0, 0.0))
-                        total = had_n + n
-                        into[index] = (total, (had_net * had_n + net * n) / total)
-            for top in (int(v) for v in args.top.split(",")):
-                report(f"top {top}", *walk(merged, top, args.least))
+            for days in (float(v) for v in args.windows.split(",")):
+                print(f"\n=== {frame} {arm}, {days:g}-day windows")
+                merged: dict[int, dict[int, tuple[int, float]]] = {}
+                for (s, f, a), book in zip(jobs, books, strict=False):
+                    if f != frame or a != arm:
+                        continue
+                    for w, row in bucketed(book, days).items():
+                        into = merged.setdefault(w, {})
+                        for index, (n, net) in row.items():
+                            had_n, had_net = into.get(index, (0, 0.0))
+                            total = had_n + n
+                            into[index] = (total, (had_net * had_n + net * n) / total)
+                # **The trade floor scales with the window.** Eight trades is
+                # a reasonable bar over a fortnight and an impossible one over
+                # three days, so holding it fixed would silently rank only the
+                # most frequent cells at the short end and compare a different
+                # grid at each window length.
+                floor = max(int(round(args.least * days / 7.0)), 3)
+                for top in (int(v) for v in args.top.split(",")):
+                    report(f"top {top} (min {floor} trades)", *walk(merged, top, floor))
 
 
 if __name__ == "__main__":

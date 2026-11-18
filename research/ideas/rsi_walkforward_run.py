@@ -18,14 +18,14 @@ CATALOGUE = os.environ.get("CATALOGUE", "data/mt5-deep")
 
 
 def main() -> None:
-    for years, frames in (("4", "15m"), ("2", "5m"), ("8", "15m")):
+    for years, frames in (("8", "15m"), ("4", "5m")):
         print("\n" + "=" * 78)
         print(f"@@@ {years}y, {frames}")
         print("=" * 78, flush=True)
         sys.argv = [
             "rsi_walkforward.py", "--catalogue", CATALOGUE, "--frames", frames,
             "--years", years, "--arms", "real,shuffled", "--top", "1,3,10",
-            "--workers", "10",
+            "--windows", "14,7,3", "--workers", "10",
         ]
         try:
             rsi_walkforward.main()

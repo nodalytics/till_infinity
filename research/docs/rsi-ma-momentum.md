@@ -116,6 +116,71 @@ days of 1m bars in the production store, and the catalogue note in
 [CLAUDE.md](../../CLAUDE.md) is explicit that the store settles mechanics and
 cost sensitivity and **cannot settle an edge**.
 
+## Carried forward: does last week's leader pay next week
+
+The control the request really wants, and it needs no new grid - rank on window
+`w-1`, take the top `k`, score those `k` on window `w`, over every window pair
+there is. **One continuous race per cell, bucketed afterwards**: a race
+restarted at each window edge lets every window open with a free entry that the
+previous window's open position would have blocked, which is a small look-ahead
+favouring whichever arm trades most.
+
+Three things to compare against, and the first one is a trap:
+
+* **every cell's mean in week `w`** - picking at random from the same grid;
+* **the bottom `k` of week `w-1`**, scored on `w`. If last week's *worst* cells
+  do as well as its best, the ranking is noise with a sign on it;
+* **the best cell of week `w`** - the hindsight ceiling.
+
+### 8 years at 15m, 418 window pairs
+
+| arm | k | top k next | bottom k next | every cell | top k - every cell | won |
+|---|---:|---:|---:|---:|---:|---:|
+| real | 1 | -0.0464 | -0.0561 | -0.0410 | -0.0054 +/- 0.0418 | 204/413 |
+| real | 3 | -0.0277 | -0.0432 | -0.0404 | +0.0128 +/- 0.0294 | 201/416 |
+| real | 10 | -0.0207 | -0.0300 | -0.0403 | +0.0196 +/- 0.0183 | 215/418 |
+| **shuffled** | 1 | -0.0448 | -0.0401 | -0.0448 | -0.0000 +/- 0.0398 | 201/415 |
+| **shuffled** | 3 | -0.0306 | -0.0190 | -0.0448 | **+0.0142** +/- 0.0270 | 220/416 |
+| **shuffled** | 10 | -0.0312 | -0.0261 | -0.0451 | **+0.0139** +/- 0.0163 | 223/418 |
+
+**"Top k minus every cell" is a biased comparison, and the shuffled arm is how
+we know.** A day-shuffled market gives +0.0142 and +0.0139 where the real one
+gives +0.0128 and +0.0196 - so most of that lift is not the market. Selecting
+by last window's mean preferentially picks cells with particular geometry (2R
+over 1R, and a particular trade frequency) and the grid average mixes all of
+them, so the two arms are not the same population. It would read as a finding
+in a run without the shuffle.
+
+**The unbiased arm is top minus bottom**, and it is small: real +0.0097,
++0.0155, +0.0093 at k of 1, 3 and 10, against shuffled -0.0047, -0.0116 and
+-0.0051. The sign structure is right - positive on the market, negative on its
+shuffle - and the size is about **+0.015R a trade** on a per-window standard
+deviation near 0.4R.
+
+**The win rate is a coin in every cell of the table**: 48.3% to 53.4%.
+
+**And every absolute figure is negative.** Top k, bottom k and the grid average
+all lose 0.02 to 0.08R a trade net. The grid is a coin-level rule paying a
+spread, which is what it should be.
+
+The hindsight ceiling runs **+1.62 to +1.85R a window** throughout. There is a
+great deal to be had; nothing here selects it.
+
+### The shorter history disagrees with the longer one
+
+| window | k=3 real | k=3 shuffled | won |
+|---|---:|---:|---:|
+| 8 years, 15m | +0.0128 | +0.0142 | 201/416 |
+| 4 years, 15m | **+0.0715** +/- 0.0492 | +0.0253 | 111/208 |
+| 4 years, 5m | +0.0070 | +0.0070 | 56/105 |
+
+The recent four years show a real lift three times its own shuffle; eight years
+show none. That is a regime split with the **larger sample saying less**, and
+`a-regime-split-is-information-not-a-verdict` is the standing instruction on
+how to report it: not as a refutation, but as a gating condition nobody can
+currently evaluate - there is no observable here that says which half we are
+in, and picking the half that agrees is the thing this whole page is about.
+
 ## What this closes, and what it does not
 
 **Closed:** that a seven-day leaderboard over an RSI-or-average times momentum
