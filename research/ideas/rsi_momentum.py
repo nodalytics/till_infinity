@@ -203,6 +203,12 @@ class Result:
     hit: float
     spread_r: float
     values: np.ndarray
+    #: Entry bar of each trade, so a caller can bucket the same race by week
+    #: instead of re-running it per window. `rsi_walkforward.py` needs one
+    #: continuous chain of non-overlapping trades, not a chain restarted at
+    #: every window edge - restarting it lets a week begin with a free entry
+    #: that the previous week's open position would have blocked.
+    at: np.ndarray
 
 
 def race(
@@ -225,6 +231,7 @@ def race(
     high, low, close = bars.high, bars.low, bars.close
     outcomes: list[float] = []
     charges: list[float] = []
+    entries: list[int] = []
     # **Jump between signals rather than walking every bar.** Stepping one bar
     # at a time made this O(bars) per cell, and at 414 cells x 2 windows x 2
     # arms that is 18 million Python iterations for one instrument - about a
@@ -257,12 +264,13 @@ def race(
             done = (float(close[j]) - entry) * (1.0 if up else -1.0) / risk
         outcomes.append(done)
         charges.append(cost / risk)
+        entries.append(i)
         # The next signal strictly after this race closed: one position at a
         # time, so no two outcome windows share a bar.
         at = int(np.searchsorted(firing, j + 1))
     empty = np.asarray([], dtype=float)
     if not outcomes:
-        return Result(0, float("nan"), float("nan"), float("nan"), float("nan"), empty)
+        return Result(0, float("nan"), float("nan"), float("nan"), float("nan"), empty, empty)
     got = np.asarray(outcomes)
     paid = np.asarray(charges)
     return Result(
@@ -272,6 +280,7 @@ def race(
         hit=float((got > 0).mean()),
         spread_r=float(paid.mean()),
         values=got - paid,
+        at=np.asarray(entries, dtype=np.int64),
     )
 
 
