@@ -193,6 +193,91 @@ So when a rule loses, separate the three causes before proposing a fix:
   and worth fixing: see `Strategy.reward_floor`, which moves a target out and
   refuses nothing.
 
+## Race labels, and six ways the accounting lies
+
+Most labels on this desk are races: did price reach A before B, inside N bars.
+Every one of the following was found in a **single day** of measuring one
+detector, 2026-11-17, and each on its own moved a headline by more than any
+real effect this desk has ever found. Read them as a checklist against any
+harness that scores a barrier.
+
+1. **The label's own arithmetic belongs in the incumbent.** "Price reaches `k`
+   ATR from the origin" is already partly satisfied at the decision bar,
+   because price has travelled from the origin to that bar's close. That
+   cushion is known with no information about the future, so anything
+   correlated with it - bar size, wick length, where in its range it closed -
+   reads as skill. Candle geometry showed a **+0.15 AUC lift** over a
+   volatility-only incumbent; with the cushion in the incumbent, the incumbent
+   went 0.5391 to **0.7467** and the lift turned negative at a day-block 90% of
+   `[-0.0381, -0.0057]`. Write the arithmetic down **before** fitting, and put
+   every term of it in the baseline.
+2. **A timeout is not a stop.** Scoring an unresolved race as a full loss read
+   **-0.3440R** a trade where marking out at the window's close reads
+   **+0.0309R**. Only **1.6%** of rows timed out - but they averaged
+   **+2.04R**, because a race that is still alive after a long time in a wide
+   geometry is usually alive and winning. A 1.6% misclassification moved the
+   answer by 0.37R and reversed its sign.
+3. **A barrier placed beyond a barrier that already breaks the loop is
+   unreachable.** A padded stop sat a quarter-ATR below an origin that the loop
+   `break`s at, so the padded arm was a **bit-identical copy** of the unpadded
+   one. A control that is secretly the treatment reads as perfect agreement,
+   which is the most reassuring possible output. Assert that two arms differ on
+   at least one row.
+4. **An entry can be already past its own stop.** Entering at the close of the
+   bar that touches a level puts **22%** of entries (109 of 494) beyond a stop
+   a quarter-ATR behind that level. Scoring them divides a three-ATR reward by a
+   near-zero risk, and one row then carries an instrument. Count them and drop
+   them; a position that was never openable is not a loss either.
+5. **A label normalised by current volatility is predicted by volatility mean
+   reversion.** "No bar in the next sixteen is under half an ATR" is easier when
+   the ATR is low, so the ATR quantile reads **AUC 0.36** on it - a strong
+   *inverse* signal that is pure definition. `strata_auc` in
+   `research/ideas/persistence.py` is the fix: compute inside volatility
+   strata, where the same feature reads 0.47.
+
+6. **Score the label you fitted.** A planted-effect power sweep fitted its
+   models on the planted label and then computed the headline interval against
+   the **real** one. At a plant governing 20% of rows the per-set AUCs read
+   `base` 0.7008 and `full` 0.7466 while the interval beside them printed
+   `[-0.0481, -0.0258]` - the right sign for a model being graded on a
+   different exam. It is invisible at plant 0, where the two labels are the
+   same array, so every published figure was unaffected and the *power curve*
+   was wrong in the direction that makes a null look safer. Build the
+   evaluation label once, outside the loop, and pass that one everywhere.
+
+   The same sweep had a second fault worth naming: the planted direction was
+   drawn over the **whole** feature set, which includes every baseline column,
+   so a planted effect lifted both arms together and the difference under test
+   stayed flat at every strength. **Plant on the columns the baseline cannot
+   see**, or the curve measures a claim nobody made.
+
+The common shape: **every one of these makes the harness look better or worse
+than the market, and none of them is a coding error.** They are design faults
+in the mapping from a trade to a number, so no test suite catches them. What
+catches them is reading the accounting out loud - what is the entry, what is
+the risk, what happens if nothing resolves, what does the control actually
+differ in - before believing any mean.
+
+## Legs, turns and origins are in scope
+
+The operator's standing instruction, 2026-11-17: *"anything that concerns
+leg(s) analysis, we are in, the data we are using has to do with legs, so turn
+points, etc are important to us."*
+
+So read the turn kills narrowly. [turns-fast.md](../../../research/docs/turns-fast.md)
+closed **a fixed-drop turn label on an hourly clock, carried by `vol` alone**,
+and [turning-points.md](../../../research/docs/turning-points.md) closed **HH/HL
+structure as a side**. Neither closes the leg as an object, and the leg
+vocabulary - the origin, the push, the pull, the running extreme, the age - is
+how this desk describes state. Build the objects; null the claims.
+
+One discipline specific to them: **a leg definition that uses the forward path
+is a labeller and not a signal.** The supplied pull-origin definition is four
+clauses, and only the first two - a 15-bar pivot, a 1.5 ATR fall into it - hold
+at the candle's close. Split any such definition at the point where it starts
+reading the future, measure the candidate set as the universe, and make the
+forward clauses the label.
+
 ## Publish, then measure, then gate - in that order
 
 Every refuted gate in the table above was built before it was scored. The

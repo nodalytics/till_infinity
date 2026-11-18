@@ -107,6 +107,57 @@ actually happen here. The short version:
   family are the only things on the account that quote. A control and a
   position are not exclusive.
 
+### The operator's standing instructions, 2026-11-17
+
+- **Leg analysis is in scope, and it is the subject of the data.** The
+  operator, 2026-11-17: *"anything that concerns leg(s) analysis, we are in,
+  the data we are using has to do with legs, so turn points, etc are important
+  to us."* So a null on a leg statistic is attribution and not a reason to stop
+  measuring legs. What the turn studies closed is narrow -
+  [`turns-fast.md`](research/docs/turns-fast.md) closed *a fixed-drop turn
+  label on an hourly clock, carried by `vol` alone* - and the leg objects
+  themselves (the origin, the push, the pull, the extreme) are the vocabulary
+  the desk thinks in. Keep building them; keep nulling the claims made about
+  them.
+- **A pull origin has a supplied definition, and it is a labeller, not a
+  signal.** Clauses 1 and 2 - a 15-bar pivot with a 1.5 ATR fall into it - hold
+  at the candle's close. Clauses 3 and 4 - a 3 ATR directional rise that never
+  revisits the low - are the forward confirmation, about 5-6 candles later. Any
+  study that treats the whole definition as a signal has used the future;
+  [`persistence.md`](research/docs/persistence.md) is the split version.
+
+#### Put the label's own arithmetic in the incumbent
+
+The biggest single measurement error of 2026-11-17, and it is not a bug - every
+line was correct and the design was wrong.
+
+A label of the form "price reaches `k` ATR from the origin" is **already
+partly satisfied at the decision bar**, because price has travelled from the
+origin to that bar's close. Call that distance the cushion: `remaining = k -
+cushion` is computable at decision time with no information about the future at
+all. Anything correlated with it then reads as skill - the bar's size, its
+wick, where in its range it closed.
+
+Measured: candle geometry read a **+0.15 AUC lift** over a volatility-only
+incumbent, which is a large and publishable-looking number. With `cushion` and
+`remaining` moved into the incumbent, the incumbent went from 0.5391 to
+**0.7467** and the full model's lift turned **negative**, day-block 90%
+`[-0.0381, -0.0057]`. `cushion` alone reads **0.7648**.
+
+So the rule: **before fitting anything, write down the arithmetic that maps
+what is known at the decision bar onto the label, and put every term of it in
+the baseline.** If the baseline then explains the result, the finding was the
+definition. This is the same defect as `the-origin-picks-a-distance-not-a-
+probability` and `a-return-rate-is-geometry`, arriving through a model instead
+of through a rate.
+
+And the corollary that matters for trading: **the quantity that predicts the
+outcome is the quantity you pay for it.** The cushion is the risk - the stop
+sits beyond the origin - so a high-cushion entry buys its hit rate at exactly
+the fair price. Measured gross on 4,656 hourly EURUSD candidates: hit 0.2446
+against a fair 0.2394, **+0.0309R** a trade, day-block 90% `[-0.0325,
++0.0933]`.
+
 ## The data ceiling
 
 `node/corpus.py` fills the catalogue from the local store. It holds about **76
