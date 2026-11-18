@@ -206,11 +206,10 @@ class Identity(WarmFromHistory, Desk):
         if self.trio is None:
             # Said out loud, because a desk that can never trade and a desk
             # with no setups read identically in a log - the lesson of
-            # `statespace-surprise`'s hardcoded feed allowlist.
-            self.log.warning(
-                f"identity-arb has no triangle for "
-                f"{self._cfg.instrument_id.symbol.value}; this desk can never trade"
-            )
+            # `statespace-surprise`'s hardcoded feed allowlist. `desks.build`
+            # now declines to register one, and this stays for the backtests
+            # and sweeps that construct a desk directly.
+            self.log.warning(f"{self.inert_reason()}; this desk can never trade")
             return
         traded, first, second = self.trio
         for name in (first, second):
@@ -225,6 +224,16 @@ class Identity(WarmFromHistory, Desk):
         )
 
     # ------------------------------------------------------------- the triangle
+
+    def inert_reason(self) -> str:
+        """No triangle, no residual. See `Desk.inert_reason`.
+
+        The FX store carries USD legs and no crosses, so this is most desks:
+        36 of 40 on the live node on 2026-11-15.
+        """
+        if self._trio() is not None:
+            return ""
+        return f"identity-arb has no triangle for {self._cfg.instrument_id.symbol.value}"
 
     def _trio(self) -> tuple[str, str, str] | None:
         """`(traded, partner, partner)` for this desk's symbol, or None.

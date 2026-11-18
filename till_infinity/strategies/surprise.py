@@ -189,6 +189,13 @@ class Surprise:
         named = frozenset(part.strip().lower() for part in raw.split(",") if part.strip())
         return named or self.profile.feeds
 
+    def inert_reason(self) -> str:
+        """The allowlist, asked before the desk is registered. See `Desk`."""
+        feed = self._feed_name()
+        if feed in self._allowed():
+            return ""
+        return f"statespace-surprise is not allowed on {feed}; allowed: {sorted(self._allowed())}"
+
     def on_start(self) -> None:
         """Say once if this desk can never trade.
 
@@ -196,14 +203,15 @@ class Surprise:
         identically in a log.** On 2026-11-07 twenty-six of thirty-two desks
         were inert by construction and nothing said so, and establishing that
         took an afternoon.
+
+        Kept although `desks.build` now declines to register such a desk: a
+        backtest or a sweep constructs these directly, and the one source of
+        truth for *why* is `inert_reason`.
         """
         super().on_start()
-        feed = self._feed_name()
-        if feed not in self._allowed():
-            self.log.warning(
-                f"statespace-surprise is not allowed on {feed}; "
-                f"this desk can never trade. Allowed: {sorted(self._allowed())}"
-            )
+        reason = self.inert_reason()
+        if reason:
+            self.log.warning(f"{reason}; this desk can never trade")
 
     #: The last round trip this rule priced, as `(cost, risk, reward)`.
     #:

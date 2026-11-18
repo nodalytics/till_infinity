@@ -259,6 +259,25 @@ def build() -> TradingNode:
         node.add_exec_client_factory(venue, orders)
 
     strategies, clipped = desks.build_all()
+    # **Refused here, where registration happens, and not in `desks.build`.**
+    #
+    # Three rules carry a hard scope - `statespace-surprise` an allowlist,
+    # `vol-impulse` a frozen HAR per feed, `identity-arb` a currency triangle -
+    # and each said so from its own `on_start` while being registered anyway:
+    # **106 of 192 desks on 2026-11-15**, every one unable to produce a trade.
+    # A desk that cannot fire and a desk with no setups write the same report
+    # line, so the silence read as a quiet market either way.
+    #
+    # `desks.build` keeps naming them, deliberately: `_wanted` is shared with
+    # `importable` so that "the live node and a backtest cannot name different
+    # desks", and a backtest that runs an inert desk gets an honest zero.
+    # Registration is this node's decision and this is where it is made.
+    strategies, refused = _registrable(strategies)
+    if refused:
+        node.kernel.logger.warning(
+            f"{len(refused)} desk(s) not registered - the rule cannot trade that "
+            f"feed: {', '.join(refused)}"
+        )
     if clipped:
         # **Said out loud, never silent.** A set smaller than the one asked for
         # is the shape of bug this desk has paid for repeatedly: a min-events
@@ -283,6 +302,30 @@ def build() -> TradingNode:
     node.build()
     _supervise(node)
     return node
+
+
+def _registrable(built: list[Any]) -> tuple[list[Any], list[str]]:
+    """Split the desks that can trade from the ones that never could.
+
+    `Desk.inert_reason` is the rule's own answer, computed from config alone,
+    and this is the first place it can be acted on rather than logged. The
+    reasons are returned rather than printed here for the reason `desks.build`
+    gives about its clip list: a set silently smaller than the one asked for is
+    the shape of bug this desk has paid for repeatedly.
+    """
+    alive: list[Any] = []
+    refused: list[str] = []
+    for desk in built:
+        try:
+            why = desk.inert_reason()
+        except Exception as exc:  # a predicate must never stop a node starting
+            log.warning("could not ask %s whether it can trade: %s", desk.id, exc)
+            why = ""
+        if why:
+            refused.append(f"{desk.id} ({why})")
+            continue
+        alive.append(desk)
+    return alive, refused
 
 
 def _supervise(node: TradingNode) -> None:
