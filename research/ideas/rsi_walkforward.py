@@ -66,8 +66,8 @@ def ledger(symbol: str, frame: str, arm: str, args: argparse.Namespace) -> dict[
     """One continuous race per cell, over the whole window, bucketed by week."""
     base = load(Path(args.catalogue), symbol)
     series = shuffled(base, seed=23) if arm == "shuffled" else base
-    if args.years > 0:
-        series = window(series, args.years)
+    if args.years > 0 or args.before > 0:
+        series = window(series, args.years, args.before)
     bars = series if frame == args.unit else fold(series, frame, unit=args.unit)
     band = atr(bars)
     every = cells(args)
@@ -141,7 +141,28 @@ def report(name: str, chosen: list[float], worst: list[float], average: list[flo
         f"    the best cell of the next        {top.mean():+.4f}R   (hindsight ceiling)\n"
         f"    top k minus every cell           {lift.mean():+.4f}R +/- {1.96 * spread:.4f}, "
         f"beat it in {int((lift > 0).sum())} of {lift.size} windows\n"
-        f"    top k minus bottom k             {(picked - tail).mean():+.4f}R"
+        f"    top k minus bottom k             {(picked - tail).mean():+.4f}R{_against(picked - tail)}"
+    )
+
+
+def _against(gap: np.ndarray, draws: int = 2000, seed: int = 61) -> str:
+    """A bootstrap, a median and a sign count on the top-minus-bottom arm.
+
+    **The unbiased arm needs all three**, because its mean can be carried by a
+    handful of windows: the top-k and the grid average are different
+    populations (selection picks particular geometry, which a shuffled market
+    reproduces), while the top-k and the bottom-k are the same grid sorted two
+    ways. Resampling whole window pairs is the block here - a window's trades
+    are one block and the pairs are the independent unit.
+    """
+    if gap.size < 20:
+        return ""
+    rng = np.random.default_rng(seed)
+    draw = gap[rng.integers(0, gap.size, (draws, gap.size))].mean(axis=1)
+    return (
+        f", 90% [{np.percentile(draw, 5):+.4f}, {np.percentile(draw, 95):+.4f}]"
+        f", median {float(np.median(gap)):+.4f}"
+        f", positive in {int((gap > 0).sum())} of {gap.size}"
     )
 
 
@@ -152,6 +173,12 @@ def main() -> None:
     parser.add_argument("--frames", default="15m")
     parser.add_argument("--unit", default="5m")
     parser.add_argument("--years", type=float, default=2.0)
+    parser.add_argument(
+        "--before",
+        type=float,
+        default=0.0,
+        help="end the window this many years ago, for a disjoint confirmation half",
+    )
     parser.add_argument("--arms", default="real,shuffled")
     parser.add_argument("--top", default="1,3,10")
     parser.add_argument(
@@ -181,9 +208,10 @@ def main() -> None:
     names = [s for s in args.symbols.split(",") if s]
     frames = [f.strip() for f in args.frames.split(",") if f.strip()]
     arms = [a.strip() for a in args.arms.split(",") if a.strip()]
+    tail = f" ending {args.before:g}y ago" if args.before > 0 else ""
     print(
-        f"{len(cells(args))} cells  {args.years:g}y  frames {','.join(frames)}  top {args.top}  "
-        f"windows {args.windows}d"
+        f"{len(cells(args))} cells  {args.years:g}y{tail}  frames {','.join(frames)}  "
+        f"top {args.top}  windows {args.windows}d  symbols {args.symbols}"
     )
 
     jobs = [(s, f, a) for f in frames for a in arms for s in names]

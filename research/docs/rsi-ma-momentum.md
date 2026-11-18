@@ -166,6 +166,58 @@ spread, which is what it should be.
 The hindsight ceiling runs **+1.62 to +1.85R a window** throughout. There is a
 great deal to be had; nothing here selects it.
 
+### Sweeping the ranking window: 14, 7 and 3 days
+
+The same races bucketed three ways. **One race per cell, bucketed afterwards**,
+so a 3-day and a 14-day reading are the same trades counted differently rather
+than three re-runs that could disagree for mechanical reasons. The trade floor
+scales with the window - eight trades is a fair bar over a week and an
+impossible one over three days, and holding it fixed would silently rank only
+the most frequent cells at the short end.
+
+**15m, 8 years, the unbiased arm (top k minus bottom k):**
+
+| window | k=1 | k=3 | k=10 | shuffled k=1 | shuffled k=3 | shuffled k=10 |
+|---|---:|---:|---:|---:|---:|---:|
+| 14 days | - | - | - | -0.0073 | -0.0066 | -0.0057 |
+| 7 days | +0.0097 | +0.0155 | +0.0093 | -0.0047 | -0.0116 | -0.0051 |
+| **3 days** | **+0.0762** | **+0.0693** | **+0.0431** | -0.0187 | -0.0159 | +0.0075 |
+
+**The shorter the ranking window, the larger it gets - and the shuffled arm
+does not follow.** At three days the real figure is five to eight times the
+seven-day one at every `k`, while a reordered market stays on zero or below.
+That is the first reading in this study where real separates from its shuffle
+on the arm that is not biased by selection.
+
+In absolute terms at three days the top 3 make **+0.0330R** a trade in the next
+window against **-0.0363R** for the bottom 3 and -0.0315R for the grid average,
+net of spread; the shuffled arm's top 3 read -0.0049 with its bottom 3 at
++0.0110. On two years and two markets the same cell reads **+0.1590R
+[+0.0620, +0.2523]**, median +0.0824, positive in **133 of 227** windows,
+against a shuffled -0.0087 `[-0.0951, +0.0800]`, median -0.0577, positive in
+108 of 233.
+
+**At 5m it mostly does not hold**, which matters because 5m is where the cost
+is 2.2x dearer:
+
+| window | real k=1 | real k=3 | real k=10 | shuffled k=1 | shuffled k=3 | shuffled k=10 |
+|---|---:|---:|---:|---:|---:|---:|
+| 14 days | - | - | +0.0346 | **+0.0773** | **+0.0545** | +0.0147 |
+| 7 days | +0.0254 | +0.0068 | -0.0073 | +0.0208 | +0.0215 | **+0.0324** |
+| 3 days | +0.0452 | +0.0147 | -0.0003 | -0.0216 | -0.0142 | -0.0022 |
+
+At 14 and 7 days the **shuffled** arm equals or beats the real one, and the
+real figure decays to nothing as `k` grows. Only the 3-day window at `k=1`
+separates, on the fewest trades of any cell in the table.
+
+**So the live claim is narrow and specific**: a three-day ranking window, at
+15m, selecting a handful of cells. It is being checked now on disjoint halves,
+per instrument and at all three `k`
+([`rsi_shortwindow_run.py`](../ideas/rsi_shortwindow_run.py)), because a
+recency gradient that steep - `+0.1590R` on two years against `+0.0693` on
+eight - is usually a regime, and because the sweep looked at eighteen real
+cells before this one came up. **Nothing here is tradable until those land.**
+
 ### The shorter history disagrees with the longer one
 
 | window | k=3 real | k=3 shuffled | won |
