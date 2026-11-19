@@ -46,10 +46,10 @@ Grinold's fundamental law of active management (Grinold and Kahn):
 3. **What a qualifying lead would have to look like, since this repository does not currently hold one.** The shape
    the law wants is a small after-cost edge over many weakly-correlated bets. *(The earlier draft credited an "FX
    buy-after-an-H4-down-move lead" with **+0.08 R a trade on 765 trades across 20 pairs in 2 years** and a
-   "QuantConnect replication and forward watch". **No such result exists here** - no 765-trade or 20-pair figure
-   appears in any document, [`quantconnect-survey.md`](quantconnect-survey.md) is a screen of three *other people's*
-   published strategies, all of which failed replication, and the only forward paper log on record belongs to
-   `DISPLACE_C` in [`turn-follow-ups.md`](turn-follow-ups.md).)*
+   a replication on a third-party platform and a "forward watch". **No such result exists here** - no 765-trade
+   or 20-pair figure appears in any document, and the only forward paper log on record belongs to `DISPLACE_C` in
+   [`turn-follow-ups.md`](turn-follow-ups.md). Replication here runs on `nautilus_trader`, which is the only
+   backtest engine this repository depends on.)*
 
    The closest live positives, both after their own controls, are **not** direction edges: contiguous activity over
    the next sixteen bars at AUC **0.8886** within volatility strata and **0.6588** inside the hour of day

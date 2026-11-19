@@ -473,6 +473,30 @@ catalogue's directional shelf is the subject of
 [order-block-zones.md](order-block-zones.md), [pivot-families.md](pivot-families.md) and
 [fourier.md](fourier.md), which between them cover more cells than this survey could add.
 
+## Carried over from a second screen of published strategies
+
+A companion screen of **three published strategy write-ups and three strategy
+repositories** on a third-party research site was removed from this repository
+on 2026-11-19: the platform is not one this desk uses - everything here runs on
+`nautilus_trader` - and a document named after it invited the reading that we
+replicate work there. Two of its findings are not about the platform and are
+kept:
+
+* **All three write-ups reported a loss in their own results table and a win in
+  their own abstract**, and the discrepancy ran the same direction every time.
+  So the prose of a published strategy write-up cannot be used even as a
+  pointer; only its table and its code can. Sample sizes were 10 to 15 trades a
+  pair in the one that reported any, and unreported in the other two.
+* **The opening-range breakout cannot be measured on this book at all**, and
+  for a venue reason rather than a statistical one: the feed sends no real
+  volume and quotes no instrument with an opening auction. That is the same
+  constraint this survey records under *what the venue cannot express*, arrived
+  at from a different catalogue.
+
+Of eleven distinct mechanisms across those six sources, seven were already
+refuted here and two were structurally unmeasurable for the reason above. The
+one that was worth a run became [`dual-thrust.md`](dual-thrust.md).
+
 ## What this survey did not cover
 
 - **Families with no keyword in the frame.** Among them: Market Profile and TPO, Ichimoku variants
