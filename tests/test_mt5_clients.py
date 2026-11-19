@@ -3842,21 +3842,32 @@ class TestTheFactoriesWireTheClientsUp:
         assert isinstance(client, MT5DataClient)
         assert client.id == ClientId("MT5")
 
-    async def test_the_exec_factory_builds_a_netting_exec_client(self):
-        """**MT5 nets**, and telling Nautilus otherwise would make its position
-        book disagree with the terminal's.
+    async def test_the_exec_factory_builds_a_hedging_exec_client(self):
+        """**This account hedges**, and telling Nautilus otherwise made its
+        position book disagree with the terminal's for eight days.
 
-        On a netting account a buy against an open short reduces that short;
-        under `HEDGING` Nautilus would carry both as separate positions, so
-        exposure would read as the sum of two legs the broker has already
-        offset. The factory is where the choice is made, and it is not a
-        setting - it is what this venue does.
+        The previous version of this test asserted `NETTING` and argued it from
+        "MT5 nets". MT5 does both, and this account answers `margin_mode: 2`,
+        `ACCOUNT_MARGIN_MODE_RETAIL_HEDGING` - recorded in
+        `tests/test_mt5_live.py` beside `trade_mode: 0`. Its reasoning was
+        sound for a netting account and false for this one: under netting a buy
+        against an open short reduces it, so carrying both legs would double the
+        exposure; under hedging **the broker keeps both legs**, so carrying them
+        separately is what matches the terminal.
+
+        What the wrong declaration cost, measured on the live desk 2026-11-19:
+        the closing route works - it sends the opposite deal with the ticket -
+        but the engine netted the resulting fill and never emitted
+        `PositionClosed`. **8 `PositionOpened` events and 0 `PositionClosed`,
+        ever.** The broker was flat while the engine believed it held eight
+        positions, and `_already_held` blocked seven instruments on positions
+        shut nine days earlier.
         """
         from nautilus_trader.model.enums import OmsType
 
         client = await self._build(MT5LiveExecClientFactory, MT5ExecClientConfig())
         assert isinstance(client, MT5ExecutionClient)
-        assert client.oms_type == OmsType.NETTING
+        assert client.oms_type == OmsType.HEDGING
 
 
 # ──── the bridge on the wire ────

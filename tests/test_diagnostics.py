@@ -496,3 +496,39 @@ def test_book_relative_benchmarks_a_desk_against_the_others() -> None:
     # The magnitudes must differ, and that is what this asserts.
     sharpes = [metrics.sharpe(one) for one in (good, middling, poor)]
     assert ratios != pytest.approx(sharpes), "a book-relative IR is not a Sharpe"
+
+
+def test_the_declared_oms_type_matches_the_account_margin_mode() -> None:
+    """Nautilus must model this account the way the broker runs it.
+
+    **The guard for a drift that cost real money.** `MT5ExecutionClient`
+    declared `OmsType.NETTING` while the terminal answers `margin_mode: 2`,
+    `ACCOUNT_MARGIN_MODE_RETAIL_HEDGING`. On a hedging account a market order
+    on the opposite side does not close anything - it opens a second position
+    facing the other way - and the adapter's own docstring named the netting
+    declaration as "the expensive half": the engine nets the fill, believes it
+    is flat, and the broker is left holding a position with no stop, no target
+    and no rule watching it.
+
+    The closing route was fixed on 2026-11-11 (`Bridge.close_position` with the
+    ticket) and the declaration was left behind. Measured on the live desk,
+    2026-11-19: **8 `PositionOpened` events and 0 `PositionClosed`, ever.**
+
+    This asserts the pair together so they cannot drift again. If the broker is
+    ever moved to a netting account, `margin_mode` becomes 0 or 1 and this test
+    is the thing that says the declaration has to follow.
+    """
+    import inspect
+
+    from nautilus_trader.model.enums import OmsType
+
+    from till_infinity.adapters.mt5 import execution
+
+    source = inspect.getsource(execution.MT5ExecutionClient.__init__)
+    assert "OmsType.HEDGING" in source, (
+        "this account answers margin_mode 2 (hedging), so the client must declare "
+        "OmsType.HEDGING - under NETTING the engine nets an opposite-side fill, "
+        "believes it is flat, and leaves the broker holding an unwatched position"
+    )
+    assert "OmsType.NETTING" not in source
+    assert OmsType.HEDGING is not OmsType.NETTING

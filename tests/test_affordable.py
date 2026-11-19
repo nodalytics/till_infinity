@@ -24,6 +24,7 @@ import pytest
 
 from till_infinity.domain.models import SymbolSpec
 from till_infinity.risk import affordable as af
+from till_infinity.risk import sizing
 
 
 def spec(
@@ -325,3 +326,62 @@ class TestPublished:
         from till_infinity.domain import models
 
         assert af.Affordability is not getattr(models, "Verdict", None)
+
+
+def test_minimum_lot_is_refused_without_a_ceiling() -> None:
+    """The default refuses, so nothing changes for a caller that sets nothing.
+
+    This is the behaviour measured on the live desk, 2026-11-19: a $5,999
+    account at the default 0.25% fraction has a $15.00 budget, and the three
+    feeds with the widest stops in price terms refused **every** signal - 55 of
+    55 in one cycle - because one minimum lot over their stops costs more than
+    that. The rule fired, the gate held, and the desk read as a quiet market.
+    """
+    nikkei = spec("JAPAN225", tick_size=1.0, tick_value=1.0, volume_min=0.1)
+    found = sizing.lots(nikkei, equity=6_000.0, risk_fraction=0.0025, stop_distance=945.0)
+    assert not found.ok
+    assert "does not cover the minimum" in found.reason
+    assert "no minimum-lot ceiling is set" in found.reason
+
+
+def test_a_ceiling_lets_the_minimum_lot_through_and_records_the_overshoot() -> None:
+    """With a ceiling, the minimum lot trades and says how far over it went.
+
+    `sizing-is-reduction-only` records that every other path here clamps at
+    1.0, so a trade that risks more than the budget is the one case the journal
+    must be able to name. One minimum lot risks 94.50 against a 15.00 budget,
+    which is 6.3 times it - a number that has to be visible on the decision
+    rather than inferred later from two columns nobody joins.
+    """
+    nikkei = spec("JAPAN225", tick_size=1.0, tick_value=1.0, volume_min=0.1)
+    found = sizing.lots(
+        nikkei,
+        equity=6_000.0,
+        risk_fraction=0.0025,
+        stop_distance=945.0,
+        floor_to_min=100.0,
+    )
+    assert found.ok
+    assert found.volume == pytest.approx(0.1)
+    assert found.risk_money == pytest.approx(94.5)
+    assert found.overshoot == pytest.approx(94.5 / 15.0, rel=1e-3)
+
+
+def test_a_ceiling_below_the_minimum_lot_still_refuses() -> None:
+    """The ceiling is a bound, not a switch: too low and it refuses, and says so.
+
+    The failure this guards is a ceiling set once and then outgrown - equity
+    falls, or a feed's ATR doubles, and a bound that used to admit the minimum
+    lot stops doing so. It has to refuse with the ceiling named, not silently
+    behave like the old code.
+    """
+    nikkei = spec("JAPAN225", tick_size=1.0, tick_value=1.0, volume_min=0.1)
+    found = sizing.lots(
+        nikkei,
+        equity=6_000.0,
+        risk_fraction=0.0025,
+        stop_distance=945.0,
+        floor_to_min=50.0,
+    )
+    assert not found.ok
+    assert "the minimum-lot ceiling is 50.00" in found.reason

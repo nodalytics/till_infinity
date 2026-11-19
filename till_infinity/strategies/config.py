@@ -546,6 +546,14 @@ class Settings:
     #: Never risk more than this, whatever the equity says. A safety rail for
     #: the case where the account query returns something absurd.
     max_risk_money: float = 0.0
+    #: The most a **minimum lot** may risk when the budget cannot cover it, in
+    #: account currency. 0 refuses instead, which is the behaviour every caller
+    #: had before this existed and the reason the default is 0: the alternative
+    #: - taking the minimum lot whenever the budget falls short - has no bound.
+    #: Measured 2026-11-19: a $5,999 account at 0.25% has a $15.00 budget, and
+    #: japan 225, volatility 75 and us tech 100 refused 55 of 55 signals in one
+    #: cycle because one minimum lot over their stops costs more than that.
+    min_lot_ceiling: float = 0.0
     #: Open positions across everything, and per instrument. One per instrument
     #: is not conservatism - the same level firing three times is one idea, and
     #: stacking it turns a single wrong read into three losses.
@@ -1612,6 +1620,7 @@ class Settings:
             intervals=_names(_env("TRADING_INTERVALS")) or TIMEFRAMES,
             risk_fraction=_float("TRADING_RISK_FRACTION", 0.0025),
             max_risk_money=_float("TRADING_MAX_RISK_MONEY", 0.0),
+            min_lot_ceiling=_float("TRADING_MIN_LOT_CEILING", 0.0),
             max_positions=_int("TRADING_MAX_POSITIONS", 4),
             max_per_symbol=_int("TRADING_MAX_PER_SYMBOL", 1),
             daily_loss_fraction=_float("TRADING_DAILY_LOSS_FRACTION", 0.03),
