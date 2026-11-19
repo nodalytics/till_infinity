@@ -444,6 +444,11 @@ def size(
         risk_fraction=settings.risk_fraction * scale,
         stop_distance=intent.risk,
         max_risk_money=settings.max_risk_money,
+        # **Not scaled by `scale`.** The ceiling is a hard limit on what one
+        # minimum lot may risk, so letting the reductions move it would make
+        # the bound depend on the very multipliers that pushed the budget
+        # under the minimum in the first place.
+        floor_to_min=float(getattr(settings, "min_lot_ceiling", 0.0) or 0.0),
     )
     if not found.ok:
         return Refusal(

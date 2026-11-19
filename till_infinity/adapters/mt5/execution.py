@@ -260,7 +260,28 @@ class MT5ExecutionClient(LiveExecutionClient):
             loop=loop,
             client_id=client_id,
             venue=venue,
-            oms_type=OmsType.NETTING,
+            # **HEDGING, because the account is.** `tests/test_mt5_live.py`
+            # records the terminal answering `margin_mode: 2`,
+            # `ACCOUNT_MARGIN_MODE_RETAIL_HEDGING`, and `_close`'s docstring
+            # below named this declaration "the expensive half" of the bug
+            # fixed on 2026-11-11: the close route was corrected to send the
+            # opposite deal **with the ticket**, and this line was left behind,
+            # so the engine kept netting the resulting fill and kept believing
+            # it was flat.
+            #
+            # Measured on the live desk, 2026-11-19: **8 `PositionOpened`
+            # events and 0 `PositionClosed`, ever**, with the broker holding
+            # two positions the engine did not know were its last two and six
+            # it had already closed. The closes were working; the engine's own
+            # book never followed them.
+            #
+            # Nothing here depended on the netting. `_close` reads the
+            # terminal's ticket stack rather than the engine's aggregate, and
+            # the five readers of `cache.positions_open()` either behave
+            # identically (the `_already_held` guard blocks on any) or more
+            # accurately (`book_of` and `books_by_rule` get per-ticket
+            # exposure instead of a net).
+            oms_type=OmsType.HEDGING,
             account_type=AccountType.MARGIN,
             base_currency=None,
             instrument_provider=instrument_provider,
@@ -1301,11 +1322,20 @@ class MT5ExecutionClient(LiveExecutionClient):
         2026-11-11 a `ZonesEdge-BTCUSD` long reported closed at -3.01 while the
         broker was left holding a short.
 
-        The divergence is the expensive half. The adapter reports the fill,
-        the engine nets it against the long because this client declares
-        `OmsType.NETTING`, and from then on Nautilus believes it is flat while
-        the broker is not: a position with no stop, no target and no rule
-        watching it. Every "closed" alert this desk has sent had that shape.
+        The divergence was the expensive half, and it outlived this fix by
+        eight days. The adapter reported the fill, the engine netted it against
+        the long because this client declared `OmsType.NETTING`, and from then
+        on Nautilus believed it was flat while the broker was not: a position
+        with no stop, no target and no rule watching it.
+
+        **Measured 2026-11-19, with the route below already working**: 8
+        `PositionOpened` events and **0 `PositionClosed`, ever**. The broker
+        held two positions - AUDUSD and BTCUSD, both with `sl=0.0` and
+        `tp=0.0` - and the engine's cache held eight, six of which it had
+        already closed here successfully. The closes landed; the engine's book
+        never followed them, so `_already_held` blocked seven instruments on
+        positions that were shut days earlier. The declaration is now
+        `OmsType.HEDGING` and the pair is pinned by a test.
 
         `Bridge.close_position` is the route that does close - it sends the
         opposite deal **with `position` set to the ticket**, which is the one

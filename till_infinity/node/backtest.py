@@ -147,7 +147,11 @@ def venue(
         # have resolved - a run that fails at load, or worse, loads nothing
         # and reports a result computed from no trades.
         name=name,
-        oms_type="NETTING",
+        # HEDGING, matching the live client: this repository's bar is that
+        # "the thing that measured it and the thing that trades it are the
+        # same thing", and a backtest that nets while the desk hedges models a
+        # different account.
+        oms_type="HEDGING",
         account_type="MARGIN",
         base_currency=money,
         starting_balances=[f"{balance} {money}"],

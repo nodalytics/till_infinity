@@ -119,6 +119,13 @@ class Sizing:
     #: The number the volume divides.
     loss_per_lot: float = 0.0
     reason: str = ""
+    #: How many times the risk budget this trade actually risks. 1.0 or below
+    #: on every normally-sized trade; above 1.0 **only** on a minimum lot taken
+    #: under `floor_to_min`, and recorded so the journal can say a trade risked
+    #: 3.2x what was intended rather than leaving that to be inferred from two
+    #: columns nobody joins. `sizing-is-reduction-only` is the standing fact
+    #: this breaks on purpose: every other path here clamps at 1.0.
+    overshoot: float = 0.0
 
     @property
     def ok(self) -> bool:
@@ -133,6 +140,7 @@ def lots(
     stop_distance: float,
     max_risk_money: float = 0.0,
     slippage: float = 0.0,
+    floor_to_min: float = 0.0,
 ) -> Sizing:
     """Lots to trade so that being stopped costs the risk budget.
 
@@ -159,16 +167,47 @@ def lots(
 
     volume = spec.round_volume(budget / loss_per_lot)
     if volume < spec.volume_min:
-        effects.fired("trading.unaffordable_refusal")
         at_min = spec.volume_min * loss_per_lot
+        # **The minimum lot, deliberately over budget, and only to a ceiling
+        # someone set.** Measured on 2026-11-19: a $5,999 account at the
+        # default 0.25% fraction has a $15.00 budget, and the three feeds with
+        # the widest stops in price terms - japan 225 at an ATR of 315,
+        # volatility 75 at 214, us tech 100 at 143 - refused **every** signal
+        # here, 55 of 55 in one cycle. The rule fired, the gate held, and the
+        # desk looked like a quiet market.
+        #
+        # `floor_to_min` defaults to 0, so this path is **off** until a
+        # ceiling is set and behaviour is unchanged for every caller that does
+        # not. That default is the safety: the alternative - taking the minimum
+        # lot whenever the budget falls short - has no bound at all, and on
+        # japan 225 it would risk several times the intended fraction without
+        # anything in the code saying how much.
+        if 0.0 < at_min <= floor_to_min:
+            return Sizing(
+                volume=spec.volume_min,
+                risk_money=at_min,
+                loss_per_lot=loss_per_lot,
+                overshoot=at_min / budget if budget > 0 else 0.0,
+            )
+        effects.fired("trading.unaffordable_refusal")
+        ceiling = (
+            f"; the minimum-lot ceiling is {floor_to_min:.2f}"
+            if floor_to_min > 0
+            else "; no minimum-lot ceiling is set"
+        )
         return Sizing(
             loss_per_lot=loss_per_lot,
             reason=(
                 f"{budget:.2f} does not cover the minimum {spec.volume_min:g} lot, "
-                f"which risks {at_min:.2f} ({at_min / equity:.2%} of equity)"
+                f"which risks {at_min:.2f} ({at_min / equity:.2%} of equity){ceiling}"
             ),
         )
-    return Sizing(volume=volume, risk_money=volume * loss_per_lot, loss_per_lot=loss_per_lot)
+    return Sizing(
+        volume=volume,
+        risk_money=volume * loss_per_lot,
+        loss_per_lot=loss_per_lot,
+        overshoot=(volume * loss_per_lot) / budget if budget > 0 else 0.0,
+    )
 
 
 def respects_stops_level(spec: SymbolSpec, entry: float, stop: float, target: float) -> str:

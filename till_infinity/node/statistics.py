@@ -230,6 +230,43 @@ class ProfitFactor(PortfolioStatistic):
         return None if got is None else round(got, 4)
 
 
+def book_relative(series: Sequence[Sequence[float]]) -> list[float]:
+    """Each desk's information ratio against **the rest of the book**.
+
+    The benchmark `information_ratio` refuses to default, made concrete. For
+    desk `i` the benchmark is the mean of every *other* desk's return at the
+    same index, so the question is "does this one beat the others" - which is
+    what an IR answers and a Sharpe cannot. Against a zero benchmark the two
+    are the same number under two names, and this desk has already paid once
+    for a statistic counted twice.
+
+    **Not the whole book including itself.** A desk measured against an
+    aggregate it is part of is measured partly against itself, which shrinks
+    every ratio toward zero by its own weight - at 89 registered desks that is
+    about 1%, at the 5 that trade a given feed it is 20%.
+
+    Series are truncated to the shortest, because an IR on mismatched lengths
+    is an IR against whatever happened to line up. Returns NaN for a desk whose
+    active return has no spread.
+    """
+    rows = [list(one) for one in series]
+    if len(rows) < 2:
+        return [float("nan")] * len(rows)
+    shortest = min(len(one) for one in rows)
+    if shortest < 2:
+        return [float("nan")] * len(rows)
+    trimmed = [one[:shortest] for one in rows]
+    out = []
+    for i, mine in enumerate(trimmed):
+        rest = [one for j, one in enumerate(trimmed) if j != i]
+        benchmark = [sum(column) / len(column) for column in zip(*rest, strict=True)]
+        try:
+            out.append(metrics.information_ratio(mine, benchmark))
+        except (ValueError, ZeroDivisionError):
+            out.append(float("nan"))
+    return out
+
+
 def register(
     analyzer,
     trial_sharpes: Sequence[float] = (),
