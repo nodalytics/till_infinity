@@ -416,3 +416,83 @@ def test_both_ratios_are_diagnostics_and_neither_is_a_gate():
     assert "InfoRatio" in DIAGNOSTICS
     assert "DIR" in DIAGNOSTICS
     assert GATES == ("DSR",)
+
+
+def test_live_build_registers_the_statistics_on_the_portfolio() -> None:
+    """The live node attaches our metrics, so a report is not silently empty.
+
+    This is the regression test for a defect that lasted as long as the module:
+    every statistic in `node/statistics.py` was built, wrapped as a Nautilus
+    `PortfolioStatistic` and registered inside `statistics.register` - and
+    `register` was called by the test suite and by nothing else, so none of
+    them appeared on any run. The module docstring claimed the opposite.
+
+    Asserting on `build()`'s source rather than standing a node up: a
+    `TradingNode` needs the venue factories and the environment, and a test
+    that needs those is a test nobody runs. What makes this one bite is the
+    name - if `register` is renamed or the call is removed, this fails.
+    """
+    import inspect
+
+    from till_infinity.node import live
+
+    source = inspect.getsource(live.build)
+    assert "statistics.register(" in source, (
+        "live.build() no longer registers the portfolio statistics, so PSR, the "
+        "minimum track record, expectancy, the profit factor, the win rate, the "
+        "payoff and P_WinRate will report on nothing"
+    )
+
+
+def test_register_attaches_every_statistic_without_a_benchmark() -> None:
+    """`register` with no benchmark and no trials still attaches eight figures.
+
+    The two it leaves out need context a single run does not have - the DSR
+    needs the trial Sharpes, the IR needs a benchmark - and both refuse rather
+    than report an undeflated or benchmark-free number under a name that
+    implies one.
+    """
+    from nautilus_trader.analysis.analyzer import PortfolioAnalyzer
+
+    from till_infinity.node import statistics
+
+    analyzer = PortfolioAnalyzer()
+    statistics.register(analyzer)
+    attached = (
+        "SR_period",
+        "PSR",
+        "MinTRL",
+        "Expectancy",
+        "ProfitFactor",
+        "WinRate",
+        "Payoff",
+        "P_WinRate",
+    )
+    for name in attached:
+        assert analyzer.statistic(name) is not None, f"{name} was not attached"
+    assert analyzer.statistic("DSR") is None, "the DSR needs trial Sharpes"
+    assert analyzer.statistic("InfoRatio") is None, "an IR needs a benchmark"
+
+
+def test_book_relative_benchmarks_a_desk_against_the_others() -> None:
+    """An IR against the rest of the book, which is the only benchmark here.
+
+    Three desks that differ in **mean**, which is what an IR ranks on. The
+    first fixture tried here was mean-zero on every desk, so every IR was
+    legitimately 0.0 and the test failed for its own reason rather than the
+    code's - a reminder that a fixture has to carry the structure the assertion
+    is about.
+    """
+    from till_infinity.node import statistics
+
+    good = [0.03, 0.01, 0.03, 0.01, 0.03, 0.01]
+    middling = [0.01, 0.00, 0.01, 0.00, 0.01, 0.00]
+    poor = [-0.02, -0.01, -0.02, -0.01, -0.02, -0.01]
+    ratios = statistics.book_relative([good, middling, poor])
+    assert ratios[0] > ratios[1] > ratios[2], f"the book order is wrong: {ratios}"
+    assert ratios[2] < 0.0, "a desk below the rest of the book scores negative"
+    # The same three against a zero benchmark are Sharpes, and they order the
+    # same way - so the ordering alone would not show the benchmark was used.
+    # The magnitudes must differ, and that is what this asserts.
+    sharpes = [metrics.sharpe(one) for one in (good, middling, poor)]
+    assert ratios != pytest.approx(sharpes), "a book-relative IR is not a Sharpe"

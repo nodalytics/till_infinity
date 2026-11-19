@@ -174,28 +174,35 @@ class Forecast:
 def simulate(
     estimate: float,
     spread: float,
-    residuals: np.ndarray,
-    rate: float,
-    horizon: float,
+    periods: np.ndarray,
     cost: float,
     draws: int,
     rng: np.random.Generator,
 ) -> tuple[float, float, float, float]:
-    """The predicted mean, 5th and 95th, and P(mean R below `cost`).
+    """The predicted mean, 5th and 95th, and `P(mean R below cost)`.
 
-    The edge is drawn from the posterior **already widened to the horizon**,
-    and the trade noise is resampled from the scenario's own residuals rather
-    than drawn Gaussian - a barrier race's outcome is two-valued and its
-    residuals are nothing like normal, so a Gaussian band would be the wrong
-    width in both tails.
+    The edge is drawn from the posterior **already widened to the horizon**;
+    the noise is drawn by **resampling whole past periods of the same length**,
+    centred.
+
+    That last choice is the whole of the calibration, and it took three goes:
+
+    * drawing `n` residuals independently gives the variance of a mean of
+      i.i.d. draws, `sigma^2 / n`. Coverage **0.431** against a target of 0.90.
+    * resampling residuals in blocks of eight carries some clustering.
+      Coverage **0.660**.
+    * resampling *periods* carries the clustering, the within-period shape and
+      - the part the first two both missed - **the variation in how many trades
+      a period holds at all**. A period with three trades has a mean 2.6 times
+      noisier than one with twenty, and a point estimate of the firing rate
+      gives every period the band of an average one.
+
+    Nothing is assumed about the shape of a period's distribution, which is
+    the point: a barrier race's outcome is two-valued and a period of them is
+    not remotely Gaussian.
     """
-    expected = max(int(round(rate * horizon)), 1)
     edges = rng.normal(estimate, np.sqrt(max(spread, 1e-12)), draws)
-    if residuals.size >= 8:
-        picks = rng.integers(0, residuals.size, (draws, expected))
-        noise = residuals[picks].mean(axis=1)
-    else:
-        noise = np.zeros(draws)
+    noise = periods[rng.integers(0, periods.size, draws)] if periods.size >= 4 else 0.0
     outcome = edges + noise
     return (
         float(outcome.mean()),
@@ -267,16 +274,18 @@ def forward(
             waited = max(float(opens - seen.ts[cut - 1]) / DAY, 0.0)
             spread = seen.p[cut - 1] + drift * (waited + horizon)
             estimate = float(seen.m[cut - 1])
-            since = opens - int(args.residual * DAY)
+            # The scenario's own past, cut into windows of exactly this
+            # horizon, as period means centred on the current estimate.
+            since = opens - int(args.lookback * DAY)
             first = int(np.searchsorted(seen.ts[:cut], since, side="left"))
-            recent = seen.net[first:cut]
-            rate = recent.size / max(args.residual, 1e-9)
-            if recent.size < 8:
-                recent = seen.net[:cut]
-                span = max(float(seen.ts[cut - 1] - seen.ts[0]) / DAY, 1.0)
-                rate = recent.size / span
+            if cut - first < args.block:
+                first = 0
+            keys = seen.ts[first:cut] // width
+            values = seen.net[first:cut]
+            edges_at = np.flatnonzero(np.diff(keys)) + 1
+            periods = np.asarray([part.mean() for part in np.split(values, edges_at) if part.size])
             predicted, lo, hi, risk = simulate(
-                estimate, spread, recent - estimate, rate, horizon, args.cost, args.draws, rng
+                estimate, spread, periods - estimate, args.cost, args.draws, rng
             )
             mean.append(predicted)
             low.append(lo)
@@ -374,17 +383,25 @@ def main() -> None:
     )
     parser.add_argument("--horizons", default="1,3,7")
     parser.add_argument(
-        "--halflife",
-        default="1,3,7,0",
-        help="days for the edge to forget half of itself; 0 is the static arm, Q=0",
+        "--wander",
+        default="0,0.002,0.005,0.01,0.02,0.05",
+        help="daily standard deviation of the edge in R; Q is its square, 0 is static",
     )
+    parser.add_argument("--block", type=int, default=8, help="past trades a scenario needs to resample")
     parser.add_argument("--confidence", default="0.5,0.6,0.7")
     parser.add_argument("--draws", type=int, default=2000)
     parser.add_argument("--warm", type=float, default=180.0, help="days before the first forecast")
     parser.add_argument("--least", type=int, default=20, help="past trades a scenario needs")
-    parser.add_argument("--residual", type=float, default=30.0, help="days of residuals to resample")
+    parser.add_argument(
+        "--lookback", type=float, default=180.0, help="days of past periods to resample from"
+    )
     parser.add_argument("--cost", type=float, default=0.0, help="the bar a scenario has to clear, in R")
-    parser.add_argument("--seed-var", type=float, default=0.25, help="the filter's starting P")
+    parser.add_argument(
+        "--seed-var",
+        type=float,
+        default=0.01,
+        help="the filter's starting P; 0.01 is a +/-0.2R prior on a per-trade edge, not +/-0.5R",
+    )
     parser.add_argument("--noise", type=float, default=0.0, help="observation variance, 0 measures it")
     # The grid, as `rsi_momentum` defines it.
     parser.add_argument("--families", default="rsi,ma")
@@ -412,12 +429,22 @@ def main() -> None:
         f"arm {args.arm}  observation variance {noise:.4f}  mean net {book.net.mean():+.4f}R"
     )
 
-    for life in (float(v) for v in args.halflife.split(",")):
-        # Q from a half-life: the posterior forgets half its information in
-        # `life` days, so Q = P_seed / life is the scale that does that. The
-        # static arm is life 0, meaning Q = 0 and a mean over all history.
-        drift = 0.0 if life <= 0 else args.seed_var / life
-        label = "static (Q=0)" if life <= 0 else f"half-life {life:g}d (Q={drift:.4f})"
+    for wander in (float(v) for v in args.wander.split(",")):
+        # **Q is set on the scale of the thing it describes.** The first
+        # version read `Q = P_seed / halflife`, with `P_seed = 0.25` - a prior
+        # that says the edge could be anywhere in +/-0.5R. At a 3-day
+        # half-life that is `Q = 0.0833` a day, so over a 7-day horizon the
+        # edge was allowed to wander `sqrt(7 * 0.0833) = 0.76R`, and the band
+        # came out **3.17R wide with 0.978 coverage**. For a per-trade edge
+        # whose plausible range is a few hundredths of an R, that is wrong by
+        # about two orders of magnitude - which is why one arm was far too
+        # wide and the other, at Q = 0, far too narrow.
+        #
+        # `--wander` is therefore the daily standard deviation of the edge in
+        # R, the quantity a person can actually reason about, and `Q` is its
+        # square. 0 is the static arm.
+        drift = wander**2
+        label = "static (Q=0)" if wander <= 0 else f"edge wanders {wander:g}R a day (Q={drift:.2e})"
         print(f"\n  {label}")
         rng = np.random.default_rng(11)
         tracks = track(book, noise, drift, args.seed_var)

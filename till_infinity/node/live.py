@@ -37,7 +37,7 @@ from nautilus_trader.model.enums import TradingState
 from nautilus_trader.model.identifiers import StrategyId
 
 from till_infinity.adapters.mt5 import MT5DataClientConfig, MT5ExecClientConfig
-from till_infinity.node import desks, ladder, venues
+from till_infinity.node import desks, ladder, statistics, venues
 from till_infinity.utils.env import flag, symbol_names
 from till_infinity.utils.topics import LADDER
 
@@ -294,6 +294,22 @@ def build() -> TradingNode:
             "no desks to run: TRADING_SYMBOLS names no instrument, so this "
             "node would connect, reconcile, report healthy and trade nothing."
         )
+    # **The metrics, attached here because nothing attached them.** Every
+    # statistic in `node/statistics.py` existed, was wrapped as a Nautilus
+    # `PortfolioStatistic` and was registered inside `statistics.register` -
+    # and `register` was called from the test suite and from nowhere else, so
+    # PSR, the minimum track record, expectancy, the profit factor, the win
+    # rate, the payoff, `P_WinRate` and both information ratios reported on no
+    # run, live or backtest, for as long as the module has existed. The
+    # module's own docstring said "called by the backtest and live nodes".
+    #
+    # The deflated Sharpe and the information ratios stay absent here on
+    # purpose: a DSR needs the trial Sharpes of whatever searched, and an IR
+    # needs a benchmark. This node has one portfolio, so the only honest
+    # benchmark - the rest of the book - is not a thing the portfolio analyzer
+    # can see. `statistics.book_relative` computes it where the per-desk
+    # series exist, which is `discovery.read`.
+    statistics.register(node.portfolio.analyzer)
     for strategy in strategies:
         node.trader.add_strategy(strategy)
     for actor in _actors(len(strategies)):
