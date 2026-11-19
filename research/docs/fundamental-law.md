@@ -70,13 +70,22 @@ measurable:
    day-blocks, so their clustering is kept), simulate the next period's trades many times. That gives the predicted
    distribution of the next period's result: its mean, its spread, and the chance it comes out below zero or below
    costs. The **deviation rate** is how often the realised result falls outside that predicted band.
-4. **The decision.** Trade a scenario next period only if the simulated chance that its edge beats costs is high
-   enough, sized by how tight the band is.
+4. **By horizon.** The operator, 2026-11-19: *"the monte carlo can also be period based saying how the deviation rate
+   will be in the next 1 day to 1 week."* So the simulation runs for each horizon H from one day to one week, and the
+   further ahead it looks, the more the edge itself can drift: the uncertainty grows as P_H = P + H·Q before the trades
+   are drawn, and the number of trades in H follows the scenario's recent firing rate. Each horizon gets its own
+   predicted band, its own chance of finishing below costs, and its own deviation rate. Short horizons are mostly the
+   luck of a few trades; long ones mostly the edge moving, and where the two cross says how far ahead a forecast is
+   still worth acting on.
+5. **The decision.** Trade a scenario over the horizon the forecast still supports, only if the simulated chance that
+   its edge beats costs is high enough, sized by how tight that horizon's band is.
 
 How it is judged, out of sample (estimate to t, act on t + 1, roll forward):
 
-- **Calibration first:** realised results must land inside the 90% Monte Carlo band about 90% of the time. A band
-  that is too narrow means the deviation is understated; that check comes before any P&L.
+- **Calibration first, per horizon:** realised results must land inside the 90% Monte Carlo band about 90% of the time,
+  separately at 1 day, 2-3 days and 1 week. A band that is too narrow means the deviation is understated; that check
+  comes before any P&L. Horizons overlap from one day to the next, so their calibration is scored on non-overlapping
+  windows (or with the overlap accounted for), or the 1-week numbers count the same week several times.
 - **Against controls:** the same filter on shuffled scenario labels (does the scenario carry information?), a
   static rule fitted once, and picking last week's leaders (already null). The filter has to beat all three after
   costs, per instrument as well as pooled.
