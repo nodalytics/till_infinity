@@ -10,6 +10,7 @@ for moving averages. Harness:
 | what led | **trend confirmation at 2R** - `ma_trend`, `ma_pullback` and `trend_confirmed` take the whole top ten at 15m, at **+0.2365 to +0.3171R** net on 184 to 313 trades, t +2.75 to +3.27 |
 | did it work | **no.** **Nought of the top ten** was positive in the preceding 30 days; every one read **-0.0293 to -0.0759R** there, on four to five times the sample |
 | against chance | **the grid loses to its own shuffle.** The best single-market cell on day-shuffled bars reads **+0.5679R** at 15m and **+0.6689R** at 5m, against real pooled leaders of +0.3171 and +0.1690 |
+| the short-window exception | **withdrawn.** A 3-day ranking window at 15m read +0.0693R on the unbiased arm against a shuffled -0.0159, and on verification no market held across both four-year halves, gold showed it in its **shuffled** arm with the interval clear of zero, AUDUSD showed it **reversed** with the interval clear of zero, and it shrinks monotonically as the selection widens |
 | the 1m end | **not measurable here.** The deep catalogue is 5-minute; the production store holds under six days of 1m and is gated; the lab was refusing SSH. 5m is the finest clock below |
 
 ## What was run
@@ -210,13 +211,54 @@ At 14 and 7 days the **shuffled** arm equals or beats the real one, and the
 real figure decays to nothing as `k` grows. Only the 3-day window at `k=1`
 separates, on the fewest trades of any cell in the table.
 
-**So the live claim is narrow and specific**: a three-day ranking window, at
-15m, selecting a handful of cells. It is being checked now on disjoint halves,
-per instrument and at all three `k`
-([`rsi_shortwindow_run.py`](../ideas/rsi_shortwindow_run.py)), because a
-recency gradient that steep - `+0.1590R` on two years against `+0.0693` on
-eight - is usually a regime, and because the sweep looked at eighteen real
-cells before this one came up. **Nothing here is tradable until those land.**
+### And the three-day cell does not survive its own verification
+
+Checked on two disjoint four-year halves, per instrument, at all three `k`
+([`rsi_shortwindow_run.py`](../ideas/rsi_shortwindow_run.py)). **Top k minus
+bottom k, with a bootstrap over window pairs:**
+
+| half | market | k | real | 90% | shuffled | 90% |
+|---|---|---:|---:|---|---:|---|
+| recent 4y | pooled | 1 | +0.0663 | `[-0.0126, +0.1434]` | +0.0599 | `[-0.0169, +0.1336]` |
+| recent 4y | pooled | 3 | +0.0605 | `[-0.0016, +0.1196]` | +0.0417 | `[-0.0155, +0.0984]` |
+| recent 4y | pooled | 10 | +0.0385 | `[-0.0002, +0.0758]` | -0.0160 | `[-0.0528, +0.0213]` |
+| earlier 4y | pooled | 1 | +0.1163 | `[+0.0345, +0.1949]` | -0.0167 | `[-0.1045, +0.0698]` |
+| earlier 4y | pooled | 3 | +0.0762 | `[+0.0175, +0.1357]` | -0.0070 | `[-0.0671, +0.0534]` |
+| earlier 4y | pooled | 10 | +0.0300 | `[-0.0071, +0.0681]` | +0.0177 | `[-0.0168, +0.0526]` |
+
+**Five things, and together they close it.**
+
+1. **On the recent half every real interval includes zero**, and the shuffled
+   arm reads +0.0599 and +0.0417 against the real +0.0663 and +0.0605. A
+   reordered market gives nine tenths of it at `k=1`.
+2. **The half that does exclude zero is the earlier one**, which is the
+   opposite of the recency gradient the two-year smoke test suggested. The
+   gradient was noise about a gradient.
+3. **No market shows it in both halves.** `GBPUSD` carries the recent half
+   (+0.0939 and +0.0748, intervals clear of zero); `USDJPY` carries the earlier
+   one (+0.1166 and +0.0747). Each is flat in the other half.
+4. **One market shows it in the shuffled arm and not the real one.** Gold,
+   recent half: shuffled **+0.0925** `[+0.0186, +0.1695]` and **+0.1205**
+   `[+0.0543, +0.1882]`, against a real -0.0039 and +0.0227. If the statistic
+   can do that on reordered days, an instance of it on real days is not
+   evidence.
+5. **And one shows it reversed with the interval excluding zero**: `AUDUSD`,
+   earlier half, **-0.0939** `[-0.1730, -0.0058]` and **-0.0719**
+   `[-0.1432, -0.0042]`. Last window's *worst* cells beat its best there, as
+   decisively as anything beat anything.
+
+**The effect also shrinks monotonically in `k`** - +0.0663, +0.0605, +0.0385
+pooled recent; +0.1163, +0.0762, +0.0300 pooled earlier - and `k=10` is the
+arm with the most trades and the least noise. Growing as the selection narrows
+is what an order statistic does, not what a signal does.
+
+Thirty real cells were examined (5 markets x 2 halves x 3 `k`); about four have
+intervals clear of zero, split three positive and one negative, with no market
+repeating. That is the multiplicity surface producing exactly what it should.
+
+**So the whole page is one verdict and no exceptions.** A short ranking window
+looked like the one place real separated from its shuffle, and it was the place
+the order statistic is largest.
 
 ### The shorter history disagrees with the longer one
 
