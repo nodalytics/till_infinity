@@ -395,6 +395,53 @@ def trimmed(bars: Candles, days: float, back: float, warmup: int) -> Candles:
     )
 
 
+def information(values: np.ndarray, stamps: np.ndarray) -> tuple[float, float, float, float]:
+    """Annualised IR, trades a year, **effective** bets a year, and implied IC.
+
+    `IR ~= IC * sqrt(breadth)` is the fundamental law
+    ([`fundamental-law.md`](../docs/fundamental-law.md)), and the term that
+    decides whether it says anything here is breadth - **independent** bets,
+    not trades. A 50.5% win rate is an IC near 0.01 and needs about 10,000
+    independent bets for an IR of 1; the same grid can emit a million
+    overlapping ones and earn nothing for them.
+
+    So breadth is deflated by the clustering actually present. Whole days are
+    the block, because that is the unit everything else here resamples:
+    `var(mean)` from the day means is `v / d`, which against an independent
+    `s^2 / n` gives an effective `n = s^2 * d / v`. On this desk's grids that
+    number is a small fraction of the trade count, and the gap is the point.
+
+    **Not computed on the ranking window alone.** Annualising a seven-day mean
+    gave an IR of **+27.69** on 67 trades, and seven days holds too few distinct
+    days to estimate the day clustering at all, so the effective count came back
+    undefined. Both are properties of a longer sample, so the caller passes the
+    ranking and prior windows together.
+
+    Returns `(IR, trades a year, effective bets a year, implied IC)`.
+    """
+    ok = np.isfinite(values) & np.isfinite(stamps)
+    values, stamps = values[ok], stamps[ok]
+    if values.size < 30:
+        return (float("nan"),) * 4
+    span = max((float(stamps[-1]) - float(stamps[0])) / (365.25 * 86_400_000_000_000), 1e-9)
+    a_year = values.size / span
+    sd = float(values.std(ddof=1))
+    if sd <= 0:
+        return (float("nan"),) * 4
+    ratio = float(values.mean()) / sd * np.sqrt(a_year)
+    days = (stamps // 86_400_000_000_000).astype(np.int64)
+    edges = np.unique(days)
+    if edges.size < 12:
+        return ratio, a_year, float("nan"), float("nan")
+    means = np.asarray([values[days == d].mean() for d in edges])
+    between = float(means.var(ddof=1))
+    if between <= 0:
+        return ratio, a_year, float("nan"), float("nan")
+    effective = sd**2 * edges.size / between
+    per_year = effective / span
+    return ratio, a_year, per_year, ratio / np.sqrt(max(per_year, 1e-9))
+
+
 def benjamini(values: list[float], alpha: float = 0.10) -> int:
     """How many cells survive Benjamini-Hochberg at `alpha`, two-sided.
 
@@ -488,6 +535,8 @@ def main() -> None:
         print(f"\n{'=' * 100}\n### {frame}\n{'=' * 100}")
         pooled: dict[int, list[np.ndarray]] = {}
         pooled_prior: dict[int, list[np.ndarray]] = {}
+        stamped: dict[int, list[np.ndarray]] = {}
+        stamped_prior: dict[int, list[np.ndarray]] = {}
         best_shuffled = []
         for symbol in (s for s in args.symbols.split(",") if s):
             base = load(Path(args.catalogue), symbol)
@@ -513,6 +562,8 @@ def main() -> None:
                     if arm == "real":
                         pooled.setdefault(index, []).append(here.values)
                         pooled_prior.setdefault(index, []).append(before.values)
+                        stamped.setdefault(index, []).append(bars.ts[here.at])
+                        stamped_prior.setdefault(index, []).append(bars.ts[before.at])
                 if not rows:
                     print(f"\n  {symbol} {arm}: no cell reached {args.least} trades")
                     continue
@@ -559,11 +610,27 @@ def main() -> None:
         print(f"\n  pooled over {len(names)} market(s), {len(summary)} cells")
         print(
             "    combination                                      n     net       t |  prior n     net"
+            " | IR, breadth and implied IC over both windows (37d)"
         )
         for net, index, count, t, prior_net, prior_count in summary[: args.show]:
             shown = f"{prior_net:+.4f}" if np.isfinite(prior_net) else "    thin"
+            # Ranking window and prior window together: 37 days rather than 7,
+            # which is the shortest span that can carry an IR or a breadth.
+            both = np.concatenate([np.concatenate(pooled[index]), np.concatenate(pooled_prior[index])])
+            when = np.concatenate(
+                [
+                    np.concatenate(stamped.get(index, [np.asarray([], dtype=np.int64)])),
+                    np.concatenate(stamped_prior.get(index, [np.asarray([], dtype=np.int64)])),
+                ]
+            )
+            if when.size != both.size:
+                both, when = both[: when.size], when[: both.size]
+            order = np.argsort(when, kind="stable")
+            ratio, a_year, effective, skill = information(both[order], when[order])
             print(
                 f"    {every[index].label()} {count:>5}  {net:+.4f}  {t:+6.2f} | {prior_count:>7}  {shown}"
+                f" | IR {ratio:+6.2f}  trades/y {a_year:>7,.0f}  effective/y {effective:>7,.0f}"
+                f"  IC {skill:+.4f}"
             )
         # BH over these cells is **anti-conservative and labelled as such**:
         # they share the same bars and many are near-duplicates, so the
