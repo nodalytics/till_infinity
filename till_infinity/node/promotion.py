@@ -279,6 +279,98 @@ class Gate:
     trial_sharpes: tuple[float, ...] = ()
     #: The candidate's own per-period returns, for the Sharpe being deflated.
     returns: tuple[float, ...] = ()
+    #: When each of those returns happened, in epoch seconds. **Optional, and
+    #: the breakdown is reported rather than deciding when it is absent** -
+    #: the same bargain `deflated` strikes with `trial_sharpes`.
+    #:
+    #: Without this, `node/breakdown.py` had no caller at all: an audit on
+    #: 2026-11-19 found 196 top-level names defined and never referenced in the
+    #: package, and `breakdown`'s own docstring calls its hourly cut "one of
+    #: the two gates worth most". A gate nobody can invoke is not a gate.
+    stamps: tuple[float, ...] = ()
+    #: The per-period returns of **every** trial the search ran, this one
+    #: included. `trial_sharpes` collapses each to one number, which is what
+    #: the deflation needs; PBO needs the series, because it re-ranks the
+    #: trials on half the sample at a time.
+    #:
+    #: Optional for the same reason, and the module it unlocks had **no
+    #: importer at all** before this: `node/selection.py` answers "is this
+    #: Sharpe real given that it was *picked*", which `metrics.py` cannot, and
+    #: `statistics.register`'s own docstring cites candidates that "passed DSR,
+    #: PBO and SPA" while nothing here could compute a PBO.
+    trial_returns: tuple[tuple[float, ...], ...] = ()
+
+    def overfitting(self) -> float | None:
+        """PBO for this search, or `None` without the trials' return series.
+
+        Reported, never deciding - the same bargain `deflated` strikes. A
+        fourth statistic with a fourth threshold gives an effective trial count
+        nobody can compute, which is the argument `statistics.register` makes
+        for keeping exactly one gate.
+
+        **PBO and DSR are different objections.** The deflated Sharpe asks
+        whether the best of a wide search would look this good from nothing;
+        PBO asks whether the thing that won in-sample keeps winning out of
+        sample, by re-ranking every trial on half the blocks at a time. A
+        candidate can clear one and fail the other, which is why both are worth
+        printing where both can be asked.
+        """
+        if len(self.trial_returns) < 2:
+            return None
+        from .selection import probability_of_overfitting
+
+        try:
+            return probability_of_overfitting(self.trial_returns).probability
+        except (ValueError, ZeroDivisionError):
+            # PBO refuses a sample it cannot split. Reported as absent, for the
+            # reason above: `verdict` is read on a live path.
+            return None
+
+    def day_block(self) -> tuple[float, float] | None:
+        """A day-block interval on the mean return, or `None` without stamps.
+
+        Whole days resampled with their contents intact. The ordinary interval
+        here is far too narrow: regime labels persist for hours and trades
+        cluster in days, so an i.i.d. bootstrap on this sample assumes away the
+        dependence that matters. `node/stability.py` had no importer either.
+        """
+        if len(self.stamps) != len(self.returns) or len(self.returns) < 24:
+            return None
+        from .stability import day_block_interval
+
+        days = [int(s // 86_400) for s in self.stamps]
+        if len(set(days)) < 8:
+            # **`verdict` must never raise**, and `day_block_interval` refuses
+            # a sample it cannot resample - correctly, since a day-block
+            # interval over one day is an i.i.d. interval wearing the name.
+            # Caught here rather than there: a record that is long enough to
+            # judge and short enough to span a day is a real case, and it
+            # should read as "no interval" and not as a crash on a live path.
+            return None
+        found = day_block_interval(self.returns, days)
+        return float(found.low), float(found.high)
+
+    def by_hour(self) -> tuple[bool, str] | None:
+        """Is the record spread across hours, or one session wearing a Sharpe.
+
+        `None` when no timestamps were supplied, which is why this is reported
+        and not decisive: most callers do not keep them yet.
+
+        **Why the hour and not something else**, measured rather than assumed:
+        intraday pattern lives in volatility and FX peaks at 14-15 UTC at about
+        three times its quiet level, so a statistic that does not control for
+        the hour is partly reading the clock. `a-pair-of-bars-needs-the-hour-
+        of-day-null` puts a size on it - ordering suppresses two-bar statistics
+        by 0.046 to 0.072 and **half of that is the daily cycle**.
+        """
+        if len(self.stamps) != len(self.returns) or len(self.returns) < 12:
+            return None
+        from .breakdown import by_clock, stable_across
+
+        try:
+            return stable_across(by_clock(self.stamps, self.returns, field="hour"))
+        except (ValueError, ZeroDivisionError):
+            return None
 
     def deflated(self) -> float | None:
         """DSR for this gate, or `None` if it was not given what it needs.
@@ -354,9 +446,19 @@ class Gate:
         # answer the other, so a gate that can be asked both is asked both.
         ok = psr >= wanted and (dsr is None or dsr >= floor)
         why = "" if ok or psr < wanted else " - PSR cleared, DSR did not"
+        # The hourly breakdown, stated beside the verdict rather than folded
+        # into it. Reported and not decisive, because a third statistic with a
+        # third threshold gives an effective trial count nobody can compute -
+        # the argument `node/statistics.register` makes for keeping one gate.
+        spread = self.by_hour()
+        clock = "" if spread is None else f"; by hour: {spread[1]}"
+        pbo = self.overfitting()
+        picked = "" if pbo is None else f"; PBO {pbo:.3f}"
+        band = self.day_block()
+        shown = "" if band is None else f"; day-block mean [{band[0]:+.4f}, {band[1]:+.4f}]"
         return ok, (
             f"{self.name}: PSR {psr:.3f} against {wanted} over "
-            f"{self.episodes} episodes{beside}{why}"
+            f"{self.episodes} episodes{beside}{why}{clock}{picked}{shown}"
         )
 
 
