@@ -19,6 +19,84 @@ orders of work are unaffected by the move; only the paths are stale, and they
 have not been rewritten because a backlog is a record of what was thought when.
 
 
+## The open book loses its manager on every deploy
+
+Noted 2026-11-20, from checking whether two positions the desk was holding were
+under management. Neither was.
+
+| position | opened UTC | owner | managed |
+|---|---|---|---|
+| XCUUSD 5842362034 | 15:15 | ZonesEdge `E637` | **no** |
+| USDJPY 5842571944 | 18:35 | ZonesEdge `E637_5m` | **no** |
+
+The container started at **19:09**, so both predate it. Since that restart the
+log carries **zero `PositionOpened`** and **zero orphan** lines, while
+`Portfolio` reports `net_position` of -4.7 and -0.63 matching the broker
+exactly. So both positions are in the engine's cache and **no strategy knows
+they exist**.
+
+`exits.on_position_opened` needs the `Intent` the desk remembered -
+`self._filled` or `self._intended` - and a position reconciled from the broker
+has neither, because an `Intent` carries *why* the trade was taken, the risk it
+was sized for and the level it was about, none of which is recoverable from a
+broker position. There is no adopt path and an honest one cannot reconstruct
+those fields.
+
+**So every deploy drops management of whatever is open**, and there were
+several deploys on 2026-11-20 alone. The effect compounds with the other
+finding of that day: managed exits had never once completed, because every
+close raised a `ValueError` in `_close_out`. They work now - but only for
+positions opened since the most recent restart.
+
+What is lost is the trail, break-even, the stale clock and the scale-out. What
+remains is the broker-side bracket, so the position is **protected and
+unmanaged** rather than naked.
+
+### Why the orphan policy does not cover it, and should not be made to
+
+`_orphan` exists for a position whose intent is missing and it **flattens**,
+with a strong argument: *"the price is the one number that must never be
+invented. A quantity has a correct answer whatever this process remembers -
+whatever is open - but a stop does not: a distance, a volatility multiple or
+the configured default all put a price nobody chose on the venue, and that
+price then reads as protection in every report."*
+
+That reasoning is right and it does not apply here, because **these stops are
+not missing**. The broker holds `sl 550.91` on the XCUUSD and `sl 159.0` on the
+USDJPY, with targets beside them. Nothing would need inventing: the stop can be
+*read* from the venue rather than guessed. Flattening a protected position in
+profit because this process forgot why it was opened would be the more
+expensive answer.
+
+Note also that a reconciled position never reaches `_orphan` at all - it fires
+no `PositionOpened` - so the policy is not declining to act, it is not
+consulted.
+
+### The design question
+
+Whether a reconciled position should get a **minimal `Held`** built from the
+broker's own numbers: `price_open` as the entry and the best seen, `sl` as the
+stop, `tp` as the target, `time` as the opened stamp. That is enough for the
+trail, break-even and the stale clock, all of which need only prices and a
+clock - and it invents nothing, which is the whole of `_orphan`'s objection.
+
+What it would **not** support is the journal: the decision, the level id, the
+risk denominator and the strategy's own reasoning are genuinely lost, and
+`strategies/report.py` pairs every outcome to a decision. So the split is
+**reconstruct enough to protect, never enough to explain** - and a minimal
+`Held` has to be marked as such, or a later study will pool managed positions
+with adopted ones and average two different rules.
+`pooled-medians-invert-subgroups` is what that costs.
+
+**And it needs an owner, which is the open dependency.** A `Held` lives on a
+strategy, so something has to say which strategy adopts the position. The order
+comment names the edge today - `120-151501-001-XCUUSD_E637-1` - and is not a
+channel to build on: the USDJPY's own comment reads
+`-183520-001-USDJPY_E637_5m-1`, already **truncated at the front** by MT5's
+31-character cap, with the day gone. A slightly longer symbol or tag would take
+`_E637` with it. The durable channel is the magic, which is why this entry sits
+below *"nothing the broker holds can be attributed to a rule"* and waits on it.
+
 ## Nothing the broker holds can be attributed to a rule
 
 Noted 2026-11-20, from attributing a fortnight of live P&L and finding there
