@@ -532,3 +532,169 @@ def test_the_declared_oms_type_matches_the_account_margin_mode() -> None:
     )
     assert "OmsType.NETTING" not in source
     assert OmsType.HEDGING is not OmsType.NETTING
+
+
+def test_the_promotion_gate_reports_the_hourly_breakdown() -> None:
+    """A gate given timestamps says whether the record is spread across hours.
+
+    `node/breakdown.py` had **no caller in the package** until this: the audit
+    on 2026-11-19 found 196 top-level names defined and never referenced
+    outside their own file, and this module's own docstring calls its hourly
+    cut "one of the two gates worth most". A gate nobody can invoke is not a
+    gate.
+
+    Reported and not decisive, deliberately - a third statistic with a third
+    threshold gives an effective trial count nobody can compute, which is the
+    argument `statistics.register` makes for keeping exactly one deciding gate.
+    """
+    from till_infinity.node.promotion import Gate
+
+    hour = 3600.0
+    # Twenty-four returns, one an hour: spread across the clock, and
+    # deliberately inside a single day so the day-block arm has to decline
+    # rather than raise - `verdict` is read on a live path.
+    even = Gate(
+        name="even",
+        criterion="beats its twin",
+        control="day-shuffled twin",
+        candidates=3,
+        episodes=24,
+        passed=True,
+        returns=tuple(0.01 if i % 2 else -0.004 for i in range(24)),
+        stamps=tuple(i * hour for i in range(24)),
+    )
+    spread = even.by_hour()
+    assert spread is not None, "timestamps were supplied, so the cut must run"
+    assert isinstance(spread[0], bool)
+    assert spread[1]
+    assert "by hour:" in even.verdict()[1]
+    assert even.day_block() is None, "one day cannot be day-block resampled"
+    assert "day-block" not in even.verdict()[1]
+
+
+def test_the_gate_stays_silent_about_hours_it_was_not_given() -> None:
+    """No timestamps, no breakdown, and no pretence of one.
+
+    The same bargain `deflated` strikes with `trial_sharpes`: a statistic that
+    needs context a caller did not supply reports nothing rather than reporting
+    a number computed from a default. `absent is not zero` is the standing rule.
+    """
+    from till_infinity.node.promotion import Gate
+
+    bare = Gate(
+        name="bare",
+        criterion="beats its twin",
+        control="day-shuffled twin",
+        candidates=3,
+        episodes=24,
+        passed=True,
+        returns=tuple(0.01 if i % 2 else -0.004 for i in range(24)),
+    )
+    assert bare.by_hour() is None
+    assert "by hour:" not in bare.verdict()[1]
+
+
+def test_a_contained_exception_is_journalled_not_only_logged() -> None:
+    """A swallowed bug must survive the deploy that would delete its log.
+
+    **The defect this closes.** On 2026-11-19 a live desk reported
+    `(bug):on_data` on 2 of 4 fires. The guard counts every occurrence and logs
+    the first with its traceback - to the container log, which the recreate
+    that shipped the OMS fix destroyed. So a bug had been seen, counted, and
+    made undiagnosable by a routine deploy.
+
+    The journal is a bind mount that outlives the container, and since the
+    composite index of 2026-11-19 an `(actor, kind, time)` read of it is a
+    covering scan. So the traceback goes there too.
+    """
+    import inspect
+
+    from till_infinity.strategies import desk as desk_module
+
+    source = inspect.getsource(desk_module)
+    assert "_journal_bug" in source, "the guard no longer records a contained bug durably"
+    guard = inspect.getsource(desk_module.guarded)
+    assert "_journal_bug" in guard, (
+        "guarded() logs the traceback but does not journal it, so a recreate "
+        "deletes the only record of a contained exception"
+    )
+    body = inspect.getsource(desk_module.Desk._journal_bug)
+    assert "traceback" in guard
+    # The rationale carries the traceback, because that is the field a person
+    # reads back and the whole point of the entry.
+    assert "rationale" in body
+    assert "OBSERVATION" in body
+    # And it must not be able to stop a decision: the call is suppressed.
+    assert "contextlib.suppress" in guard
+
+
+def test_the_gate_reports_pbo_when_given_the_trials_series() -> None:
+    """PBO answers what the deflated Sharpe cannot: did the winner keep winning.
+
+    `node/selection.py` had **no importer in the package** before this. Its own
+    docstring says `metrics.py` answers "is this Sharpe real given the sample"
+    and it answers "is this Sharpe real given that it was *picked*" - and
+    `statistics.register` cites candidates that "passed DSR, PBO and SPA" while
+    nothing here could compute a PBO at all.
+
+    The fixture is the honest case for it: twenty trials of pure noise, one of
+    which wins in sample by luck. A high PBO is the correct reading.
+    """
+    import random
+
+    from till_infinity.node.promotion import Gate
+
+    rng = random.Random(11)
+    trials = tuple(tuple(rng.gauss(0.0, 0.02) for _ in range(120)) for _ in range(20))
+    gate = Gate(
+        name="noise",
+        criterion="beats its twin",
+        control="day-shuffled twin",
+        candidates=len(trials),
+        episodes=120,
+        passed=True,
+        returns=trials[0],
+        trial_returns=trials,
+    )
+    pbo = gate.overfitting()
+    assert pbo is not None, "the trials' series were supplied, so PBO must compute"
+    assert 0.0 <= pbo <= 1.0
+    assert "PBO" in gate.verdict()[1]
+    # Without them it says nothing rather than computing from a default.
+    bare = Gate(
+        name="bare",
+        criterion="beats its twin",
+        control="day-shuffled twin",
+        candidates=20,
+        episodes=120,
+        passed=True,
+        returns=trials[0],
+    )
+    assert bare.overfitting() is None
+    assert "PBO" not in bare.verdict()[1]
+
+
+def test_the_gate_reports_a_day_block_interval_across_enough_days() -> None:
+    """Whole days resampled, because an i.i.d. interval here is far too narrow.
+
+    Trades cluster in days and regime labels persist for hours, so resampling
+    rows assumes away the dependence that matters. `node/stability.py` had no
+    importer before this either.
+    """
+    from till_infinity.node.promotion import Gate
+
+    day = 86_400.0
+    gate = Gate(
+        name="spread",
+        criterion="beats its twin",
+        control="day-shuffled twin",
+        candidates=3,
+        episodes=40,
+        passed=True,
+        returns=tuple(0.01 if i % 3 else -0.012 for i in range(40)),
+        stamps=tuple(day * (i // 2) for i in range(40)),
+    )
+    band = gate.day_block()
+    assert band is not None, "twenty distinct days is enough to resample"
+    assert band[0] <= band[1]
+    assert "day-block" in gate.verdict()[1]

@@ -226,6 +226,235 @@ def decay(series: dict[int, tuple[np.ndarray, np.ndarray]], lags: int, hours: fl
     return Decay(period_hours=hours, pairs=counts, acf=found, half_life=life, periods=len(series))
 
 
+def derived_memory(values: np.ndarray) -> tuple[float, float, float]:
+    """`(Q, R, half-life in trades)` from the series itself. **Nothing fixed.**
+
+    The operator, 2026-11-19: *"the decay factor should be automatically
+    computed and derived, not fixed"*. For a local-level model - the edge is a
+    random walk, each trade is a noisy reading of it -
+
+        r_t   = mu_t + eps_t      Var(eps) = R
+        mu_t  = mu_{t-1} + eta_t  Var(eta) = Q
+
+    the first differences give both variances in closed form, with no fitting
+    and no parameter to choose:
+
+        Var(dr)             = Q + 2R
+        Cov(dr_t, dr_{t-1}) = -R
+
+    so `R = -Cov` and `Q = Var(dr) + 2*Cov`. The steady-state Kalman gain
+    follows from the ratio `q = Q/R`,
+
+        K = (sqrt(q^2 + 4q) - q) / 2 ... as the positive root of K^2/(1-K) = q
+
+    and the memory is `ln(2) / -ln(1 - K)` trades: how many observations before
+    half the weight on today's estimate has decayed away. That is the half-life
+    the operator asked for, derived per combination from its own record.
+
+    **A negative `Q` is a result, not an error.** It means the differences are
+    more negatively autocorrelated than a drifting level can produce, which is
+    what a *constant* edge observed through noise looks like. Returned as
+    `Q = 0` with an infinite half-life, which is the static arm - and the right
+    answer for a combination whose edge is not moving.
+    """
+    good = values[np.isfinite(values)]
+    if good.size < 30:
+        return float("nan"), float("nan"), float("nan")
+    diffs = np.diff(good)
+    if diffs.size < 8:
+        return float("nan"), float("nan"), float("nan")
+    spread = float(np.var(diffs, ddof=1))
+    lag = float(np.cov(diffs[:-1], diffs[1:], ddof=1)[0, 1])
+    noise = max(-lag, 1e-12)
+    drift = spread + 2.0 * lag
+    if drift <= 0.0:
+        return 0.0, noise, float("inf")
+    ratio = drift / noise
+    gain = (np.sqrt(ratio**2 + 4.0 * ratio) - ratio) / 2.0
+    gain = float(min(max(gain, 1e-9), 1.0 - 1e-9))
+    return drift, noise, float(np.log(2.0) / -np.log(1.0 - gain))
+
+
+def moments_of(values: np.ndarray) -> tuple[float, float, int] | None:
+    """`(Var(dr), Cov(dr_t, dr_{t-1}), n)` - the two moments `derived_memory` needs.
+
+    Split out so they can be **pooled across series before** `Q` and `R` are
+    taken from them. That is the whole of the pooled estimator: one
+    combination cannot see its own `Q` because the sampling error on `Var(dr)`
+    is `2R*sqrt(2/n)` and `Q` is four to seven orders below `R`, but the error
+    falls as `sqrt(k)` over `k` pooled series while a shared `Q` does not.
+    """
+    good = values[np.isfinite(values)]
+    if good.size < 30:
+        return None
+    diffs = np.diff(good)
+    if diffs.size < 8:
+        return None
+    return float(np.var(diffs, ddof=1)), float(np.cov(diffs[:-1], diffs[1:], ddof=1)[0, 1]), diffs.size
+
+
+def memory_from(spread: float, lag: float) -> tuple[float, float, float]:
+    """`(Q, R, half-life)` from already-computed moments. See `derived_memory`."""
+    noise = max(-lag, 1e-12)
+    drift = spread + 2.0 * lag
+    if drift <= 0.0:
+        return 0.0, noise, float("inf")
+    ratio = drift / noise
+    gain = float(min(max((np.sqrt(ratio**2 + 4.0 * ratio) - ratio) / 2.0, 1e-9), 1.0 - 1e-9))
+    return drift, noise, float(np.log(2.0) / -np.log(1.0 - gain))
+
+
+def pooled_memory(series: list[np.ndarray], label: str) -> None:
+    """One `Q` shared across many series, with the spread that assumption hides.
+
+    **Reported with its own dispersion on purpose.** Pooling buys precision by
+    assuming the series share a memory; if they do not, the pooled number is a
+    precise estimate of nothing. So the per-series half-lives are printed
+    beside it - if they scatter over orders of magnitude, the shared `Q` is not
+    a description of any of them.
+    """
+    found = [m for m in (moments_of(s) for s in series) if m is not None]
+    if len(found) < 4:
+        print(f"    {label}: {len(found)} usable series, too few to pool")
+        return
+    weight = float(sum(m[2] for m in found))
+    spread = sum(m[0] * m[2] for m in found) / weight
+    lag = sum(m[1] * m[2] for m in found) / weight
+    drift, noise, life = memory_from(spread, lag)
+    singles = np.asarray([memory_from(m[0], m[1])[2] for m in found])
+    finite = singles[np.isfinite(singles)]
+    shown = f"{life:.1f}" if np.isfinite(life) else "static"
+    scatter = (
+        f"per-series p10-p90 {np.percentile(finite, 10):.1f}-{np.percentile(finite, 90):.1f}"
+        if finite.size >= 4
+        else "per-series undefined"
+    )
+    print(
+        f"    {label}: {len(found)} series, {weight:,.0f} steps  "
+        f"pooled half-life {shown}  Q {drift:.3e}  R {noise:.3e}  ({scatter}, "
+        f"{len(found) - finite.size} static)"
+    )
+
+
+def ar1_memory(values: np.ndarray) -> tuple[float, float]:
+    """`(rho, half-life)` from an AR(1) fit. **The right model for a persistent series.**
+
+    `derived_memory`'s local-level model is refuted by its own moments here:
+    it requires `Cov(dr_t, dr_{t-1}) = -R < 0`, and on log-ATR that covariance
+    comes out **positive**, which drove `R` onto its floor and returned a
+    half-life of 0.0 bars. Log volatility is long-memory rather than a random
+    walk observed through noise, so the moments the local-level model needs do
+    not exist in it.
+
+    An AR(1) is the well-conditioned alternative: `rho` is the lag-1
+    autocorrelation of the level itself, and the half-life is
+    `ln(2) / -ln(rho)` in whatever unit a step is. `reactive-zones.md` measures
+    log-ATR autocorrelation at 0.68 to 0.88 at five days against -0.03 to
+    +0.12 shuffled, so there is a real `rho` here for this to find.
+
+    `rho` at or above 1 is a random walk with no half-life at all, and is
+    returned as infinite rather than as a large number.
+    """
+    good = values[np.isfinite(values)]
+    if good.size < 50:
+        return float("nan"), float("nan")
+    centred = good - good.mean()
+    denominator = float(np.dot(centred, centred))
+    if denominator <= 0:
+        return float("nan"), float("nan")
+    rho = float(np.dot(centred[:-1], centred[1:]) / denominator)
+    if rho <= 0.0:
+        return rho, 0.0
+    if rho >= 1.0:
+        return rho, float("inf")
+    return rho, float(np.log(2.0) / -np.log(rho))
+
+
+def volatility_memory(args: argparse.Namespace) -> None:
+    """The memory of **log volatility**, which is the one that is estimable.
+
+    `reactive-zones.md` measures log-ATR autocorrelation at **0.68 to 0.88 at
+    five days** against -0.03 to +0.12 on shuffled bars. That is a real memory
+    two orders of magnitude better conditioned than an edge's, so the same
+    closed form has a sample it can work with - and it is the quantity a
+    derived decay factor should actually be driven by, since
+    `seasonality-belongs-on-q` already says the intraday pattern lives in
+    volatility rather than in return.
+    """
+    print("\n  the memory of log ATR, in bars and in hours")
+    hours = {"1h": 1.0, "15m": 0.25, "5m": 1.0 / 12.0}
+    for frame in ("1h", "15m"):
+        rows = []
+        for symbol in (s for s in args.symbols.split(",") if s):
+            base = load(Path(args.catalogue), symbol)
+            if args.years > 0:
+                base = window(base, args.years)
+            bars = base if frame == args.unit else fold(base, frame, unit=args.unit)
+            band = atr(bars)
+            with np.errstate(invalid="ignore", divide="ignore"):
+                logged = np.log(band[np.isfinite(band) & (band > 0)])
+            # **AR(1), not the local-level model.** The local-level estimator
+            # needs `Cov(dr_t, dr_{t-1}) < 0` and gets a positive number here,
+            # which pinned `R` to its floor and returned 0.0 bars. Both are
+            # printed so the refutation is visible rather than quietly
+            # replaced.
+            rho, life = ar1_memory(logged)
+            _, _, wrong = derived_memory(logged)
+            rows.append((symbol, rho, life, wrong, logged.size))
+        for symbol, rho, life, wrong in ((r[0], r[1], r[2], r[3]) for r in rows):
+            n = next(r[4] for r in rows if r[0] == symbol)
+            shown = (
+                f"{life:8.1f} bars = {life * hours[frame]:7.1f}h"
+                if np.isfinite(life)
+                else ("   random walk" if np.isinf(life) else "        none")
+            )
+            print(
+                f"    {frame:<4} {symbol:<8} {n:>7,} bars  rho {rho:.4f}  half-life {shown}"
+                f"   (local-level said {wrong:.1f}, refuted)"
+            )
+
+
+def planted_memory(draws: int = 40, trades: int = 4000, seed: int = 17) -> None:
+    """Does the estimator recover a memory it was given? Swept, with its floor.
+
+    **Power before any reading.** The half-lives this prints for real
+    combinations mean nothing without knowing what the estimator does when it
+    already knows the answer, and `show-power-before-reporting-a-null` is the
+    standing rule. A barrier race's outcome is two-valued, so the noise here is
+    deliberately +/-1 Bernoulli rather than Gaussian - the estimator must cope
+    with the distribution it will actually meet.
+    """
+    rng = np.random.default_rng(seed)
+    print("\n  recovering a planted memory, +/-1 trade noise, 4,000 trades a draw")
+    print("    planted half-life   recovered median   10th-90th        Q/R planted : found")
+    for life in (10.0, 50.0, 200.0, 1000.0, float("inf")):
+        # A half-life in trades fixes the gain, and the gain fixes Q/R.
+        if np.isinf(life):
+            drift = 0.0
+        else:
+            gain = 1.0 - 0.5 ** (1.0 / life)
+            drift = gain**2 / (1.0 - gain)
+        found = []
+        for _ in range(draws):
+            level = np.zeros(trades)
+            if drift > 0:
+                level = np.cumsum(rng.normal(0.0, np.sqrt(drift), trades))
+            seen = level + rng.choice((-1.0, 1.0), trades)
+            found.append(derived_memory(seen)[2])
+        got = np.asarray([f for f in found if np.isfinite(f)])
+        if got.size == 0:
+            print(f"    {life:>10}          all infinite      -                {drift:.2e} : 0")
+            continue
+        shown = f"{np.median(got):10.1f}"
+        band = f"{np.percentile(got, 10):8.1f}-{np.percentile(got, 90):<8.1f}"
+        infinite = draws - got.size
+        print(
+            f"    {life:>10}          {shown}       {band}  {drift:.2e} : "
+            f"{'-' if got.size == 0 else f'{got.size}/{draws} finite'}"
+            + (f", {infinite} read static" if infinite else "")
+        )
+
+
 def costs(args: argparse.Namespace) -> None:
     """Cost in R per trade, by clock and by stop, from the measured spreads.
 
@@ -285,6 +514,17 @@ def main() -> None:
     parser.add_argument("--lags", type=int, default=10)
     parser.add_argument("--least", type=int, default=3, help="trades a period needs to count")
     parser.add_argument("--cost-ladder", action="store_true")
+    parser.add_argument(
+        "--planted-memory",
+        action="store_true",
+        help="recover a known half-life, which is the power check for the derived one",
+    )
+    parser.add_argument("--derive", action="store_true", help="derive each combination's memory")
+    parser.add_argument(
+        "--derive-better",
+        action="store_true",
+        help="the three quantities that can carry a memory: volatility, the pool, the firing rate",
+    )
     # The grid, as `rsi_momentum` defines it.
     parser.add_argument("--families", default="rsi,ma")
     parser.add_argument("--rsi", default="7,14,21")
@@ -301,6 +541,70 @@ def main() -> None:
 
     if args.cost_ladder:
         costs(args)
+        return
+    if args.planted_memory:
+        planted_memory()
+        return
+    if args.derive_better:
+        # 1. Volatility, which is estimable on its own.
+        volatility_memory(args)
+        book = gather(args)
+        hour = int(HOUR)
+        print(f"\n  pooled across {len(book.names)} combinations, {book.net.size:,} trades")
+        # 2. The pool: one Q shared across the combinations of a family.
+        families: dict[str, list[np.ndarray]] = {}
+        for which in np.unique(book.scenario):
+            mine = book.net[book.scenario == which]
+            families.setdefault(book.names[int(which)].split("/")[0], []).append(mine)
+        pooled_memory([s for group in families.values() for s in group], "every combination")
+        for name, group in sorted(families.items()):
+            pooled_memory(group, f"family {name}")
+        # 3. The firing rate and the context mix, per period, which have a
+        #    signal-to-noise ratio an edge does not: a count is Poisson around
+        #    its own mean rather than +/-1R around a mean of 0.01R.
+        print("\n  the memory of what a combination *does*, not what it earns")
+        rates, contexts = [], []
+        keys = book.ts // hour
+        for which in np.unique(book.scenario):
+            mine = book.scenario == which
+            here = keys[mine]
+            if here.size < 60:
+                continue
+            marks, counts = np.unique(here, return_counts=True)
+            rates.append(counts.astype(float))
+            band = np.asarray([float(book.names[int(which)].split("/")[2][-1])] * marks.size)
+            contexts.append(band)
+        pooled_memory(rates, "firing rate an hour")
+        _ = contexts
+        return
+    if args.derive:
+        book = gather(args)
+        print(f"{len(book.names)} combinations, {book.net.size:,} trades")
+        rows = []
+        for which in np.unique(book.scenario):
+            mine = book.net[book.scenario == which]
+            drift, noise, life = derived_memory(mine)
+            if np.isfinite(drift):
+                rows.append((life, mine.size, float(mine.mean()), drift, noise, int(which)))
+        finite = [r for r in rows if np.isfinite(r[0])]
+        static = len(rows) - len(finite)
+        print(
+            f"  {len(rows)} estimated: {static} read **static** (no detectable drift), "
+            f"{len(finite)} carry a finite memory"
+        )
+        if finite:
+            lives = np.asarray([r[0] for r in finite])
+            print(
+                f"  half-life in trades: p10 {np.percentile(lives, 10):.0f}  "
+                f"median {np.median(lives):.0f}  p90 {np.percentile(lives, 90):.0f}"
+            )
+            print("  the twelve shortest-memory combinations")
+            print("    half-life  trades   mean R        Q        R   combination")
+            for life, n, mean, drift, noise, which in sorted(finite)[:12]:
+                print(
+                    f"    {life:9.1f}  {n:>6,}  {mean:+.4f}  {drift:.2e}  {noise:.2e}  "
+                    f"{book.names[which]}"
+                )
         return
 
     print(

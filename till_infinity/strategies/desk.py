@@ -57,6 +57,7 @@ above it and not inside.
 
 from __future__ import annotations
 
+import contextlib
 import functools
 import traceback
 from dataclasses import replace
@@ -169,11 +170,26 @@ def guarded(what: str):
                 self._count(f"(bug):{what}")
                 if key not in seen:
                     seen.add(key)
+                    detail = traceback.format_exc()
                     self.log.error(
                         f"{what} raised and was contained so the node keeps running - "
                         f"this desk refuses the message and the failure is counted as "
-                        f"(bug):{what}: {key}\n{traceback.format_exc()}"
+                        f"(bug):{what}: {key}\n{detail}"
                     )
+                    # **And to the journal, because the log does not survive a
+                    # deploy.** On 2026-11-19 `(bug):on_data` showed 2 of 4
+                    # fires on one desk, the traceback was in the container log
+                    # only, and the recreate that shipped the OMS fix destroyed
+                    # it - so a contained bug had been seen, counted, and made
+                    # undiagnosable. The journal is a bind mount that outlives
+                    # the container, and since the composite index it carries
+                    # a `(actor, kind, time)` covering scan.
+                    #
+                    # Swallowed for the same reason `_journal` swallows: this
+                    # runs on the stack of a live decision and a record that
+                    # cannot be written must not stop the desk.
+                    with contextlib.suppress(Exception):
+                        self._journal_bug(what, key, detail)
             return None
 
         return inner
@@ -700,6 +716,36 @@ class Desk(NautilusStrategy):
         self._count(f"(desk):{refusal.gate}")
         self._journal(refusal, payload)
         return refusal
+
+    def _journal_bug(self, what: str, key: str, detail: str) -> None:
+        """Record a contained exception where a deploy cannot delete it.
+
+        `Kind.OBSERVATION` and the shared `WRITER`, matching `_journal`, with
+        the handler and the exception in the context so a reader can group by
+        either. The traceback goes in the rationale because that is the field a
+        person reads, and it is the whole point of the entry.
+        """
+        from ..journal.actor import publish
+        from ..journal.models import Entry, Kind
+
+        publish(
+            self,
+            Entry(
+                title=f"(bug):{what} on {self.label}",
+                kind=Kind.OBSERVATION,
+                actor=WRITER,
+                rationale=f"{key}\n{detail}",
+                context={
+                    "gate": f"(bug):{what}",
+                    "handler": what,
+                    "exception": key,
+                    "rule": self.label,
+                    "strategy": str(self.id),
+                    "feed": self._feed_name(),
+                },
+                tags=("bug", what),
+            ),
+        )
 
     def _journal(self, refusal: Refusal, payload: dict[str, Any]) -> None:
         """Record one refusal, for the half of it nothing else holds.
