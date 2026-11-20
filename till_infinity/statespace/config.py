@@ -36,10 +36,31 @@ from till_infinity.utils.state import Restorable
 
 DEFAULT_STATE_DIR = ".data/statespace"
 
-#: Bar intervals this service folds. Two, for the same reason
-#: `structures.config.INTERVALS` is two: every interval is a separate member
-#: per feed, and the cost is linear in the product.
-DEFAULT_INTERVALS: tuple[str, ...] = ("1m", "5m")
+#: Bar intervals this service folds **when nobody says otherwise**, which live
+#: is not: `StatespaceActorConfig.intervals` defaults to `None` and the actor
+#: replaces this with the intervals it is actually subscribed to, because that
+#: "is the only value that cannot be silently wrong". The live fold is
+#: therefore the desks' own bar types - 15m and 5m on this instance - and this
+#: constant does not decide it.
+#:
+#: It decides the **backtest** path, where nothing derives from a
+#: subscription, and there the old value of `('1m', '5m')` was a silent
+#: rejection of every bar this desk trades. `actor.py` records the cost:
+#: `Settings.wants` returned `False` for all 5,135 bars of a run and
+#: `observe_bar` returned `None` for each, which also covers "unwarmed" and
+#: "no variance" - so nine of twelve sweep leaves reported `+0.00 over 0
+#: positions` as though the rules had declined to trade.
+#:
+#: 15m is therefore included: it is `desks.BASE_INTERVAL`, the clock every cost
+#: on this desk is quoted against, and a default that cannot fold it is a
+#: default that cannot measure the thing that runs.
+#:
+#: The operator's call, 2026-11-20: *"statespace can be 1m 5m, and 15m"*. Three
+#: rather than two widens the product of feeds and intervals that the old
+#: comment was careful about - but only where this constant is used at all,
+#: and the live path that the cost argument is about derives its own and is
+#: unaffected.
+DEFAULT_INTERVALS: tuple[str, ...] = ("1m", "5m", "15m")
 
 #: See the module docstring. The conservative end of two derivations that
 #: disagree by 4.6x, pending `band_coverage.py`.

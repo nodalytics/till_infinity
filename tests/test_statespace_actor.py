@@ -297,6 +297,30 @@ class TestABacktestDoesNotInheritState:
         assert wanted.wants("eurusd", "15m") is True
         assert ss_config.Settings(intervals=("1m", "5m")).wants("eurusd", "15m") is False
 
+    def test_the_default_scope_folds_the_interval_this_desk_quotes_costs_against(self) -> None:
+        """**The default has to fold `BASE_INTERVAL`, or a backtest measures nothing.**
+
+        Live does not depend on this: `StatespaceActorConfig.intervals` is
+        `None` and the actor replaces the setting with the intervals it is
+        subscribed to, which is "the only value that cannot be silently wrong".
+        The backtest path has no subscription to derive from, so it takes this
+        constant - and `('1m', '5m')` made `Settings.wants` false for every
+        15-minute bar, which is the null the test above describes.
+
+        `desks.BASE_INTERVAL` is the clock every cost on this desk is quoted
+        against, so a default that cannot fold it cannot measure the thing that
+        runs. Asserted against that constant rather than against the string, so
+        moving the desk's base clock moves this with it.
+        """
+        from till_infinity.node.desks import BASE_INTERVAL
+        from till_infinity.statespace import config as ss_config
+
+        assert BASE_INTERVAL in ss_config.DEFAULT_INTERVALS, (
+            f"the default scope {ss_config.DEFAULT_INTERVALS} cannot fold "
+            f"{BASE_INTERVAL}, so a backtest on it folds nothing and reports no trades"
+        )
+        assert ss_config.Settings().wants("eurusd", BASE_INTERVAL) is True
+
     def test_a_rerun_over_the_same_bars_folds_them_again(self) -> None:
         """**Cause two: persisted progress makes a backtest unrepeatable.**
 
