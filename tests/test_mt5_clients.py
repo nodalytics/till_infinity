@@ -3767,6 +3767,55 @@ class TestFillReports:
         assert float(report.commission) == pytest.approx(-0.35)
         assert str(report.commission.currency) == "USD"
 
+    async def test_a_stop_or_target_fill_names_the_leg_the_engine_holds(self):
+        """**The phantom, at its cause.**
+
+        A stop and a target are *fields on an MT5 position*, not orders, so
+        `_leg_id` registers them as `<position>-SL` and `<position>-TP` - ids
+        the venue never issued. When one fires the venue issues a **fresh**
+        order ticket for the close, and a fill reported under that ticket
+        matches no order this engine holds:
+
+            Found 2 missing fill(s) for BTCUSD.MT5
+            Failed to reconcile fill 5713012477 for BTCUSD.MT5: order not yet
+            cached or other prerequisite missing.
+
+        So reconciliation found the right deal inside its window and could not
+        attach it, the engine kept a position the broker had closed, and new
+        entries on that instrument were refused as `already held by EXTERNAL`.
+
+        The three rows here are the live deals of 2026-11-20, `reason` 4 with a
+        closing order ticket that differs from the position's.
+        """
+        rows = [
+            _deal(ticket=5713012477, order=5842450268, position_id=5842441839, entry=1, reason=4),
+            _deal(ticket=5713063660, order=5842502378, position_id=5842499522, entry=1, reason=3),
+            _deal(ticket=5713099365, order=5842539214, position_id=5842535369, entry=1, reason=5),
+        ]
+        rig = make_exec(FakeBridge(deals=rows))
+        reports = await rig.client.generate_fill_reports()
+        assert [str(r.venue_order_id) for r in reports] == [
+            "5842441839-TP",
+            "5842499522-SL",
+            "5842535369-SL",
+        ], "a leg fill must be reported under the id the engine registered the leg with"
+
+    async def test_an_opening_deal_keeps_the_venue_s_own_order_ticket(self):
+        """The remap is for closes only, and this is the half that must not move.
+
+        An opening deal's order ticket **is** the position ticket on a hedging
+        account, which is why `_fill` uses one value for both there. A desk's
+        own partial close carries `reason` 0 or 1 and keeps the real ticket too,
+        because `_close_out` reports that ticket itself.
+        """
+        rows = [
+            _deal(ticket=6001, order=900, position_id=900, entry=0, reason=0),
+            _deal(ticket=6002, order=911, position_id=900, entry=1, reason=1),
+        ]
+        rig = make_exec(FakeBridge(deals=rows))
+        reports = await rig.client.generate_fill_reports()
+        assert [str(r.venue_order_id) for r in reports] == ["900", "911"]
+
     async def test_a_fill_carries_the_position_it_belongs_to(self):
         """**Without this the position check cannot do its job.**
 

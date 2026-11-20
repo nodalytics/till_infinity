@@ -57,6 +57,15 @@ from .transport import connect
 #: MT5 position types. 0 buy, 1 sell - and nothing else is a position.
 _SIDES = {0: OrderSide.BUY, 1: OrderSide.SELL}
 
+#: `DEAL_REASON_SL`, `DEAL_REASON_TP` and `DEAL_REASON_SO`, to the suffix
+#: `_leg_id` gave the leg that caused them.
+#:
+#: **A stop and a target are fields on an MT5 position, not orders**, so the
+#: venue issues a *fresh* order ticket when one fires and that ticket matches
+#: nothing this engine holds. A stop-out is attributed to the stop: it is the
+#: side that was breached, and the alternative is no attribution at all.
+_CLOSED_BY = {3: "SL", 4: "TP", 5: "SL"}
+
 #: The same two codes as a position's side. **Spelled out rather than derived**:
 #: `OrderSide` has no `to_position_side`, the method the first version called,
 #: and a position report built on it raised `AttributeError` on the first real
@@ -221,10 +230,51 @@ def _leg_id(ticket: Any, order: Any, entry: Any) -> str:
     return f"{ticket}-SL" if order.order_type == OrderType.STOP_MARKET else f"{ticket}-TP"
 
 
+def _fill_order_id(row: dict) -> VenueOrderId:
+    """The id this engine knows a deal's order by. **Not always the venue's.**
+
+    A deal normally names the order that produced it and that is the answer.
+    The exception is a deal that closed a position because its **stop or
+    target fired**: those are fields on an MT5 position rather than orders, so
+    `_leg_id` registered them as `<position>-SL` and `<position>-TP` - ids the
+    venue never issued - while the venue issues a fresh order ticket for the
+    close. Reporting the venue's ticket leaves the fill matching nothing.
+
+    **That was the phantom.** Measured on 2026-11-20, three closes in one
+    session - BTCUSD deal 5713012477 (order 5842450268, position 5842441839,
+    -122.38), BTCUSD 5713063660 and XAUUSD 5713099365, all `reason` 4:
+
+        Found 2 missing fill(s) for BTCUSD.MT5
+        Failed to reconcile fill 5713012477 for BTCUSD.MT5: order not yet
+        cached or other prerequisite missing.
+
+    Reconciliation found the right deals inside its window and could not
+    attach any of them, so the engine held positions the broker had closed and
+    refused new entries on those instruments as `already held by EXTERNAL`.
+    `external-phantoms-block-instruments` is the standing note; this is the
+    cause.
+
+    Only closing deals are remapped. An opening deal's order ticket **is** the
+    position ticket on a hedging account, so `_fill` is right to use one value
+    for both there, and a partial close sent by this desk carries `reason` 0 or
+    1 and keeps the real ticket, which `_close_out` now reports consistently.
+    """
+    ticket = str(row.get("order") or row.get("ticket"))
+    try:
+        closing = int(row.get("entry") or 0) == 1
+        leg = _CLOSED_BY.get(int(row.get("reason") or 0))
+    except (TypeError, ValueError):
+        return VenueOrderId(ticket)
+    position = row.get("position_id") or row.get("position") or 0
+    if closing and leg and position:
+        return VenueOrderId(f"{int(position)}-{leg}")
+    return VenueOrderId(ticket)
+
+
 class MT5ExecutionClient(LiveExecutionClient):
     """The order side of the venue.
 
-    **The account is hedging and this declares `NETTING`, knowingly.** The
+    **The account is hedging and this declares `HEDGING`.** The
     live terminal answers `margin_mode: 2` - `ACCOUNT_MARGIN_MODE_RETAIL_
     HEDGING` - recorded in `tests/test_mt5_live.py` beside the `trade_mode`
     the demo guard reads. The distinction is not cosmetic: on a netting
@@ -238,11 +288,20 @@ class MT5ExecutionClient(LiveExecutionClient):
     order through `Bridge.close_position` and its ticket. See that method for
     what it cost.
 
-    What is left is the bookkeeping. Declaring `HEDGING` would give each
-    broker ticket its own Nautilus position and change what
+    **The bookkeeping half was done on 2026-11-19 and this client now declares
+    `HEDGING`.** It was left for a while because it is not a one-line flip:
+    each broker ticket gets its own Nautilus position, which changes what
     `generate_position_status_reports` means, what `cache.positions_open()`
-    hands a rule, and what `exits.Held` is keyed on - so it is a deliberate
-    piece of work and not a one-line flip, and it is not done here.
+    hands a rule, and what `exits.Held` is keyed on. What forced it was the log
+    - 8 `PositionOpened` against 0 `PositionClosed`, because an engine netting
+    a stack the broker holds separately can never see one of them close.
+
+    Two defects followed it out, both the same mistake in different places: an
+    id this engine invented standing in for one the venue issued. `_close_out`
+    named the *position* ticket in its accept and the *order* ticket in its
+    fill, so `Order.apply` rejected every close on a `ValueError` and no
+    managed exit completed for a fortnight. And `_fill_order_id` below is the
+    other one - see it for the phantom it caused.
     """
 
     def __init__(
@@ -926,7 +985,7 @@ class MT5ExecutionClient(LiveExecutionClient):
             instrument_id = InstrumentId(Symbol(str(row.get("symbol"))), self._venue)
             if wanted is not None and instrument_id != wanted:
                 continue
-            venue_order_id = VenueOrderId(str(row.get("order") or row.get("ticket")))
+            venue_order_id = _fill_order_id(row)
             if order is not None and venue_order_id != order:
                 continue
             instrument = await self._instrument(instrument_id)
