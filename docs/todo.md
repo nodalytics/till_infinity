@@ -19,6 +19,74 @@ orders of work are unaffected by the move; only the paths are stale, and they
 have not been rewritten because a backlog is a record of what was thought when.
 
 
+## Nothing the broker holds can be attributed to a rule
+
+Noted 2026-11-20, from attributing a fortnight of live P&L and finding there
+was no durable channel to do it with.
+
+**Every one of the 166 deals in the 14 days to 2026-11-20 carries magic
+`777701`** - `DEFAULT_MAGIC`, the base, which `magic_for` returns only when the
+strategy name is **empty**. Not a table offset, not a hash. So per-strategy
+magic is designed, exported from `strategies/__init__.py`, and has **no caller
+in the live path**: `adapters/mt5/execution.py` stamps `self._cfg.magic` on
+every order and that is the base for all of them.
+
+Seven of the eight live rule names have no slot in `MAGIC_ORDER` either -
+`smc-bos-causal`, `zones`, `smc-zones`, `displacement-zones`, `identity-arb`,
+`vol-impulse` and `bands`, with only `statespace-surprise` present - but that
+is the second problem, not the first. A slot is worth nothing while the name
+never reaches `magic_for`.
+
+**The attribution that was done instead rests on order comments**, which is the
+channel `profile.py` already calls "the free cross-check" rather than the
+record: the broker's comment reads `109-190026-001-BTCUSD_E270-1`, a truncated
+client order id whose `_E270` tail names the edge. MT5 caps comments at 31
+characters and brokers rewrite them. 41 of 164 positions - **a quarter** - were
+already unattributable because their entry comment was empty or overwritten.
+`MAGIC_ORDER`'s own comment records the end state: two strategies that ran an
+hour without slots have trades that "are unattributable in the record for
+ever".
+
+### The ordering is the trap, and it is the wrong way round from the obvious one
+
+`_ours` asks for **equality with the base**, while `strategies.config.ours`
+tests the **band** and its docstring describes the equality test as the one it
+replaced - "a comparison against the base alone would make every position
+opened by a named strategy look like somebody else's, so the trader would
+neither manage nor close its own trades."
+
+That reads as "adopt `ours` first, then stamp", and it is backwards. **Widening
+`_ours` on its own is the unsafe half.** While nothing stamps a per-strategy
+magic, any position in 777702-778700 was placed by somebody *else*, and a desk
+that claims the band would start managing and closing a stranger's trades on a
+shared account. Attempted on 2026-11-20 and five tests refused it, correctly -
+`test_a_position_with_another_magic_is_not_ours[777702]` among them. They encode
+the contract that holds today.
+
+So the two halves have to land **together**, stamping first in the same change,
+and the tests that assert `MAGIC + 1` is foreign have to be rewritten in the
+same commit rather than deleted ahead of it.
+
+### What still needs deciding
+
+`magic_for` wants the **profile** name - `zones` - and the adapter has only
+`order.strategy_id`, which is `ZonesEdge-BTCUSD_E637`. The venue layer should
+not know about strategy profiles, so the name has to travel: either on the
+order's `tags`, which Nautilus already carries end to end, or through a
+registry the node populates at build. That choice is the open question and it
+is a layering decision rather than a measurement.
+
+Three smaller things fall out of it once the channel exists:
+
+* `MAGIC_ORDER` needs the seven missing names **appended, never inserted** - the
+  table is append-only because a magic that has reached a live order has to keep
+  resolving to the name that placed it.
+* `strategy_for` has no inverse for a hashed offset, so an unslotted rule reads
+  as ours-but-unattributed. That is the honest answer and the reason the slots
+  matter.
+* `MAGIC_BAND` is 1,000, so two desks on one account need bases at least that
+  far apart. Worth asserting somewhere rather than remembering.
+
 ## The trail is a constant where it should be a reading
 
 Noted 2026-11-20, from the first live evaluation of the exit managers. The
