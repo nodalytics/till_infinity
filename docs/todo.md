@@ -19,6 +19,87 @@ orders of work are unaffected by the move; only the paths are stale, and they
 have not been rewritten because a backlog is a record of what was thought when.
 
 
+## The trail is a constant where it should be a reading
+
+Noted 2026-11-20, from the first live evaluation of the exit managers. The
+operator: *"we need to find a way to move the trails intelligently or
+reactively using either momentum or something else"*.
+
+**`manage.py` opens by saying this is unmeasured** - *"Off by default, and that
+is a finding... Both cut the loss tail, and both cut winners. Which dominates
+is an empirical question about this strategy on these instruments, and nothing
+in this repository answers it."* Production has had both on
+(`TRADING_BREAK_EVEN_AT=1.0`, `TRADING_TRAIL_VOL=2.0`), so the question was
+being answered live without being asked. The broker's own records now answer
+it, over 139 positions with a placed stop in the 14 days to 2026-11-20:
+
+| | Zones | Surprise |
+|---|---:|---:|
+| average win | **0.14R** | 0.59R |
+| average loss | 0.20R | 0.93R |
+| worst loss seen | 1.00R | 1.03R |
+| win rate | 67% | 64% |
+
+The loss tail is cut - nothing in 139 positions exceeded **1.28R** and Zones'
+median loss is **0.20R** against a 1R stop. The winners are cut far harder:
+**0.14R against a 2R target** that is placed at exactly 2.00 every time. So the
+trade-off the docstring named is measured and it loses.
+
+**The mechanism is a constant equal to the thing it is measured against.** The
+trail keeps the stop `trail_vol` volatility units behind the best price, at
+2.0, and the initial stop is `stop_vol` volatility units, also at 2.0. The
+trail therefore grants the trade **no room beyond its own stop**: any one-R
+retracement from the running high closes it, and a market that retraces at all
+closes everything long before 2R. 85 `ModifyOrder` calls in 14 hours, each
+logged as `stop to 24957 (trailing 2.00v behind 24821)`.
+
+Four explanations were tested against the broker and discarded, which is why
+this entry is about the trail and not about risk: stops hold (max 1.28R);
+sizing is symmetric (dollars per R of 23.35 on winners against 23.98 on
+losers); the target is placed correctly (2.00, p10-p90 1.98-2.03); and realised
+loss never ran past the stop, so slippage is not it either.
+
+### What to measure
+
+The ask is a trail that reads the market rather than a constant, and the
+repository already says which readings are credible and which are not.
+
+* **Volatility, not momentum, is the defensible driver.** `relationships-are-contemporaneous`:
+  vol and tails are huge, every lagged measure is null. `direction-is-closed-not-just-null`:
+  the directional gate finds a planted drift at z+2.90 and earns 2% of a
+  spread, so a momentum-driven trail is being built on the one quantity this
+  desk has closed. A trail that widens when volatility rises is a trail priced
+  in the units it is already quoted in - and `the-walk-is-the-best-calibrated-band`
+  says the walk is the best-calibrated band for exactly this, so the walk's
+  quantile is the first candidate and the incumbent to beat.
+* **The decay rate is derivable and the edge's is not.** `research/docs/edge-life.md`
+  measures log volatility at rho 0.9963 to 0.9995 with half-lives of 185 to
+  1253 hours, 7x apart across five feeds, while the edge estimator cannot tell
+  a half-life of 10 trades from an infinite one. So *how fast the trail should
+  adapt* is a quantity that can be estimated per feed; *whether the move will
+  continue* is not.
+* **It is an exit policy, so judge it as one.** `fade-to-value-loses-on-the-entry-not-the-target`
+  is the record of an exit study that moved the P&L: 62% stopped out in 7
+  minutes at -10.81 while targets paid +28.16. The four combinations of
+  break-even and trail are what `manage.py` asks for and they have never been
+  compared, because until this week every managed exit raised a `ValueError`
+  in `_close_out` and completed none of them.
+* **The baseline has to be reproduced first.** `reproduce-the-baseline-before-an-increment`:
+  a HAR read +0.036 against the shelf's +0.110 and the cause was the data
+  window. Here the baseline is `TRADING_TRAIL_VOL=0` - the 2R/1R bracket the
+  rules were measured on - and no reactive trail should be believed until the
+  constant one has been beaten on the same sample.
+
+### Why it is not simply switched off
+
+Because the loss tail it cuts is real, and 90% of Zones' losses stop out at a
+median 0.20R. The question is not trail against no trail, it is **what the
+trail should be a function of**, and the four-way comparison is the cheapest
+thing on this page: two environment variables, no code, and
+`TRADING_SCALE_OUT_AT=1.0` with `TRADING_SCALE_OUT_FRACTION=0.5` has been
+configured the whole time and has never once completed, so partial exits enter
+that comparison untested as well.
+
 ## Residual time is the hold clock, and the hold clock is where the money went
 
 Noted 2026-09-08 from Agudelo-España et al., *Bayesian Online Prediction of
