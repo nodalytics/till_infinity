@@ -104,6 +104,14 @@ class EdgeEntry(Desk):
                 sl_trigger_price=instrument.make_price(intent.stop),
                 tp_price=instrument.make_price(intent.target),
                 time_in_force=TimeInForce.GTC,
+                # **Nautilus's own leg markers are kept.** `entry_tags`
+                # defaults to `["ENTRY"]`, `sl_tags` to `["STOP_LOSS"]` and
+                # `tp_tags` to `["TAKE_PROFIT"]`, and passing a list replaces
+                # the default rather than adding to it - so dropping them here
+                # would take the markers off every leg to add one tag.
+                entry_tags=["ENTRY", self._rule_tag()],
+                sl_tags=["STOP_LOSS", self._rule_tag()],
+                tp_tags=["TAKE_PROFIT", self._rule_tag()],
             )
             self.submit_order_list(order_list)
             self.log.info(
@@ -116,6 +124,7 @@ class EdgeEntry(Desk):
             instrument_id=instrument.id,
             order_side=side,
             quantity=quantity,
+            tags=[self._rule_tag()],
         )
         self.submit_order(order)
         self._pending[order.client_order_id] = intent
@@ -151,6 +160,7 @@ class EdgeEntry(Desk):
             trigger_price=instrument.make_price(intent.stop),
             time_in_force=TimeInForce.GTC,
             reduce_only=True,
+            tags=["STOP_LOSS", self._rule_tag()],
         )
         self.submit_order(protect)
         self.log.info(f"{intent.feed} stop attached at {intent.stop}")
@@ -237,6 +247,7 @@ class RestingEntry(Desk):
             quantity=quantity,
             price=instrument.make_price(at),
             time_in_force=TimeInForce.GTC,
+            tags=["ENTRY", self._rule_tag()],
         )
         self.submit_order(order)
         self._waiting[order.client_order_id] = intent
@@ -548,6 +559,9 @@ class ArrivalEntry(Desk):
             sl_trigger_price=instrument.make_price(intent.stop),
             tp_price=instrument.make_price(intent.target),
             time_in_force=TimeInForce.GTC,
+            entry_tags=["ENTRY", self._rule_tag()],
+            sl_tags=["STOP_LOSS", self._rule_tag()],
+            tp_tags=["TAKE_PROFIT", self._rule_tag()],
         )
         self.submit_order_list(order_list)
         self.log.info(f"{intent.feed} filled on arrival at {self._trigger:.5g}")

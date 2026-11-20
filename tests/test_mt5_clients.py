@@ -97,6 +97,16 @@ VENUE = Venue("MT5")
 EURUSD_ID = InstrumentId.from_str("EURUSD.MT5")
 MAGIC = 777_701
 
+#: A magic that is **not** this desk's, for the tests that need one.
+#:
+#: `MAGIC + 1` used to serve and no longer can: since `magic_for` was wired on
+#: 2026-11-20, every rule stamps its own offset inside a 1,000-wide band from
+#: the base, so `777702` is this desk's `level-scalp` rather than a stranger's.
+#: `_ours` tests the band for that reason, and a test that wants a foreign row
+#: has to go outside it - which is also what a human's order looks like, since
+#: the terminal stamps `0` on anything placed by hand.
+FOREIGN_MAGIC = MAGIC + 1_000
+
 #: What the terminal says about EURUSD: `digits`, `volume_step` and the
 #: currencies are what the provider builds an instrument from.
 EURUSD_INFO: dict[str, Any] = {
@@ -2157,6 +2167,47 @@ class TestSubmittingAnOrder:
         body = rig.bridge.called("order")[0][0][0]
         assert (body["magic"], body["deviation"], body["type_filling"]) == (424_242, 7, "FOK")
 
+    async def test_a_rule_tag_stamps_that_rule_s_own_magic(self):
+        """**The channel that makes a fill attributable to a rule.**
+
+        `Desk._rule_tag` puts `rule:<name>` on every order it places, Nautilus
+        carries tags into the cache, and this client turns that into the rule's
+        magic - so the venue adapter never has to know what a strategy profile
+        is. It holds only `order.strategy_id`, which is
+        `ZonesEdge-BTCUSD_E637`, where `magic_for` wants `zones`.
+
+        Until 2026-11-20 it stamped the bare base on everything, so **all 166
+        deals of the preceding fortnight read 777701** and not one could be
+        attributed. `magic_for` and `MAGIC_ORDER` existed the whole time with no
+        caller in the live path.
+
+        The comment is not a substitute: MT5 caps it at 31 characters and a
+        live USDJPY order that day had already lost the date off the front.
+        """
+        from till_infinity.strategies.config import DEFAULT_MAGIC, magic_for
+
+        for rule in ("zones", "statespace-surprise", "smc-bos-causal", "identity-arb"):
+            rig = make_exec(FakeBridge(order=REJECTION))
+            order = _factory().market(
+                EURUSD_ID, OrderSide.BUY, Quantity.from_str("0.50"), tags=["ENTRY", f"rule:{rule}"]
+            )
+            await rig.client._submit_order(_submit(rig, order))
+            body = rig.bridge.called("order")[0][0][0]
+            assert body["magic"] == magic_for(DEFAULT_MAGIC, rule), rule
+            assert body["magic"] != DEFAULT_MAGIC, f"{rule} stamped the base"
+
+    async def test_an_order_with_no_rule_tag_stamps_the_base(self):
+        """Which means "ours, but we cannot say which rule" - the honest answer.
+
+        A manual order, a test double, or a leg built before this channel
+        existed has no rule tag, and `magic_for("")` answers the base. That is
+        what every order did before the wiring, so nothing that was attributed
+        becomes less attributed by it.
+        """
+        rig = make_exec(FakeBridge(order=REJECTION))
+        await rig.client._submit_order(_submit(rig, _market()))
+        assert rig.bridge.called("order")[0][0][0]["magic"] == MAGIC
+
     def test_the_default_magic_is_the_one_the_desk_attributes_by(self):
         """**The magic is the only thing that says a fill was ours**, so the
         two places that spell it have to agree.
@@ -3203,7 +3254,7 @@ class TestModifyAndCancel:
         )
 
     async def test_another_desks_position_is_never_modified(self):
-        terminal = Terminal(positions=[_held(magic=MAGIC + 1)])
+        terminal = Terminal(positions=[_held(magic=FOREIGN_MAGIC)])
         rig = make_exec(terminal.bridge)
         await rig.client._modify_order(
             self._modify(rig, VenueOrderId("55"), Price.from_str("1.09"))
@@ -3448,11 +3499,35 @@ class TestPositionReports:
         assert report.instrument_id == EURUSD_ID
         assert report.account_id == AccountId("MT5-5042")
 
-    @pytest.mark.parametrize("magic", [MAGIC - 1, MAGIC + 1, 0, 123])
-    async def test_a_position_with_another_magic_is_not_ours(self, magic):
-        """Off by one is the neighbouring strategy; zero is a human's."""
+    @pytest.mark.parametrize("magic", [MAGIC - 1, FOREIGN_MAGIC, 0, 123])
+    async def test_a_position_outside_the_band_is_not_ours(self, magic):
+        """Below the base, past the band, or zero - which is a human's."""
         rig = make_exec(FakeBridge(positions=[_position(magic=magic)]))
         assert await rig.client.generate_position_status_reports() == []
+
+    @pytest.mark.parametrize("magic", [MAGIC, MAGIC + 1, MAGIC + 24, MAGIC + 999])
+    async def test_a_position_anywhere_in_the_band_is_ours(self, magic):
+        """**Off by one is this desk's next rule, not a stranger's.**
+
+        This test replaces one asserting the opposite - "off by one is the
+        neighbouring strategy" and therefore not ours - which was inverted
+        relative to `strategies.config.ours` from the day that function was
+        written: *"a comparison against the base alone would make every
+        position opened by a named strategy look like somebody else's, so the
+        trader would neither manage nor close its own trades."*
+
+        It read correctly for as long as nothing stamped a per-strategy magic,
+        and `magic_for` had no caller in the live path until 2026-11-20 - which
+        is why the inversion survived. Now every rule stamps its own offset:
+        `zones` is base + 24.
+
+        **The base itself stays ours**, which is what makes the change safe to
+        deploy over an open book: every position the broker held at the time
+        carried the bare base.
+        """
+        rig = make_exec(FakeBridge(positions=[_position(magic=magic)]))
+        (report,) = await rig.client.generate_position_status_reports()
+        assert report.instrument_id == EURUSD_ID
 
     async def test_a_configured_magic_replaces_the_default(self):
         rig = make_exec(
@@ -3547,7 +3622,7 @@ class TestOrderStatusReports:
         assert report.order_side == side
 
     async def test_another_desks_orders_are_not_reported(self):
-        rig = make_exec(FakeBridge(pending=[_pending(magic=MAGIC + 1), _pending(magic=0)]))
+        rig = make_exec(FakeBridge(pending=[_pending(magic=FOREIGN_MAGIC), _pending(magic=0)]))
         assert await rig.client.generate_order_status_reports() == []
 
     async def test_query_order_sends_the_matching_report_only(self):
@@ -3736,7 +3811,7 @@ class TestASingleOrderStatusReport:
         )
 
     async def test_another_desks_order_is_none_even_with_its_ticket(self):
-        rig = make_exec(FakeBridge(pending=[_pending(ticket=71, magic=MAGIC + 1)]))
+        rig = make_exec(FakeBridge(pending=[_pending(ticket=71, magic=FOREIGN_MAGIC)]))
         assert (
             await rig.client.generate_order_status_report(self._command(VenueOrderId("71"))) is None
         )
@@ -3893,7 +3968,7 @@ class TestFillReports:
 
     async def test_deals_with_other_magics_and_balance_rows_are_excluded(self):
         """A balance operation has magic 0, as does anything a human did."""
-        deals = [_deal(), _deal(ticket=2, magic=MAGIC + 1), _deal(ticket=3, magic=0)]
+        deals = [_deal(), _deal(ticket=2, magic=FOREIGN_MAGIC), _deal(ticket=3, magic=0)]
         rig = make_exec(FakeBridge(deals=deals))
         reports = await rig.client.generate_fill_reports()
         assert [str(r.trade_id) for r in reports] == ["5001"]

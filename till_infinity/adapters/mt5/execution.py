@@ -854,8 +854,51 @@ class MT5ExecutionClient(LiveExecutionClient):
         self._filling[symbol] = chosen
         return chosen
 
+    def _magic_for(self, order: Any) -> int:
+        """The magic this order carries: **its rule's, not the desk's base.**
+
+        `Desk._rule_tag` puts `rule:<name>` on every order it places and
+        Nautilus carries tags into the cache, so the name arrives here without
+        this client knowing what a strategy profile is. An order with no rule
+        tag answers the base, which means "ours, but we cannot say which rule"
+        - the behaviour every order had before this was wired.
+
+        **Until 2026-11-20 this stamped `self._cfg.magic` on everything**, so
+        all 166 deals of the preceding fortnight read `777701` and not one
+        could be attributed to a rule. `magic_for` and `MAGIC_ORDER` both
+        existed the whole time with no caller in the live path, and the
+        attribution that was done instead leaned on the order comment - which
+        MT5 truncates at 31 characters, and which had already lost the date off
+        the front of a live USDJPY order.
+        """
+        from ...domain.magic import magic_for, rule_from_tags
+
+        return magic_for(self._cfg.magic, rule_from_tags(getattr(order, "tags", None)))
+
     def _ours(self, row: dict) -> bool:
-        return int(row.get("magic") or 0) == self._cfg.magic
+        """Whether a row at the broker is this desk's. **The band, not the base.**
+
+        `strategies.config.ours` exists for this and its docstring describes
+        the base-equality test as the one it replaced: "a comparison against
+        the base alone would make every position opened by a named strategy
+        look like somebody else's, so the trader would neither manage nor
+        close its own trades."
+
+        **The order of these two changes is the trap, and it runs backwards
+        from the obvious one.** Adopting the band *first* looks safe and is
+        not: while nothing stamps a per-strategy magic, every magic in
+        777702-778700 belongs to somebody else, so a desk that claimed the
+        band would start managing and closing a stranger's trades. Tried on
+        2026-11-20 and five tests refused it, correctly. So the stamping above
+        and the widening here land in **one** change, and the tests that
+        asserted `MAGIC + 1` was foreign moved with them.
+
+        The band includes the base, so positions opened before this - every one
+        the broker holds today - stay ours.
+        """
+        from ...domain.magic import ours
+
+        return ours(self._cfg.magic, int(row.get("magic") or 0))
 
     # ──── reconciliation ────
     #
@@ -1262,7 +1305,7 @@ class MT5ExecutionClient(LiveExecutionClient):
             "order_type": "BUY" if order.side == OrderSide.BUY else "SELL",
             "volume": float(order.quantity),
             "deviation": self._cfg.deviation,
-            "magic": self._cfg.magic,
+            "magic": self._magic_for(order),
             "comment": _comment(order.client_order_id),
             "type_filling": await self._filling_for(order.instrument_id.symbol.value),
         }
