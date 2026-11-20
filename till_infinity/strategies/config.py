@@ -20,7 +20,6 @@ at start-up, against the terminal - see `symbols.py`.
 
 from __future__ import annotations
 
-import hashlib
 import math
 import os
 from collections.abc import Sequence
@@ -34,6 +33,23 @@ from till_infinity.utils.env import whole as _int
 from till_infinity.utils.logging import get_logger
 
 from ..domain import costs
+
+#: **Re-exported, not redefined.** The attribution arithmetic moved to
+#: `domain/magic.py` on 2026-11-20 so the MT5 client could reach it:
+#: `test_service_boundaries` forbids `adapters` from importing `strategies`,
+#: and an identifier convention shared by whoever writes it and whoever reads
+#: it is not strategy logic. Every caller that reads these from here still
+#: works, which is why the names stay visible.
+from ..domain.magic import (  # noqa: F401
+    DEFAULT_MAGIC,
+    MAGIC_BAND,
+    MAGIC_ORDER,
+    RULE_TAG,
+    magic_for,
+    ours,
+    rule_from_tags,
+    strategy_for,
+)
 from ..risk import plans
 from ..risk.envelope import Envelope
 from ..risk.plans import DEFAULT_PLAN, Plan
@@ -274,145 +290,11 @@ DEFAULT_STOP_OVERSHOOT: tuple[tuple[str, float], ...] = tuple(
     for size in (300, 500, 1000)
 )
 
-#: Stamped on every position this system opens, so `positions` and the panic
-#: close can be filtered to *ours*. Any stable non-zero number would do; what
-#: matters is that a hand-placed trade on the same terminal is never touched by
-#: something here. Zero would mean "everything on the account", which is the
-#: one value that must not be the default.
-#:
-#: This is the *base* of a band rather than a single number - see `MAGIC_BAND`.
-DEFAULT_MAGIC = 777_701
-
-#: How many magics one deployment occupies, starting at `Settings.magic`.
-#:
-#: The base itself means "ours, but we cannot say which strategy" - what a
-#: position opened before per-strategy magics existed carries, and what the
-#: panic close and reconciliation still have to recognise. Offsets 1 and above
-#: name the strategy that asked for the trade, which is the only way to tell,
-#: after a restart or from the terminal itself, which of several strategies
-#: running side by side opened a given position. The order comment carries the
-#: same name, but comments are advisory: brokers truncate and rewrite them,
-#: and MT5 caps them at 31 characters. Magic survives.
-MAGIC_BAND = 1_000
-
-#: Strategy name to offset within the band. **Append-only.** These numbers end
-#: up on positions held at a broker and in journal entries that outlive any one
-#: release, so reordering this tuple would silently reattribute history: a
-#: position opened by one strategy would start reading as another's. Add new
-#: names at the end and never move an existing one.
-#:
-#: Deriving the offset from the *configured* strategy list instead would be the
-#: same bug in a worse form - editing TRADING_STRATEGIES would renumber every
-#: open position, and a restart mid-trade could not say who owned what.
-MAGIC_ORDER: tuple[str, ...] = (
-    "level-scalp",
-    "confluence-scalp",
-    "momentum-scalp",
-    "approach-scalp",
-    "swing-level",
-    "sweep-aware",
-    "fade-to-value",
-    "council",
-    # Appended, never inserted. A strategy added without a slot here still
-    # trades - it stamps a hashed magic from the tail of the band - but that
-    # hash has no inverse, so every position it opens reads as
-    # "unattributed" on close and the strategy cannot be scored at all.
-    # Both of these ran live for an hour before the missing entries were
-    # noticed, and their two trades are unattributable in the record.
-    "snap",
-    "thesis-only",
-    "runner",
-    "inverse",
-    # Removed 2026-08-28 as a near-duplicate of `swing-level`, which shares its
-    # entries, context and higher-timeframe requirement; its resting entry and
-    # horizon-scaled protection moved there. The slot stays reserved because
-    # this table is append-only - a magic that has been on live orders has to
-    # keep resolving to the name that placed them.
-    "high-timeframe",
-    "origin-swing",
-    # 2026-09-02. The nine above are points in one parameter space and this is
-    # the space itself; see `trading/opportunity.py`. Appended like every other
-    # slot, because a magic that has been on a live order has to keep resolving
-    # to the name that placed it.
-    "opportunity",
-    # 2026-09-03. `opportunity` with the target moved out of reach so the trail
-    # decides - the measured best exit policy of six tested. See `Ride`.
-    "ride",
-    # 2026-09-14. Unified scalp thesis: trend context from 4h/1h and the
-    # fast pullback entry from 15m/1m, with sweep-aware geometry guarding the
-    # stop. Appended to preserve the strategy attribution table's append-only
-    # contract.
-    "cycle-scalp",
-    # 2026-09-15. The cycle reading as an entry rather than a veto, gated on
-    # that feed's own scored record - see `strategies/turning.py`. Appended,
-    # never inserted: a magic that has been on a live order has to keep
-    # resolving to the name that placed it.
-    #
-    # It shipped for one commit without this line, and the test below caught
-    # it. Two earlier strategies did not get caught and ran live for an hour
-    # each; their trades are unattributable in the record for ever.
-    "cycle-turn",
-    # 2026-09-16. `cycle-turn` one tier down and one condition looser: a 1h
-    # mother cycle over 15m/30m, entries from 1m to 15m, gated on the
-    # z-score's *displacement* rather than on displacement-plus-momentum -
-    # which fires on 1.5% of calls and is why `cycle-turn` has never traded.
-    # Agreement sizes the trade instead of gating it. See
-    # `strategies/stretching.py`. Appended, never inserted.
-    "cycle-turn-scalp",
-    # 2026-10-26. The first strategy on this desk that is not level-based:
-    # continuation of a bar the statespace service found surprising, stopped
-    # and targeted off its band rather than off a level. See
-    # `strategies/dispersing.py`. Appended before it is configured to run, not
-    # after - the note above records two strategies that ran live for an hour
-    # without a slot and whose trades are unattributable for ever.
-    "statespace-surprise",
-)
-
-
 #: The synthetics carried by default. A list rather than the whole catalogue
 #: for the reason `register_broker_instruments` gives, and here rather than in
 #: the environment so a deployment that says nothing still gets the instruments
 #: this repository has measured.
 register_broker_instruments(SYNTHETICS)
-
-
-def magic_for(base: int, strategy: str) -> int:
-    """The magic one strategy stamps on its orders.
-
-    See `trading-config.md` in research/docs.
-    """
-    if not strategy:
-        return base
-    if strategy in MAGIC_ORDER:
-        return base + 1 + MAGIC_ORDER.index(strategy)
-    fixed = len(MAGIC_ORDER)
-    digest = hashlib.blake2s(strategy.encode(), digest_size=4).digest()
-    span = MAGIC_BAND - 1 - fixed
-    return base + 1 + fixed + int.from_bytes(digest, "big") % span
-
-
-def strategy_for(base: int, magic: int) -> str:
-    """The strategy a magic names, or "" when it does not name one.
-
-    The inverse of `magic_for` for the fixed table only. A hashed offset has no
-    inverse, so a plugin strategy's positions read as ours-but-unattributed,
-    which is the honest answer rather than a guessed one.
-    """
-    offset = magic - base
-    if 1 <= offset <= len(MAGIC_ORDER):
-        return MAGIC_ORDER[offset - 1]
-    return ""
-
-
-def ours(base: int, magic: int) -> bool:
-    """Whether a position at the broker belongs to this system.
-
-    The band, not the base, because every strategy now stamps its own number.
-    A comparison against the base alone - which is what this replaced - would
-    make every position opened by a named strategy look like somebody else's,
-    so the trader would neither manage nor close its own trades.
-    """
-    return base <= magic < base + MAGIC_BAND
 
 
 def _overshoot(raw: str) -> tuple[tuple[str, float], ...]:

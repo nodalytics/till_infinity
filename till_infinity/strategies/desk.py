@@ -73,7 +73,7 @@ from ..domain.models import Intent, Refusal, Side, SymbolSpec, Tick
 from ..risk import forecast, releases, sizing
 from ..utils.topics import EVENTS, PROPOSALS, VOLATILE, subscribe
 from . import sizes
-from .config import WRITER, Settings
+from .config import RULE_TAG, WRITER, Settings
 from .counterfactual import Counterfactual, Resolved
 from .timeframes import Frames, seconds_of
 
@@ -303,6 +303,29 @@ class Desk(NautilusStrategy):
                 f"desk trades {traded}: a different experiment, not a slower view of "
                 f"the same one. Sizing and holds follow {traded}."
             )
+
+    def _rule_tag(self) -> str:
+        """This desk's rule, as an order tag. **The channel the magic needs.**
+
+        `strategies.config.magic_for` turns a rule name into the magic its
+        orders carry, and the MT5 client has to call it per order - but a venue
+        adapter must not know about strategy profiles, and all it holds is
+        `order.strategy_id`, which is `ZonesEdge-BTCUSD_E637` where
+        `magic_for` wants `zones`.
+
+        Nautilus carries `tags` on every order, end to end and into the cache,
+        so the name travels with the thing it describes. Prefixed, because the
+        adapter must not guess which of several tags is a rule name: the
+        bracket legs already carry `ENTRY`, `STOP_LOSS` and `TAKE_PROFIT`.
+
+        **The comment is not this channel.** It reads `till <strategy>` by
+        design and `120-151501-001-XCUUSD_E637-1` in practice, and MT5 caps it
+        at 31 characters - a live USDJPY order on 2026-11-20 had the date
+        truncated off the front and a slightly longer symbol would have taken
+        the edge id with it. `profile.py` calls the comment "the free
+        cross-check" rather than the record, and this is why.
+        """
+        return f"{RULE_TAG}{self._cfg.rule}"
 
     def inert_reason(self) -> str:
         """Why this desk could never trade on this feed, or `""` if it could.
