@@ -1031,7 +1031,16 @@ class MT5ExecutionClient(LiveExecutionClient):
         qty: float,
         px: float,
         commission: float = 0.0,
+        position: Any = None,
     ) -> None:
+        # **An order ticket and a position ticket are the same number only on
+        # the way in.** Opening a position on a hedging account gives the new
+        # position the opening order's ticket, so one argument served for both
+        # and `position` stays `None` on that path. A *close* is a different
+        # order against an existing position: MT5 returns a fresh order ticket
+        # and the position keeps its own. Reporting the close's ticket as the
+        # position id tells the engine a position it has never heard of just
+        # closed, and leaves the one that did close open forever.
         # **By keyword, on purpose.** The positional call left out `trade_id`,
         # which sits between `venue_position_id` and `order_side`, so every
         # later argument landed one slot early and every successful fill
@@ -1042,7 +1051,7 @@ class MT5ExecutionClient(LiveExecutionClient):
             instrument_id=order.instrument_id,
             client_order_id=order.client_order_id,
             venue_order_id=VenueOrderId(str(ticket)),
-            venue_position_id=PositionId(str(ticket)),
+            venue_position_id=PositionId(str(ticket if position is None else position)),
             trade_id=TradeId(str(trade_id)),
             order_side=order.side,
             order_type=order.order_type,
@@ -1383,6 +1392,7 @@ class MT5ExecutionClient(LiveExecutionClient):
         )
         wanted = float(order.quantity)
         done = 0.0
+        closed: list[int] = []
         last: dict[str, Any] = {}
         for ticket, held in stack:
             if done >= wanted - 1e-12:
@@ -1401,18 +1411,31 @@ class MT5ExecutionClient(LiveExecutionClient):
                 break
             last = raw
             done += part
+            closed.append(int(ticket))
 
         if done <= 0.0:
             self._reject(order, f"the terminal confirmed no close of {symbol}")
             return True
+        result = last.get("result") or {}
+        # **The closing order's ticket, in both events, or neither applies.**
+        # The accept said `stack[0][0]` - the *position* ticket - while the
+        # fill said `result["order"]`, the ticket MT5 gave the closing order.
+        # `Order.apply` compares the two and raises
+        # `ValueError('self.venue_order_id' ... was not equal to
+        # 'event.venue_order_id' ...)`, so the fill never applied, the order
+        # sat `ACCEPTED` forever and no `PositionClosed` was ever published.
+        # On 2026-11-20 that was 32 fills, 12 `PositionOpened` and **0**
+        # `PositionClosed` in a day on USDCAD, UK Brent Oil and BNBUSD, with
+        # reconciliation papering over it by inferring fills under random
+        # client order ids.
+        closing = result.get("order") or closed[0]
         self.generate_order_accepted(
             strategy_id=order.strategy_id,
             instrument_id=order.instrument_id,
             client_order_id=order.client_order_id,
-            venue_order_id=VenueOrderId(str(stack[0][0])),
+            venue_order_id=VenueOrderId(str(closing)),
             ts_event=self._clock.timestamp_ns(),
         )
-        result = last.get("result") or {}
         price = float(result.get("price") or 0.0)
         if price <= 0.0:
             # Closed at the broker but unpriced. The position is gone either
@@ -1423,13 +1446,23 @@ class MT5ExecutionClient(LiveExecutionClient):
         if price <= 0.0:
             self._log.error(f"{order.client_order_id}: closed with no price - reconcile")
             return True
+        if len(closed) > 1:
+            # **Said out loud, because one fill cannot describe it.** A fill
+            # carries one position id, so a walk that closed several tickets
+            # can only be attributed to the first. The others close at the
+            # broker and reconciliation has to find them.
+            self._log.error(
+                f"{order.client_order_id}: closed {len(closed)} tickets ({closed}) under one "
+                f"order - only {closed[0]} is attributed, the rest need reconciliation"
+            )
         self._fill(
             order,
             instrument,
-            ticket=result.get("order") or stack[0][0],
-            trade_id=result.get("deal") or result.get("order") or stack[0][0],
+            ticket=closing,
+            trade_id=result.get("deal") or closing,
             qty=done,
             px=price,
+            position=closed[0],
         )
         if done < wanted - 1e-12:
             # Said out loud rather than inferred from two numbers in a journal.

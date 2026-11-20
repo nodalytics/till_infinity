@@ -2712,6 +2712,45 @@ class TestSubmittingAnOrder:
         assert sent[0][1] == (77, 0.40), f"sent {sent}"
         assert terminal.positions[0]["volume"] == pytest.approx(0.6), "it flattened a partial"
 
+    async def test_a_close_reports_one_order_ticket_and_the_position_s_own(self):
+        """**The accept and the fill must name the same order, or neither counts.**
+
+        A close is a new order against an existing position, so MT5 hands back
+        a fresh order ticket while the position keeps its own. The accept named
+        the *position* ticket and the fill named the *order* ticket, and
+        `Order.apply` compares them:
+
+            ValueError('self.venue_order_id' ... of 5841773518 was not equal
+            to 'event.venue_order_id' ... of 5841785650)
+
+        So the fill never applied. On 2026-11-20 the live desk logged 32 fills,
+        12 `PositionOpened` and **zero** `PositionClosed` in a day - every exit
+        on USDCAD, UK Brent Oil and BNBUSD raised this and was then papered
+        over by reconciliation inferring a fill under a random client order id.
+
+        The position id matters for the same reason in the other direction: a
+        fill that names the closing order as its position tells the engine an
+        unknown position closed and leaves the real one open forever.
+        """
+        terminal = Terminal(positions=[_held(ticket=77, volume=0.40)])
+        rig = make_exec(terminal.bridge)
+        order = _factory().market(
+            EURUSD_ID, OrderSide.SELL, Quantity.from_str("0.40"), reduce_only=True
+        )
+        await rig.client._submit_order(_submit(rig, order))
+
+        accepted = rig.events(OrderAccepted)
+        filled = rig.events(OrderFilled)
+        assert len(accepted) == 1, f"{rig.events(OrderRejected)}"
+        assert len(filled) == 1, f"{rig.events(OrderRejected)}"
+        assert accepted[0].venue_order_id == filled[0].venue_order_id, (
+            "the accept and the fill named different orders, which Order.apply rejects"
+        )
+        # The fake answers a close with `order: 900 + ticket`, as the terminal
+        # does with a ticket of its own.
+        assert str(filled[0].venue_order_id) == "977", "not the closing order's ticket"
+        assert str(filled[0].position_id) == "77", "not the position's own ticket"
+
     async def test_a_close_walks_a_hedged_stack_until_the_volume_is_met(self):
         """**Hedging holds a stack, and the engine holds one position.**
 
