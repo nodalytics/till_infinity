@@ -448,6 +448,22 @@ class Identity(WarmFromHistory, Desk):
             volume=0.0,
             entry=entry,
             stop=stop,
+            #: **No target, like `structure.py`, `zones.py` and `origins.py`.**
+            #: A target invented here would be a different rule with better
+            #: arithmetic: the residual measurement names neither a stop nor a
+            #: target, the stop above is already this rule's addition, and
+            #: `a-martingale-cannot-pay` is this desk's record of a target
+            #: making a losing geometry read positive through arithmetic rather
+            #: than selection. `Desk._floor_target` applies `TRADING_TARGET_R`
+            #: after the decision where one is wanted, which leaves this code
+            #: path identical to the one that was measured.
+            #:
+            #: Omitting it entirely is what broke this rule: `target` has no
+            #: default, so every `decide` raised
+            #: `TypeError: Intent.__init__() missing 1 required positional
+            #: argument: 'target'` inside `guarded()`, and all four IdentityEdge
+            #: desks were dead on every bar while reading healthy.
+            target=0.0,
             features={k: _number(v) for k, v in features.items()},
             interval=self.interval or self.profile.interval,
         )
