@@ -150,6 +150,56 @@ class SurpriseProfile(Profile):
             # large against its own volatility.
             "btcusd",
             "ethusd",
+            # 2026-11-20. Four crosses and the Swiss major, admitted on **both**
+            # measurements rather than on the trigger alone - which is the
+            # distinction `bnbusd` above exists to enforce.
+            #
+            # They were never excluded on evidence. `TRADING_SYMBOLS` carries
+            # them, the fold had never been run over them, and 76 of the 163
+            # desk slots the node builds decline to register with the largest
+            # group declining here. Excluded by omission, not by measurement.
+            #
+            # **The trigger**, through `statespace.facade.Desk` - the production
+            # fold - over 15m bars at twice a quarter of each bar's log range,
+            # the noise level at which the admitted majors reproduce the 1.80%
+            # on record. The admitted seven span 1.08% to 1.32% of bars
+            # clearing `TRIGGER`:
+            #
+            #   usdchf 1.49%   audcad 1.27%   audnzd 1.28%   eurcad 1.22%
+            #
+            # **The cost gate**, each against its own quoted spread over 2,000
+            # 15m bars, as a share of a 2R target on a 2-vol stop. The number
+            # that matters is the share of bars *inside* the 10% gate, because
+            # that is what `bnbusd` failed at 20%; the admitted seven span 90%
+            # (ethusd) to 100%:
+            #
+            #   audcad  3.0% of target, 95% inside
+            #   usdchf  3.5% of target, 94% inside
+            #   audnzd  4.1% of target, 92% inside
+            #   eurcad  4.4% of target, 91% inside
+            #
+            # **Three measured candidates are deliberately left out**, all of
+            # which clear the trigger and none of which clears the gate often
+            # enough to give a desk that can act:
+            #
+            #   euraud  4.7% of target, 85% inside
+            #   xagusd  7.3% of target, 71% inside
+            #   nzdusd  8.6% of target, 62% inside
+            #
+            # `nzdusd` at 62% is `bnbusd`'s failure in milder form - a desk
+            # refused on cost on more than a third of bars - and `xagusd` is
+            # the one whose *trigger* rate is highest of any feed measured
+            # (8.22% at the lower noise), which is exactly the trap: the signal
+            # fires and the spread eats it.
+            #
+            # The spreads here are 2,000 bars, about three weeks, against the
+            # 521 days the crypto screen used. Weekend widening is what took
+            # `bnbusd` from a 18% median to 27% live, so these shares are a
+            # floor on cost and not a ceiling.
+            "usdchf",
+            "audcad",
+            "audnzd",
+            "eurcad",
         }
     )
 
