@@ -64,7 +64,24 @@ _SIDES = {0: OrderSide.BUY, 1: OrderSide.SELL}
 #: venue issues a *fresh* order ticket when one fires and that ticket matches
 #: nothing this engine holds. A stop-out is attributed to the stop: it is the
 #: side that was breached, and the alternative is no attribution at all.
-_CLOSED_BY = {3: "SL", 4: "TP", 5: "SL"}
+#:
+#: **These were off by one when this was written, and the live record settles
+#: them.** `ENUM_DEAL_REASON` is `CLIENT=0, MOBILE=1, WEB=2, EXPERT=3, SL=4,
+#: TP=5, SO=6`, and the first version read `{3: "SL", 4: "TP", 5: "SL"}` - so
+#: every leg fill was attributed to the *opposite* leg and every close the desk
+#: sent itself was attributed to the stop. Measured over 14 days and 184
+#: positions, the deal comment agrees with the code without exception:
+#:
+#:   entry=0 reason=3  no comment    184   the desk opened it
+#:   entry=1 reason=3  no comment     51   the desk closed it
+#:   entry=1 reason=4  `[sl ...]`    130   its stop
+#:   entry=1 reason=5  `[tp ...]`      3   its target
+#:
+#: **`EXPERT` is deliberately absent.** A close the desk sent has an order
+#: ticket of its own - `_close_out` reports that ticket - so remapping it to a
+#: leg id would hide a real order behind a synthetic one, which is the defect
+#: this table exists to repair rather than to spread.
+_CLOSED_BY = {4: "SL", 5: "TP", 6: "SL"}
 
 #: The same two codes as a position's side. **Spelled out rather than derived**:
 #: `OrderSide` has no `to_position_side`, the method the first version called,
