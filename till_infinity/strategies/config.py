@@ -284,10 +284,33 @@ DEFAULT_API_PATH = "/api/v1"
 #: `Settings.stop_overshoot` note for the measurement and for why 2.0 is a floor
 #: rather than the answer. Boom spikes up, so its gapped stop is a sell's; Crash
 #: spikes down, so it is a buy's.
-DEFAULT_STOP_OVERSHOOT: tuple[tuple[str, float], ...] = tuple(
-    (f"{family}_{size}_index.{side}", 2.0)
-    for family, side in (("boom", "sell"), ("crash", "buy"))
-    for size in (300, 500, 1000)
+DEFAULT_STOP_OVERSHOOT: tuple[tuple[str, float], ...] = (
+    *(
+        (f"{family}_{size}_index.{side}", 2.0)
+        for family, side in (("boom", "sell"), ("crash", "buy"))
+        for size in (300, 500, 1000)
+    ),
+    #: **Unsided, where Boom and Crash are sided, and that is the mechanism.**
+    #: A Boom index spikes only up, so only a sell's stop can be leapfrogged;
+    #: a Crash only down. A Jump index jumps **both ways**, so neither side's
+    #: stop is the safe one and a side-keyed entry would protect half the
+    #: trades and quietly leave the rest at full size.
+    #:
+    #: 1.25 is **borrowed, not measured** - Boom 500's -1.25R median stop
+    #: delivery from `instruments.md`, taken from the nearest measured member
+    #: of the same mechanism because `jump 75 index` has no fills yet. It sits
+    #: well below the 2.0 the boom family carries, which is the conservative
+    #: direction for a guess: `scaling.by_slippage` turns it into a size of
+    #: 1/1.25, and sizing is reduction-only, so being wrong can only have made
+    #: the position smaller than it needed to be.
+    #:
+    #: **It belongs here rather than in `TRADING_STOP_OVERSHOOT`** because the
+    #: comment below says measured instrument facts live in the code, and
+    #: because `settings` resolves that variable as
+    #: `_overshoot(...) or DEFAULT_STOP_OVERSHOOT`: a deployment setting one
+    #: feed in the environment would **replace** this whole table and silently
+    #: drop the six boom and crash entries.
+    ("jump_75_index", 1.25),
 )
 
 #: The synthetics carried by default. A list rather than the whole catalogue

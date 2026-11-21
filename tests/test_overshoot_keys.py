@@ -69,6 +69,34 @@ class TestTheDefaultBookReachesTheFeedsItNames:
         assert overshoot_for(DEFAULT_STOP_OVERSHOOT, feed("EURUSD"), Side.SELL) == 1.0
 
 
+class TestTheJumpEntryIsUnsided:
+    """**Where Boom and Crash are sided, and that is the mechanism.** A Boom
+    index spikes only up, so only a sell's stop can be leapfrogged. A Jump
+    index jumps both ways, so a side-keyed entry would protect half the trades
+    and leave the rest at full size."""
+
+    @pytest.mark.parametrize("side", [Side.BUY, Side.SELL])
+    def test_both_sides_are_reduced(self, side: Side) -> None:
+        got = overshoot_for(DEFAULT_STOP_OVERSHOOT, feed("Jump 75 Index"), side)
+        assert got == 1.25
+        assert by_slippage(got) == pytest.approx(0.8)
+
+    def test_it_is_gentler_than_the_boom_family(self) -> None:
+        """1.25 is borrowed from Boom 500's measured -1.25R, not measured on
+        this feed, so it sits below the 2.0 the boom family carries. Sizing is
+        reduction-only, so a wrong guess can only have been too small."""
+        jump = overshoot_for(DEFAULT_STOP_OVERSHOOT, feed("Jump 75 Index"), Side.SELL)
+        boom = overshoot_for(DEFAULT_STOP_OVERSHOOT, feed("Boom 500 Index"), Side.SELL)
+        assert 1.0 < jump < boom
+
+    def test_the_controls_are_not_scaled(self) -> None:
+        """Step Index and Range Break are fixed-spread, non-jumping feeds. An
+        overshoot on a null arm would make its result a function of a guess."""
+        for symbol in ("Step Index", "Range Break 100 Index", "Range Break 200 Index"):
+            for side in (Side.BUY, Side.SELL):
+                assert overshoot_for(DEFAULT_STOP_OVERSHOOT, feed(symbol), side) == 1.0
+
+
 class TestEitherSpelling:
     """An operator may write `TRADING_STOP_OVERSHOOT` in either form, because
     both live in this repository for the reason `feed_of` explains."""
