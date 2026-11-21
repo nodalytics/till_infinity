@@ -153,6 +153,31 @@ class TestItIsNotReachableOrAnonymous:
             assert "rename-command" in text, f"{name} renames no command"
             assert "CONFIG" in text, f"{name} leaves CONFIG enabled on the cache"
 
+    def test_a_running_cache_is_kept_only_if_it_matches(self) -> None:
+        """**The fail-open a second review caught.**
+
+        The first version asked only "is one running". A cache started by an
+        earlier, weaker script - published port, no password - would have been
+        *kept* by the fixed one, so the fix would never have reached the box it
+        was written for.
+
+        The deploy now compares a digest of the intended configuration against
+        a label on the running container, which forces a recreate on *any*
+        divergence rather than on three remembered fields - and means the
+        comparison never reads the password back out of `docker inspect`.
+        """
+        from pathlib import Path
+
+        text = (Path(__file__).resolve().parents[1] / "scripts/deploy.sh").read_text()
+        assert "till.cache.config" in text, "nothing stamps the intended config"
+        assert "HAVE_DIGEST" in text, "nothing reads the running config back"
+        assert "already running with this configuration" in text, (
+            "the keep branch does not say that it checked"
+        )
+        assert 'echo "till-cache already running"' not in text, (
+            "the unconditional keep is still there, which is the fail-open"
+        )
+
     def test_a_password_reaches_the_node_and_is_redacted(self) -> None:
         """The node has to send the same secret, and it must not end up in a log.
 

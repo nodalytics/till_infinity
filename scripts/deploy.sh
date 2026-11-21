@@ -229,18 +229,53 @@ if grep -qE '^TRADING_CACHE_REDIS=[^[:space:]]' /home/ubuntu/till.env 2>/dev/nul
   # only reason a published port was tempting. A user-defined network has it,
   # so the cache is reachable as `till-cache:6379` and listens nowhere else.
   docker network inspect till-net >/dev/null 2>&1 || docker network create till-net
-  if [ -z "$(docker ps -q -f name=^till-cache$)" ]; then
+
+  # **The password, from the env file the node already reads**, so one place
+  # decides and there is no second switch to drift. Read before the digest
+  # below, because whether a password is set is part of what the digest covers.
+  #
+  # Residual worth stating: `--requirepass` on the command line is visible to
+  # anyone with root on this host, through `docker inspect` or the process
+  # list. Redis only reads `requirepass` from a config file otherwise, and
+  # `CONFIG` is disabled here deliberately. The network is the control that
+  # does not have this weakness; this is the second layer.
+  CACHE_PASS="$(sed -n 's/^TRADING_CACHE_REDIS_PASSWORD=//p' /home/ubuntu/till.env | tail -1)"
+  if [ -z "$CACHE_PASS" ]; then
+    echo "WARNING: TRADING_CACHE_REDIS_PASSWORD is unset, so the cache takes" >&2
+    echo "         no password. It is unreachable off till-net, but set one." >&2
+  fi
+
+  # **A running cache is kept only if it is the cache this script would start.**
+  # The first version asked "is one running" and stopped there, which is a
+  # fail-open migration: a cache started by an earlier, weaker version of this
+  # script - published port, no password - would be *kept* by a fixed one, so
+  # the fix would never reach the box it was written for. A second security
+  # review caught it.
+  #
+  # Compared by a digest of the intended configuration rather than by
+  # inspecting three named fields, so a change to *any* of it forces a
+  # recreate and nobody has to remember to extend a list of checks. The digest
+  # is a label on the container, which also means the comparison never has to
+  # read the password back out of `docker inspect`.
+  #
+  # Recreating is cheap and safe: the data is in the named volume, the AOF
+  # reloads in milliseconds at this keyspace size, and the node is recreated
+  # moments later anyway - so the cache is never the only thing restarting.
+  WANT_CACHE="redis:7-alpine|till-net|appendonly|no-config|${CACHE_PASS:+pass}"
+  WANT_DIGEST="$(printf '%s' "$WANT_CACHE" | sha256sum | cut -c1-16)"
+  HAVE_DIGEST="$(docker inspect till-cache \
+    --format '{{index .Config.Labels "till.cache.config"}}' 2>/dev/null || true)"
+  if [ -n "$(docker ps -q -f name=^till-cache$)" ] && [ "$HAVE_DIGEST" = "$WANT_DIGEST" ]; then
+    echo "till-cache already running with this configuration"
+  else
+    [ -n "$(docker ps -q -f name=^till-cache$)" ] \
+      && echo "till-cache is running a different configuration; recreating"
     echo "starting till-cache"
     docker rm -f till-cache >/dev/null 2>&1 || true
     # **A password as well, from the env file the node already reads.** Defence
     # in depth: the network removes the reachability and this removes the
     # anonymous access if anything is ever attached to that network. Absent, no
     # password is set and the warning below says so rather than implying one.
-    CACHE_PASS="$(sed -n 's/^TRADING_CACHE_REDIS_PASSWORD=//p' /home/ubuntu/till.env | tail -1)"
-    if [ -z "$CACHE_PASS" ]; then
-      echo "WARNING: TRADING_CACHE_REDIS_PASSWORD is unset, so the cache takes" >&2
-      echo "         no password. It is unreachable off till-net, but set one." >&2
-    fi
     # `appendonly` and no RDB: the AOF survives an unclean stop, and two
     # persistence mechanisms on a keyspace of kilobytes is one more thing to go
     # wrong. 128m because the keyspace is this desk's open orders and
@@ -255,6 +290,7 @@ if grep -qE '^TRADING_CACHE_REDIS=[^[:space:]]' /home/ubuntu/till.env 2>/dev/nul
       --restart unless-stopped \
       --memory 128m \
       --network till-net \
+      --label "till.cache.config=$WANT_DIGEST" \
       -v till-cache:/data \
       --log-opt max-size=10m --log-opt max-file=3 \
       redis:7-alpine redis-server \
@@ -265,8 +301,6 @@ if grep -qE '^TRADING_CACHE_REDIS=[^[:space:]]' /home/ubuntu/till.env 2>/dev/nul
         --rename-command DEBUG '' \
         ${CACHE_PASS:+--requirepass "$CACHE_PASS"} \
       || echo "the cache would not start; the node falls back to memory" >&2
-  else
-    echo "till-cache already running"
   fi
 fi
 
