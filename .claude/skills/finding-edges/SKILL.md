@@ -299,6 +299,29 @@ build one, build one of these instead and say why:
    **one event**; `venue-faults-hide-below-the-strategy` exists because a rule
    that never fires and one that *cannot* fire read identically.
 
+## A cost in R is only comparable to its own volatility unit
+
+Cost in R is `spread / stop distance`, so every cost number on this desk has a
+volatility denominator hiding in it - and **the choice of denominator decides
+marginal verdicts.**
+
+Measured 2026-11-21, screening instruments against
+`SurpriseProfile.cost_share` (a 10% gate on a 2R target over a 2-vol stop).
+Eight ATR definitions were swept against the ten feeds already on record. Only
+the **bar's own unsmoothed high-low range** reproduces them - audcad 2.94%
+against a recorded 3.0%, nzdusd 8.33% against 8.6%.
+
+**A Wilder(14) ATR puts nzdusd at 90% of bars inside the gate where the bar
+range puts it at 62%.** The record rejects that feed; a smoothed ATR would have
+admitted it. Smoothing averages quiet bars into loud ones, which flatters
+precisely the instruments whose problem is a wide spread against a *typical*
+bar.
+
+So: **state the volatility unit with any cost figure**, and never compare a
+cost computed one way against a band computed another. Re-running an admission
+screen with a smoothed ATR would silently widen the book, and nothing in the
+output would say so.
+
 ## Roles: a role is a distance, never a veto
 
 [`docs/specs/2026-11-21-roles-design.md`](../../../docs/specs/2026-11-21-roles-design.md)

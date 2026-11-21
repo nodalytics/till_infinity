@@ -92,6 +92,24 @@ class SurpriseProfile(Profile):
     #: `statespace/deciding.py` for the per-venue measurement and for the 49
     #: trades that passed a reward-denominated test and lost -0.471R.
     cost_share: ClassVar[float] = 0.10
+    #
+    # **The denominator is the bar's own unsmoothed high-low range, and the
+    # choice is load-bearing.** Every number in the `feeds` block below is
+    # `2 * spread / (4 * range)` with `range` taken bar by bar. Re-measured on
+    # 2026-11-21 across eight definitions, that is the only one that reproduces
+    # the recorded band on all ten feeds - audcad 2.94% against a recorded
+    # 3.0%, nzdusd 8.33% against 8.6%, and so on.
+    #
+    # **A Wilder(14) ATR puts nzdusd at 90% of bars inside the gate where the
+    # bar range puts it at 62%** - so it would admit a feed this desk rejected,
+    # and the verdict on a marginal instrument is decided by the smoothing
+    # rather than by the spread. Smoothing averages the quiet bars into the
+    # loud ones, which flatters exactly the feeds whose cost problem is that
+    # their spread is wide against a *typical* bar.
+    #
+    # So a cost figure quoted here without its volatility unit is not
+    # comparable to these, and re-running this screen with a smoothed ATR
+    # would silently widen the book.
     #: Fallbacks where the proposal names neither.
     stop_vol: ClassVar[float] = 2.0
     target_r: ClassVar[float] = 2.0
@@ -245,6 +263,92 @@ class SurpriseProfile(Profile):
             "volatility 75 index",
             "volatility 100 index",
             "volatility 25 index",
+            # 2026-11-21, on the operator's call. **The only synthetic of 97
+            # screened that passes both gates on measurements rather than on
+            # interpolation**, which is the distinction the rest of this block
+            # is about.
+            #
+            #   trigger  1.23% of bars clear TRIGGER, against an admitted band
+            #            of 1.08% to 1.32% - so it fires as often as a real
+            #            major, unlike the volatility indices above at two
+            #            thirds the rate
+            #   cost     100% of bars inside the 10% gate on either spread
+            #            reading (2.54% of target on the wide route, 1.30% on
+            #            the narrow one)
+            #
+            # **The caveat is the exit, not the signal, and it is unmeasured
+            # here.** `.secrets/instruments.md` measures stop delivery over the
+            # whole journal:
+            #
+            #   Boom 500 Index        5 stops, median -1.25R, 60% past 1.1R
+            #   volatility indices    2 stops, median -1.00R,  0% past 1.1R
+            #   everything else      10 stops, median -1.04R,  0% past 1.1R
+            #
+            # "Deriv's Boom indices are constructed to move in discrete jumps -
+            # a spike roughly every 500 ticks, drift between them - so a stop
+            # can be leapfrogged rather than filled. The signal is not what is
+            # failing; the exit is." A Jump index is the same construction, so
+            # the **mechanism is certain and the magnitude is not**: no jump
+            # family has a measured overshoot. The volatility indices admitted
+            # above deliver their stops, which is why they needed none.
+            #
+            # So it ships with `TRADING_STOP_OVERSHOOT` carrying
+            # `jump_75_index=1.25` - Boom 500's number, borrowed from the
+            # nearest measured member of the same mechanism and **stated as
+            # borrowed**. It sizes the feed at 0.8 so the trade risks what it
+            # said it would, and `sizing-is-reduction-only` means the guess can
+            # only ever make the position smaller. Re-take it once this feed has
+            # twenty stops of its own, as instruments.md asks for the Boom
+            # family.
+            "jump 75 index",
+            # 2026-11-21, on the operator's call - *"add them, we are testing
+            # remember?"* - and these are **not candidates for edge**. They are
+            # this repository's own controls, admitted as a **live diagnostic
+            # suite with the expected outcome stated in advance**, which is what
+            # makes them falsifiable rather than hopeful.
+            #
+            #   `step index`       the tier-1 **null**. 86,391 of 86,393 tick
+            #                      moves are exactly 0.1 and
+            #                      `p(up) = 0.499734 +- 0.000220` over 5.18M
+            #                      flips; `deriving.md` concludes "Step Index is
+            #                      therefore closed. Not 'no edge found' -
+            #                      *there is no edge*". So the desk should lose
+            #                      the spread here and nothing else. **A profit
+            #                      on this feed is a bug in the measurement
+            #                      chain, not an edge**, which makes it the live
+            #                      equivalent of the shuffled arm and the best
+            #                      single diagnostic this desk can carry.
+            #   `range break 100`  the **level positive control** - a range by
+            #   `range break 200`  construction. A rule that reads levels should
+            #                      find something here; one that finds nothing
+            #                      is blind rather than disciplined.
+            #
+            # **The contamination objection is weaker than it looks, for these.**
+            # A synthetic's price comes from a generator, so this desk's orders
+            # cannot move it - the control's statistics are untouched by trading
+            # it. What is lost is only the claim "never traded", and the live
+            # arm is worth more than that.
+            #
+            # Both are fixed-spread (`spread_float = false`), so their cost is
+            # the reliable kind: the per-bar column, `info.spread` and the raw
+            # tick stream agree exactly, verified against an hour of ticks.
+            # `step index` is **the cheapest round trip of all 97 synthetics
+            # screened** at 1.14% of target with 100% of bars inside the 10%
+            # gate; `range break` reads 2.78% and 3.71% at 100% and 99.8%.
+            #
+            # **`drift switch` is deliberately absent and it is the one the
+            # regime work wants.** Its spread is floating, and the two broker
+            # routes disagree about it by up to 29x: Drift Switch 10 reads
+            # **19.08% of target with 0.2% of bars inside the gate** on the wide
+            # route and **1.63% with 99.5% inside** on the narrow one. At the
+            # wide end every trade loses about 0.38R to cost, which does not
+            # just lose money - it swamps the regime signal the control exists
+            # to test, so the experiment would be uninformative rather than
+            # expensive. Admit it once one real fill settles which route an
+            # order fills at.
+            "step index",
+            "range break 100",
+            "range break 200",
         }
     )
 
