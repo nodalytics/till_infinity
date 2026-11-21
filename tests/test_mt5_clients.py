@@ -3863,29 +3863,38 @@ class TestFillReports:
         closing order ticket that differs from the position's.
         """
         rows = [
+            # reason 4 is SL, 5 is TP, 6 is a stop-out - `ENUM_DEAL_REASON` is
+            # `CLIENT=0, MOBILE=1, WEB=2, EXPERT=3, SL=4, TP=5, SO=6`, and the
+            # live record agrees without exception: every `reason=4` deal in 14
+            # days carried an `[sl ...]` comment and every `reason=5` a `[tp ...]`.
             _deal(ticket=5713012477, order=5842450268, position_id=5842441839, entry=1, reason=4),
-            _deal(ticket=5713063660, order=5842502378, position_id=5842499522, entry=1, reason=3),
-            _deal(ticket=5713099365, order=5842539214, position_id=5842535369, entry=1, reason=5),
+            _deal(ticket=5713063660, order=5842502378, position_id=5842499522, entry=1, reason=5),
+            _deal(ticket=5713099365, order=5842539214, position_id=5842535369, entry=1, reason=6),
         ]
         rig = make_exec(FakeBridge(deals=rows))
         reports = await rig.client.generate_fill_reports()
         assert [str(r.venue_order_id) for r in reports] == [
-            "5842441839-TP",
-            "5842499522-SL",
+            "5842441839-SL",
+            "5842499522-TP",
             "5842535369-SL",
         ], "a leg fill must be reported under the id the engine registered the leg with"
 
     async def test_an_opening_deal_keeps_the_venue_s_own_order_ticket(self):
-        """The remap is for closes only, and this is the half that must not move.
+        """The remap is for bracket legs only, and this is the half that must not move.
 
         An opening deal's order ticket **is** the position ticket on a hedging
-        account, which is why `_fill` uses one value for both there. A desk's
-        own partial close carries `reason` 0 or 1 and keeps the real ticket too,
-        because `_close_out` reports that ticket itself.
+        account, which is why `_fill` uses one value for both there. A close the
+        desk sent itself carries `reason` 3 - `DEAL_REASON_EXPERT` - and keeps
+        its real ticket, because `_close_out` reports that ticket; remapping it
+        to a leg id would hide a real order behind a synthetic one.
+
+        Both rows here are `reason` 3, which is what the live record shows for
+        every deal this desk opened (184 of them) and for the 51 it closed
+        itself.
         """
         rows = [
-            _deal(ticket=6001, order=900, position_id=900, entry=0, reason=0),
-            _deal(ticket=6002, order=911, position_id=900, entry=1, reason=1),
+            _deal(ticket=6001, order=900, position_id=900, entry=0, reason=3),
+            _deal(ticket=6002, order=911, position_id=900, entry=1, reason=3),
         ]
         rig = make_exec(FakeBridge(deals=rows))
         reports = await rig.client.generate_fill_reports()
