@@ -37,6 +37,9 @@ because two of the roles the operator describes do not exist in either package.
 | **dispersion** | every statespace member | how far can price get, how often, how soon |
 | **price** | `projecting.py` alone | the distribution over forward paths |
 
+A sixth is half-built: `projecting.py` can already answer *how far, how
+often, how soon*, which is what a **gauge** needs. See below.
+
 ## The roles that do not
 
 **`context` - where, and what is happening there.** This is the operator's
@@ -53,6 +56,45 @@ differs:
   of character, a key level. Any of them, not all of them.
 * **reaction**, from the middle frame: momentum slowing or accelerating at that
   location.
+
+**`gauge` - how strong a signal is, in units that mean something.** The
+operator: *"projecting can also be used for deviation rate... know gauge how
+strong a signal is."*
+
+A `Signal.strength` today is a scalar in -1..+1 and **nothing says what it is
+worth**. `projecting.py` can answer that, because it already measures the
+quantity a strength should be compared against: *how far can price get, how
+often, and how soon*. The accessors exist - `Projection.above(level)`,
+`touches(level)`, `when(level, coverage)`, `worth(cost, multiple)` - and `Trade`
+already prints the comparison that matters: `win_rate` beside `geometric`, the
+`1 / (1 + reward)` a driftless market owes, *"their difference is the only
+quantity that can be an edge"*.
+
+So a gauge role would express a signal's claim as **a position in the projected
+distribution**: a target inside the projected band is claiming nothing beyond
+diffusion, and one far outside is claiming a great deal and is correspondingly
+unlikely. The deviation rate is exactly the denominator for that.
+
+**What this can and cannot buy, stated before anyone builds it.** It cannot
+improve ranking: `only-the-sign-survives-into-a-weighted-sum` records that
+activation, scale and per-term offset are all rank identities and that 0..1
+against -1..+1 is empty, so a monotone re-expression of strength reorders
+nothing and no AUC will move.
+
+What it buys is **a portable threshold**. A strength of 0.6 means nothing across
+instruments; "the target sits at the 0.93 coverage edge of the projection"
+means the same thing on EURUSD at 15m and on gold at 4h, which is what lets one
+number be set once instead of per desk. And the coverage is calibrated to say
+it: `band-coverage.md` measured the composition holding **1.02 to 1.10** across
+0.95 to 0.999 where a Gaussian band of the same nominal width degrades to
+**14.80**.
+
+The one trap is the horizon. A projection read at one day on a 2R target
+forecasts the **stop** rather than the trade -
+[`race-calibration.md`](../../research/docs/race-calibration.md) measured it:
+7.5% at one day climbing to 33.3% at seven, where the geometry owes 33.3%. So a
+gauge has to state its horizon, and `projecting.PERIODS` already insists a
+horizon is a duration and never a count of bars.
 
 **`forget` - how fast to discount.** `research/docs/edge-life.md` measures log
 volatility at rho 0.9963 to 0.9995, half-lives of 185 to 1,253 hours and 7x
@@ -218,6 +260,48 @@ unmeasurable**, and would be indistinguishable from switching at random.
 So a role assignment conditioned on **a volatility regime** is a measurable
 proposition, and one conditioned on **which role made money last week** is not.
 That is the whole of the design guidance here.
+
+### The ordering is free too, and that has a size
+
+The operator, pressing it further: *"4h can be or structure today and entry
+tomorrow and 1h same etc."* So the frame-to-role mapping is itself free - a slow
+frame can supply the entry and a fast one the location. Coherent: a 4h entry is
+what a swing desk does.
+
+**Which frames can hold which roles is arithmetic, and it is not symmetric.**
+EURUSD, two years of 5m folded, with Bjorgum's pivot rate near 2.5% and three
+visits a zone:
+
+| frame | bars | zones | visits | **pooled, 5 symbols** |
+|---|---:|---:|---:|---:|
+| 15m | 49,677 | 1,242 | 3,726 | **18,629** |
+| 1h | 12,419 | 310 | 931 | **4,657** |
+| **4h** | 3,104 | 78 | 233 | **1,164** |
+| 1d | 517 | 13 | 39 | **194** |
+
+* **4h can be the entry frame and still be measured** - 1,164 pooled against
+  the 350 to 800 `Trade.trials` requires.
+* **1d cannot.** 194 pooled is under the floor, so a daily entry role is
+  unfalsifiable on the history that exists and must not be built.
+* 4h clears **pooled only**. Per symbol it is 233, and
+  `pooled-medians-invert-subgroups` records a pooled answer disagreeing with
+  every subgroup - so a 4h entry role is judgeable across the book and never
+  for one instrument. `pool-events-before-a-per-feed-guard` is the other side
+  of that: a min-events guard once dropped 141 of 146 feeds and made 0.9 sigma
+  read as 4.8.
+
+**And a free ordering is a grid.** Four frames into three distinct roles is
+**24 assignments**. That is small next to the one this desk has a scar from -
+`rsi-ma-momentum.md` ran **414 cells** whose seven-day leaders had **0 of the
+top 10 positive in the following month**, and a day-shuffled market's best cell
+beat the real market's best. 24 is defensible where 414 was not, but it carries
+the same requirement: **the real best is compared to the shuffled best, never
+to zero.**
+
+If the assignment then rotates, the space multiplies by the switching schedule
+and the 414-cell failure returns with a time dimension on it. Which is the same
+conclusion as the section above, arrived at from the size rather than from the
+estimator: rotate on a state, not on a score.
 
 ### The control a rotating assignment must beat
 
