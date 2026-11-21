@@ -137,11 +137,32 @@ def test_the_deploy_script_passes_no_command():
 def test_compose_describes_one_node():
     """The port collapsed six services into one kernel - one cache and one
     portfolio, which is what makes exposure answerable across venues. Six
-    processes would put each one's positions out of the others' sight."""
+    processes would put each one's positions out of the others' sight.
+
+    **The claim is one *kernel*, not one container**, and that distinction is
+    what this now asserts. A `cache` service was added on 2026-11-21 because
+    the engine's cache is in memory and a restart forgets the orders and
+    positions the broker still holds - measured, a position opened at 10:35,
+    the container restarted at 11:24, and its closing fill at 11:32 matched
+    nothing. Storage for the one kernel is not a second kernel, and the node
+    does not use it unless `TRADING_CACHE_REDIS` is set.
+
+    So: exactly one service runs this project's image, and every other service
+    is a stock image doing storage.
+    """
     yaml = pytest.importorskip("yaml")
     found = yaml.safe_load(read("docker-compose.yml"))
-    assert list(found["services"]) == ["node"]
-    assert "redis" not in found["services"], "nothing under till_infinity imports redis"
+    services = found["services"]
+    ours = [
+        name
+        for name, spec in services.items()
+        if "build" in spec or "till" in str(spec.get("image", ""))
+    ]
+    assert ours == ["node"], f"more than one service runs this project: {ours}"
+    assert "redis" not in services, (
+        "the service is named for its job, and nothing under till_infinity "
+        "imports a redis client - the backend is compiled into Nautilus"
+    )
 
 
 def test_compose_mounts_the_data_volume():

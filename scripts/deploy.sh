@@ -200,6 +200,44 @@ CORES="$(nproc)"
 CPU_LIMIT="$(awk -v c="$CORES" 'BEGIN{v=(c*90)/100; if (v<0.5) v=0.5; printf "%.2f", v}')"
 echo "host has ${CORES} core(s), giving the container ${CPU_LIMIT}"
 
+# ──── the cache, when the node is configured to use one ────
+#
+# **Started here and not in compose, because the node is not started by
+# compose either.** `docker-compose.yml` carries the same service for anyone
+# running that way, and `tis.sh` says why this script exists: the live
+# container "has no compose labels", and `deployed-compose-diverges-from-the-
+# file` records a 4GiB limit where the file said 1G. A cache added only to the
+# yml would be a no-op on the box that matters, which is the worst kind of
+# change - one that looks done.
+#
+# **Only when `TRADING_CACHE_REDIS` is set**, read from the same env file the
+# node gets, so there is one place that decides and no second switch to drift.
+# The address it names has to be reachable from inside the node's container, so
+# the port is published on the docker bridge gateway rather than on 127.0.0.1 -
+# a cache on loopback is invisible to every container on the box.
+if grep -qE '^TRADING_CACHE_REDIS=[^[:space:]]' /home/ubuntu/till.env 2>/dev/null; then
+  if [ -z "$(docker ps -q -f name=^till-cache$)" ]; then
+    echo "starting till-cache"
+    docker rm -f till-cache >/dev/null 2>&1 || true
+    # `appendonly` and no RDB: the AOF survives an unclean stop, and two
+    # persistence mechanisms on a keyspace of kilobytes is one more thing to go
+    # wrong. 128m because the keyspace is this desk's open orders and
+    # positions; a cache allowed to grow into the node's memory would trade one
+    # outage for another on a 2-core box.
+    docker run -d \
+      --name till-cache \
+      --restart unless-stopped \
+      --memory 128m \
+      -p 172.17.0.1:6379:6379 \
+      -v till-cache:/data \
+      --log-opt max-size=10m --log-opt max-file=3 \
+      redis:7-alpine redis-server --appendonly yes --save '' \
+      || echo "the cache would not start; the node falls back to memory" >&2
+  else
+    echo "till-cache already running"
+  fi
+fi
+
 docker run -d \
   --name "$NAME" \
   --restart unless-stopped \
