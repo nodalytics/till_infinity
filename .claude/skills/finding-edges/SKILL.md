@@ -258,6 +258,69 @@ catches them is reading the accounting out loud - what is the entry, what is
 the risk, what happens if nothing resolves, what does the control actually
 differ in - before believing any mean.
 
+## The window is 7 days, 3 months or 1 year - and one of them cannot be verified
+
+The operator's definition: **short is the last 7 days, medium the last 3
+months, and 1 year is the maximum useful lookback.** Older than that is a
+different regime rather than more data, because the premise is an adapting
+process and not a durable rule.
+
+**So say which window a number came from, and state the arithmetic on a 7-day
+one.** At about a dozen trades a day the desk makes **~84 in a week** against
+the **350 to 800** `projecting.Trade.trials` needs before a win rate can be
+told from its geometric baseline. A 7-day edge can be **acted on and never
+verified**; 3 months is the shortest window that can be. "It worked last week"
+is a statement about 84 trades and has to be labelled as one.
+
+### An edge cannot be detected as stopping inside the window in which it stopped
+
+This is the constraint that governs every adaptive design here. Detecting a
+*change* in a win rate - telling A from B rather than A from its baseline -
+needs roughly two to four times the sample, so **1,500 to 3,000 trades**, which
+at this desk's rate is **18 to 36 weeks**.
+
+Two measurements say the same thing from other directions:
+
+* `research/docs/edge-life.md`: the decay estimator is **blind**. Planted
+  half-lives of 10, 50, 200, 1,000 and **infinity** all return **3.5 to 4.6
+  trades**.
+* `strategy-rotation-is-not-timeable`: **every pause rule tested matched random
+  pausing at the same duty cycle.**
+
+So a detector reading the edge's own P&L fires on noise. If you are asked to
+build one, build one of these instead and say why:
+
+1. **Condition on a state, not a score.** Log volatility reads `rho` 0.9963 to
+   0.9995 with half-lives of 185 to 1,253 hours - readable now and still true
+   in an hour.
+2. **Run every rule and let the state set the sizes.** No switching decision,
+   no detection latency.
+3. **Detect breaks, not fades.** A venue fault or a gate refusing everything is
+   **one event**; `venue-faults-hide-below-the-strategy` exists because a rule
+   that never fires and one that *cannot* fire read identically.
+
+## Roles: a role is a distance, never a veto
+
+[`docs/specs/2026-11-21-roles-design.md`](../../../docs/specs/2026-11-21-roles-design.md)
+is the record. Two packages already compose roles -
+`SurpriseEdge(Surprise, ManagedExit, EdgeEntry)` is decision, exit and entry;
+statespace splits dispersion from price - and the open additions are `location`
+and `reaction` from slower frames and a `gauge` from `projecting.py`.
+
+Three rules when measuring one:
+
+* **A conjunction multiplies its way out of existence.** `reactive-zones.md`
+  ran confluence as a vote: **271 entries to 1 to 0**. Express a role as a
+  **distance with a tolerance to sweep**, so a sample survives - measured
+  2026-11-21, a 4h-to-15m zone tolerance goes from **7% retention at exact
+  overlap to 65% at 0.5 ATR**.
+* **Judge it marginally**, against the same rule without it, not against zero.
+  `the-book-is-composable-judge-rules-marginally`.
+* **A free ordering is a grid.** Four frames into three roles is 24
+  assignments, so the real best is compared to **the shuffled best** -
+  `rsi-ma-momentum.md` ran 414 cells whose 7-day leaders had 0 of the top 10
+  positive the next month and whose shuffled market's best beat the real one's.
+
 ## Legs, turns and origins are in scope
 
 The operator's standing instruction, 2026-11-17: *"anything that concerns
