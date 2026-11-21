@@ -362,6 +362,51 @@ class SurpriseProfile(Profile):
             "step index",
             "range break 100",
             "range break 200",
+            # 2026-11-21, on the operator's call. **The indices were in this
+            # rule's original measurement and were never admitted**, which is
+            # the gap here: the baseline above reads "1.80% of real-market 15m
+            # bars" on *"the FX and index feeds"*, so they were measured as a
+            # pool and then left out of the allowlist for eight months.
+            #
+            # **They are also the cheapest feeds the desk can trade.** Each
+            # against its own quoted spread over 2,000 15m bars, as a share of
+            # a 2R target on a 2-vol stop, with the bar's own unsmoothed range
+            # as the denominator:
+            #
+            #   us tech 100      0.6% of target, 100% inside the 10% gate
+            #   germany 40       1.0% of target,  92% inside
+            #   wall street 30   1.1% of target, 100% inside
+            #   japan 225        1.6% of target, 100% inside
+            #   us sp 500        1.7% of target, 100% inside
+            #   uk 100           3.5% of target,  72% inside
+            #
+            # `us tech 100` at 0.6% is cheaper than **every** feed admitted
+            # above, gold included at 1.1%. Four of the six sit at 100% inside,
+            # against an admitted band of 90% (ethusd) to 100%.
+            #
+            # **`uk 100` is in at 72% deliberately, as a test arm, and it is
+            # the only one below the band.** The operator's call: *"for the uk
+            # 100, you can note is as 72% but for testing"*. It is the same
+            # shape as `xagusd` at 71%, which is held *out* - so the pair is a
+            # natural comparison, and if the cost gate is doing its job
+            # `uk 100` should show the refusal rate that 72% predicts. Judge it
+            # on that rather than on P&L.
+            #
+            # **The per-feed trigger rate is being measured and is not here
+            # yet.** `research/docs/surprise-band.md` and the `bnbusd` note
+            # above both say why that matters: admitting on cost alone is the
+            # `bnbusd` error mirrored, and a cheap round trip on a desk that
+            # never fires is a fraction of nothing. What makes these different
+            # from the synthetics is that the pooled 1.80% *did* include index
+            # feeds, so the prior is informed rather than absent - but a pooled
+            # figure is not a per-feed one and the measurement is what settles
+            # it.
+            "us tech 100",
+            "wall street 30",
+            "japan 225",
+            "us sp 500",
+            "germany 40",
+            "uk 100",
         }
     )
 
