@@ -81,6 +81,19 @@ class SurpriseProfile(Profile):
     #: asked for, and `test_the_floor_is_not_above_the_producers_trigger`
     #: fails if the two drift apart.
     least_surprise: ClassVar[float] = TRIGGER
+    #: The top of the band, past which a reading is not traded. Infinite by
+    #: default, which is the behaviour this rule has always had.
+    #:
+    #: **A ceiling is not an arbitrary bound, and the evidence points the
+    #: unintuitive way.** `origin-returns-turn-at-z-one-three` measured returns
+    #: turning at **z 1.3 to 1.95** while **non-returners reach 2.2** - so a
+    #: larger surprise is *less* likely to come back, not more. If this rule is
+    #: a reversion rule, its edge lives at the *low* end of the band and the
+    #: big readings are the ones that keep going.
+    #:
+    #: That also says the current floor of 3.0 may be the expensive part: the
+    #: same note records that z 2.5 already misses 85-89% of returns.
+    most_surprise: ClassVar[float] = float("inf")
     #: The share of the move a round trip may cost before the idea is over.
     #:
     #: **Chosen, not measured.** `statespace/deciding.py` cited this as the
@@ -376,6 +389,63 @@ class Surprise:
             return False
         return str(payload.get("feed") or "").lower() in self._allowed()
 
+    def _band(self) -> tuple[float, float]:
+        """`(floor, ceiling)` for the surprise this rule will trade.
+
+        `TRADING_SURPRISE_MIN` and `TRADING_SURPRISE_MAX`, read per call like
+        `_allowed` and for the same reason: a sweep can move the band without a
+        restart, and a reader can see what the desk is actually using.
+
+        **The floor is clamped to what the producer emits.** `proposing`
+        publishes nothing below its own trigger, so a floor beneath that buys
+        no proposals - it only makes the gate look open. A floor *above* it is
+        the defect the `least_surprise` comment records: a band of work done
+        and thrown away, with a refusal counter reading as a quiet market. So
+        asking for 1.3 here requires `STATESPACE_TRIGGER=1.3` as well, and
+        without it this returns the producer's number and says so once.
+
+        An inverted or empty band is refused back to the defaults rather than
+        silently trading nothing: a desk that refuses everything and a desk
+        with no setups write the same report line, which is the failure
+        `venue-faults-hide-below-the-strategy` is named for.
+        """
+        import os
+
+        from ..statespace.proposing import trigger_now
+
+        def number(raw: str, fallback: float) -> float:
+            try:
+                return float(raw.strip()) if raw.strip() else fallback
+            except ValueError:
+                return fallback
+
+        emitted = trigger_now()
+        # **`os.environ.get` with the literal, not a helper taking the name.**
+        # `test_the_example_names_nothing_the_node_ignores` walks the AST for
+        # exactly this shape, so a setting read through an indirection is
+        # invisible to it - and the first version of this hid both names behind
+        # a `read(name, fallback)` and was reported as undocumented.
+        low = number(os.environ.get("TRADING_SURPRISE_MIN", ""), self.profile.least_surprise)
+        high = number(os.environ.get("TRADING_SURPRISE_MAX", ""), self.profile.most_surprise)
+        if low < emitted:
+            if not getattr(self, "_said_floor", False):
+                self.log.warning(
+                    f"{self._cfg.rule}: asked for surprise from {low:.2f} but "
+                    f"statespace publishes nothing below {emitted:.2f}, so the "
+                    f"floor is {emitted:.2f}. Set STATESPACE_TRIGGER to widen it."
+                )
+                self._said_floor = True
+            low = emitted
+        if not (high > low):
+            if not getattr(self, "_said_band", False):
+                self.log.warning(
+                    f"{self._cfg.rule}: surprise band [{low:.2f}, {high:.2f}] is "
+                    f"empty, so nothing could ever trade. Using the defaults."
+                )
+                self._said_band = True
+            return self.profile.least_surprise, self.profile.most_surprise
+        return low, high
+
     def _allowed(self) -> frozenset[str]:
         """`SURPRISE_FEEDS` if set, else the profile's measured default.
 
@@ -474,10 +544,22 @@ class Surprise:
             return Refusal(gate="features", detail="no features on the proposal", feed=feed)
 
         surprise = abs(_number(features.get("surprise")))
-        if surprise < self.profile.least_surprise:
+        low, high = self._band()
+        if surprise < low:
             return Refusal(
                 gate="surprise",
-                detail=f"{surprise:.2f} below {self.profile.least_surprise:.2f}",
+                detail=f"{surprise:.2f} below {low:.2f}",
+                feed=feed,
+            )
+        if surprise > high:
+            # **A separate gate name, because it is a different refusal.** One
+            # says the market was too quiet to pay for a round trip; the other
+            # says the move was too large to be the reversion this rule trades.
+            # Pooling them under `surprise` would make the tally unreadable at
+            # exactly the moment a band is being swept.
+            return Refusal(
+                gate="too-surprising",
+                detail=f"{surprise:.2f} above {high:.2f}",
                 feed=feed,
             )
 
