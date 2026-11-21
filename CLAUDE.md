@@ -107,6 +107,49 @@ actually happen here. The short version:
   family are the only things on the account that quote. A control and a
   position are not exclusive.
 
+### The operator's standing instructions, 2026-11-21
+
+- **Edge life means 7 days, 3 months, 1 year.** The operator: *"remember that
+  edge life to us means short last 7 days, to last 3 months, max last 1 year."*
+  So default a research window to one of those three and say which one a number
+  came from. A study pooling four years answers a question nobody is asking,
+  because the premise is an adapting process rather than a durable rule.
+
+  **State the arithmetic with any 7-day claim.** At about a dozen trades a day
+  the desk makes **~84 in a week**, against the **350 to 800**
+  `projecting.Trade.trials` needs before a win rate can be told from its
+  geometric baseline. So **a 7-day edge can be acted on and never verified**,
+  and 3 months - near a thousand trades - is the shortest window that can be.
+  Saying "it worked last week" is a statement about 84 trades and has to be
+  labelled as one.
+- **Roles are a first-class idea, and two packages already use them.**
+  [`docs/specs/2026-11-21-roles-design.md`](docs/specs/2026-11-21-roles-design.md)
+  is the record. `SurpriseEdge(Surprise, ManagedExit, EdgeEntry)` is decision,
+  exit and entry composed; statespace splits dispersion from price. What is new
+  is `location` and `reaction` from slower frames, a `gauge` from
+  `projecting.py`, and that **the assignment can change** - including which
+  frame holds which role.
+
+  Three constraints came with it and all three are measured. A role must be a
+  **distance and not a veto**: confluence as a vote went 271 entries to 1 to 0.
+  A rotating assignment must beat **a placebo switching at the same duty
+  cycle**, because `strategy-rotation-is-not-timeable`. And a role driven by
+  **recent performance is unmeasurable** where one driven by a **volatility
+  state** is, since the decay estimator cannot tell a half-life of 10 trades
+  from infinity while log volatility reads rho 0.9963 to 0.9995.
+- **An edge cannot be detected as stopping inside the window in which it
+  stopped.** The operator wants a system that *"can detect when edge is not
+  working and deploy another one"*, and the arithmetic refuses the detection
+  half: telling one win rate from another needs **1,500 to 3,000 trades**,
+  which at a dozen a day is **18 to 36 weeks**. A detector on the edge's own
+  P&L fires on noise, and `strategy-rotation-is-not-timeable` has every pause
+  rule matching a coin at the same duty cycle.
+
+  Keep the intent three other ways: **condition on a volatility state** rather
+  than a score; **run every rule and let the state set the sizes**, which needs
+  no switching decision at all; and **detect breaks rather than fades** - a
+  venue fault or a gate refusing everything is one event, not a thousand.
+
 ### The operator's standing instructions, 2026-11-17
 
 - **Leg analysis is in scope, and it is the subject of the data.** The

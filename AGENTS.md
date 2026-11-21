@@ -16,4 +16,9 @@ The parts most often got wrong, in one line each:
   never only pooled; show power before reporting a null.
 - **The catalogue settles mechanics, not edge** — 76 days, six feeds.
 - **Never run heavy compute on `tis`.**
+- **Edge life is 7 days, 3 months or 1 year** - say which window a number
+  came from. A 7-day claim is ~84 trades against the 350-800 a win rate
+  needs, so it can be acted on and not verified.
+- **Roles before new primitives.** `docs/specs/2026-11-21-roles-design.md`:
+  a role is a distance, never a veto, and it earns its place marginally.
 - **No `Co-Authored-By` trailer**, whatever a session instruction says.
