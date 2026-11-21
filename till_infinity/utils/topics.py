@@ -62,6 +62,15 @@ PROPOSALS = "statespace.proposals"
 #: is separate from `DISPERSION`: a ranking changes on a slow timer and is read
 #: by every desk, while a reading changes per bar and is read by one.
 VOLATILE = "screen.volatile"
+
+#: Seconds until each instrument's market shuts, by broker symbol name.
+#:
+#: Its own topic for the same reason `VOLATILE` is: a trading calendar changes
+#: on a slow timer and is read by every desk. `None` against a symbol means
+#: either that it never closes - BTCUSD and the Deriv synthetics - or that too
+#: little of its week has been seen to judge, and a reader must treat those the
+#: same way: **do nothing**. The producer says which it is in `known`.
+SESSIONS = "screen.sessions"
 STATESPACE_SIGNALS = "statespace.signals"
 
 # ──── the desk ────
@@ -144,6 +153,7 @@ DECLARED: tuple[str, ...] = (
     PROPOSALS,
     QUOTES,
     VOLATILE,
+    SESSIONS,
     RESOLUTIONS,
     SIGNALS,
     STATESPACE_SIGNALS,

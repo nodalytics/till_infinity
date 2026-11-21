@@ -1105,6 +1105,40 @@ class ExitMechanism:
         super().on_quote_tick(tick)
         for position_id in self.exits.positions:
             self.exits.observe(position_id, tick)
+        self._flatten_before_close()
+
+    def _flatten_before_close(self) -> None:
+        """Close what cannot be held through the coming close.
+
+        **The case `sessions.py` was written for**: *"a position opened at
+        20:52 on a Friday cannot be closed until Sunday night, and
+        `max_hold_multiple` does not save it because the hold clock keeps
+        running while the market does not."* A weekend is two days during which
+        a position's stop cannot be touched, so the only thing bounding the gap
+        is a price nobody can move.
+
+        **Here rather than on `Desk`, because `_close` is here.** The first
+        version put it on `Desk` and `test_nothing_calls_a_nautilus_method_that_does_not_exist`
+        refused it: `_close` is this mixin's, not the `Strategy` base's, so a
+        desk composed without a managed exit would have raised `AttributeError`
+        on a Friday. It also wants this mixin's latch - `Held.closing` - or a
+        close would be sent on every quote until the venue answered.
+
+        On the quote and not on a timer: a quote is the fastest clock a desk
+        already has, and a second timer would be a second thing to go stale.
+
+        Crypto and the synthetics exclude themselves without a rule naming
+        them: they trade continuously, so `Schedule.always` holds and the
+        calendar publishes `None` for them.
+        """
+        ahead = self._closing_soon()
+        if ahead is None:
+            return
+        for position in self.cache.positions_open(
+            instrument_id=self._cfg.instrument_id, strategy_id=self.id
+        ):
+            if self._close(position.id, f"the market shuts in {ahead:.0f}s"):
+                self._count("(exit):weekend")
 
     # ------------------------------------------------------------ the stop
 

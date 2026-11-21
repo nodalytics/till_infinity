@@ -71,7 +71,7 @@ from nautilus_trader.trading.strategy import Strategy as NautilusStrategy
 
 from ..domain.models import Intent, Refusal, Side, SymbolSpec, Tick
 from ..risk import forecast, releases, sizing
-from ..utils.topics import EVENTS, PROPOSALS, VOLATILE, subscribe
+from ..utils.topics import EVENTS, PROPOSALS, SESSIONS, VOLATILE, subscribe
 from . import sizes
 from .config import RULE_TAG, WRITER, Settings
 from .counterfactual import Counterfactual, Resolved
@@ -386,6 +386,11 @@ class Desk(NautilusStrategy):
         # refuse every trade for ever - which is the failure mode this desk has
         # on record three times under the name "consumer with no producer".
         subscribe(self, VOLATILE, self._on_ranking)
+        # **The trading calendar, if one is being published.** Subscribed on
+        # the same terms as the ranking above: a desk with no producer keeps
+        # `None` and does nothing, which is the only safe reading of an
+        # unknown schedule. `SessionCalendar` is the producer.
+        subscribe(self, SESSIONS, self._on_sessions)
         subscribe(self, EVENTS, self._on_calendar)
         self.log.info(f"{self._cfg.rule} on {self._cfg.bar_type}, proposals on {PROPOSALS}")
         # **Say what this desk is doing while it runs, not only when it stops.**
@@ -870,6 +875,37 @@ class Desk(NautilusStrategy):
 
         self._admitted = ranked_bar_types(payload)
 
+    def _on_sessions(self, payload: Any) -> None:
+        """Keep the seconds until this symbol's market shuts.
+
+        `None` when the producer does not know, which `SessionCalendar`'s
+        docstring insists covers two different cases - an instrument that never
+        closes, and one whose week has not been seen - and that a reader must
+        treat the same way: do nothing.
+        """
+        if not isinstance(payload, dict):
+            return
+        closing = payload.get("closes_in")
+        if not isinstance(closing, dict):
+            return
+        self._closes_in = closing.get(self._cfg.instrument_id.symbol.value)
+
+    def _closing_soon(self) -> float | None:
+        """Seconds until the close, if one is known and near enough to matter.
+
+        `None` is "no reason to act" and never "act now". That asymmetry is the
+        whole safety of this feature: an unknown schedule, a producer that has
+        not started and a market that never closes all answer `None`, and a
+        reader that treated any of them as "closing now" would flatten the book
+        on a failed fetch.
+        """
+        if self.settings.weekend_flat <= 0.0:
+            return None
+        ahead = getattr(self, "_closes_in", None)
+        if ahead is None or ahead <= 0.0:
+            return None
+        return float(ahead) if ahead <= self.settings.weekend_flat else None
+
     def _barred(self, spec: SymbolSpec, payload: dict[str, Any]) -> Refusal | None:
         """Every desk-level refusal, in order, counted and recorded.
 
@@ -902,7 +938,36 @@ class Desk(NautilusStrategy):
             self._count(f"(desk):{refusal.gate}")
             self._journal(refusal, payload)
             return refusal
+        if refusal := self._fits_before_close():
+            self._count(f"(desk):{refusal.gate}")
+            self._journal(refusal, payload)
+            return refusal
         return None
+
+    def _fits_before_close(self) -> Refusal | None:
+        """Refuse a trade that cannot resolve before its market shuts.
+
+        **`session_margin` has existed since the port with no reader**, and
+        this is it. Opening into a close is worse than holding through one: the
+        position inherits the whole gap with none of the move that was supposed
+        to pay for it, and `_flatten_before_close` would close it moments later
+        for a spread.
+
+        The same `None`-means-do-nothing rule as everywhere in this feature. A
+        continuously-traded instrument and an unknown schedule both answer
+        `None`, and neither is a reason to refuse.
+        """
+        ahead = self._closing_soon()
+        if ahead is None:
+            return None
+        return Refusal(
+            gate="closing",
+            detail=(
+                f"its market shuts in {ahead:.0f}s, inside the "
+                f"{self.settings.weekend_flat:.0f}s flat"
+            ),
+            feed=self._feed_name(),
+        )
 
     def _volatile_enough(self) -> Refusal | None:
         """Refuse an instrument outside the current top share, when asked to.

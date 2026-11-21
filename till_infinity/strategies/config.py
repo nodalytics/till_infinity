@@ -993,6 +993,26 @@ class Settings:
     #: Measured; see `research/docs/settings.md`.
     session_margin: float = 60.0
 
+    #: Flatten an open position this many seconds before its market shuts.
+    #: `TRADING_WEEKEND_FLAT_S`, off at 0.
+    #:
+    #: **The weekend is the case worth paying for.** A Friday close is two days
+    #: during which a position's stop cannot be touched, so the only thing
+    #: bounding the gap is a price nobody can move. `sessions.py` was written
+    #: for it - "a position opened at 20:52 on a Friday cannot be closed until
+    #: Sunday night, and `max_hold_multiple` does not save it because the hold
+    #: clock keeps running while the market does not" - and had no caller until
+    #: `calendar.SessionCalendar` became its producer.
+    #:
+    #: It applies to **any** close the calendar knows about, not only Fridays,
+    #: because the index book also has a daily 21:00-22:00 break and the same
+    #: argument holds over an hour as over a weekend. 1,800 is thirty minutes.
+    #:
+    #: Off by default, and off is a no-op: an unknown schedule publishes `None`
+    #: and `_closing_soon` answers `None`, so a desk with no producer does
+    #: nothing rather than flattening on a failed fetch.
+    weekend_flat: float = 0.0
+
     #: The largest expected push a call may claim, in volatility units. Beyond
     #: this the number is not a forecast, it is a fault.
     #: Measured; see `research/docs/settings.md`.
@@ -1593,6 +1613,7 @@ class Settings:
             followers=_names(_env("TRADING_FOLLOWERS")),
             style=_env("TRADING_STYLE") or "both",
             session_margin=_float("TRADING_SESSION_MARGIN_S", 60.0),
+            weekend_flat=_float("TRADING_WEEKEND_FLAT_S", 0.0),
             max_push_vol=_float("TRADING_MAX_PUSH_VOL", 25.0),
             hold_max_spread=_float("TRADING_HOLD_MAX_SPREAD", 0.0),
             parked_stop_vol=_float("TRADING_PARKED_STOP_VOL", 0.0),
