@@ -107,6 +107,7 @@ def trigger_now() -> float:
         return TRIGGER
     return asked if asked > 0.0 else TRIGGER
 
+
 #: Reward to risk the geometry is solved for.
 TARGET_R = 2.0
 
