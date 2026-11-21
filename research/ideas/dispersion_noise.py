@@ -64,7 +64,7 @@ for q in (HERE, HERE.parent, HERE.parents[1]):
 
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
-from till_infinity.statespace.diagnostics import crps  # noqa: E402
+from till_infinity.statespace.evidence.diagnostics import crps  # noqa: E402
 from till_infinity.statespace.engine import dispersion  # noqa: E402
 from till_infinity.statespace.facade import Desk  # noqa: E402
 

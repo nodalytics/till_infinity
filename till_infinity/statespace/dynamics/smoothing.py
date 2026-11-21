@@ -84,7 +84,7 @@ import math
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 
-from .filters.linear import HOUR
+from ..filters.linear import HOUR
 
 #: Pivot below which a solve is treated as singular. The predicted covariance is
 #: positive definite in theory and can lose a digit to arithmetic in practice,

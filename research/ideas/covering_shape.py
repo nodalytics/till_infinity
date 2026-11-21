@@ -76,10 +76,10 @@ for q in (HERE, HERE.parent, HERE.parents[1]):
 
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
-from till_infinity.statespace.adapting import MOST, Adapting  # noqa: E402
+from till_infinity.statespace.dynamics.adapting import MOST, Adapting  # noqa: E402
 from till_infinity.statespace.engine import dispersion  # noqa: E402
 from till_infinity.statespace.facade import LEAST, WINDOW  # noqa: E402
-from till_infinity.statespace.pooling import DEFAULT, LEVERS, Pooled, _factories  # noqa: E402
+from till_infinity.statespace.composition.pooling import DEFAULT, LEVERS, Pooled, _factories  # noqa: E402
 
 #: **Both, and the shipped one first.** The first version of this harness ran
 #: only at 0.265, the estimator's physically correct noise - while

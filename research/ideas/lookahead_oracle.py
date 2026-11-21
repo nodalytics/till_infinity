@@ -51,7 +51,7 @@ from pathlib import Path
 
 from till_infinity.statespace.filters.linear import Gaussian
 from till_infinity.statespace.filters.reverting import Reverting
-from till_infinity.statespace.smoothing import smooth
+from till_infinity.statespace.dynamics.smoothing import smooth
 from till_infinity.statespace.filters.swarm import Swarm
 
 SYMBOLS = (("eurusd", "EURUSD"), ("xauusd", "XAUUSD"), ("v75", "Volatility_75_Index"))

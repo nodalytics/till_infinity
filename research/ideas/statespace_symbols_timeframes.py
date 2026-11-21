@@ -74,7 +74,7 @@ import statistics
 from collections import Counter
 from pathlib import Path
 
-from till_infinity.statespace.diagnostics import residuals
+from till_infinity.statespace.evidence.diagnostics import residuals
 from till_infinity.statespace.filters.linear import Gaussian
 from till_infinity.statespace.filters.reverting import Reverting
 from till_infinity.statespace.filters.selective import Selective

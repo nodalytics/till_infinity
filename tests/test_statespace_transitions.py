@@ -26,7 +26,7 @@ import random
 
 import pytest
 
-from till_infinity.statespace import transitions
+from till_infinity.statespace.observables import transitions
 
 #: One bar, in hours. The sequences here are hourly so a dwell reads in hours.
 HOUR = 1.0

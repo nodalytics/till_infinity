@@ -53,8 +53,8 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from till_infinity.statespace.driven import Driven  # noqa: E402
-from till_infinity.statespace.pacing import Pace  # noqa: E402
+from till_infinity.statespace.dynamics.driven import Driven  # noqa: E402
+from till_infinity.statespace.dynamics.pacing import Pace  # noqa: E402
 from till_infinity.statespace.filters.seasonal import Seasonal  # noqa: E402
 
 HOUR = 3600.0

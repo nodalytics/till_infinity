@@ -77,7 +77,7 @@ import math
 from collections.abc import Callable
 from dataclasses import dataclass, field
 
-from ..indicators.changepoint import THRESHOLD, Focus
+from ...indicators.changepoint import THRESHOLD, Focus
 
 HOUR = 3600.0
 

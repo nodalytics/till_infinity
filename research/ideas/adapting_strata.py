@@ -66,9 +66,9 @@ for q in (HERE, HERE.parent, HERE.parents[1]):
 
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
-from till_infinity.statespace.adapting import LEAST, MEMORY, MOST, Adapting  # noqa: E402
+from till_infinity.statespace.dynamics.adapting import LEAST, MEMORY, MOST, Adapting  # noqa: E402
 from till_infinity.statespace.engine import dispersion  # noqa: E402
-from till_infinity.statespace.pooling import DEFAULT, LEVERS, Pooled, _factories  # noqa: E402
+from till_infinity.statespace.composition.pooling import DEFAULT, LEVERS, Pooled, _factories  # noqa: E402
 
 #: The measured sampling variance of `log(garman_klass)`, where the miss is
 #: largest and cleanest. `dispersion-noise.md`.

@@ -264,7 +264,7 @@ def garch_returns(n: int, sigma: float, seed: int) -> list[float]:
     to `1e110` and 98.8% of returns sat on the clamp. A near-constant series
     is worse than no control, because it still produces a number.
     """
-    from till_infinity.statespace.nulls import garch
+    from till_infinity.statespace.evidence.nulls import garch
 
     return garch(n, seed=seed, sigma=sigma)
 

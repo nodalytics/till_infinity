@@ -20,8 +20,9 @@ import random
 import pytest
 
 from till_infinity.node import surrogates
-from till_infinity.statespace import searching, shaping
-from till_infinity.statespace.nulls import garch
+from till_infinity.statespace.evidence import searching
+from till_infinity.statespace.evidence.nulls import garch
+from till_infinity.statespace.observables import shaping
 
 #: A series long enough for a 64-bar trailing estimate, five strata and a few
 #: hundred events. Short enough that a test file runs in seconds.

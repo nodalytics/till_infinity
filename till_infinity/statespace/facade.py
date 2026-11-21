@@ -61,15 +61,15 @@ import math
 from collections import deque
 from dataclasses import dataclass, field
 
-from .anchored import Anchor
-from .behaving import classify, drives_q, traits_for
-from .bounding import feasible, least_horizon, shifts_for
+from .composition.pooling import Pooled
+from .dynamics.anchored import Anchor
+from .dynamics.bounding import feasible, least_horizon, shifts_for
+from .dynamics.pacing import Pace
+from .dynamics.tails import coverage as _coverage
+from .dynamics.tails import dof_for
+from .dynamics.tails import reach as _reach
 from .filters.hmm import Direction
-from .pacing import Pace
-from .pooling import Pooled
-from .tails import coverage as _coverage
-from .tails import dof_for
-from .tails import reach as _reach
+from .observables.behaving import classify, drives_q, traits_for
 
 #: Standardised residuals kept for the interval. Long enough for a 5% tail to
 #: have observations behind it, which `statespace-conditional-quantiles.md`
@@ -500,7 +500,7 @@ class Readout:
         """
         if not feasible(probability, horizon, feed=self.feed):
             return None
-        from .bounding import solve
+        from .dynamics.bounding import solve
 
         got = solve(probability=probability, horizon=horizon, feed=self.feed)
         return dict(got) if isinstance(got, dict) else None

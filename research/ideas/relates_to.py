@@ -126,7 +126,7 @@ def split_t(left, right) -> tuple[float, float]:
 def main() -> None:
     import numpy as np
 
-    from till_infinity.statespace.nulls import rotated
+    from till_infinity.statespace.evidence.nulls import rotated
     from till_infinity.statespace.filters.relating import is_identity
 
     print(

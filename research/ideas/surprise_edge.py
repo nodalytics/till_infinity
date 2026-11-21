@@ -59,7 +59,7 @@ if str(HERE) not in sys.path:
 from signal_layer import auc, load  # noqa: E402
 
 from till_infinity.statespace import terms_from  # noqa: E402
-from till_infinity.statespace.behaving import drives_q  # noqa: E402
+from till_infinity.statespace.observables.behaving import drives_q  # noqa: E402
 from till_infinity.statespace.facade import Desk  # noqa: E402
 
 FRAME = "1h"

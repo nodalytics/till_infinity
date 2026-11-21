@@ -299,7 +299,7 @@ class TestSubjects:
             # magnitude, so it belongs in the dispersion half.
             "turn depth",
         }
-        from till_infinity.statespace.subjects import DISPERSIONS
+        from till_infinity.statespace.composition.subjects import DISPERSIONS
 
         assert {s.name for s in DISPERSIONS} == {
             "dispersion",
@@ -350,7 +350,7 @@ class TestSubjects:
         The parameters stay placeholders because fitting them is **degenerate
         on a constant**: `sigma2` and `theta` pin at opposite grid edges.
         """
-        from till_infinity.statespace.subjects import SPREAD
+        from till_infinity.statespace.composition.subjects import SPREAD
 
         assert "measured" in SPREAD.provenance
         assert "placeholder" in SPREAD.provenance
@@ -648,14 +648,14 @@ class TestAgainstTheStandardDiscretisation:
     def test_the_chi_squared_survival_function_matches_scipy(self):
         """The closed form for even degrees of freedom, checked rather than trusted."""
         stats = pytest.importorskip("scipy.stats")
-        from till_infinity.statespace.diagnostics import _chi2_sf
+        from till_infinity.statespace.evidence.diagnostics import _chi2_sf
 
         for df in (2, 4, 10, 20):
             for x in (0.1, 1.0, 5.99, 18.3, 40.0):
                 assert _chi2_sf(x, df) == pytest.approx(stats.chi2.sf(x, df), rel=1e-9)
 
     def test_odd_degrees_of_freedom_are_refused_rather_than_approximated(self):
-        from till_infinity.statespace.diagnostics import _chi2_sf
+        from till_infinity.statespace.evidence.diagnostics import _chi2_sf
 
         with pytest.raises(ValueError, match="even df"):
             _chi2_sf(1.0, 3)
@@ -1024,7 +1024,8 @@ def test_the_smoother_is_written_and_listed_as_an_inference_mode():
     see `test_nothing_on_the_missing_list_is_actually_written` for the guard
     that stops a third.
     """
-    from till_infinity.statespace import MISSING, smoothing
+    from till_infinity.statespace import MISSING
+    from till_infinity.statespace.dynamics import smoothing
     from till_infinity.statespace.filters import family
 
     doc = " ".join((family.__doc__ or "").split())
@@ -1147,6 +1148,30 @@ class TestSmoothing:
         assert got.autocorrelated is True, "the misspecification shows in the forward pass"
 
 
+def _resolve_statespace_module(where: str):
+    """`till_infinity.statespace.<where>`, wherever `<where>` actually sits.
+
+    The members and internals live in `filters/`, `dynamics/`, `evidence/`,
+    `observables/` and `composition/`. A probe table that spelled the folder
+    would have to be rewritten every time one moved, and the folder is not part
+    of what the probe is asserting.
+    """
+    import importlib
+    import pathlib
+
+    from till_infinity import statespace as _ss
+
+    try:
+        return importlib.import_module(f"till_infinity.statespace.{where}")
+    except ModuleNotFoundError:
+        pass
+    package = pathlib.Path(_ss.__file__).resolve().parent
+    for folder in sorted(p.name for p in package.iterdir() if p.is_dir()):
+        if (package / folder / f"{where}.py").exists():
+            return importlib.import_module(f"till_infinity.statespace.{folder}.{where}")
+    raise AssertionError(f"no module named {where} anywhere in statespace/")
+
+
 def test_nothing_on_the_missing_list_is_actually_written():
     """**The guard that stops the list rotting**, which the old one did not.
 
@@ -1162,7 +1187,6 @@ def test_nothing_on_the_missing_list_is_actually_written():
     exist if it were done. A key whose probe starts resolving fails here,
     which is the only way the list stays honest.
     """
-    import importlib
 
     from till_infinity.statespace import MISSING
 
@@ -1179,7 +1203,13 @@ def test_nothing_on_the_missing_list_is_actually_written():
     )
 
     for key, (where, names) in probes.items():
-        module = importlib.import_module(f"till_infinity.statespace.{where}")
+        # **Resolved, not spelled.** `where` names a module the way a reader
+        # says it - `smoothing`, not `dynamics.smoothing` - so the probe table
+        # stays readable and a folder move does not rewrite it. The import
+        # tries the package root first and then each subpackage, which is what
+        # `statespace/__init__.py` means by the folders being an internal
+        # arrangement rather than part of the public name.
+        module = _resolve_statespace_module(where)
         for name in names:
             assert not hasattr(module, name), (
                 f"MISSING['{key}'] says this is absent, but "
@@ -1187,7 +1217,7 @@ def test_nothing_on_the_missing_list_is_actually_written():
             )
 
     # And the one that is written is gone from the list.
-    from till_infinity.statespace import smoothing
+    from till_infinity.statespace.dynamics import smoothing
 
     assert "fixed-lag smoother" not in MISSING
     assert callable(smoothing.lagged), "which is why it is not on the list"
@@ -1829,7 +1859,7 @@ class TestTheRestAgainstAReference:
         and `reverting` two - it replaced a 3x3 cofactor expansion that could
         only ever serve one of them."""
         np = pytest.importorskip("numpy")
-        from till_infinity.statespace.smoothing import _inverse
+        from till_infinity.statespace.dynamics.smoothing import _inverse
 
         rng = np.random.default_rng(31)
         for size in (2, 3):
@@ -1857,7 +1887,7 @@ class TestTheRestAgainstAReference:
         assert np.allclose(product, np.eye(3), atol=1e-12)
 
     def test_a_singular_matrix_is_refused_rather_than_inverted(self):
-        from till_infinity.statespace.smoothing import _inverse
+        from till_infinity.statespace.dynamics.smoothing import _inverse
 
         # Rank one: every row a multiple of the first.
         assert _inverse([[1.0, 1.0], [1.0, 1.0]]) is None
@@ -1912,7 +1942,7 @@ class TestTheRestAgainstAReference:
         picked one again."""
         import inspect
 
-        from till_infinity.statespace import smoothing
+        from till_infinity.statespace.dynamics import smoothing
 
         parameters = inspect.signature(smoothing.smooth).parameters
         assert "build" in parameters
@@ -2105,8 +2135,8 @@ class TestSelective:
         is the covariance: a selective SSM is a deterministic map, so there is
         no posterior to run backwards, and `smooth` returning None is a true
         statement about the member."""
+        from till_infinity.statespace.dynamics.smoothing import smooth
         from till_infinity.statespace.filters.selective import SIZE, Selective
-        from till_infinity.statespace.smoothing import smooth
 
         f = Selective()
         rows = f.transition(0.25)
@@ -2454,8 +2484,8 @@ class TestSwarm:
     def test_it_reports_a_posterior_and_can_be_smoothed(self):
         """The capability `selective` lacks. A covariance from the ensemble
         means `smooth` has what it needs, where that member returns None."""
+        from till_infinity.statespace.dynamics.smoothing import smooth
         from till_infinity.statespace.filters.swarm import SIZE, Swarm
-        from till_infinity.statespace.smoothing import smooth
 
         engine = Swarm()
         for i in range(40):
@@ -2608,8 +2638,8 @@ class TestFixedLagSmoothing:
         hold is that the gap closes as the lag grows, and it does: 0.337 at
         lag 1 down to 0.00064 at lag 100 on this series.
         """
+        from till_infinity.statespace.dynamics.smoothing import lagged, smooth
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.smoothing import lagged, smooth
 
         times = tuple(i * 900.0 for i in range(120))
         values = tuple(100.0 + 0.05 * i + (1.5 if i % 23 == 0 else 0.0) for i in range(120))
@@ -2642,8 +2672,8 @@ class TestFixedLagSmoothing:
         rather than being dropped - a caller zipping the two would otherwise
         silently misalign.
         """
+        from till_infinity.statespace.dynamics.smoothing import lagged
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.smoothing import lagged
 
         times = tuple(i * 900.0 for i in range(60))
         values = tuple(100.0 + 0.1 * i for i in range(60))
@@ -2658,8 +2688,8 @@ class TestFixedLagSmoothing:
         """`revision` is the quantity worth watching: a revision much larger
         than the filter's own standard deviation means the filter was
         confidently wrong, which is a statement about the process noise."""
+        from till_infinity.statespace.dynamics.smoothing import lagged
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.smoothing import lagged
 
         times = tuple(i * 900.0 for i in range(80))
         # A level that steps, so hindsight has something to correct.
@@ -2674,8 +2704,8 @@ class TestFixedLagSmoothing:
 
     def test_a_member_that_cannot_state_its_transition_declines(self):
         """Same contract as `smooth`: None rather than a half-smoothed answer."""
+        from till_infinity.statespace.dynamics.smoothing import lagged
         from till_infinity.statespace.filters.selective import Selective
-        from till_infinity.statespace.smoothing import lagged
 
         times = tuple(i * 900.0 for i in range(30))
         values = tuple(100.0 + 0.1 * i for i in range(30))
@@ -2693,7 +2723,7 @@ class TestInputsAreMeasuredInTime:
         months at 1d - so a feature defined that way means something different
         on every series. One week has to be one week.
         """
-        from till_infinity.statespace.inputs import WEEKS, bar_hours
+        from till_infinity.statespace.dynamics.inputs import WEEKS, bar_hours
 
         week = WEEKS[0]
         got = {}
@@ -2721,7 +2751,7 @@ class TestInputsAreMeasuredInTime:
         against 5/7 = 0.714, and Volatility_75 and Volatility_25 at exactly
         1.000.
         """
-        from till_infinity.statespace.inputs import (
+        from till_infinity.statespace.dynamics.inputs import (
             WEEKS,
             bar_hours,
             coverage,
@@ -2757,7 +2787,7 @@ class TestInputsAreMeasuredInTime:
         of the present, and the cross-resolution test has already shown what
         that produces: `t = +20.8` on five symbols, one of them generated.
         """
-        from till_infinity.statespace.inputs import WEEKS, Features
+        from till_infinity.statespace.dynamics.inputs import WEEKS, Features
 
         times = [i * 900.0 for i in range(500)]
         closes = [100.0 + i * 0.01 for i in range(500)]
@@ -2774,7 +2804,7 @@ class TestInputsAreMeasuredInTime:
     def test_position_is_unit_free_so_it_travels_across_symbols(self):
         """A raw high is in the instrument's units and a position is not, which
         is what lets xauusd and eurusd sit in one table."""
-        from till_infinity.statespace.inputs import WEEKS, Features
+        from till_infinity.statespace.dynamics.inputs import WEEKS, Features
 
         times = [i * 900.0 for i in range(600)]
         for scale in (1.0, 1000.0):
@@ -2790,7 +2820,7 @@ class TestInputsAreMeasuredInTime:
     def test_naming_the_components_rather_than_their_order(self):
         """`of()` by name, `KeyError` for anything else - the mistake
         `frozen.vector` exists to prevent one layer down."""
-        from till_infinity.statespace.inputs import WEEKS, Features
+        from till_infinity.statespace.dynamics.inputs import WEEKS, Features
 
         times = [i * 900.0 for i in range(400)]
         closes = [100.0] * 400
@@ -2821,7 +2851,7 @@ class TestInputsAreMeasuredInTime:
         defaulted off because 48 features widen the multiple-comparison
         surface for every caller of `Features`.
         """
-        from till_infinity.statespace.inputs import WEEKS, Features
+        from till_infinity.statespace.dynamics.inputs import WEEKS, Features
 
         times = [i * 900.0 for i in range(400)]
         closes = [100.0 + (i % 7) * 0.1 for i in range(400)]
@@ -2846,7 +2876,7 @@ class TestInputsAreMeasuredInTime:
         that knows the future - the same shape as the cross-resolution bug
         this project has already paid for at `t = +20.8` on five symbols.
         """
-        from till_infinity.statespace.inputs import pivots
+        from till_infinity.statespace.dynamics.inputs import pivots
 
         # A single, unmistakable peak at index 20.
         highs = [1.0] * 41
@@ -2865,7 +2895,7 @@ class TestInputsAreMeasuredInTime:
         bars of 1h is one every ten. If these came out equal the feature would
         be counting bars, which is what the package forbids.
         """
-        from till_infinity.statespace.inputs import per_hour
+        from till_infinity.statespace.dynamics.inputs import per_hour
 
         flags = [i % 10 == 0 for i in range(400)]
         quick = per_hour(flags, span=40, bar=0.25)
@@ -2877,7 +2907,7 @@ class TestInputsAreMeasuredInTime:
     def test_time_since_an_event_is_hours_not_bars(self):
         """Same portability argument, and `inf` rather than a plausible number
         when the thing has never happened."""
-        from till_infinity.statespace.inputs import since
+        from till_infinity.statespace.dynamics.inputs import since
 
         flags = [i == 250 for i in range(500)]
         assert since(flags, 300, 0.25) == pytest.approx(12.5)
@@ -3021,9 +3051,9 @@ class TestSpectrum:
         """And the two findings the first run produced."""
         pytest.importorskip("numpy")
 
+        from till_infinity.statespace.dynamics.spectrum import spectrum
         from till_infinity.statespace.filters.family import members
         from till_infinity.statespace.filters.fractional import Fractional
-        from till_infinity.statespace.spectrum import spectrum
 
         built = {**members(), "fractional": Fractional}
         seen = {}
@@ -3067,9 +3097,9 @@ class TestSpectrum:
         """
         pytest.importorskip("numpy")
 
+        from till_infinity.statespace.dynamics.spectrum import reachable
         from till_infinity.statespace.filters.fractional import Fractional
         from till_infinity.statespace.filters.selective import Selective
-        from till_infinity.statespace.spectrum import reachable
 
         quick = Selective()
         quick.predict(0.0)
@@ -3096,8 +3126,8 @@ class TestSpectrum:
         """
         pytest.importorskip("numpy")
 
+        from till_infinity.statespace.dynamics.spectrum import spectrum
         from till_infinity.statespace.filters.relating import Relating
-        from till_infinity.statespace.spectrum import spectrum
 
         engine = Relating()
         engine.predict(0.0)
@@ -3110,8 +3140,8 @@ class TestSpectrum:
 
     def test_a_member_that_cannot_state_its_transition_declines(self):
         """The same contract `smooth` uses."""
-        from till_infinity.statespace.nulls import Walk
-        from till_infinity.statespace.spectrum import spectrum
+        from till_infinity.statespace.dynamics.spectrum import spectrum
+        from till_infinity.statespace.evidence.nulls import Walk
 
         assert spectrum(Walk(), 1.0) is None
 
@@ -3197,9 +3227,9 @@ class TestFractional:
         member that would cluster is this device applied to log variance,
         which is not written.
         """
-        from till_infinity.statespace.facts import measure, rollout
+        from till_infinity.statespace.evidence.facts import measure, rollout
+        from till_infinity.statespace.evidence.paths import hourly
         from till_infinity.statespace.filters.fractional import Fractional
-        from till_infinity.statespace.paths import hourly
 
         got = measure(rollout(Fractional, hourly(4000), noise=0.25, seed=5))
         assert got.clustering < 0.5, (
@@ -3443,7 +3473,7 @@ class TestPanel:
         import random
         import statistics
 
-        from till_infinity.statespace.panel import Panel
+        from till_infinity.statespace.composition.panel import Panel
 
         rng = random.Random(seed)
         base = [100.0 - 8 * k for k in range(size)]
@@ -3466,7 +3496,7 @@ class TestPanel:
         """The module rule: anything hand-written arrives with a reference."""
         numpy = pytest.importorskip("numpy")
 
-        from till_infinity.statespace.panel import _solve
+        from till_infinity.statespace.composition.panel import _solve
 
         rng = numpy.random.default_rng(3)
         a = rng.normal(size=(5, 5))
@@ -3521,7 +3551,7 @@ class TestPanel:
         assert panel.factor == pytest.approx(expected, abs=2.0)
 
     def test_a_panel_that_changes_width_is_refused(self):
-        from till_infinity.statespace.panel import Panel
+        from till_infinity.statespace.composition.panel import Panel
 
         panel = Panel(size=3)
         panel.predict(0.0)
@@ -3728,9 +3758,9 @@ class TestExpectationMaximisation:
         """
         import statistics
 
+        from till_infinity.statespace.dynamics.smoothing import smooth
+        from till_infinity.statespace.evidence.paths import hourly, simulate
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.paths import hourly, simulate
-        from till_infinity.statespace.smoothing import smooth
 
         times = hourly(200)
         pairs = []
@@ -3753,9 +3783,9 @@ class TestExpectationMaximisation:
 
     def test_em_recovers_the_parameters_it_was_generated_from(self):
         """And is compared with the thing it replaces, rather than assumed better."""
-        from till_infinity.statespace.diagnostics import fit_both, fit_em
+        from till_infinity.statespace.evidence.diagnostics import fit_both, fit_em
+        from till_infinity.statespace.evidence.paths import hourly, simulate
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.paths import hourly, simulate
 
         truth_jerk, truth_noise = 1e-3, 0.25
         path = simulate(hourly(1200), jerk=truth_jerk, noise=truth_noise, seed=4)
@@ -3792,7 +3822,7 @@ class TestNulls:
         punishes an understated `s`, so the null was handicapped and every
         member's margin over it was overstated.
         """
-        from till_infinity.statespace.nulls import Walk
+        from till_infinity.statespace.evidence.nulls import Walk
 
         walk = Walk(noise=1.0)
         walk.update(0.0, 0.0, 0.0)
@@ -3807,7 +3837,7 @@ class TestNulls:
 
     def test_the_walk_band_diffuses_and_its_forecast_does_not(self):
         """Flat forecast, `sqrt(h)` band. Both halves are the null."""
-        from till_infinity.statespace.nulls import Walk
+        from till_infinity.statespace.evidence.nulls import Walk
 
         walk = Walk(noise=0.5)
         for i in range(10):
@@ -3825,7 +3855,7 @@ class TestNulls:
         import random
         import statistics
 
-        from till_infinity.statespace.nulls import control, spearman, trailing
+        from till_infinity.statespace.evidence.nulls import control, spearman, trailing
 
         rng = random.Random(5)
         values, level = [0.0], 0.0
@@ -3848,7 +3878,7 @@ class TestFacts:
         """The module rule: anything hand-written arrives with a reference."""
         numpy = pytest.importorskip("numpy")
 
-        from till_infinity.statespace.facts import autocorrelation
+        from till_infinity.statespace.evidence.facts import autocorrelation
 
         rng = numpy.random.default_rng(7)
         series = numpy.cumsum(rng.normal(size=500)).tolist()
@@ -3866,7 +3896,7 @@ class TestFacts:
         Raising instead of reporting would make the one check designed to catch
         a runaway member the thing the runaway member breaks.
         """
-        from till_infinity.statespace.facts import autocorrelation, kurtosis
+        from till_infinity.statespace.evidence.facts import autocorrelation, kurtosis
 
         wild = [float(10.0**k) for k in range(1, 160)]
         assert math.isfinite(autocorrelation(wild, 1))
@@ -3881,9 +3911,9 @@ class TestFacts:
         """
         import random
 
-        from till_infinity.statespace.facts import measure, rollout, verdict
-        from till_infinity.statespace.nulls import Walk
-        from till_infinity.statespace.paths import hourly
+        from till_infinity.statespace.evidence.facts import measure, rollout, verdict
+        from till_infinity.statespace.evidence.nulls import Walk
+        from till_infinity.statespace.evidence.paths import hourly
 
         rng = random.Random(1)
         level, variance, previous = 0.0, 1.0, 0.0
@@ -3910,8 +3940,8 @@ class TestYielding:
 
     def test_it_declines_a_member_that_cannot_name_its_process_noise(self):
         """The same contract `smooth` uses: declining is a true statement."""
-        from till_infinity.statespace.nulls import Walk
-        from till_infinity.statespace.yielding import Yielding
+        from till_infinity.statespace.dynamics.yielding import Yielding
+        from till_infinity.statespace.evidence.nulls import Walk
 
         with pytest.raises(AttributeError, match="process noise"):
             Yielding(Walk)
@@ -3926,8 +3956,8 @@ class TestYielding:
         """
         import random
 
+        from till_infinity.statespace.dynamics.yielding import Yielding
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.yielding import Yielding
 
         build = lambda: Gaussian(jerk=1e-4)  # noqa: E731
 
@@ -3982,7 +4012,7 @@ class TestRankThenMap:
 
     def test_it_learns_an_order_and_not_a_scale(self):
         """The weights recover the latent ratio; their size means nothing."""
-        from till_infinity.statespace.ranking import Ranker
+        from till_infinity.statespace.composition.ranking import Ranker
 
         rows = self._rows(1)
         ranker = Ranker(margin=0.1)
@@ -3998,7 +4028,7 @@ class TestRankThenMap:
 
     def test_the_margin_refuses_pairs_that_are_too_close(self):
         """A pair closer than the margin teaches estimation error."""
-        from till_infinity.statespace.ranking import Ranker
+        from till_infinity.statespace.composition.ranking import Ranker
 
         ranker = Ranker(margin=1.0)
         assert ranker.learn([1.0], 5.0, [0.0], 0.0) is True
@@ -4019,7 +4049,7 @@ class TestRankThenMap:
         """
         import statistics
 
-        from till_infinity.statespace.ranking import Ranker, RankThenMap
+        from till_infinity.statespace.composition.ranking import Ranker, RankThenMap
 
         train = self._rows(11)
         target = self._rows(12)
@@ -4063,7 +4093,7 @@ class TestRankThenMap:
 
     def test_the_mapping_says_whether_it_helped(self):
         """`improvement` can be negative, which is the point of having it."""
-        from till_infinity.statespace.ranking import Mapping
+        from till_infinity.statespace.composition.ranking import Mapping
 
         scores = [float(k) for k in range(30)]
         useful = Mapping()
@@ -4091,7 +4121,7 @@ class TestRankThenMap:
         """
         numpy = pytest.importorskip("numpy")
 
-        from till_infinity.statespace.ranking import _least_squares
+        from till_infinity.statespace.composition.ranking import _least_squares
 
         rng = numpy.random.default_rng(4)
         xs = rng.normal(size=40)
@@ -4116,7 +4146,7 @@ class TestRankThenMap:
         A mis-annotated anchor is the failure the paper names, and squared
         error hands it the fit.
         """
-        from till_infinity.statespace.ranking import Mapping
+        from till_infinity.statespace.composition.ranking import Mapping
 
         scores = [float(k) for k in range(20)]
         values = [3.0 + 2.0 * s for s in scores]
@@ -4133,7 +4163,7 @@ class TestRankThenMap:
         can put it inside the range. The fallback is a straight line and the
         flag says so.
         """
-        from till_infinity.statespace.ranking import Mapping
+        from till_infinity.statespace.composition.ranking import Mapping
 
         # Anchors whose least-squares parabola turns inside their own range.
         scores = [0.0, 1.0, 2.0, 3.0, 4.0, 5.0]
@@ -4166,8 +4196,8 @@ class TestPaired:
         """
         import random
 
+        from till_infinity.statespace.composition.paired import Paired
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.paired import Paired
 
         rng = random.Random(13)
         pair = Paired(lambda: Gaussian(jerk=1e-4))
@@ -4190,8 +4220,8 @@ class TestPaired:
         """
         import random
 
+        from till_infinity.statespace.composition.paired import Paired
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.paired import Paired
 
         build = lambda: Gaussian(jerk=1e-4)  # noqa: E731
 
@@ -4226,8 +4256,8 @@ class TestPaired:
         reset for, and the rebuilt member would start from nothing."""
         import random
 
+        from till_infinity.statespace.composition.paired import Paired
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.paired import Paired
 
         rng = random.Random(4)
         paired = Paired(lambda: Gaussian(jerk=1e-4))
@@ -4245,8 +4275,8 @@ class TestPaired:
         and the hazard."""
         import random
 
+        from till_infinity.statespace.composition.paired import Paired
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.paired import Paired
 
         rng = random.Random(6)
         paired = Paired(lambda: Gaussian(jerk=1e-4))
@@ -4260,9 +4290,9 @@ class TestPaired:
 
     def test_paired_satisfies_the_contract_it_delegates(self):
         """So it can be scored against the member alone without a special case."""
+        from till_infinity.statespace.composition.paired import Paired
         from till_infinity.statespace.filters.family import Filter
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.paired import Paired
 
         paired = Paired(lambda: Gaussian(jerk=1e-4))
         assert isinstance(paired, Filter)
@@ -4287,7 +4317,7 @@ class TestPaired:
         or there are too few independent observations of it - which is the
         mistake the slope-fade harness made before the overlap correction.
         """
-        from till_infinity.statespace.inputs import (
+        from till_infinity.statespace.dynamics.inputs import (
             LADDER,
             bar_hours,
             resolvable,
@@ -4380,7 +4410,7 @@ class TestPaired:
         Neither is a gap in the ladder. A feed cannot be asked about a horizon
         it has not observed, and asking anyway is what the bounds prevent.
         """
-        from till_infinity.statespace.inputs import (
+        from till_infinity.statespace.dynamics.inputs import (
             LADDER,
             bar_hours,
             coverage,
@@ -4440,7 +4470,7 @@ class TestPaired:
         trading, so the `30m` rung must drop out - and under the old conversion
         it did not.
         """
-        from till_infinity.statespace.inputs import (
+        from till_infinity.statespace.dynamics.inputs import (
             LEAST_BARS,
             bar_hours,
             coverage,
@@ -4485,7 +4515,7 @@ class TestPaired:
         to 79%, and the EMA signals were the only slope variants to survive the
         overlap correction.
         """
-        from till_infinity.statespace.inputs import (
+        from till_infinity.statespace.dynamics.inputs import (
             Features,
             ema,
             garman_klass,
@@ -4539,7 +4569,7 @@ class TestPaired:
         length it is a log return an hour, and the same drift then measures the
         same on every series: 2.977e-04 at 15m against 2.980e-04 at 1h.
         """
-        from till_infinity.statespace.inputs import Features
+        from till_infinity.statespace.dynamics.inputs import Features
 
         got = {}
         for minutes, label in ((15, "15m"), (60, "1h")):
@@ -4580,7 +4610,7 @@ class TestDistance:
         stats = pytest.importorskip("scipy.stats")
         import random
 
-        from till_infinity.statespace.distance import wasserstein
+        from till_infinity.statespace.evidence.distance import wasserstein
 
         rng = random.Random(4242)
         left = [rng.gauss(0.0, 1.0) for _ in range(400)]
@@ -4590,7 +4620,7 @@ class TestDistance:
         )
 
     def test_a_sample_against_itself_is_zero(self):
-        from till_infinity.statespace.distance import wasserstein
+        from till_infinity.statespace.evidence.distance import wasserstein
 
         values = [3.0, 1.0, 4.0, 1.0, 5.0, 9.0, 2.0, 6.0]
         assert wasserstein(values, list(values)) == pytest.approx(0.0)
@@ -4603,7 +4633,7 @@ class TestDistance:
         of a standard deviation from where the model says it should, which is
         a sentence a log-likelihood cannot produce.
         """
-        from till_infinity.statespace.distance import wasserstein
+        from till_infinity.statespace.evidence.distance import wasserstein
 
         values = [0.0, 1.0, 2.0, 3.0, 4.0]
         moved = [v + 2.5 for v in values]
@@ -4619,7 +4649,7 @@ class TestDistance:
         """
         import random
 
-        from till_infinity.statespace.distance import against_normal
+        from till_infinity.statespace.evidence.distance import against_normal
 
         rng = random.Random(99)
         tight = [rng.gauss(0.0, 1.0) for _ in range(2000)]
@@ -4652,7 +4682,7 @@ class TestDisplacements:
         pivot threshold rather than of the market, and then every statistic
         over it would be reading the threshold.
         """
-        from till_infinity.statespace.displacements import sequence
+        from till_infinity.statespace.observables.displacements import sequence
 
         times, closes = self._zigzag([1, -1, 1, -1, 1, -1])
         moves = sequence(times, closes, closes, closes, span=2, unit=0.01)
@@ -4666,7 +4696,7 @@ class TestDisplacements:
         feature built on `ended` is a feature that reads the future. Carrying
         both times is what makes the leak avoidable rather than invisible.
         """
-        from till_infinity.statespace.displacements import sequence
+        from till_infinity.statespace.observables.displacements import sequence
 
         times, closes = self._zigzag([1, -1, 1, -1, 1, -1])
         moves = sequence(times, closes, closes, closes, span=2, unit=0.01)
@@ -4682,7 +4712,7 @@ class TestDisplacements:
         finds a reversal on every bar of a constant series - which an earlier
         version of the pivot finder did, because `<=` makes every tie a swing.
         """
-        from till_infinity.statespace.displacements import sequence
+        from till_infinity.statespace.observables.displacements import sequence
 
         times = [i * 3600.0 for i in range(80)]
         closes = [100.0] * 80
@@ -4690,7 +4720,7 @@ class TestDisplacements:
 
     def test_the_ratio_is_what_a_symmetry_transformation_acts_on(self):
         """A sequence whose legs grow by a fixed factor has that factor as its ratio."""
-        from till_infinity.statespace.displacements import relations, sequence
+        from till_infinity.statespace.observables.displacements import relations, sequence
 
         times, closes = [0.0], [100.0]
         size = 1.0
@@ -5048,7 +5078,7 @@ class TestSeasonal:
         first argument. That is what makes a time-of-day profile usable in a
         live member rather than only in a harness.
         """
-        from till_infinity.statespace.driven import Driven
+        from till_infinity.statespace.dynamics.driven import Driven
         from till_infinity.statespace.filters.seasonal import Profile, Seasonal
 
         # A profile peaking at midnight: e at hour 0, 1/e twelve hours later.
@@ -5080,7 +5110,7 @@ class TestSeasonal:
         `inputs.py` exists to feed, and the harness comparing the two doors
         would be comparing one of them with itself.
         """
-        from till_infinity.statespace.driven import Driven
+        from till_infinity.statespace.dynamics.driven import Driven
         from till_infinity.statespace.filters.seasonal import Profile, Seasonal
 
         made = Profile(weights=(0.0, 1.0, 0.0), harmonics=1)
@@ -5100,7 +5130,7 @@ class TestSeasonal:
         A wrapper whose unconfigured behaviour drifted would invalidate every
         measurement already taken through it.
         """
-        from till_infinity.statespace.driven import Driven
+        from till_infinity.statespace.dynamics.driven import Driven
         from till_infinity.statespace.filters.seasonal import Seasonal
 
         member = Driven(
@@ -5118,7 +5148,7 @@ class TestSeasonal:
         it applies once to the product - otherwise two channels each just
         above the floor would multiply to far below it.
         """
-        from till_infinity.statespace.driven import Driven
+        from till_infinity.statespace.dynamics.driven import Driven
         from till_infinity.statespace.filters.seasonal import Seasonal
 
         quiet = type("Quiet", (), {})
@@ -5155,7 +5185,7 @@ class TestNodes:
         return times, values
 
     def test_the_nodes_alternate_peak_and_trough(self):
-        from till_infinity.statespace.displacements import nodes
+        from till_infinity.statespace.observables.displacements import nodes
 
         times, values = self._zigzag([3, -2, 3, -2, 3, -2, 3, -2])
         found = nodes(times, values, values, values, span=2)
@@ -5171,7 +5201,7 @@ class TestNodes:
         level the later one has already exceeded, so the sequence would stop
         being a sequence of extremes.
         """
-        from till_infinity.statespace.displacements import PEAK, nodes
+        from till_infinity.statespace.observables.displacements import PEAK, nodes
 
         # Two highs with only a shallow dip between them, the second higher.
         times = [i * self.HOUR for i in range(40)]
@@ -5190,7 +5220,7 @@ class TestNodes:
         **identical** in the displacement sequence, because its `size` is an
         absolute value. The step between consecutive peaks tells them apart.
         """
-        from till_infinity.statespace.displacements import (
+        from till_infinity.statespace.observables.displacements import (
             HIGHER_HIGH,
             PEAK,
             nodes,
@@ -5224,7 +5254,7 @@ class TestNodes:
         `statespace-peaks-and-troughs.md` found the "cycle length" to be a
         fixed *bar* count rather than a duration.
         """
-        from till_infinity.statespace.displacements import (
+        from till_infinity.statespace.observables.displacements import (
             PEAK,
             nodes,
             structure,
@@ -5247,7 +5277,7 @@ class TestNodes:
         walk - which is why the pair is returned together and never the one
         without the other.
         """
-        from till_infinity.statespace.displacements import nodes, structure
+        from till_infinity.statespace.observables.displacements import nodes, structure
 
         times, values = self._zigzag([3, -2] * 10)
         read = structure(nodes(times, values, values, values, span=2), unit=1.0)
@@ -5261,7 +5291,7 @@ class TestNodes:
         Before this they were two copies of the same loop, and a fix to one
         would have silently left the other reading a different set of pivots.
         """
-        from till_infinity.statespace.displacements import nodes, sequence
+        from till_infinity.statespace.observables.displacements import nodes, sequence
 
         times, values = self._zigzag([3, -2] * 9)
         found = nodes(times, values, values, values, span=2)
@@ -5292,11 +5322,11 @@ def test_every_member_takes_the_measurement_noise_as_a_variance():
     exactly, whatever `P` is. A member that squares `R` gives `R1^2 - R2^2`
     instead and fails by a wide margin.
     """
+    from till_infinity.statespace.evidence.nulls import Walk
     from till_infinity.statespace.filters.linear import Gaussian
     from till_infinity.statespace.filters.reverting import Reverting
     from till_infinity.statespace.filters.seasonal import Seasonal
     from till_infinity.statespace.filters.switching import Switching
-    from till_infinity.statespace.nulls import Walk
 
     builders = {
         "walk": Walk,
@@ -5356,7 +5386,7 @@ def test_a_matrix_m_step_would_recover_the_shape_it_was_given():
     """
     import random
 
-    from till_infinity.statespace.diagnostics import shape_cost
+    from till_infinity.statespace.evidence.diagnostics import shape_cost
     from till_infinity.statespace.filters.linear import Gaussian
 
     times = [i * HOUR for i in range(600)]
@@ -5394,7 +5424,7 @@ def test_the_scalar_spread_is_the_column_that_separates():
     """
     import random
 
-    from till_infinity.statespace.diagnostics import shape_cost
+    from till_infinity.statespace.evidence.diagnostics import shape_cost
     from till_infinity.statespace.filters.linear import Gaussian
 
     times = [i * HOUR for i in range(600)]
@@ -5853,7 +5883,7 @@ class TestAdapting:
         modes and any difference here is attributed to adaptation.
         """
         from till_infinity.statespace import Gaussian
-        from till_infinity.statespace.adapting import Adapting
+        from till_infinity.statespace.dynamics.adapting import Adapting
 
         times, levels = self._series()
         wrapped = Adapting(build=lambda: Gaussian(jerk=0.01, p00=1.0), mode="none")
@@ -5878,7 +5908,7 @@ class TestAdapting:
         step, which is the difference between a held-out number and a cheat.
         """
         from till_infinity.statespace import Gaussian
-        from till_infinity.statespace.adapting import Adapting
+        from till_infinity.statespace.dynamics.adapting import Adapting
 
         times, levels = self._series(n=200)
         loop = Adapting(build=lambda: Gaussian(jerk=0.01, p00=1.0), mode="matching", step=0.05)
@@ -5899,7 +5929,7 @@ class TestAdapting:
         loop has somewhere to go.
         """
         from till_infinity.statespace import Gaussian
-        from till_infinity.statespace.adapting import Adapting
+        from till_infinity.statespace.dynamics.adapting import Adapting
 
         times, levels = self._series(jerk=0.02)
         wrong = 0.02 / 1000.0
@@ -5925,7 +5955,7 @@ class TestAdapting:
         spread grows, and measuring whether that matters is the harness's job.
         """
         from till_infinity.statespace import Gaussian
-        from till_infinity.statespace.adapting import Adapting
+        from till_infinity.statespace.dynamics.adapting import Adapting
 
         times, levels = self._series(jerk=0.02)
         for wrong, direction in ((0.02 / 500.0, 1.0), (0.02 * 500.0, -1.0)):
@@ -5955,7 +5985,7 @@ class TestAdapting:
         than the unforgetting arm's.
         """
         from till_infinity.statespace import Gaussian
-        from till_infinity.statespace.adapting import Adapting
+        from till_infinity.statespace.dynamics.adapting import Adapting
 
         times, levels = self._series()
         loose = Adapting(
@@ -5979,7 +6009,7 @@ class TestAdapting:
         stopped learning and started sitting on a bound.
         """
         from till_infinity.statespace import Gaussian
-        from till_infinity.statespace.adapting import Adapting
+        from till_infinity.statespace.dynamics.adapting import Adapting
 
         times, levels = self._series(jerk=5.0)
         loop = Adapting(
@@ -6000,7 +6030,7 @@ class TestAdapting:
         a harness would report adaptation buying zero and be right by
         accident."""
         from till_infinity.statespace import Gaussian
-        from till_infinity.statespace.adapting import Adapting
+        from till_infinity.statespace.dynamics.adapting import Adapting
 
         with pytest.raises(ValueError, match="no 'theta' to adapt"):
             Adapting(build=lambda: Gaussian(jerk=0.01), lever="theta")
@@ -6009,7 +6039,7 @@ class TestAdapting:
 
     def test_it_satisfies_the_filter_protocol(self):
         from till_infinity.statespace import Gaussian
-        from till_infinity.statespace.adapting import Adapting
+        from till_infinity.statespace.dynamics.adapting import Adapting
         from till_infinity.statespace.filters.family import Filter
 
         assert isinstance(Adapting(build=lambda: Gaussian(jerk=0.01)), Filter)
@@ -6092,14 +6122,14 @@ class TestBounding:
 
     def test_the_symmetric_case_is_a_coin_whatever_the_shift(self):
         """Equal barriers give 0.5 because the shift moves both walls alike."""
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         for shift in (0.0, bounding.SHIFT, 2.0):
             got = bounding.solve(up=1.3, down=1.3, shift=shift)
             assert got["probability"] == pytest.approx(0.5)
 
     def test_the_duration_is_the_product_of_the_shifted_barriers(self):
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         got = bounding.solve(up=2.0, down=3.0)
         want = (2.0 + bounding.SHIFT) * (3.0 + bounding.SHIFT)
@@ -6122,7 +6152,7 @@ class TestBounding:
         This is the item itself: if any pair disagreed, the four quantities
         would not be one model and the desk's third number would be free.
         """
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         full = bounding.solve(up=2.0, down=3.0)
         again = bounding.solve(**{key: full[key] for key in pair})
@@ -6131,7 +6161,7 @@ class TestBounding:
 
     def test_three_numbers_is_an_error_rather_than_an_input(self):
         """Over-specified is the finding, so it cannot be silently accepted."""
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         with pytest.raises(ValueError, match="exactly two"):
             bounding.solve(up=1.0, down=1.0, horizon=10.0)
@@ -6140,7 +6170,7 @@ class TestBounding:
 
     def test_a_win_rate_and_a_holding_time_can_be_jointly_unreachable(self):
         """The constraint three independent numbers cannot express."""
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         least = bounding.least_horizon(0.9)
         assert least == pytest.approx(bounding.SHIFT**2 * 0.9 / 0.1)
@@ -6153,7 +6183,7 @@ class TestBounding:
         assert min(edge["up"], edge["down"]) == pytest.approx(0.0, abs=1e-9)
 
     def test_slack_says_which_of_the_three_decides_the_exit(self):
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         implied = bounding.solve(up=1.0, down=1.0)["horizon"]
         assert bounding.slack(1.0, 1.0, implied) == pytest.approx(1.0)
@@ -6163,7 +6193,7 @@ class TestBounding:
 
     def test_slower_scales_the_duration_and_leaves_the_label_alone(self):
         """The measured correction is conditional on volatility; the label is not."""
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         plain = bounding.solve(up=2.0, down=3.0)
         slow = bounding.solve(up=2.0, down=3.0, slower=1.958)
@@ -6178,7 +6208,7 @@ class TestBounding:
 
     def test_the_symmetric_case_is_untouched_by_the_two_wall_form(self):
         """Adding a second wall must not move the single-wall answer."""
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         plain = bounding.solve(up=1.0, down=1.0)
         same = bounding.solve(up=1.0, down=1.0, shift_up=bounding.SHIFT)
@@ -6195,7 +6225,7 @@ class TestBounding:
         barrier is effectively further away - which lowers, not raises, the
         chance of reaching it first.
         """
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         up_wall, down_wall = bounding.shifts_for("Boom_300_Index")
         assert up_wall > down_wall, "boom must overshoot upward"
@@ -6220,7 +6250,7 @@ class TestBounding:
     )
     def test_the_surface_still_closes_with_two_different_walls(self, pair):
         """Two degrees of freedom has to survive the asymmetry, or it is not one model."""
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         walls = {"shift_up": 0.7183, "shift_down": 0.4500}
         full = bounding.solve(up=2.0, down=3.0, **walls)
@@ -6230,7 +6260,7 @@ class TestBounding:
 
     def test_each_wall_contributes_its_own_feasibility_bound(self):
         """With different walls the two constraints stop coinciding."""
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         up_wall, down_wall = 0.9, 0.3
         for p in (0.2, 0.5, 0.8):
@@ -6250,7 +6280,7 @@ class TestBounding:
         so their mirroring is evidence the estimator read the asymmetry rather
         than noise.
         """
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         boom_up, boom_down = bounding.SHIFTS["boom"]
         crash_up, crash_down = bounding.SHIFTS["crash"]
@@ -6270,7 +6300,7 @@ class TestBounding:
         `TestTradedWalls` - so the unmeasured cases are the traded classes that
         still have not been: energy, softs, baskets, indices and equities.
         """
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         for feed in ("US_Oil", "Sugar", "USD_Basket", "Germany_40", "AAPL.OQ"):
             assert bounding.shifts_for(feed) == (bounding.SHIFT, bounding.SHIFT), feed
@@ -6392,7 +6422,7 @@ class TestVendoredCusum:
         import importlib
 
         from till_infinity.indicators.changepoint import Focus
-        from till_infinity.statespace import paired as paired_module
+        from till_infinity.statespace.composition import paired as paired_module
 
         assert paired_module.Focus is Focus
         with pytest.raises(ModuleNotFoundError):
@@ -6401,8 +6431,8 @@ class TestVendoredCusum:
     def test_paired_still_works_on_the_shared_detector(self):
         """The caller that prompted the vendoring, driven through its real API."""
         from till_infinity.indicators.changepoint import Focus
+        from till_infinity.statespace.composition.paired import Paired
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.paired import Paired
 
         member = Paired(build=lambda: Gaussian(jerk=1e-9))
         hour = 3_600.0
@@ -6435,7 +6465,7 @@ class TestResearchIntegrated:
         """
         import random
 
-        from till_infinity.statespace import nulls
+        from till_infinity.statespace.evidence import nulls
 
         rng = random.Random(20261013)
         values = [0.0]
@@ -6453,7 +6483,7 @@ class TestResearchIntegrated:
     def test_a_block_shuffle_preserves_the_marginal_and_the_caller_s_order(self):
         import random
 
-        from till_infinity.statespace import nulls
+        from till_infinity.statespace.evidence import nulls
 
         rng = random.Random(7)
         values = [0.0]
@@ -6483,7 +6513,7 @@ class TestResearchIntegrated:
         """
         import statistics as stats
 
-        from till_infinity.statespace import diagnostics
+        from till_infinity.statespace.evidence import diagnostics
 
         normal = stats.NormalDist()
         grid = [(i / 200.0, normal.inv_cdf(i / 200.0)) for i in range(1, 200)]
@@ -6507,7 +6537,7 @@ class TestResearchIntegrated:
         assert far > near
 
     def test_pit_flatness_reads_one_on_uniform_and_more_on_a_pile(self):
-        from till_infinity.statespace import diagnostics
+        from till_infinity.statespace.evidence import diagnostics
 
         uniform = [(i + 0.5) / 2000.0 for i in range(2000)]
         assert diagnostics.pit_flatness(uniform) == pytest.approx(0.0, abs=0.05)
@@ -6516,7 +6546,7 @@ class TestResearchIntegrated:
         assert math.isnan(diagnostics.pit_flatness([0.1, 0.2]))
 
     def test_har_is_a_harder_floor_than_a_lag_and_says_so_by_shape(self):
-        from till_infinity.statespace import nulls
+        from till_infinity.statespace.evidence import nulls
 
         rows, targets = nulls.har(list(range(100)))
         assert len(rows) == len(targets)
@@ -6567,7 +6597,7 @@ class TestBoundingFeed:
     """
 
     def test_a_named_feed_resolves_the_measured_asymmetric_walls(self):
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         assert bounding.shifts_for("Boom_500_Index") == bounding.SHIFTS["boom"]
         assert bounding.shifts_for("DEX_900_UP_Index") == bounding.SHIFTS["dex_up"]
@@ -6576,7 +6606,7 @@ class TestBoundingFeed:
         assert bounding.shifts_for("US_Oil") == (bounding.SHIFT, bounding.SHIFT)
 
     def test_feed_changes_what_solve_returns_on_a_skewed_family(self):
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         plain = bounding.solve(probability=0.4, horizon=9.0)
         boomed = bounding.solve(probability=0.4, horizon=9.0, feed="Boom_500_Index")
@@ -6587,7 +6617,7 @@ class TestBoundingFeed:
         assert plain != boomed
 
     def test_feed_reaches_least_horizon_and_feasible_and_they_agree(self):
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         for feed in ("Boom_500_Index", "DEX_1500_DOWN_Index", "Crash_500_Index"):
             for probability in (0.3, 0.5, 0.7):
@@ -6613,7 +6643,7 @@ class TestBoundingFeed:
         and overriding the up wall there correctly changes nothing. A test that
         demanded a change from either side would be asserting a bug.
         """
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         table = bounding.least_horizon(0.4, feed="Boom_500_Index")
         # Down binds at this probability, so overriding it moves the floor.
@@ -6639,7 +6669,7 @@ class TestPacing:
         comparison would mean nothing - and nothing in the harness would say
         so, because a factor of 1.001 looks exactly like a factor of 1.
         """
-        from till_infinity.statespace import pacing
+        from till_infinity.statespace.dynamics import pacing
 
         pace = pacing.Pace()
         for _ in range(300):
@@ -6659,7 +6689,7 @@ class TestPacing:
         """
         import random
 
-        from till_infinity.statespace import pacing
+        from till_infinity.statespace.dynamics import pacing
 
         random.seed(11)
         volumes = [random.lognormvariate(6.0, 0.7) for _ in range(4000)]
@@ -6685,7 +6715,7 @@ class TestPacing:
         import random
         import statistics
 
-        from till_infinity.statespace import pacing
+        from till_infinity.statespace.dynamics import pacing
 
         random.seed(3)
         volumes = [random.lognormvariate(6.0, 0.9) for _ in range(6000)]
@@ -6699,7 +6729,7 @@ class TestPacing:
 
     def test_the_exponent_is_the_difference_between_twofold_and_fourfold(self):
         """Subordination says variance tracks activity; the clock squares."""
-        from till_infinity.statespace import pacing
+        from till_infinity.statespace.dynamics import pacing
 
         pace = pacing.Pace(exponent=1.0)
         for _ in range(200):
@@ -6716,7 +6746,7 @@ class TestPacing:
 
     def test_a_counter_reset_cannot_hand_q_a_twentyfold_variance(self):
         """`Driven` has a floor and no ceiling, so the clamp belongs here."""
-        from till_infinity.statespace import pacing
+        from till_infinity.statespace.dynamics import pacing
 
         pace = pacing.Pace()
         for _ in range(200):
@@ -6729,7 +6759,7 @@ class TestPacing:
         assert pace.factor(-5.0) == 1.0
 
     def test_it_says_nothing_until_it_has_seen_enough_to_have_a_mean(self):
-        from till_infinity.statespace import pacing
+        from till_infinity.statespace.dynamics import pacing
 
         pace = pacing.Pace()
         for i in range(pacing.WARMUP - 1):
@@ -6750,7 +6780,7 @@ class TestPacing:
         entirely, which is correct: a multiplier that never varies carries no
         information and must not change what the member does.
         """
-        from till_infinity.statespace import pacing
+        from till_infinity.statespace.dynamics import pacing
 
         def run(clock, volumes):
             pace = pacing.Pace()
@@ -6795,7 +6825,7 @@ class TestPacing:
 
         Bursts are what the mechanism is for, and they read as bursts.
         """
-        from till_infinity.statespace import pacing
+        from till_infinity.statespace.dynamics import pacing
 
         step = pacing.extent([100.0] * 500 + [1000.0] * 500)
         assert step < 1.5
@@ -6803,7 +6833,7 @@ class TestPacing:
         assert pacing.extent(bursty) > 4.0
 
     def test_the_shares_are_causal_so_a_gain_measured_with_them_is_earnable(self):
-        from till_infinity.statespace import pacing
+        from till_infinity.statespace.dynamics import pacing
 
         shares = pacing.shares([100.0] * 500 + [1000.0] * 500)
         # The early bars cannot know about the busy stretch: the share is one
@@ -6817,7 +6847,7 @@ class TestBehaving:
     """The measured per-class table, and the one classifier that feeds it."""
 
     def test_the_classifier_separates_generated_families_from_traded_classes(self):
-        from till_infinity.statespace import behaving
+        from till_infinity.statespace.observables import behaving
 
         for feed, want in (
             ("EURUSD", "fx_major"),
@@ -6856,7 +6886,8 @@ class TestBehaving:
         measured table was about to carry another - which is how two lookups
         for the same feed start disagreeing about what family it is in.
         """
-        from till_infinity.statespace import behaving, bounding
+        from till_infinity.statespace.dynamics import bounding
+        from till_infinity.statespace.observables import behaving
 
         for feed in (
             "Boom_500_Index",
@@ -6885,7 +6916,7 @@ class TestBehaving:
         it, and the generated families that depart are the ones whose
         generators contain a jump.
         """
-        from till_infinity.statespace import behaving
+        from till_infinity.statespace.observables import behaving
 
         assert behaving.traits_for("EURUSD").absorbs
         assert behaving.traits_for("XAUUSD").absorbs
@@ -6897,7 +6928,7 @@ class TestBehaving:
         assert not step.runs
 
     def test_an_unmeasured_class_returns_nothing_rather_than_a_default(self):
-        from till_infinity.statespace import behaving
+        from till_infinity.statespace.observables import behaving
 
         # `class_traits.py` measured the classes this once listed, so the
         # remaining unmeasured ones are a name the classifier cannot place and
@@ -6917,7 +6948,7 @@ class TestBehaving:
         absorbs. If a future measurement breaks it, the fingerprint is what has
         to be re-examined and not the test.
         """
-        from till_infinity.statespace import behaving
+        from till_infinity.statespace.observables import behaving
 
         traded = ("fx_major", "fx_cross", "metal", "energy", "equity", "index", "soft", "basket")
         jumping = ("boom", "crash", "dex_up", "dex_down", "drift_switch", "jump", "range_break")
@@ -6943,7 +6974,7 @@ class TestBehaving:
         nothing to do with being generated. A table that used one field to
         answer both questions would have had to call it generated.
         """
-        from till_infinity.statespace import behaving
+        from till_infinity.statespace.observables import behaving
 
         basket = behaving.traits_for("USD_Basket")
         assert basket.absorbs
@@ -6957,7 +6988,7 @@ class TestBehaving:
 
     def test_every_traded_class_has_an_undefined_fourth_moment(self):
         """Hill alpha below four forbids quoting a sample kurtosis."""
-        from till_infinity.statespace import behaving
+        from till_infinity.statespace.observables import behaving
 
         for label in ("fx_major", "fx_cross", "metal", "energy", "equity", "index", "soft"):
             alpha = behaving.TRAITS[label].tail_alpha
@@ -6969,7 +7000,7 @@ class TestBehaving:
             assert behaving.TRAITS[label].tail_alpha > 5.0, label
 
     def test_activity_only_drives_q_where_activity_varies(self):
-        from till_infinity.statespace import behaving
+        from till_infinity.statespace.observables import behaving
 
         for feed in ("EURUSD", "XAUUSD", "US_Oil", "AAPL.OQ", "Germany_40", "Sugar"):
             assert behaving.drives_q(feed), feed
@@ -7000,8 +7031,8 @@ class TestPooling:
         combination of them rather than another one, and putting it there
         would make it a candidate in its own contest.
         """
+        from till_infinity.statespace.composition.pooling import Pooled
         from till_infinity.statespace.filters.family import Filter, members
-        from till_infinity.statespace.pooling import Pooled
 
         assert isinstance(Pooled(), Filter)
         assert "pooled" not in members()
@@ -7009,7 +7040,7 @@ class TestPooling:
 
     def test_the_defaults_are_the_measured_ones(self):
         """Not conventions. `0.5` was the hypothesis and it lost."""
-        from till_infinity.statespace import pooling
+        from till_infinity.statespace.composition import pooling
 
         assert pooling.ALPHA == 1.0
         assert pooling.RULE == "shrinking"
@@ -7022,7 +7053,7 @@ class TestPooling:
         """The two spread rules differ in the direction that matters."""
         import random
 
-        from till_infinity.statespace.pooling import Pooled
+        from till_infinity.statespace.composition.pooling import Pooled
 
         def run(rule):
             pool = Pooled(rule=rule)
@@ -7045,7 +7076,7 @@ class TestPooling:
     def test_argmax_is_one_hot_and_carries_the_chosen_member_s_own_spread(self):
         import random
 
-        from till_infinity.statespace.pooling import Pooled
+        from till_infinity.statespace.composition.pooling import Pooled
 
         pool = Pooled(rule="argmax")
         random.seed(7)
@@ -7064,7 +7095,7 @@ class TestPooling:
         observation, so the order inside `update` is load-bearing."""
         import random
 
-        from till_infinity.statespace.pooling import Pooled
+        from till_infinity.statespace.composition.pooling import Pooled
 
         pool = Pooled()
         random.seed(3)
@@ -7084,7 +7115,7 @@ class TestPooling:
         assert pool.seen == 200
 
     def test_a_pool_of_one_is_refused_rather_than_silently_degenerate(self):
-        from till_infinity.statespace.pooling import Pooled
+        from till_infinity.statespace.composition.pooling import Pooled
 
         with pytest.raises(ValueError, match="at least two members"):
             Pooled(names=("kalman",))
@@ -7092,8 +7123,8 @@ class TestPooling:
             Pooled(rule="average")
 
     def test_quantiles_feed_crps_directly(self):
-        from till_infinity.statespace.diagnostics import crps
-        from till_infinity.statespace.pooling import Pooled
+        from till_infinity.statespace.composition.pooling import Pooled
+        from till_infinity.statespace.evidence.diagnostics import crps
 
         pool = Pooled()
         pool.predict(0.0)
@@ -7118,8 +7149,8 @@ class TestPooling:
         """
         import random
 
-        from till_infinity.statespace import pooling
-        from till_infinity.statespace.adapting import Adapting
+        from till_infinity.statespace.composition import pooling
+        from till_infinity.statespace.dynamics.adapting import Adapting
 
         assert pooling.ADAPT is True
         pool = pooling.Pooled()
@@ -7147,7 +7178,7 @@ class TestPooling:
 
     def test_every_member_s_lever_is_named_because_they_disagree(self):
         """`reverting` has no `jerk`, so one name for all of them would raise."""
-        from till_infinity.statespace import pooling
+        from till_infinity.statespace.composition import pooling
         from till_infinity.statespace.filters.family import members
 
         built = members()
@@ -7196,7 +7227,7 @@ class TestResearchPrimitives:
     def test_blocked_error_grows_with_the_overlap_it_is_told_about(self):
         import numpy as np
 
-        from till_infinity.statespace.diagnostics import blocked_error
+        from till_infinity.statespace.evidence.diagnostics import blocked_error
 
         rng = np.random.default_rng(5)
         # A strongly serially correlated series: independent blocks of 50.
@@ -7210,7 +7241,7 @@ class TestResearchPrimitives:
     def test_geometry_and_absorption_rebuild_the_fingerprint(self):
         import random
 
-        from till_infinity.statespace import behaving
+        from till_infinity.statespace.observables import behaving
 
         random.seed(11)
         opens, highs, lows, closes = [], [], [], []
@@ -7330,7 +7361,7 @@ class TestFacade:
     def test_the_quantiles_are_ascending_and_feed_crps(self):
         import random
 
-        from till_infinity.statespace.diagnostics import crps
+        from till_infinity.statespace.evidence.diagnostics import crps
         from till_infinity.statespace.facade import Desk
 
         desk = Desk()
@@ -7398,7 +7429,7 @@ class TestRanging:
     def _filled(seed: int = 4, bars: int = 400):
         import random
 
-        from till_infinity.statespace.ranging import Profile
+        from till_infinity.statespace.observables.ranging import Profile
 
         random.seed(seed)
         profile, price = Profile(), 100.0
@@ -7419,7 +7450,7 @@ class TestRanging:
         That gave a zero-width range that did not contain the price it was
         asked about, which is the one thing this object promises.
         """
-        from till_infinity.statespace.ranging import Profile
+        from till_infinity.statespace.observables.ranging import Profile
 
         for seed in (3, 4, 7, 11, 19):
             profile, price = self._filled(seed)
@@ -7454,7 +7485,7 @@ class TestRanging:
         that forgets to pass them gets a rejection profile that is empty rather
         than a plausible-looking one.
         """
-        from till_infinity.statespace.ranging import Profile
+        from till_infinity.statespace.observables.ranging import Profile
 
         plain = Profile()
         for i in range(200):
@@ -7472,7 +7503,7 @@ class TestRanging:
         exists so a caller checks rather than assumes. The thin edges are the
         ones that bracket by construction.
         """
-        from till_infinity.statespace.ranging import VALUE_SHARE, Profile
+        from till_infinity.statespace.observables.ranging import VALUE_SHARE, Profile
 
         profile, price = self._filled()
         got = profile.range_at(price)
@@ -7503,7 +7534,7 @@ class TestInteracting:
         they are not the same claim. A ratio cannot say which, so it cannot be
         pooled, shrunk or compared between levels.
         """
-        from till_infinity.statespace.interacting import Rate
+        from till_infinity.statespace.observables.interacting import Rate
 
         thin, thick = Rate(), Rate()
         for _ in range(3):
@@ -7526,7 +7557,7 @@ class TestInteracting:
         The mistake `Kalman.var_slope` documents, in the other object: an
         unobserved rate must not come back as 0.0 and sure of it.
         """
-        from till_infinity.statespace.interacting import Rate
+        from till_infinity.statespace.observables.interacting import Rate
 
         empty = Rate()
         assert empty.mean == pytest.approx(0.5)
@@ -7544,7 +7575,7 @@ class TestInteracting:
         """
         import math
 
-        from till_infinity.statespace.interacting import WEIGHTS, Attention
+        from till_infinity.statespace.observables.interacting import WEIGHTS, Attention
 
         for touches, spread, unit, since, swings in (
             (8.0, 0.3, 1.0, 86_400.0, 4.0),
@@ -7583,7 +7614,7 @@ class TestInteracting:
         depth is a tail quantity, which is where the assumption costs most. A
         skewed sample is where the two answers part company.
         """
-        from till_infinity.statespace.interacting import Depth
+        from till_infinity.statespace.observables.interacting import Depth
 
         depth = Depth()
         for value in [0.1] * 90 + [3.0] * 10:
@@ -7598,7 +7629,7 @@ class TestInteracting:
         assert Depth().unusual() == 0.0
 
     def test_interactions_publishes_its_uncertainty_beside_every_rate(self):
-        from till_infinity.statespace.interacting import Interactions
+        from till_infinity.statespace.observables.interacting import Interactions
 
         one = Interactions()
         for k in range(20):
@@ -7640,7 +7671,7 @@ class TestDispersion:
         number - it is a function of how many units there are and how often
         each was counted - so it has to be simulated.
         """
-        from till_infinity.statespace.dispersion import differ
+        from till_infinity.statespace.evidence.dispersion import differ
 
         same = self._pool([0.5] * 60)
         observed, null, p = differ(same, self._mean(same))
@@ -7653,7 +7684,7 @@ class TestDispersion:
         assert wider < null
 
     def test_units_that_really_differ_are_found(self):
-        from till_infinity.statespace.dispersion import differ, tau
+        from till_infinity.statespace.evidence.dispersion import differ, tau
 
         spread = self._pool([0.3, 0.5, 0.7] * 20)
         mean = self._mean(spread)
@@ -7663,7 +7694,7 @@ class TestDispersion:
         assert tau(spread, mean) == pytest.approx(observed)
 
     def test_a_pool_too_small_to_speak_says_so(self):
-        from till_infinity.statespace.dispersion import UNITS, differ, tau_squared
+        from till_infinity.statespace.evidence.dispersion import UNITS, differ, tau_squared
 
         tiny = self._pool([0.5] * 4)
         observed, null, p = differ(tiny, self._mean(tiny))
@@ -7676,7 +7707,7 @@ class TestDispersion:
 
     def test_borrowed_evidence_is_worth_more_when_units_agree(self):
         """`K` in `own / (own + K)`: large when units are alike, small when not."""
-        from till_infinity.statespace.dispersion import borrow_weight
+        from till_infinity.statespace.evidence.dispersion import borrow_weight
 
         same = self._pool([0.5] * 60)
         spread = self._pool([0.2, 0.5, 0.8] * 20)
@@ -7709,7 +7740,14 @@ class TestDispersion:
 
         from till_infinity import statespace as _ss
 
-        text = (pathlib.Path(_ss.__file__).resolve().parent / "dispersion.py").read_text()
+        # **Found rather than named.** `dispersion.py` lives in
+        # `evidence/` now, and a hard-coded filename made a folder move look
+        # like a deleted module. The package is small enough to search and the
+        # search cannot go stale.
+        package = pathlib.Path(_ss.__file__).resolve().parent
+        found = list(package.rglob("dispersion.py"))
+        assert len(found) == 1, f"expected one dispersion.py, found {found}"
+        text = found[0].read_text()
         assert "from ..shrinkage" not in text
         assert "structures.shrinkage" not in text
         # And the thing it must not reach for is still one package over, so the
@@ -7744,7 +7782,7 @@ class TestSpanning:
 
     def test_the_estimators_agree_on_a_flat_bar(self):
         """All three measure the same thing: variance that happened inside the bar."""
-        from till_infinity.statespace import spanning
+        from till_infinity.statespace.dynamics import spanning
 
         o, h, l_, c = 1.0, 1.01, 0.99, 1.0
         park = spanning.parkinson(h, l_)
@@ -7768,7 +7806,7 @@ class TestSpanning:
         through unsquared under-drives every bar by its own square. A bar whose
         range implies twice the close-to-close *volatility* must arrive as four.
         """
-        from till_infinity.statespace.spanning import Span
+        from till_infinity.statespace.dynamics.spanning import Span
 
         quiet = Span(half_life=10.0, memory=500.0, high=100.0)
         for bar in self._bars(400, span=0.02, step=0.001):
@@ -7789,7 +7827,7 @@ class TestSpanning:
         process noise cannot remove it because the sweep refits the arm that is
         not being driven.
         """
-        from till_infinity.statespace.spanning import Span
+        from till_infinity.statespace.dynamics.spanning import Span
 
         span = Span(half_life=20.0, memory=400.0)
         seen = []
@@ -7801,7 +7839,7 @@ class TestSpanning:
         assert sum(seen) / len(seen) == pytest.approx(1.0, abs=0.1)
 
     def test_it_never_freezes_or_runs_away(self):
-        from till_infinity.statespace.spanning import Span
+        from till_infinity.statespace.dynamics.spanning import Span
 
         span = Span(half_life=5.0, memory=100.0, low=0.25, high=4.0)
         for bar in self._bars(300, span=0.02, step=0.001):
@@ -7816,7 +7854,7 @@ class TestSpanning:
 
     def test_it_says_one_until_it_knows_anything(self):
         """An unready driver has to be the identity, so the control arm exists."""
-        from till_infinity.statespace.spanning import Span
+        from till_infinity.statespace.dynamics.spanning import Span
 
         span = Span(half_life=40.0)
         assert span.factor() == 1.0
@@ -7826,7 +7864,7 @@ class TestSpanning:
         assert span.factor() == 1.0
 
     def test_the_normaliser_must_be_slower_than_the_signal(self):
-        from till_infinity.statespace.spanning import Span
+        from till_infinity.statespace.dynamics.spanning import Span
 
         with pytest.raises(ValueError, match="slower"):
             Span(half_life=100.0, memory=50.0)
@@ -7835,9 +7873,9 @@ class TestSpanning:
 
     def test_it_drives_a_member_through_driven(self):
         """The wiring this exists for: `Span.factor` into `Driven`."""
-        from till_infinity.statespace.driven import Driven
+        from till_infinity.statespace.dynamics.driven import Driven
+        from till_infinity.statespace.dynamics.spanning import Span
         from till_infinity.statespace.filters.linear import Gaussian
-        from till_infinity.statespace.spanning import Span
 
         span = Span(half_life=10.0, memory=400.0)
         for bar in self._bars(300, span=0.02, step=0.001):
@@ -7870,7 +7908,7 @@ class TestTails:
         right, and the honest check is the published value rather than a second
         copy of the same code.
         """
-        from till_infinity.statespace import tails
+        from till_infinity.statespace.dynamics import tails
 
         for dof, probability, published in (
             (3.0, 0.975, 3.182446),
@@ -7895,7 +7933,7 @@ class TestTails:
         into "every band here was too narrow", which is not what was measured:
         at two sigmas the two agree and nothing reading one was wrong.
         """
-        from till_infinity.statespace import tails
+        from till_infinity.statespace.dynamics import tails
 
         # Below: the t is strictly narrower.
         assert tails.reach(0.90, 4.0) < 1.644854
@@ -7910,7 +7948,7 @@ class TestTails:
 
     def test_a_three_sigma_band_is_breached_several_times_as_often_as_labelled(self):
         """The diagnostic reading, which is the one that changes a decision."""
-        from till_infinity.statespace import tails
+        from till_infinity.statespace.dynamics import tails
 
         # Two sigmas is still about 95%, so the common case is untouched.
         assert tails.coverage(2.0, 4.0) == pytest.approx(0.9545, abs=0.005)
@@ -7926,7 +7964,7 @@ class TestTails:
 
     def test_a_large_tail_index_recovers_the_gaussian(self):
         """The limit case, which says the correction is the only difference."""
-        from till_infinity.statespace import tails
+        from till_infinity.statespace.dynamics import tails
 
         for coverage, gaussian in ((0.95, 1.959964), (0.99, 2.575829), (0.999, 3.290527)):
             assert tails.reach(coverage, 5_000.0) == pytest.approx(gaussian, rel=0.01)
@@ -7938,7 +7976,7 @@ class TestTails:
         stops existing - it is where the fit measurably stopped describing the
         distribution and started chasing a few bars.
         """
-        from till_infinity.statespace import tails
+        from till_infinity.statespace.dynamics import tails
 
         assert tails.LEAST_DOF > 2.0
         # Anything below the floor is treated as the floor, not passed through.
@@ -7957,7 +7995,7 @@ class TestTails:
 
     def test_the_readout_offers_coverage_beside_sigmas(self):
         """The facade's two readings agree where they should and part where they should."""
-        from till_infinity.statespace import tails
+        from till_infinity.statespace.dynamics import tails
         from till_infinity.statespace.facade import Readout
 
         got = Readout(feed="EURUSD", interval="1h", at=0.0, value=100.0, spread=0.04)
@@ -8264,9 +8302,9 @@ class TestTheValueRevertingMember:
         assert held.level == pytest.approx(before)
 
     def test_it_is_registered_poolable_and_smoothable(self):
+        from till_infinity.statespace.composition.pooling import LEVERS, Pooled
+        from till_infinity.statespace.composition.subjects import DISPERSIONS
         from till_infinity.statespace.filters.family import members
-        from till_infinity.statespace.pooling import LEVERS, Pooled
-        from till_infinity.statespace.subjects import DISPERSIONS
 
         assert members()["ornstein"].__name__ == "Ornstein"
         assert LEVERS["ornstein"] == "sigma2"
@@ -8321,7 +8359,7 @@ class TestPivotsByDirectionalChange:
 
     def test_peaks_and_troughs_alternate_by_construction(self):
         """The thing a fixed span cannot promise, and this one cannot break."""
-        from till_infinity.statespace.pivoting import fractal, pivots
+        from till_infinity.statespace.observables.pivoting import fractal, pivots
 
         times, highs, lows, closes = self._walk()
         unit = self._unit(closes)
@@ -8337,7 +8375,7 @@ class TestPivotsByDirectionalChange:
 
     def test_the_confirmation_lag_adapts(self):
         """A sharp reversal confirms sooner than a hesitant one."""
-        from till_infinity.statespace.pivoting import fractal, pivots
+        from till_infinity.statespace.observables.pivoting import fractal, pivots
 
         times, highs, lows, closes = self._walk()
         unit = self._unit(closes)
@@ -8351,7 +8389,7 @@ class TestPivotsByDirectionalChange:
 
     def test_a_pivot_is_knowable_only_when_it_is_confirmed(self):
         """The leak both detectors exist to avoid."""
-        from till_infinity.statespace.pivoting import pivots
+        from till_infinity.statespace.observables.pivoting import pivots
 
         times, highs, lows, closes = self._walk()
         found = pivots(times, highs, lows, unit=self._unit(closes), threshold=2.0)
@@ -8362,7 +8400,7 @@ class TestPivotsByDirectionalChange:
 
     def test_a_higher_threshold_finds_fewer_turns(self):
         """Monotone, and the exponent is the law's own prediction."""
-        from till_infinity.statespace.pivoting import scaling
+        from till_infinity.statespace.observables.pivoting import scaling
 
         times, highs, lows, closes = self._walk()
         got = scaling(times, highs, lows, unit=self._unit(closes), thresholds=(2.0, 4.0, 8.0, 16.0))
@@ -8376,7 +8414,7 @@ class TestPivotsByDirectionalChange:
 
     def test_the_overshoot_is_measured_from_the_trigger(self):
         """It averages about one threshold - and the first version did not."""
-        from till_infinity.statespace.pivoting import overshoots, pivots
+        from till_infinity.statespace.observables.pivoting import overshoots, pivots
 
         times, highs, lows, closes = self._walk()
         unit = self._unit(closes)
@@ -8393,7 +8431,7 @@ class TestPivotsByDirectionalChange:
 
     def test_the_unit_may_track_the_regime(self):
         """A per-bar unit is the point of measuring a swing in volatility units."""
-        from till_infinity.statespace.pivoting import pivots
+        from till_infinity.statespace.observables.pivoting import pivots
 
         times, highs, lows, closes = self._walk()
         flat = self._unit(closes)
@@ -8409,7 +8447,7 @@ class TestPivotsByDirectionalChange:
                 pivots(times, highs, lows, unit=bad, threshold=2.0)
 
     def test_bad_asks_are_refused(self):
-        from till_infinity.statespace.pivoting import pivots
+        from till_infinity.statespace.observables.pivoting import pivots
 
         times, highs, lows, _ = self._walk(n=50)
         with pytest.raises(ValueError, match="threshold"):
@@ -8438,7 +8476,7 @@ class TestTurnDepthPorted:
         """Depths with a known persistence, so skill has a right answer."""
         import random
 
-        from till_infinity.statespace.depths import Turn
+        from till_infinity.statespace.observables.depths import Turn
 
         rng = random.Random(seed)
         out, last = [], level
@@ -8449,7 +8487,7 @@ class TestTurnDepthPorted:
 
     def test_the_skill_finds_persistence_and_reads_zero_without_it(self):
         """Power first, then the null - the order `show-power-before-reporting-a-null` asks for."""
-        from till_infinity.statespace.depths import score
+        from till_infinity.statespace.observables.depths import score
 
         flat = score(self._series(0.0))
         some = score(self._series(0.6))
@@ -8463,7 +8501,7 @@ class TestTurnDepthPorted:
 
     def test_the_timing_arm_is_carried_because_it_failed(self):
         """v1's `when` read positive on nulls, so the arm has to exist to catch that."""
-        from till_infinity.statespace.depths import score
+        from till_infinity.statespace.observables.depths import score
 
         # The span here is i.i.d. by construction, so its skill must be zero
         # at every depth persistence - a port that dropped this arm could not
@@ -8474,7 +8512,7 @@ class TestTurnDepthPorted:
 
     def test_the_baseline_is_causal_and_kept_inside_the_statistic(self):
         """Neither arm may see the observation it is being scored on."""
-        from till_infinity.statespace.depths import Skill
+        from till_infinity.statespace.observables.depths import Skill
 
         got = Skill()
         # The first observation cannot be scored: there is no prior mean to be
@@ -8491,7 +8529,7 @@ class TestTurnDepthPorted:
         assert math.isnan(got.skill)  # still under LEAST
 
     def test_a_skill_is_not_reported_on_too_few_turns(self):
-        from till_infinity.statespace.depths import LEAST, score
+        from till_infinity.statespace.observables.depths import LEAST, score
 
         thin = score(self._series(0.9, n=LEAST - 5))
         assert math.isnan(thin["depth ar1"])
@@ -8500,7 +8538,7 @@ class TestTurnDepthPorted:
 
     def test_the_ar1_arm_cannot_extrapolate(self):
         """A fitted coefficient outside the stationary range is a unit root."""
-        from till_infinity.statespace.depths import AR1
+        from till_infinity.statespace.observables.depths import AR1
 
         got = AR1()
         # A perfectly trending series fits phi above one; clamping is what
@@ -8512,8 +8550,8 @@ class TestTurnDepthPorted:
 
     def test_depths_are_read_on_the_confirmation_clock(self):
         """The leak the two timestamps exist to prevent."""
-        from till_infinity.statespace.depths import depths
-        from till_infinity.statespace.displacements import Displacement
+        from till_infinity.statespace.observables.depths import depths
+        from till_infinity.statespace.observables.displacements import Displacement
 
         moves = [
             Displacement(ended=100.0, confirmed=460.0, size=2.0, hours=3.0, direction=1),
@@ -8535,9 +8573,9 @@ class TestTurnDepthPorted:
 
     def test_a_family_member_can_be_scored_on_the_turn_clock(self):
         """The port's point: the depth series is something the family can read."""
-        from till_infinity.statespace.depths import Turns
+        from till_infinity.statespace.composition.subjects import TURN_DEPTH
         from till_infinity.statespace.filters.reverting import Reverting
-        from till_infinity.statespace.subjects import TURN_DEPTH
+        from till_infinity.statespace.observables.depths import Turns
 
         assert TURN_DEPTH.tracks == "dispersion"
         turns = Turns(member=Reverting())
@@ -8965,8 +9003,8 @@ class TestS4DRealPromoted:
 
     def test_it_is_registered_so_it_can_be_pooled_and_scored(self):
         """The whole point of promotion, and it needs an adaptation lever."""
+        from till_infinity.statespace.composition.pooling import DEFAULT, LEVERS, Pooled
         from till_infinity.statespace.filters.family import members
-        from till_infinity.statespace.pooling import DEFAULT, LEVERS, Pooled
 
         assert members()["s4d"].__name__ == "Diagonal"
         # `Adapting` refuses a lever that names no field, so the registry entry
@@ -9099,7 +9137,7 @@ class TestTheCoverageAccessor:
         so its error does not move when `spread` is wrong - and the pure t's
         error is proportional to the mistake.
         """
-        from till_infinity.statespace import tails
+        from till_infinity.statespace.dynamics import tails
 
         truth = 100.0 + tails.reach(0.999, self.DOF)
         anchored, pure = {}, {}
@@ -9165,7 +9203,7 @@ class TestDispersionOfMeans:
         return out
 
     def test_identical_units_do_not_read_as_different(self):
-        from till_infinity.statespace.dispersion import differ_means
+        from till_infinity.statespace.evidence.dispersion import differ_means
 
         observed, null, p = differ_means(self._units(0.0), draws=120, seed=1)
         # The claim is never `tau == 0`. DerSimonian and Laird truncates at
@@ -9178,7 +9216,7 @@ class TestDispersionOfMeans:
         assert observed == pytest.approx(null, abs=0.04)
 
     def test_units_that_really_differ_are_found(self):
-        from till_infinity.statespace.dispersion import differ_means, tau_of_means
+        from till_infinity.statespace.evidence.dispersion import differ_means, tau_of_means
 
         groups = self._units(0.20)
         observed, null, p = differ_means(groups, draws=120, seed=1)
@@ -9196,7 +9234,7 @@ class TestDispersionOfMeans:
         """
         import random
 
-        from till_infinity.statespace.dispersion import (
+        from till_infinity.statespace.evidence.dispersion import (
             differ_means,
             tau_squared_of_means,
         )
@@ -9243,7 +9281,7 @@ class TestDispersionOfMeans:
         On units that are identical by construction with strong dependence
         inside each, the default must not reject and a short block does.
         """
-        from till_infinity.statespace.dispersion import differ_means, lag_one
+        from till_infinity.statespace.evidence.dispersion import differ_means, lag_one
 
         groups = self._units(0.0, rho=0.6, seed=11)
         assert lag_one(groups) > 0.3
@@ -9251,7 +9289,7 @@ class TestDispersionOfMeans:
         assert differ_means(groups, draws=150, seed=11, block=8)[2] < 0.05
 
     def test_a_pool_too_small_to_ask_says_so(self):
-        from till_infinity.statespace.dispersion import UNITS, differ_means
+        from till_infinity.statespace.evidence.dispersion import UNITS, differ_means
 
         observed, null, p = differ_means(self._units(0.2, units=UNITS - 1), draws=20)
         assert observed >= 0.0
@@ -9265,7 +9303,7 @@ class TestDispersionOfMeans:
         pool with no spread pools maximally. The docstring says to read it only
         after `differ_means` has opened the gate, and this is why.
         """
-        from till_infinity.statespace.dispersion import borrow_weight_of_means
+        from till_infinity.statespace.evidence.dispersion import borrow_weight_of_means
 
         pooled = borrow_weight_of_means(self._units(0.0))
         spread = borrow_weight_of_means(self._units(0.40))
@@ -9273,7 +9311,7 @@ class TestDispersionOfMeans:
         assert 0.5 <= spread < pooled
 
     def test_a_mean_needs_more_observations_than_a_rate(self):
-        from till_infinity.statespace.dispersion import (
+        from till_infinity.statespace.evidence.dispersion import (
             LEAST,
             LEAST_VALUES,
             tau_squared_of_means,
@@ -9293,7 +9331,7 @@ class TestTradedWalls:
         `SHIFTS` held no traded instrument at all until this was measured, so
         every live feed took the diffusion constant and understated the wall.
         """
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         for feed in ("EURUSD", "USDJPY", "EURJPY", "GBPJPY", "XAUUSD"):
             up, down = bounding.shifts_for(feed)
@@ -9307,14 +9345,14 @@ class TestTradedWalls:
         own ratio wanders 0.741 to 1.229 - so the table carries class medians
         and only the direction of the pooled ordering is asserted.
         """
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         for feed in ("EURUSD", "EURJPY", "XAUUSD"):
             up, down = bounding.shifts_for(feed)
             assert down > up
 
     def test_generated_feeds_keep_their_own_walls(self):
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         assert bounding.shifts_for("Volatility_75_Index") == (
             bounding.SHIFT,
@@ -9324,7 +9362,7 @@ class TestTradedWalls:
 
     def test_unmeasured_classes_are_not_given_a_measured_wall(self):
         """An FX-measured wall on an equity is an extrapolation, so it is refused."""
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         for feed in ("AAPL.OQ", "JPM.N"):
             assert bounding.shifts_for(feed) == (bounding.SHIFT, bounding.SHIFT)
@@ -9337,7 +9375,7 @@ class TestTradedWalls:
         `wall_at` guarded on the wall rather than the class and let `Boom` and
         `DEX` through.
         """
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         near = bounding.wall_at("EURUSD", 2.0)
         far = bounding.wall_at("EURUSD", 8.0)
@@ -9350,7 +9388,7 @@ class TestTradedWalls:
             assert bounding.wall_at(feed, 8.0) == bounding.shifts_for(feed)
 
     def test_at_the_anchor_reach_the_wall_is_the_table(self):
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         assert bounding.wall_at("EURUSD", bounding.REACH_BASE) == bounding.shifts_for("EURUSD")
         assert bounding.wall_at("EURUSD", 0.0) == bounding.shifts_for("EURUSD")
@@ -9368,7 +9406,7 @@ class TestTradedWalls:
         barriers widen because the wall is additive, so it is a smaller share
         of a bigger distance.
         """
-        from till_infinity.statespace import bounding
+        from till_infinity.statespace.dynamics import bounding
 
         worst = 0.0
         for up in (0.5, 1.0, 2.0, 3.0, 4.0, 6.0, 8.0, 12.0):
@@ -10276,8 +10314,8 @@ class TestTheDeskSpreadRule:
         this desk folds log variance, so the two are separate knobs even while
         they hold the same value - changing the module default would move a
         figure in `statespace-pooling-exponent.md` that nothing re-measured."""
+        from till_infinity.statespace.composition.pooling import RULE
         from till_infinity.statespace.facade import SPREAD_RULE, Desk
-        from till_infinity.statespace.pooling import RULE
 
         assert SPREAD_RULE == "shrinking", (
             "pool-spread.md swept all three rules at 15m and 1h and none "
@@ -10342,7 +10380,7 @@ class TestASaturatedLeverIsVisible:
     no symptom unless something looks for it. These make it look."""
 
     def test_a_member_on_its_upper_stop_is_named(self):
-        from till_infinity.statespace.pooling import Pooled
+        from till_infinity.statespace.composition.pooling import Pooled
 
         pool = Pooled()
         assert pool.saturated == (), "a fresh pool has not moved yet"
@@ -10354,7 +10392,7 @@ class TestASaturatedLeverIsVisible:
         """The constant-sigma family pins at `LEAST`, which is the same failure
         wearing the opposite sign: a lever against a stop cannot answer the
         next bar, whichever stop it is."""
-        from till_infinity.statespace.pooling import Pooled
+        from till_infinity.statespace.composition.pooling import Pooled
 
         pool = Pooled()
         pool.members[0].factor = pool.members[0].least
@@ -10364,7 +10402,7 @@ class TestASaturatedLeverIsVisible:
         """`adapt=False` members carry no loop, so the question does not apply
         and must not raise - this is the arm every `rule` figure was measured
         on, and a diagnostic that crashed on it would be worse than none."""
-        from till_infinity.statespace.pooling import Pooled
+        from till_infinity.statespace.composition.pooling import Pooled
 
         assert Pooled(adapt=False).saturated == ()
 
@@ -10372,9 +10410,9 @@ class TestASaturatedLeverIsVisible:
         """Reachable so the measured value can be set once it is known; left
         alone until then, because a clamp exists to stop a loop chasing an
         outlier and widening it by default weakens that for every member."""
-        from till_infinity.statespace.adapting import MOST
+        from till_infinity.statespace.composition.pooling import Pooled
+        from till_infinity.statespace.dynamics.adapting import MOST
         from till_infinity.statespace.facade import Desk
-        from till_infinity.statespace.pooling import Pooled
 
         assert Pooled().most is None
         assert {one.most for one in Pooled().members} == {MOST}
@@ -10547,7 +10585,7 @@ class TestTheTransitionTopic:
         from till_infinity.statespace.actor import StatespaceActor, payload_for
         from till_infinity.statespace.config import Settings
         from till_infinity.statespace.engine import Engine
-        from till_infinity.statespace.noticing import Notices
+        from till_infinity.statespace.observables.noticing import Notices
         from till_infinity.utils import topics
 
         engine = Engine(
@@ -10707,7 +10745,7 @@ class TestTheAnchoredFairValue:
         """Zero means "not offered" rather than "at fair", which is why the
         payload omits the keys instead of publishing a zero."""
         from till_infinity.statespace.actor import payload_for
-        from till_infinity.statespace.anchored import LEAST
+        from till_infinity.statespace.dynamics.anchored import LEAST
 
         _, got = self._run(bars=LEAST - 1)
         assert got.fair_variance == 0.0
@@ -10719,7 +10757,7 @@ class TestTheAnchoredFairValue:
         """A session anchor has edges, and the edges are the point: "high
         relative to today" is a different claim from "high relative to the
         last fortnight"."""
-        from till_infinity.statespace.anchored import Anchor
+        from till_infinity.statespace.dynamics.anchored import Anchor
 
         anchor = Anchor(hours=5.0)
         for i in range(12):
@@ -10733,7 +10771,7 @@ class TestTheAnchoredFairValue:
     def test_the_weights_are_precisions_so_a_noisier_reading_counts_less(self):
         """The honest version of "volume-weighted": the weight is how well the
         reading was measured."""
-        from till_infinity.statespace.anchored import Anchor
+        from till_infinity.statespace.dynamics.anchored import Anchor
 
         tight = Anchor()
         loose = Anchor()
@@ -10745,7 +10783,7 @@ class TestTheAnchoredFairValue:
         assert tight.mean > loose.mean * 10, (tight.mean, loose.mean)
 
     def test_a_bad_reading_cannot_move_it(self):
-        from till_infinity.statespace.anchored import Anchor
+        from till_infinity.statespace.dynamics.anchored import Anchor
 
         anchor = Anchor()
         for i in range(15):
@@ -10756,7 +10794,7 @@ class TestTheAnchoredFairValue:
         assert (anchor.mean, anchor.seen) == was
 
     def test_the_stretch_is_zero_without_a_band_rather_than_infinite(self):
-        from till_infinity.statespace.anchored import Anchor
+        from till_infinity.statespace.dynamics.anchored import Anchor
 
         anchor = Anchor()
         for i in range(15):
@@ -10802,7 +10840,7 @@ class TestTheAlertReadsInPlainWords:
 
     def test_no_jargon_reaches_the_line(self):
         from till_infinity.statespace.actor import payload_for
-        from till_infinity.statespace.noticing import notice_for
+        from till_infinity.statespace.observables.noticing import notice_for
 
         got = self._readout()
         banned = (
@@ -10833,7 +10871,7 @@ class TestTheAlertReadsInPlainWords:
         """The service says how big, never which way. A line containing "up",
         "down", "bullish" or "long" would be acted on as a price call."""
         from till_infinity.statespace.actor import payload_for
-        from till_infinity.statespace.noticing import notice_for
+        from till_infinity.statespace.observables.noticing import notice_for
 
         got = self._readout()
         for kind, score in (("surprise", 5.0), ("widening", 0.8), ("quieting", -0.8)):
@@ -10844,7 +10882,7 @@ class TestTheAlertReadsInPlainWords:
     def test_an_unreliable_reading_quotes_no_probability(self):
         """Quoting a probability in the same breath as "these readings are
         unreliable" invites the reader to use the probability."""
-        from till_infinity.statespace.noticing import notice_for
+        from till_infinity.statespace.observables.noticing import notice_for
 
         line = str(notice_for(*self._both(), "saturated", 0.0)["detail"])
         assert "unreliable" in line
@@ -10853,7 +10891,7 @@ class TestTheAlertReadsInPlainWords:
 
     def test_the_numbers_are_multiples_and_percentages(self):
         from till_infinity.statespace.actor import payload_for
-        from till_infinity.statespace.noticing import notice_for
+        from till_infinity.statespace.observables.noticing import notice_for
 
         got = self._readout()
         wider = str(notice_for(payload_for(got), got, "widening", 0.62)["detail"])
@@ -10864,7 +10902,7 @@ class TestTheAlertReadsInPlainWords:
     def test_the_technical_fields_are_still_all_there(self):
         """Plain words in the line, every number in the payload - a consumer
         reading the topic loses nothing to the phrasing."""
-        from till_infinity.statespace.noticing import notice_for
+        from till_infinity.statespace.observables.noticing import notice_for
 
         payload = notice_for(*self._both(), "surprise", 3.42)
         for name in (

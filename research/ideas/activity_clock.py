@@ -60,9 +60,9 @@ ROOT = Path(__file__).resolve().parents[2]
 if str(ROOT) not in sys.path:
     sys.path.insert(0, str(ROOT))
 
-from till_infinity.statespace.driven import Driven  # noqa: E402
+from till_infinity.statespace.dynamics.driven import Driven  # noqa: E402
 from till_infinity.statespace.filters.linear import Gaussian  # noqa: E402
-from till_infinity.statespace.pacing import Both, Levelled, Pace  # noqa: E402
+from till_infinity.statespace.dynamics.pacing import Both, Levelled, Pace  # noqa: E402
 from till_infinity.statespace.filters.reverting import Reverting  # noqa: E402
 from till_infinity.statespace.filters.seasonal import Profile, Seasonal  # noqa: E402
 
@@ -251,7 +251,7 @@ def best_base(times, values, volumes, *, build, lever, natural, clock=None, driv
 
 
 def main() -> None:
-    from till_infinity.statespace.pacing import extent
+    from till_infinity.statespace.dynamics.pacing import extent
 
     print(f"frames {FRAMES}  levers {WHICH}  exponents {EXPONENTS}")
     print(

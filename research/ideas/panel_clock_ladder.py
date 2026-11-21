@@ -171,7 +171,7 @@ def clock_nats(times, values, factor_at, half_index: int, *, profile=None):
     `+33` and a reversed one costs `-1298`, so a small positive is a real
     reading and a large negative means the clock is actively misleading.
     """
-    from till_infinity.statespace.driven import Driven
+    from till_infinity.statespace.dynamics.driven import Driven
     from till_infinity.statespace.filters.seasonal import Seasonal
 
     steps = [abs(values[i] - values[i - 1]) for i in range(1, len(values))]

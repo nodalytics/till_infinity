@@ -67,9 +67,9 @@ import statistics
 from collections import Counter
 from pathlib import Path
 
-from till_infinity.statespace.displacements import relations, sequence
-from till_infinity.statespace.distance import wasserstein
-from till_infinity.statespace.nulls import control, spearman, trailing
+from till_infinity.statespace.observables.displacements import relations, sequence
+from till_infinity.statespace.evidence.distance import wasserstein
+from till_infinity.statespace.evidence.nulls import control, spearman, trailing
 from till_infinity.statespace.filters.symmetry import Symmetry, nodal_symmetry
 
 #: Two of these - EURUSD and the S&P - are instruments the revision reports a
@@ -243,7 +243,7 @@ def garch_like(closes: list[float], seed: int) -> list[float]:
     comes from `nulls.garch`, which standardises the innovation and asserts
     the persistence is under one.
     """
-    from till_infinity.statespace.nulls import garch
+    from till_infinity.statespace.evidence.nulls import garch
 
     scale = unit(closes) or 1e-6
     out = [closes[0]]
