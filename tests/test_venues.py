@@ -626,7 +626,16 @@ def test_a_desk_whose_rule_cannot_trade_the_feed_is_not_registered(monkeypatch, 
     from till_infinity.node import live
 
     monkeypatch.setenv("TRADING_VENUES", "MT5")
-    monkeypatch.setenv("TRADING_SYMBOLS", "Volatility 75 Index,")
+    # **`XAGUSD`, because it is excluded on a measurement rather than by
+    # omission.** This test read `Volatility 75 Index` until 2026-11-21, when
+    # that feed was admitted to `statespace-surprise` - so the premise went
+    # false and the test failed for the right reason. Silver is the durable
+    # choice: it was *measured* and deliberately held back, clearing the
+    # trigger at the highest rate of any feed tried while sitting inside the
+    # cost gate on only **71%** of bars against an admitted band of 90% to
+    # 100%. A feed excluded because the spread eats the signal does not get
+    # admitted by accident.
+    monkeypatch.setenv("TRADING_SYMBOLS", "XAGUSD,")
     monkeypatch.setenv("TRADING_ENTRIES", "edge")
 
     # The control first: a rule with no feed scope is registered as before.

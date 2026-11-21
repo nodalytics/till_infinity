@@ -200,6 +200,51 @@ class SurpriseProfile(Profile):
             "audcad",
             "audnzd",
             "eurcad",
+            # 2026-11-21. **The Deriv volatility indices, on the operator's
+            # call** - *"add volatility 75, 100, 25 to statespace list, let's
+            # watch it and see"* - and on the cost gate rather than on the
+            # trigger, because the trigger is the weaker of the two here.
+            #
+            # **The cost gate is where they are strongest.** Each against its
+            # own quoted spread over 2,000 15m bars, as a share of a 2R target
+            # on a 2-vol stop:
+            #
+            #   Volatility 75   3.0% of target, 100% inside the 10% gate
+            #   Volatility 100  3.0% of target, 100% inside
+            #   Volatility 25   3.0% of target, 100% inside
+            #
+            # 100% inside is better than every admitted real feed but gold and
+            # btc, and better than `ethusd` at 91%. A synthetic's spread is
+            # constant and its volatility high and stable, so cost over ATR
+            # barely moves - which is the opposite of `bnbusd`, admitted on the
+            # trigger and removed at 20% inside.
+            #
+            # **The trigger is the caveat and it is honest to state it.** At the
+            # noise level where the admitted majors reproduce the 1.80% on
+            # record, the admitted seven span 1.08% to 1.32% of bars clearing
+            # `TRIGGER` and these read **0.81%** (Vol 75) and **0.76%**
+            # (Vol 25) - two thirds of a real market's rate. So these are desks
+            # that fire *less often*, not desks that cannot fire, which is the
+            # distinction the `(1s)` family above fails: over 4,725 readouts it
+            # never reached 2.5 against a trigger of 3.0.
+            #
+            # `synthetics-are-a-poor-tail-control` explains the rate
+            # mechanically - kurtosis 3.19 against 20.07 traded - so thinner
+            # tails give fewer 3-sigma innovations and the shortfall is
+            # expected rather than a fault.
+            #
+            # **Volatility 100 is assumed from its family and not measured.**
+            # The lab cache holds 25 and 75 and not 100, so its trigger rate is
+            # interpolated from two feeds reading 0.76% and 0.81%. That is the
+            # one unmeasured thing in this block.
+            #
+            # The reason to want them: `synthetics-control-for-news-and-are-traded`
+            # measures V75 volatility as orthogonal to EURUSD and gold - +0.006
+            # and +0.005 on changes - so these carry a different book's risk,
+            # and they have no news to be surprised by.
+            "volatility 75 index",
+            "volatility 100 index",
+            "volatility 25 index",
         }
     )
 

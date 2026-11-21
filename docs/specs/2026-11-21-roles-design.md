@@ -303,6 +303,105 @@ and the 414-cell failure returns with a time dimension on it. Which is the same
 conclusion as the section above, arrived at from the size rather than from the
 estimator: rotate on a state, not on a score.
 
+### Detect-and-redeploy, and the arithmetic that stops it
+
+The operator states the goal plainly: *"the edge that works now might not be
+the edge that work in the next window, so our system can detect when edge is
+not working and deploy another one."*
+
+**The intent is right and the detection step is the one thing measured here as
+unmeasurable.** Two findings, independent of each other:
+
+* `research/docs/edge-life.md` - the decay estimator is **blind**. Planted
+  half-lives of 10, 50, 200, 1,000 and **infinity** all come back as **3.5 to
+  4.6 trades**, with half the draws reading "static" regardless. A hundred-fold
+  change in the truth moves the answer by one trade.
+* `strategy-rotation-is-not-timeable` - **every pause rule tested matched
+  random pausing at the same duty cycle.**
+
+And the operator's own window definition prices it. Telling a win rate from its
+geometric baseline needs **350 to 800 trades** (`Trade.trials`). Telling win
+rate A from win rate B - which is what *detecting a change* means - needs
+roughly two to four times that: **1,500 to 3,000**. At about a dozen trades a
+day that is **18 to 36 weeks**.
+
+> **An edge cannot be detected as stopping inside the window in which it
+> stopped.** By the time the sample exists the window is four to eight months
+> gone, and a detector built on the edge's own P&L fires on noise.
+
+### Three ways to keep the intent without the detector
+
+1. **Condition on a state, not a score.** Volatility regime is readable now and
+   persists - `rho` 0.9963 to 0.9995, half-life 185 to 1,253 hours. If rules
+   suit regimes, read the regime. Same adaptation, estimable input, no
+   detection latency.
+2. **Run them all and let the state set the sizes.** Instead of
+   detect-then-switch, hold every rule and have the regime weight them. This is
+   the continuous version of the same idea, it needs no switching decision, and
+   it sidesteps the 24-assignment grid entirely. `sizing-is-reduction-only`
+   already makes every scaler a reduction, so a weighting cannot enlarge a
+   position by accident.
+3. **Detect breaks, not fades.** "The edge faded" needs a thousand trades;
+   "something is broken" is **one event** - a venue fault, a desk that cannot
+   fill, a gate refusing everything.
+   `venue-faults-hide-below-the-strategy` exists because a rule that never
+   fires and a rule that *cannot* fire read identically, and
+   `half-the-desks-can-never-trade` is what that cost. That detector is worth
+   building and is a different object from a decay detector.
+
+### The chosen shape: regimes plus the Monte Carlo
+
+The operator: *"we can still make it work, detect breaks too and regimes too,
+regimes can be how we would handle it, regimes + monte carlo."*
+
+**This replaces the question rather than answering it.** The unanswerable
+question is *"has this edge stopped working"*, which needs 1,500 to 3,000
+trades. The answerable one is *"what is this geometry worth in the regime that
+is in force now"* - and `projecting.py` already computes it.
+
+The loop, with every input estimable:
+
+1. **Read the regime.** Log volatility, `rho` 0.9963 to 0.9995, half-life 185
+   to 1,253 hours. Readable now, still true in an hour, 7x apart across feeds
+   so it is per-instrument for free.
+2. **Feed it to the projection.** `project(..., scales=...)` is already the
+   per-step dispersion arm, and its docstring says so: *"this is the arm the
+   members are being pointed at dispersion to feed."*
+3. **Read what each rule's geometry is worth there.** `Trade` already prints
+   `win_rate` beside `geometric`, plus `edge_needed`, `cover` and `trials`. A
+   geometry whose `cover` is under the gate has no trade in this regime
+   whatever its signal says.
+4. **Size by that, not by recent P&L.** No detector, no switching decision, no
+   latency - the regime changes, the projection changes, the implied value of
+   each geometry changes, the sizes follow. `sizing-is-reduction-only` means a
+   weighting can only ever reduce.
+
+**What it can and cannot tell you, which is the whole discipline of it.** The
+projection is **driftless by default** - *"that default is the measurement and
+not a placeholder"* - so its win rate sits on the geometric. It therefore
+answers **"is this geometry tradeable in this regime"**: the cost in R, the time
+to the target, the share of paths that resolve at all. It does **not** answer
+"does this rule have direction here", and reading it as though it did is the
+mistake `a-martingale-cannot-pay` records.
+
+Given `direction-is-closed-not-just-null` - the gate earns 2% of a spread
+against a planted drift - geometry and cost are what is left to optimise, so
+this is the right target rather than a consolation.
+
+**And there is one directional quantity it does yield.**
+[`race-calibration.md`](../../research/docs/race-calibration.md) establishes
+that `projected - realised` **is realised drift**, because the simulator
+assumes none. So *per regime*, that gap is a measurable directional residual
+with its control built in - and it tracked the long/short bias cell by cell on
+the first sample it was run on.
+
+**The sample arithmetic works, for the first time in this document.** Regimes
+partition rather than intersect, so three regimes over the operator's one-year
+maximum - about 4,000 trades - give roughly **1,300 each**, which clears the
+350 to 800 floor. Over 7 days it gives 28 a regime and clears nothing, which is
+the same conclusion as everywhere else here: **act on a week, judge on a
+quarter, bound at a year.**
+
 ### The control a rotating assignment must beat
 
 `a-control-is-only-for-a-named-property`: the control has to rotate the same
