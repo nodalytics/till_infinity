@@ -789,6 +789,26 @@ def actors(venue: str) -> list[Actor]:
         found.append(
             VolatileScreen(ScreenConfig(bar_types=bars, component_id=f"VolatileScreen-{venue}"))
         )
+    # **Only where a desk would read it.** `TRADING_WEEKEND_FLAT_S` is off by
+    # default and an unpublished calendar costs a timer and a bar subscription
+    # per instrument. The reverse case is safe here and is *not* symmetric with
+    # the screen's: a missing calendar leaves `_closing_soon` answering `None`,
+    # which the whole feature reads as "do nothing", so the gate is off rather
+    # than refusing everything. `calendar.py` says why `None` must never mean
+    # "closing now".
+    if Settings.from_env().weekend_flat > 0:
+        from till_infinity.strategies.calendar import CalendarConfig, SessionCalendar
+
+        learn = tuple(
+            str(bar_type(symbol, venue, interval))
+            for interval in intervals()
+            for symbol in symbols_for(venue, interval)
+        )
+        found.append(
+            SessionCalendar(
+                CalendarConfig(bar_types=learn, component_id=f"SessionCalendar-{venue}")
+            )
+        )
     # **Only where a desk would read it**, for the same reason: `_floor_stop`
     # consults the calendar only under `TRADING_RELEASE_BAND`, and an unread
     # publisher is a sqlite open every half hour for nothing.
