@@ -66,7 +66,38 @@ services:
     # `--save ""` turns the RDB snapshots off: two persistence mechanisms on one
     # small keyspace is one more thing to go wrong, and the AOF is the one that
     # survives an unclean stop.
-    command: ["redis-server", "--appendonly", "yes", "--save", ""]
+    # **No published port, and that is the security property.** A review
+    # refused the first cut, which published 6379 on the docker bridge gateway
+    # with no password: this keyspace is the desk's own view of its open orders
+    # and positions, so an unauthenticated writer could make the desk carry a
+    # position that does not exist or forget one that does. Here it is reachable
+    # only by service name on compose's own network and listens nowhere else.
+    #
+    # `CONFIG` renamed to nothing disables it - a cache that can be
+    # reconfigured at runtime can be told to drop its password or persist
+    # elsewhere, and nothing needs it after start-up.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --save
+      - ""
+      - --protected-mode
+      - "yes"
+      - --rename-command
+      - CONFIG
+      - ""
+      - --rename-command
+      - FLUSHALL
+      - ""
+      - --rename-command
+      - DEBUG
+      - ""
+      # Empty is no password, which is safe here only because nothing outside
+      # this network can reach it. Set it in `.env` and the node reads the same
+      # value through `TRADING_CACHE_REDIS_PASSWORD`.
+      - --requirepass
+      - "${TRADING_CACHE_REDIS_PASSWORD:-}"
     # Small on purpose. The keyspace is this desk's open orders and positions -
     # kilobytes - and a cache allowed to grow into the node's memory would
     # trade one outage for another on a 2-core box with 3.8GB.

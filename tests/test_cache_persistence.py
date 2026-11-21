@@ -114,6 +114,75 @@ class TestTheThreeSettingsThatMakeItPersist:
         assert _cache().persist_account_events is True
 
 
+class TestItIsNotReachableOrAnonymous:
+    """**A review refused the first cut of this, and it was right.**
+
+    The cache was published on `172.17.0.1:6379` - the docker bridge gateway -
+    with no password. That address is reachable by every container on the box
+    and from the host, and this keyspace is the desk's own view of its open
+    orders and positions: writing it is writing what the desk *believes* it
+    holds. An unauthenticated writer could make the desk carry a position that
+    does not exist, or forget one that does - the stale-cache hazard below,
+    except adversarial rather than accidental.
+
+    Two controls now, asserted here because neither is visible from the node's
+    own config: the cache listens only on a private docker network, and it
+    takes a password when one is set.
+    """
+
+    def test_no_launch_path_publishes_the_port(self) -> None:
+        """Reachability is the first control, so nothing may publish 6379."""
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        for name in ("docker-compose.yml", "scripts/deploy.sh"):
+            text = (root / name).read_text()
+            assert "6379:6379" not in text, (
+                f"{name} publishes the cache's port; it must stay on a private "
+                "network reachable only by service name"
+            )
+
+    def test_both_launch_paths_disable_config(self) -> None:
+        """A cache that can be reconfigured at runtime can be told to drop its
+        password or persist elsewhere, and nothing needs `CONFIG` after start."""
+        from pathlib import Path
+
+        root = Path(__file__).resolve().parents[1]
+        for name in ("docker-compose.yml", "scripts/deploy.sh"):
+            text = (root / name).read_text()
+            assert "rename-command" in text, f"{name} renames no command"
+            assert "CONFIG" in text, f"{name} leaves CONFIG enabled on the cache"
+
+    def test_a_password_reaches_the_node_and_is_redacted(self) -> None:
+        """The node has to send the same secret, and it must not end up in a log.
+
+        Passed as a `DatabaseConfig` field rather than folded into a URL for
+        exactly that reason - `DatabaseConfig` redacts it in its own `repr`,
+        and a URL with a password in it reaches a log line eventually.
+        """
+        from till_infinity.node.live import _cache
+
+        os.environ["TRADING_CACHE_REDIS"] = "till-cache:6379"
+        os.environ["TRADING_CACHE_REDIS_PASSWORD"] = "not-the-real-one"
+        try:
+            got = _cache()
+            assert got.database.password == "not-the-real-one"
+            assert "not-the-real-one" not in repr(got.database), (
+                "the password survives into a repr, so it will reach a log"
+            )
+        finally:
+            os.environ.pop("TRADING_CACHE_REDIS_PASSWORD", None)
+
+    def test_no_password_is_supported_and_means_none(self) -> None:
+        """A deployment without one is valid - the network is the control - and
+        it must read as absent rather than as an empty-string password."""
+        from till_infinity.node.live import _cache
+
+        os.environ["TRADING_CACHE_REDIS"] = "till-cache:6379"
+        os.environ.pop("TRADING_CACHE_REDIS_PASSWORD", None)
+        assert _cache().database.password is None
+
+
 def test_the_broker_outranks_a_persisted_cache() -> None:
     """**The hazard, pinned.** Reconciliation runs at startup, so the venue wins.
 

@@ -216,22 +216,54 @@ echo "host has ${CORES} core(s), giving the container ${CPU_LIMIT}"
 # the port is published on the docker bridge gateway rather than on 127.0.0.1 -
 # a cache on loopback is invisible to every container on the box.
 if grep -qE '^TRADING_CACHE_REDIS=[^[:space:]]' /home/ubuntu/till.env 2>/dev/null; then
+  # **A private network and no published port.** The first cut published
+  # `172.17.0.1:6379` on the docker bridge gateway with no password, and a
+  # security review was right to refuse it: that address is reachable by every
+  # container on the box and from the host, and this keyspace is the desk's own
+  # view of its open orders and positions. Writing it is writing what the desk
+  # believes it holds - so an unauthenticated writer could make the desk carry
+  # a position that does not exist, or forget one that does. That is the
+  # stale-cache hazard `node/live._cache` documents, except adversarial.
+  #
+  # The default bridge has no automatic DNS between containers, which is the
+  # only reason a published port was tempting. A user-defined network has it,
+  # so the cache is reachable as `till-cache:6379` and listens nowhere else.
+  docker network inspect till-net >/dev/null 2>&1 || docker network create till-net
   if [ -z "$(docker ps -q -f name=^till-cache$)" ]; then
     echo "starting till-cache"
     docker rm -f till-cache >/dev/null 2>&1 || true
+    # **A password as well, from the env file the node already reads.** Defence
+    # in depth: the network removes the reachability and this removes the
+    # anonymous access if anything is ever attached to that network. Absent, no
+    # password is set and the warning below says so rather than implying one.
+    CACHE_PASS="$(sed -n 's/^TRADING_CACHE_REDIS_PASSWORD=//p' /home/ubuntu/till.env | tail -1)"
+    if [ -z "$CACHE_PASS" ]; then
+      echo "WARNING: TRADING_CACHE_REDIS_PASSWORD is unset, so the cache takes" >&2
+      echo "         no password. It is unreachable off till-net, but set one." >&2
+    fi
     # `appendonly` and no RDB: the AOF survives an unclean stop, and two
     # persistence mechanisms on a keyspace of kilobytes is one more thing to go
     # wrong. 128m because the keyspace is this desk's open orders and
     # positions; a cache allowed to grow into the node's memory would trade one
     # outage for another on a 2-core box.
+    #
+    # `CONFIG` is renamed to nothing, which disables it: a cache that can be
+    # reconfigured at runtime can be told to persist somewhere else or to drop
+    # its password, and nothing here needs it after start-up.
     docker run -d \
       --name till-cache \
       --restart unless-stopped \
       --memory 128m \
-      -p 172.17.0.1:6379:6379 \
+      --network till-net \
       -v till-cache:/data \
       --log-opt max-size=10m --log-opt max-file=3 \
-      redis:7-alpine redis-server --appendonly yes --save '' \
+      redis:7-alpine redis-server \
+        --appendonly yes --save '' \
+        --protected-mode yes \
+        --rename-command CONFIG '' \
+        --rename-command FLUSHALL '' \
+        --rename-command DEBUG '' \
+        ${CACHE_PASS:+--requirepass "$CACHE_PASS"} \
       || echo "the cache would not start; the node falls back to memory" >&2
   else
     echo "till-cache already running"
@@ -265,6 +297,17 @@ docker run -d \
     echo "ROLLBACK FAILED - there is no container. Look now." >&2
     exit 2
   }
+
+# **Both networks, and that is deliberate.** The container stays on the default
+# bridge because the MT5 tunnel binds `172.17.0.1:8000` there and
+# `--add-host=host.docker.internal:host-gateway` resolves to that gateway;
+# moving the node onto `till-net` alone would have left the terminal
+# unreachable, which is the live trading path. So it is *also* attached to
+# `till-net`, where the cache is - a second network rather than a moved one.
+if docker network inspect till-net >/dev/null 2>&1; then
+  docker network connect till-net "$NAME" >/dev/null 2>&1 \
+    || echo "could not attach $NAME to till-net; the node falls back to memory" >&2
+fi
 
 # **Running is not enough.** With `--restart unless-stopped` a container that
 # exits immediately spends most of its life in restart backoff, and

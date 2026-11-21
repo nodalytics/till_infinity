@@ -220,12 +220,25 @@ def _cache() -> CacheConfig:
     if not where:
         return CacheConfig(timestamps_as_iso8601=True)
     host, _, port = where.partition(":")
+    # **A password, where one is set.** `DatabaseConfig` redacts it in its own
+    # `repr`, which is why it is passed as a field rather than folded into a
+    # URL - a URL with a password in it ends up in a log line eventually.
+    #
+    # Empty is no password and that is a supported deployment: the cache runs
+    # on a private docker network with no published port, so reachability is
+    # the first control and this is the second. A review refused the first cut
+    # of this for publishing 6379 on the bridge gateway unauthenticated, and it
+    # was right - the keyspace is the desk's own view of its open orders and
+    # positions, so an unauthenticated writer could make the desk carry a
+    # position that does not exist or forget one that does.
+    secret = os.environ.get("TRADING_CACHE_REDIS_PASSWORD", "").strip()
     return CacheConfig(
         timestamps_as_iso8601=True,
         database=DatabaseConfig(
             type="redis",
             host=host or "127.0.0.1",
             port=int(port) if port.isdigit() else 6379,
+            password=secret or None,
         ),
         # **Named rather than left to the default**, because the whole point of
         # the setting is that these two do not drift: flushing on start would
