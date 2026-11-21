@@ -799,10 +799,20 @@ def actors(venue: str) -> list[Actor]:
     if Settings.from_env().weekend_flat > 0:
         from till_infinity.strategies.calendar import CalendarConfig, SessionCalendar
 
+        # **One interval per symbol, the coarsest.** A trading week is the
+        # same week whichever bar size observes it, and the coarsest covers
+        # three weeks in the fewest bars: 2,016 at 15m against 6,048 at 5m.
+        # Subscribing to every configured interval would have sent 62
+        # three-week history requests at the terminal that is also serving the
+        # live desk, for no extra information.
+        # `utils.intervals.SECONDS` and **not** `timeframes.seconds_of`, which
+        # takes a `BarType` and answers 0.0 for a bare name - so it ranked
+        # every interval equally and picked the first.
+        from till_infinity.utils.intervals import SECONDS
+
+        coarsest = max(intervals(), key=lambda name: SECONDS.get(name, 0.0))
         learn = tuple(
-            str(bar_type(symbol, venue, interval))
-            for interval in intervals()
-            for symbol in symbols_for(venue, interval)
+            str(bar_type(symbol, venue, coarsest)) for symbol in symbols_for(venue, coarsest)
         )
         found.append(
             SessionCalendar(
