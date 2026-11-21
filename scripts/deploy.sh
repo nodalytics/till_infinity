@@ -200,6 +200,126 @@ CORES="$(nproc)"
 CPU_LIMIT="$(awk -v c="$CORES" 'BEGIN{v=(c*90)/100; if (v<0.5) v=0.5; printf "%.2f", v}')"
 echo "host has ${CORES} core(s), giving the container ${CPU_LIMIT}"
 
+# ──── the cache, when the node is configured to use one ────
+#
+# **Started here and not in compose, because the node is not started by
+# compose either.** `docker-compose.yml` carries the same service for anyone
+# running that way, and `tis.sh` says why this script exists: the live
+# container "has no compose labels", and `deployed-compose-diverges-from-the-
+# file` records a 4GiB limit where the file said 1G. A cache added only to the
+# yml would be a no-op on the box that matters, which is the worst kind of
+# change - one that looks done.
+#
+# **Only when `TRADING_CACHE_REDIS` is set**, read from the same env file the
+# node gets, so there is one place that decides and no second switch to drift.
+# The address it names has to be reachable from inside the node's container, so
+# the port is published on the docker bridge gateway rather than on 127.0.0.1 -
+# a cache on loopback is invisible to every container on the box.
+if grep -qE '^TRADING_CACHE_REDIS=[^[:space:]]' /home/ubuntu/till.env 2>/dev/null; then
+  # **A private network and no published port.** The first cut published
+  # `172.17.0.1:6379` on the docker bridge gateway with no password, and a
+  # security review was right to refuse it: that address is reachable by every
+  # container on the box and from the host, and this keyspace is the desk's own
+  # view of its open orders and positions. Writing it is writing what the desk
+  # believes it holds - so an unauthenticated writer could make the desk carry
+  # a position that does not exist, or forget one that does. That is the
+  # stale-cache hazard `node/live._cache` documents, except adversarial.
+  #
+  # The default bridge has no automatic DNS between containers, which is the
+  # only reason a published port was tempting. A user-defined network has it,
+  # so the cache is reachable as `till-cache:6379` and listens nowhere else.
+  docker network inspect till-net >/dev/null 2>&1 || docker network create till-net
+
+  # **The password, from the env file the node already reads**, so one place
+  # decides and there is no second switch to drift. Read before the digest
+  # below, because whether a password is set is part of what the digest covers.
+  #
+  # Residual worth stating: `--requirepass` on the command line is visible to
+  # anyone with root on this host, through `docker inspect` or the process
+  # list. Redis only reads `requirepass` from a config file otherwise, and
+  # `CONFIG` is disabled here deliberately. The network is the control that
+  # does not have this weakness; this is the second layer.
+  CACHE_PASS="$(sed -n 's/^TRADING_CACHE_REDIS_PASSWORD=//p' /home/ubuntu/till.env | tail -1)"
+  if [ -z "$CACHE_PASS" ]; then
+    echo "WARNING: TRADING_CACHE_REDIS_PASSWORD is unset, so the cache takes" >&2
+    echo "         no password. It is unreachable off till-net, but set one." >&2
+  fi
+
+  # **A running cache is kept only if it is the cache this script would start.**
+  # The first version asked "is one running" and stopped there, which is a
+  # fail-open migration: a cache started by an earlier, weaker version of this
+  # script - published port, no password - would be *kept* by a fixed one, so
+  # the fix would never reach the box it was written for. A second security
+  # review caught it.
+  #
+  # Compared by a digest of the intended configuration rather than by
+  # inspecting three named fields, so a change to *any* of it forces a
+  # recreate and nobody has to remember to extend a list of checks. The digest
+  # is a label on the container, which also means the comparison never has to
+  # read the password back out of `docker inspect`.
+  #
+  # Recreating is cheap and safe: the data is in the named volume, the AOF
+  # reloads in milliseconds at this keyspace size, and the node is recreated
+  # moments later anyway - so the cache is never the only thing restarting.
+  # **The command is built once, then digested and used** - so the digest
+  # cannot describe a different container from the one that starts. The first
+  # version hand-wrote a summary string with `${CACHE_PASS:+pass}` in it, which
+  # recorded only *whether* a password was set: rotating the secret left the
+  # digest unchanged, so the old cache kept running with the old password while
+  # the node connected with the new one. A third security review caught that,
+  # and this shape makes the class of bug unreachable rather than fixing the
+  # one instance.
+  CACHE_CMD=(
+    redis-server
+    --appendonly yes
+    --save ''
+    --protected-mode yes
+    --rename-command CONFIG ''
+    --rename-command FLUSHALL ''
+    --rename-command DEBUG ''
+  )
+  [ -n "$CACHE_PASS" ] && CACHE_CMD+=(--requirepass "$CACHE_PASS")
+  # NUL-separated, so no argument's content can forge a boundary with another's.
+  # The label therefore carries a hash *of the password* as well. That is
+  # readable by anyone who can run `docker inspect` on this host - who can also
+  # read `till.env` directly, so it discloses nothing new.
+  WANT_DIGEST="$(printf '%s\0' "redis:7-alpine" "till-net" "${CACHE_CMD[@]}" \
+    | sha256sum | cut -c1-16)"
+  HAVE_DIGEST="$(docker inspect till-cache \
+    --format '{{index .Config.Labels "till.cache.config"}}' 2>/dev/null || true)"
+  if [ -n "$(docker ps -q -f name=^till-cache$)" ] && [ "$HAVE_DIGEST" = "$WANT_DIGEST" ]; then
+    echo "till-cache already running with this configuration"
+  else
+    [ -n "$(docker ps -q -f name=^till-cache$)" ] \
+      && echo "till-cache is running a different configuration; recreating"
+    echo "starting till-cache"
+    docker rm -f till-cache >/dev/null 2>&1 || true
+    # **A password as well, from the env file the node already reads.** Defence
+    # in depth: the network removes the reachability and this removes the
+    # anonymous access if anything is ever attached to that network. Absent, no
+    # password is set and the warning below says so rather than implying one.
+    # `appendonly` and no RDB: the AOF survives an unclean stop, and two
+    # persistence mechanisms on a keyspace of kilobytes is one more thing to go
+    # wrong. 128m because the keyspace is this desk's open orders and
+    # positions; a cache allowed to grow into the node's memory would trade one
+    # outage for another on a 2-core box.
+    #
+    # `CONFIG` is renamed to nothing, which disables it: a cache that can be
+    # reconfigured at runtime can be told to persist somewhere else or to drop
+    # its password, and nothing here needs it after start-up.
+    docker run -d \
+      --name till-cache \
+      --restart unless-stopped \
+      --memory 128m \
+      --network till-net \
+      --label "till.cache.config=$WANT_DIGEST" \
+      -v till-cache:/data \
+      --log-opt max-size=10m --log-opt max-file=3 \
+      redis:7-alpine "${CACHE_CMD[@]}" \
+      || echo "the cache would not start; the node falls back to memory" >&2
+  fi
+fi
+
 docker run -d \
   --name "$NAME" \
   --restart unless-stopped \
@@ -227,6 +347,17 @@ docker run -d \
     echo "ROLLBACK FAILED - there is no container. Look now." >&2
     exit 2
   }
+
+# **Both networks, and that is deliberate.** The container stays on the default
+# bridge because the MT5 tunnel binds `172.17.0.1:8000` there and
+# `--add-host=host.docker.internal:host-gateway` resolves to that gateway;
+# moving the node onto `till-net` alone would have left the terminal
+# unreachable, which is the live trading path. So it is *also* attached to
+# `till-net`, where the cache is - a second network rather than a moved one.
+if docker network inspect till-net >/dev/null 2>&1; then
+  docker network connect till-net "$NAME" >/dev/null 2>&1 \
+    || echo "could not attach $NAME to till-net; the node falls back to memory" >&2
+fi
 
 # **Running is not enough.** With `--restart unless-stopped` a container that
 # exits immediately spends most of its life in restart backoff, and

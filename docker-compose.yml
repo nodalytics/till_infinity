@@ -11,8 +11,22 @@
 # across venues: what is at risk is a question about an *account*, and a
 # process per service would hide each one's positions from the others.
 #
-# **Redis is gone, and not by omission.** Nothing under `till_infinity/` imports
-# it; Nautilus's bus is in-process. A bus nothing publishes to can only fail.
+# **Redis is back, for the cache and not for the bus.** It was removed because
+# nothing published to it - Nautilus's message bus is in-process and a bus with
+# no publisher can only fail - and that argument still holds: `till_infinity/`
+# imports no redis client and the bus stays in-process.
+#
+# The *cache* is a different consumer. It holds the orders and positions this
+# process knows about, in memory, so a restart forgets them while the broker
+# does not. On 2026-11-21 a position opened at 10:35, the container restarted at
+# 11:24, the engine re-discovered the position by reconciliation and attached it
+# to a synthetic order - so when its stop fired at 11:32 the closing fill
+# matched nothing and the position became a phantom. `RedisCacheDatabase` is
+# compiled into the Nautilus extension, so this is a service and not a
+# dependency.
+#
+# **The node does not use it unless `TRADING_CACHE_REDIS` is set**, so a compose
+# up with that unset runs exactly as before and this service is idle.
 #
 # The MT5 terminal stays a separate container because it is a Windows program
 # under Wine. `TRADING_MT5_URL` points at its bridge, or the node starts one
@@ -41,5 +55,61 @@ services:
     # `profiles:` guard: a profile is a thing somebody forgets to pass, and
     # `HALTED` is a thing the venue never sees past. See `node/live._arm`.
 
+  # **Named `cache` because that is all it is.** Not a bus, not a queue, and
+  # not a database the desk reads for anything it could not reconstruct from
+  # the broker. If it is empty the node starts as it always did.
+  cache:
+    image: redis:7-alpine
+    restart: unless-stopped
+    # **Persistence on, or this buys nothing.** `appendonly` fsyncs the log so
+    # a Redis restart does not lose what a node restart was supposed to find.
+    # `--save ""` turns the RDB snapshots off: two persistence mechanisms on one
+    # small keyspace is one more thing to go wrong, and the AOF is the one that
+    # survives an unclean stop.
+    # **No published port, and that is the security property.** A review
+    # refused the first cut, which published 6379 on the docker bridge gateway
+    # with no password: this keyspace is the desk's own view of its open orders
+    # and positions, so an unauthenticated writer could make the desk carry a
+    # position that does not exist or forget one that does. Here it is reachable
+    # only by service name on compose's own network and listens nowhere else.
+    #
+    # `CONFIG` renamed to nothing disables it - a cache that can be
+    # reconfigured at runtime can be told to drop its password or persist
+    # elsewhere, and nothing needs it after start-up.
+    command:
+      - redis-server
+      - --appendonly
+      - "yes"
+      - --save
+      - ""
+      - --protected-mode
+      - "yes"
+      - --rename-command
+      - CONFIG
+      - ""
+      - --rename-command
+      - FLUSHALL
+      - ""
+      - --rename-command
+      - DEBUG
+      - ""
+      # Empty is no password, which is safe here only because nothing outside
+      # this network can reach it. Set it in `.env` and the node reads the same
+      # value through `TRADING_CACHE_REDIS_PASSWORD`.
+      - --requirepass
+      - "${TRADING_CACHE_REDIS_PASSWORD:-}"
+    # Small on purpose. The keyspace is this desk's open orders and positions -
+    # kilobytes - and a cache allowed to grow into the node's memory would
+    # trade one outage for another on a 2-core box with 3.8GB.
+    mem_limit: 128m
+    volumes:
+      - cache:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 30s
+      timeout: 3s
+      retries: 3
+
 volumes:
   data:
+  cache:
