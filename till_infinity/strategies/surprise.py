@@ -398,15 +398,47 @@ class SurpriseProfile(Profile):
             # `uk 100` should show the refusal rate that 72% predicts. Judge it
             # on that rather than on P&L.
             #
-            # **The per-feed trigger rate is being measured and is not here
-            # yet.** `research/docs/surprise-band.md` and the `bnbusd` note
-            # above both say why that matters: admitting on cost alone is the
-            # `bnbusd` error mirrored, and a cheap round trip on a desk that
-            # never fires is a fraction of nothing. What makes these different
-            # from the synthetics is that the pooled 1.80% *did* include index
-            # feeds, so the prior is informed rather than absent - but a pooled
-            # figure is not a per-feed one and the measurement is what settles
-            # it.
+            # **The per-feed trigger rate was then measured and all six clear
+            # the band**, which is the half the `bnbusd` note above says cost
+            # alone cannot answer. M15 bars through `statespace.facade.Desk` -
+            # the production fold, not a reimplementation - at the same noise
+            # the recorded band was measured at, with the admitted majors
+            # carried as a reference arm in the same run:
+            #
+            #                    bars   trigger   q99    gap hit / base
+            #   germany 40      6,000     1.55%  3.22     0.0% / 1.1%
+            #   us tech 100    40,000     1.39%  3.23     1.4% / 1.1%
+            #   us sp 500      40,000     1.38%  3.22     1.1% / 1.1%
+            #   wall street 30 40,000     1.37%  3.22     0.5% / 1.1%
+            #   japan 225      40,000     1.29%  3.17     1.2% / 1.1%
+            #   uk 100          6,000     1.28%  3.17     1.3% / 1.1%
+            #
+            # **The reference arm reproduced the recorded band exactly** - the
+            # admitted seven read 1.08% to 1.32% against the 1.08% to 1.32% on
+            # record - so these rows are comparable to it rather than to a
+            # second measurement of a different thing.
+            #
+            # Every index fires **at or above** the majors, where the
+            # volatility indices were admitted at two thirds the rate. So the
+            # trigger is not the constraint here, and together with the cost
+            # column these are the only feeds admitted today that clear both
+            # gates on their own measurements.
+            #
+            # **The gap column is the one that had to be checked.** A cash
+            # index stops quoting overnight and the fold charges elapsed
+            # *time*, not bars: a 15-hour step accumulates `Q` for fifteen
+            # hours and then scores the opening gap against it. If the triggers
+            # were the opening bar, the desk would fire once a day at a price
+            # that has already gone. `gap hit` is the share of
+            # trigger-clearing readouts that are the first bar after a break
+            # over an hour, against `gap base`, the share of all readouts that
+            # are. **They match on all six**, one at 1.4% against 1.1% and the
+            # rest at or below base - so the triggers are not the open.
+            #
+            # `germany 40` and `uk 100` carry **6,000 bars against the others'
+            # 40,000**: three months rather than twenty. That is the operator's
+            # medium window and not the maximum, so their rates are the weakest
+            # two readings here even though both sit inside the band.
             "us tech 100",
             "wall street 30",
             "japan 225",
