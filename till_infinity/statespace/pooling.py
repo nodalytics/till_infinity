@@ -148,7 +148,7 @@ ADAPT = True
 
 
 def _factories(names: Sequence[str]) -> tuple[Callable[[], object], ...]:
-    from .family import members
+    from .filters.family import members
 
     built = members()
     return tuple(built[name] for name in names if name in built)

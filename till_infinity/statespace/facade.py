@@ -64,7 +64,7 @@ from dataclasses import dataclass, field
 from .anchored import Anchor
 from .behaving import classify, drives_q, traits_for
 from .bounding import feasible, least_horizon, shifts_for
-from .hmm import Direction
+from .filters.hmm import Direction
 from .pacing import Pace
 from .pooling import Pooled
 from .tails import coverage as _coverage

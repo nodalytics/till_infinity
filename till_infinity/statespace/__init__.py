@@ -434,17 +434,17 @@ from .dispersion import (
     tau_squared_of_means,
 )
 from .facade import Desk, Interval, Readout
-from .family import MISSING, PENDING, Filter, members
+from .filters.family import MISSING, PENDING, Filter, members
+from .filters.landau import Landau
+from .filters.linear import Gaussian
+from .filters.ornstein import Ornstein
+from .filters.reverting import Reverting
+from .filters.robust import Robust
 from .interacting import Attention, Depth, Interactions, Rate
-from .landau import Landau
-from .linear import Gaussian
-from .ornstein import Ornstein
 from .paths import Path, hourly, simulate, with_gaps
 from .pivoting import Pivot, fractal, overshoots, scaling
 from .projecting import Projection, basis_price, project
 from .rates import Slope, slope_per_bar, slope_per_hour
-from .reverting import Reverting
-from .robust import Robust
 from .signalling import BOUNDS, NEUTRAL, Layer, Signal, squash, terms_from
 from .smoothing import Smoothed, smooth
 from .spanning import Span, garman_klass, parkinson, rogers_satchell
