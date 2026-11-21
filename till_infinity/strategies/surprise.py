@@ -81,6 +81,19 @@ class SurpriseProfile(Profile):
     #: asked for, and `test_the_floor_is_not_above_the_producers_trigger`
     #: fails if the two drift apart.
     least_surprise: ClassVar[float] = TRIGGER
+    #: The top of the band, past which a reading is not traded. Infinite by
+    #: default, which is the behaviour this rule has always had.
+    #:
+    #: **A ceiling is not an arbitrary bound, and the evidence points the
+    #: unintuitive way.** `origin-returns-turn-at-z-one-three` measured returns
+    #: turning at **z 1.3 to 1.95** while **non-returners reach 2.2** - so a
+    #: larger surprise is *less* likely to come back, not more. If this rule is
+    #: a reversion rule, its edge lives at the *low* end of the band and the
+    #: big readings are the ones that keep going.
+    #:
+    #: That also says the current floor of 3.0 may be the expensive part: the
+    #: same note records that z 2.5 already misses 85-89% of returns.
+    most_surprise: ClassVar[float] = float("inf")
     #: The share of the move a round trip may cost before the idea is over.
     #:
     #: **Chosen, not measured.** `statespace/deciding.py` cited this as the
@@ -92,6 +105,24 @@ class SurpriseProfile(Profile):
     #: `statespace/deciding.py` for the per-venue measurement and for the 49
     #: trades that passed a reward-denominated test and lost -0.471R.
     cost_share: ClassVar[float] = 0.10
+    #
+    # **The denominator is the bar's own unsmoothed high-low range, and the
+    # choice is load-bearing.** Every number in the `feeds` block below is
+    # `2 * spread / (4 * range)` with `range` taken bar by bar. Re-measured on
+    # 2026-11-21 across eight definitions, that is the only one that reproduces
+    # the recorded band on all ten feeds - audcad 2.94% against a recorded
+    # 3.0%, nzdusd 8.33% against 8.6%, and so on.
+    #
+    # **A Wilder(14) ATR puts nzdusd at 90% of bars inside the gate where the
+    # bar range puts it at 62%** - so it would admit a feed this desk rejected,
+    # and the verdict on a marginal instrument is decided by the smoothing
+    # rather than by the spread. Smoothing averages the quiet bars into the
+    # loud ones, which flatters exactly the feeds whose cost problem is that
+    # their spread is wide against a *typical* bar.
+    #
+    # So a cost figure quoted here without its volatility unit is not
+    # comparable to these, and re-running this screen with a smoothed ATR
+    # would silently widen the book.
     #: Fallbacks where the proposal names neither.
     stop_vol: ClassVar[float] = 2.0
     target_r: ClassVar[float] = 2.0
@@ -245,6 +276,175 @@ class SurpriseProfile(Profile):
             "volatility 75 index",
             "volatility 100 index",
             "volatility 25 index",
+            # 2026-11-21, on the operator's call. **The only synthetic of 97
+            # screened that passes both gates on measurements rather than on
+            # interpolation**, which is the distinction the rest of this block
+            # is about.
+            #
+            #   trigger  1.23% of bars clear TRIGGER, against an admitted band
+            #            of 1.08% to 1.32% - so it fires as often as a real
+            #            major, unlike the volatility indices above at two
+            #            thirds the rate
+            #   cost     100% of bars inside the 10% gate on either spread
+            #            reading (2.54% of target on the wide route, 1.30% on
+            #            the narrow one)
+            #
+            # **The caveat is the exit, not the signal, and it is unmeasured
+            # here.** `.secrets/instruments.md` measures stop delivery over the
+            # whole journal:
+            #
+            #   Boom 500 Index        5 stops, median -1.25R, 60% past 1.1R
+            #   volatility indices    2 stops, median -1.00R,  0% past 1.1R
+            #   everything else      10 stops, median -1.04R,  0% past 1.1R
+            #
+            # "Deriv's Boom indices are constructed to move in discrete jumps -
+            # a spike roughly every 500 ticks, drift between them - so a stop
+            # can be leapfrogged rather than filled. The signal is not what is
+            # failing; the exit is." A Jump index is the same construction, so
+            # the **mechanism is certain and the magnitude is not**: no jump
+            # family has a measured overshoot. The volatility indices admitted
+            # above deliver their stops, which is why they needed none.
+            #
+            # So it ships with `TRADING_STOP_OVERSHOOT` carrying
+            # `jump_75_index=1.25` - Boom 500's number, borrowed from the
+            # nearest measured member of the same mechanism and **stated as
+            # borrowed**. It sizes the feed at 0.8 so the trade risks what it
+            # said it would, and `sizing-is-reduction-only` means the guess can
+            # only ever make the position smaller. Re-take it once this feed has
+            # twenty stops of its own, as instruments.md asks for the Boom
+            # family.
+            "jump 75 index",
+            # 2026-11-21, on the operator's call - *"add them, we are testing
+            # remember?"* - and these are **not candidates for edge**. They are
+            # this repository's own controls, admitted as a **live diagnostic
+            # suite with the expected outcome stated in advance**, which is what
+            # makes them falsifiable rather than hopeful.
+            #
+            #   `step index`       the tier-1 **null**. 86,391 of 86,393 tick
+            #                      moves are exactly 0.1 and
+            #                      `p(up) = 0.499734 +- 0.000220` over 5.18M
+            #                      flips; `deriving.md` concludes "Step Index is
+            #                      therefore closed. Not 'no edge found' -
+            #                      *there is no edge*". So the desk should lose
+            #                      the spread here and nothing else. **A profit
+            #                      on this feed is a bug in the measurement
+            #                      chain, not an edge**, which makes it the live
+            #                      equivalent of the shuffled arm and the best
+            #                      single diagnostic this desk can carry.
+            #   `range break 100`  the **level positive control** - a range by
+            #   `range break 200`  construction. A rule that reads levels should
+            #                      find something here; one that finds nothing
+            #                      is blind rather than disciplined.
+            #
+            # **The contamination objection is weaker than it looks, for these.**
+            # A synthetic's price comes from a generator, so this desk's orders
+            # cannot move it - the control's statistics are untouched by trading
+            # it. What is lost is only the claim "never traded", and the live
+            # arm is worth more than that.
+            #
+            # Both are fixed-spread (`spread_float = false`), so their cost is
+            # the reliable kind: the per-bar column, `info.spread` and the raw
+            # tick stream agree exactly, verified against an hour of ticks.
+            # `step index` is **the cheapest round trip of all 97 synthetics
+            # screened** at 1.14% of target with 100% of bars inside the 10%
+            # gate; `range break` reads 2.78% and 3.71% at 100% and 99.8%.
+            #
+            # **`drift switch` is deliberately absent and it is the one the
+            # regime work wants.** Its spread is floating, and the two broker
+            # routes disagree about it by up to 29x: Drift Switch 10 reads
+            # **19.08% of target with 0.2% of bars inside the gate** on the wide
+            # route and **1.63% with 99.5% inside** on the narrow one. At the
+            # wide end every trade loses about 0.38R to cost, which does not
+            # just lose money - it swamps the regime signal the control exists
+            # to test, so the experiment would be uninformative rather than
+            # expensive. Admit it once one real fill settles which route an
+            # order fills at.
+            "step index",
+            # **"Index" is part of the broker's name for these two** and the
+            # first version of this entry omitted it. The gate compares
+            # `sizes.feed_of`, which lowercases the broker symbol, so
+            # `"range break 100"` would have matched nothing and registered no
+            # desk - a silent no-op. Caught by asking the terminal for the
+            # symbol before adding it, which answered 404 on the short form.
+            "range break 100 index",
+            "range break 200 index",
+            # 2026-11-21, on the operator's call. **The indices were in this
+            # rule's original measurement and were never admitted**, which is
+            # the gap here: the baseline above reads "1.80% of real-market 15m
+            # bars" on *"the FX and index feeds"*, so they were measured as a
+            # pool and then left out of the allowlist for eight months.
+            #
+            # **They are also the cheapest feeds the desk can trade.** Each
+            # against its own quoted spread over 2,000 15m bars, as a share of
+            # a 2R target on a 2-vol stop, with the bar's own unsmoothed range
+            # as the denominator:
+            #
+            #   us tech 100      0.6% of target, 100% inside the 10% gate
+            #   germany 40       1.0% of target,  92% inside
+            #   wall street 30   1.1% of target, 100% inside
+            #   japan 225        1.6% of target, 100% inside
+            #   us sp 500        1.7% of target, 100% inside
+            #   uk 100           3.5% of target,  72% inside
+            #
+            # `us tech 100` at 0.6% is cheaper than **every** feed admitted
+            # above, gold included at 1.1%. Four of the six sit at 100% inside,
+            # against an admitted band of 90% (ethusd) to 100%.
+            #
+            # **`uk 100` is in at 72% deliberately, as a test arm, and it is
+            # the only one below the band.** The operator's call: *"for the uk
+            # 100, you can note is as 72% but for testing"*. It is the same
+            # shape as `xagusd` at 71%, which is held *out* - so the pair is a
+            # natural comparison, and if the cost gate is doing its job
+            # `uk 100` should show the refusal rate that 72% predicts. Judge it
+            # on that rather than on P&L.
+            #
+            # **The per-feed trigger rate was then measured and all six clear
+            # the band**, which is the half the `bnbusd` note above says cost
+            # alone cannot answer. M15 bars through `statespace.facade.Desk` -
+            # the production fold, not a reimplementation - at the same noise
+            # the recorded band was measured at, with the admitted majors
+            # carried as a reference arm in the same run:
+            #
+            #                    bars   trigger   q99    gap hit / base
+            #   germany 40      6,000     1.55%  3.22     0.0% / 1.1%
+            #   us tech 100    40,000     1.39%  3.23     1.4% / 1.1%
+            #   us sp 500      40,000     1.38%  3.22     1.1% / 1.1%
+            #   wall street 30 40,000     1.37%  3.22     0.5% / 1.1%
+            #   japan 225      40,000     1.29%  3.17     1.2% / 1.1%
+            #   uk 100          6,000     1.28%  3.17     1.3% / 1.1%
+            #
+            # **The reference arm reproduced the recorded band exactly** - the
+            # admitted seven read 1.08% to 1.32% against the 1.08% to 1.32% on
+            # record - so these rows are comparable to it rather than to a
+            # second measurement of a different thing.
+            #
+            # Every index fires **at or above** the majors, where the
+            # volatility indices were admitted at two thirds the rate. So the
+            # trigger is not the constraint here, and together with the cost
+            # column these are the only feeds admitted today that clear both
+            # gates on their own measurements.
+            #
+            # **The gap column is the one that had to be checked.** A cash
+            # index stops quoting overnight and the fold charges elapsed
+            # *time*, not bars: a 15-hour step accumulates `Q` for fifteen
+            # hours and then scores the opening gap against it. If the triggers
+            # were the opening bar, the desk would fire once a day at a price
+            # that has already gone. `gap hit` is the share of
+            # trigger-clearing readouts that are the first bar after a break
+            # over an hour, against `gap base`, the share of all readouts that
+            # are. **They match on all six**, one at 1.4% against 1.1% and the
+            # rest at or below base - so the triggers are not the open.
+            #
+            # `germany 40` and `uk 100` carry **6,000 bars against the others'
+            # 40,000**: three months rather than twenty. That is the operator's
+            # medium window and not the maximum, so their rates are the weakest
+            # two readings here even though both sit inside the band.
+            "us tech 100",
+            "wall street 30",
+            "japan 225",
+            "us sp 500",
+            "germany 40",
+            "uk 100",
         }
     )
 
@@ -271,6 +471,63 @@ class Surprise:
         if str(payload.get("shape") or "") != self.profile.shape:
             return False
         return str(payload.get("feed") or "").lower() in self._allowed()
+
+    def _band(self) -> tuple[float, float]:
+        """`(floor, ceiling)` for the surprise this rule will trade.
+
+        `TRADING_SURPRISE_MIN` and `TRADING_SURPRISE_MAX`, read per call like
+        `_allowed` and for the same reason: a sweep can move the band without a
+        restart, and a reader can see what the desk is actually using.
+
+        **The floor is clamped to what the producer emits.** `proposing`
+        publishes nothing below its own trigger, so a floor beneath that buys
+        no proposals - it only makes the gate look open. A floor *above* it is
+        the defect the `least_surprise` comment records: a band of work done
+        and thrown away, with a refusal counter reading as a quiet market. So
+        asking for 1.3 here requires `STATESPACE_TRIGGER=1.3` as well, and
+        without it this returns the producer's number and says so once.
+
+        An inverted or empty band is refused back to the defaults rather than
+        silently trading nothing: a desk that refuses everything and a desk
+        with no setups write the same report line, which is the failure
+        `venue-faults-hide-below-the-strategy` is named for.
+        """
+        import os
+
+        from ..statespace.proposing import trigger_now
+
+        def number(raw: str, fallback: float) -> float:
+            try:
+                return float(raw.strip()) if raw.strip() else fallback
+            except ValueError:
+                return fallback
+
+        emitted = trigger_now()
+        # **`os.environ.get` with the literal, not a helper taking the name.**
+        # `test_the_example_names_nothing_the_node_ignores` walks the AST for
+        # exactly this shape, so a setting read through an indirection is
+        # invisible to it - and the first version of this hid both names behind
+        # a `read(name, fallback)` and was reported as undocumented.
+        low = number(os.environ.get("TRADING_SURPRISE_MIN", ""), self.profile.least_surprise)
+        high = number(os.environ.get("TRADING_SURPRISE_MAX", ""), self.profile.most_surprise)
+        if low < emitted:
+            if not getattr(self, "_said_floor", False):
+                self.log.warning(
+                    f"{self._cfg.rule}: asked for surprise from {low:.2f} but "
+                    f"statespace publishes nothing below {emitted:.2f}, so the "
+                    f"floor is {emitted:.2f}. Set STATESPACE_TRIGGER to widen it."
+                )
+                self._said_floor = True
+            low = emitted
+        if not (high > low):
+            if not getattr(self, "_said_band", False):
+                self.log.warning(
+                    f"{self._cfg.rule}: surprise band [{low:.2f}, {high:.2f}] is "
+                    f"empty, so nothing could ever trade. Using the defaults."
+                )
+                self._said_band = True
+            return self.profile.least_surprise, self.profile.most_surprise
+        return low, high
 
     def _allowed(self) -> frozenset[str]:
         """`SURPRISE_FEEDS` if set, else the profile's measured default.
@@ -370,10 +627,22 @@ class Surprise:
             return Refusal(gate="features", detail="no features on the proposal", feed=feed)
 
         surprise = abs(_number(features.get("surprise")))
-        if surprise < self.profile.least_surprise:
+        low, high = self._band()
+        if surprise < low:
             return Refusal(
                 gate="surprise",
-                detail=f"{surprise:.2f} below {self.profile.least_surprise:.2f}",
+                detail=f"{surprise:.2f} below {low:.2f}",
+                feed=feed,
+            )
+        if surprise > high:
+            # **A separate gate name, because it is a different refusal.** One
+            # says the market was too quiet to pay for a round trip; the other
+            # says the move was too large to be the reversion this rule trades.
+            # Pooling them under `surprise` would make the tally unreadable at
+            # exactly the moment a band is being swept.
+            return Refusal(
+                gate="too-surprising",
+                detail=f"{surprise:.2f} above {high:.2f}",
                 feed=feed,
             )
 

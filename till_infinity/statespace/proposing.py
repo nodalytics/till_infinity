@@ -78,6 +78,36 @@ TOPIC = "statespace.proposals"
 #: service's standardised innovation, and the two are not the same scale.
 TRIGGER = 3.0
 
+
+def trigger_now() -> float:
+    """`STATESPACE_TRIGGER`, or `TRIGGER`. **Read per call, on purpose.**
+
+    The producer's threshold decides what is *emitted*, so it is the floor of
+    any band a consumer can see: a rule asking for 1.3 sees nothing between 1.3
+    and this number, because nothing below it was ever published. That is the
+    same asymmetry the `least_surprise` comment in `strategies/surprise.py`
+    records from the other direction, where a rule floor *above* this threw
+    away a band of work already done.
+
+    Read per call rather than at import so a sweep can move it without a
+    restart - `_allowed` in `surprise.py` takes the same approach and says why.
+
+    **Lowering it is not free.** At 3.0 this fires on about 1.2% of 15m bars.
+    A standardised innovation reaches 1.3 on roughly a fifth of them, so 1.3 is
+    something like a sixteen-fold increase in proposals, each costing its own
+    round trip - and `actor.py` already notes that 207 armed feed-intervals at
+    1m is twelve thousand readings an hour. Move it with the volume in mind.
+    """
+    import os
+
+    raw = os.environ.get("STATESPACE_TRIGGER", "").strip()
+    try:
+        asked = float(raw) if raw else TRIGGER
+    except ValueError:
+        return TRIGGER
+    return asked if asked > 0.0 else TRIGGER
+
+
 #: Reward to risk the geometry is solved for.
 TARGET_R = 2.0
 
@@ -124,7 +154,7 @@ def proposal_for(
     readout,
     bar: dict,
     *,
-    trigger: float = TRIGGER,
+    trigger: float | None = None,
     target_r: float = TARGET_R,
     stop_vol: float = STOP_VOL,
 ) -> dict[str, object] | None:
@@ -134,6 +164,10 @@ def proposal_for(
     docstring gives: the strategies build the Intent, and reusing their layer
     keeps the measured sizing and risk rather than reimplementing it.
     """
+    # `None` means "whatever the environment says now", so a caller that does
+    # not care never has to know the setting exists.
+    if trigger is None:
+        trigger = trigger_now()
     surprise = abs(float(readout.surprise))
     if surprise < trigger:
         return None
