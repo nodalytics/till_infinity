@@ -34,13 +34,13 @@ import statistics
 from pathlib import Path
 
 from till_infinity.statespace.driven import Driven
-from till_infinity.statespace.fractional import Fractional
+from till_infinity.statespace.filters.fractional import Fractional
 from till_infinity.statespace.inputs import bar_hours, coverage
-from till_infinity.statespace.linear import Gaussian
+from till_infinity.statespace.filters.linear import Gaussian
 from till_infinity.statespace.nulls import Walk, trailing
 from till_infinity.statespace.panel import Panel
-from till_infinity.statespace.reverting import Reverting
-from till_infinity.statespace.switching import Switching
+from till_infinity.statespace.filters.reverting import Reverting
+from till_infinity.statespace.filters.switching import Switching
 
 SYMBOLS = (
     ("eurusd", "EURUSD"),

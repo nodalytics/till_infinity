@@ -284,8 +284,8 @@ def ladder_against_one(series: list[float], *, seed: int) -> dict[str, float]:
     `1/(2 * WINDOW)`, which is a quantity this harness knows rather than
     guesses.
     """
-    from till_infinity.statespace.fractional import Fractional
-    from till_infinity.statespace.reverting import Reverting
+    from till_infinity.statespace.filters.fractional import Fractional
+    from till_infinity.statespace.filters.reverting import Reverting
 
     if len(series) < 400:
         return {}
@@ -528,8 +528,8 @@ def band_arm(moves: list[float], *, label: str) -> list[dict]:
     per-bar standard deviation is theirs unchanged: realised volatility is
     already a per-bar quantity by construction of `log_volatility`.
     """
-    from till_infinity.statespace.fractional import Fractional
-    from till_infinity.statespace.reverting import Reverting
+    from till_infinity.statespace.filters.fractional import Fractional
+    from till_infinity.statespace.filters.reverting import Reverting
 
     series = log_volatility(moves, WINDOW)
     if len(series) < 400:

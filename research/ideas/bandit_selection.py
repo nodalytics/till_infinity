@@ -97,7 +97,7 @@ def load(name: str):
 
 def adapting_members():
     from till_infinity.statespace.adapting import Adapting
-    from till_infinity.statespace.family import members
+    from till_infinity.statespace.filters.family import members
 
     built = members()
     return [

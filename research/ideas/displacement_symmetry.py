@@ -70,7 +70,7 @@ from pathlib import Path
 from till_infinity.statespace.displacements import relations, sequence
 from till_infinity.statespace.distance import wasserstein
 from till_infinity.statespace.nulls import control, spearman, trailing
-from till_infinity.statespace.symmetry import Symmetry, nodal_symmetry
+from till_infinity.statespace.filters.symmetry import Symmetry, nodal_symmetry
 
 #: Two of these - EURUSD and the S&P - are instruments the revision reports a
 #: correction factor for, which is what makes its numbers checkable rather
