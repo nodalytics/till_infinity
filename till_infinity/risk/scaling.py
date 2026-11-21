@@ -301,10 +301,29 @@ def overshoot_for(book: Sequence[tuple[str, float]], feed: str, side: object = N
     `boom_500_index.sell` beats `boom_500_index`, because on a jump instrument
     the two sides are not the same trade: a stop on the spike side can only be
     gapped over. See `config._overshoot`.
+
+    **A space and an underscore are the same character here, and that is a fix
+    rather than a convenience.** The feed this is asked about comes from
+    `sizes.feed_of`, which keeps the spaces in a broker's name - `boom 1000
+    index` - and whose docstring says the underscored form "is the wrong one".
+    But `DEFAULT_STOP_OVERSHOOT` was written `boom_500_index.sell`, so the
+    lookup asked for `boom 1000 index.sell`, the book held
+    `boom_1000_index.sell`, and every entry fell through to 1.0: **the whole
+    boom and crash mitigation was dead config for as long as it existed.**
+    Nothing caught it because the only test near this passes bare strings it
+    writes itself, and both spellings look right to a reader.
+
+    Folding the two forms together also means an operator can set
+    `TRADING_STOP_OVERSHOOT` in either spelling, which matters because the two
+    live side by side in this repository for the reason `feed_of` explains.
     """
-    held = dict(book)
-    name = feed.strip().lower()
-    word = str(getattr(side, "value", side) or "").strip().lower()
+
+    def canon(text: str) -> str:
+        return text.strip().lower().replace(" ", "_")
+
+    held = {canon(key): value for key, value in book}
+    name = canon(feed)
+    word = canon(str(getattr(side, "value", side) or ""))
     if word and f"{name}.{word}" in held:
         return held[f"{name}.{word}"]
     return held.get(name, 1.0)

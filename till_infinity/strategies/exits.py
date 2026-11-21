@@ -213,9 +213,22 @@ def protection_for(
     `Protection` of zeros: the first leaves the intent alone, and the second
     is a side deliberately asking for the configured defaults.
     """
-    held = dict(book)
-    name = feed.strip().lower()
-    word = str(getattr(side, "value", side) or "").strip().lower()
+
+    # **A space and an underscore are one character here**, exactly as in
+    # `scaling.overshoot_for`, and for the reason that function records: the
+    # feed arrives from `sizes.feed_of` with its spaces kept, while the
+    # underscored form is what gets written in configuration. The default book
+    # for this one is empty, so unlike the overshoot table nothing is dead
+    # today - but an operator writing `boom_1000_index.sell` here would have
+    # been ignored in silence, and the two lookups are meant to read the same
+    # vocabulary. `test_the_side_words_are_the_ones_the_rest_of_the_desk_writes`
+    # is the test that says so.
+    def canon(text: str) -> str:
+        return text.strip().lower().replace(" ", "_")
+
+    held = {canon(key): value for key, value in book}
+    name = canon(feed)
+    word = canon(str(getattr(side, "value", side) or ""))
     if word and f"{name}.{word}" in held:
         return held[f"{name}.{word}"]
     return held.get(name)
