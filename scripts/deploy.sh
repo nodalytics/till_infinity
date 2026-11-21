@@ -261,8 +261,30 @@ if grep -qE '^TRADING_CACHE_REDIS=[^[:space:]]' /home/ubuntu/till.env 2>/dev/nul
   # Recreating is cheap and safe: the data is in the named volume, the AOF
   # reloads in milliseconds at this keyspace size, and the node is recreated
   # moments later anyway - so the cache is never the only thing restarting.
-  WANT_CACHE="redis:7-alpine|till-net|appendonly|no-config|${CACHE_PASS:+pass}"
-  WANT_DIGEST="$(printf '%s' "$WANT_CACHE" | sha256sum | cut -c1-16)"
+  # **The command is built once, then digested and used** - so the digest
+  # cannot describe a different container from the one that starts. The first
+  # version hand-wrote a summary string with `${CACHE_PASS:+pass}` in it, which
+  # recorded only *whether* a password was set: rotating the secret left the
+  # digest unchanged, so the old cache kept running with the old password while
+  # the node connected with the new one. A third security review caught that,
+  # and this shape makes the class of bug unreachable rather than fixing the
+  # one instance.
+  CACHE_CMD=(
+    redis-server
+    --appendonly yes
+    --save ''
+    --protected-mode yes
+    --rename-command CONFIG ''
+    --rename-command FLUSHALL ''
+    --rename-command DEBUG ''
+  )
+  [ -n "$CACHE_PASS" ] && CACHE_CMD+=(--requirepass "$CACHE_PASS")
+  # NUL-separated, so no argument's content can forge a boundary with another's.
+  # The label therefore carries a hash *of the password* as well. That is
+  # readable by anyone who can run `docker inspect` on this host - who can also
+  # read `till.env` directly, so it discloses nothing new.
+  WANT_DIGEST="$(printf '%s\0' "redis:7-alpine" "till-net" "${CACHE_CMD[@]}" \
+    | sha256sum | cut -c1-16)"
   HAVE_DIGEST="$(docker inspect till-cache \
     --format '{{index .Config.Labels "till.cache.config"}}' 2>/dev/null || true)"
   if [ -n "$(docker ps -q -f name=^till-cache$)" ] && [ "$HAVE_DIGEST" = "$WANT_DIGEST" ]; then
@@ -293,13 +315,7 @@ if grep -qE '^TRADING_CACHE_REDIS=[^[:space:]]' /home/ubuntu/till.env 2>/dev/nul
       --label "till.cache.config=$WANT_DIGEST" \
       -v till-cache:/data \
       --log-opt max-size=10m --log-opt max-file=3 \
-      redis:7-alpine redis-server \
-        --appendonly yes --save '' \
-        --protected-mode yes \
-        --rename-command CONFIG '' \
-        --rename-command FLUSHALL '' \
-        --rename-command DEBUG '' \
-        ${CACHE_PASS:+--requirepass "$CACHE_PASS"} \
+      redis:7-alpine "${CACHE_CMD[@]}" \
       || echo "the cache would not start; the node falls back to memory" >&2
   fi
 fi

@@ -178,6 +178,38 @@ class TestItIsNotReachableOrAnonymous:
             "the unconditional keep is still there, which is the fail-open"
         )
 
+    def test_the_digest_covers_the_secret_so_a_rotation_applies(self) -> None:
+        """**The third review's finding: a rotated password must recreate it.**
+
+        The digest first read `${CACHE_PASS:+pass}`, which recorded only
+        *whether* a password was set. Rotating the secret left the digest
+        unchanged, so the old cache kept running with the old password while
+        the node connected with the new one - the cache would then refuse the
+        node, which is a worse outcome than no cache.
+
+        Fixed by building the command once and digesting that argument list, so
+        the digest cannot describe a different container from the one that
+        starts. Asserted on the mechanism rather than on the symptom: a summary
+        string can always drift from the thing it summarises, and an argument
+        list digested in place cannot.
+        """
+        from pathlib import Path
+
+        text = (Path(__file__).resolve().parents[1] / "scripts/deploy.sh").read_text()
+        assert "CACHE_CMD=(" in text, "the command is not built as one list"
+        assert '"${CACHE_CMD[@]}"' in text, "the built list is not what is passed"
+        # **Code only.** The comment above the fix quotes the old pattern to say
+        # what it did, which a whole-file search would match - and the first
+        # version of this test failed on exactly that. The explanation is worth
+        # keeping, so the assertion is narrowed instead of the prose.
+        live = [
+            line for line in text.splitlines() if line.strip() and not line.lstrip().startswith("#")
+        ]
+        assert not [line for line in live if "CACHE_PASS:+pass" in line], (
+            "the digest still records only whether a password is set, so a "
+            "rotation would not be applied"
+        )
+
     def test_a_password_reaches_the_node_and_is_redacted(self) -> None:
         """The node has to send the same secret, and it must not end up in a log.
 
