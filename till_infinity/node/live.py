@@ -24,6 +24,7 @@ from decimal import Decimal
 from typing import Any
 
 from nautilus_trader.common.actor import Actor
+from nautilus_trader.common.config import DatabaseConfig
 from nautilus_trader.config import (
     CacheConfig,
     LiveDataEngineConfig,
@@ -77,7 +78,7 @@ def settings() -> TradingNodeConfig:
             bypass=False,
             max_order_submit_rate=os.environ.get("RISK_ORDER_RATE", "10/00:00:01"),
         ),
-        cache=CacheConfig(timestamps_as_iso8601=True),
+        cache=_cache(),
         data_engine=LiveDataEngineConfig(time_bars_timestamp_on_close=True),
         # **Reconcile on start, against the broker.** The desk's own record is
         # not evidence about the account: `judge-the-desk-on-the-broker-not-
@@ -173,6 +174,66 @@ def _wanted() -> tuple[str, ...]:
     a missing factory rather than about a mismatched list.
     """
     return desks.venues()
+
+
+def _cache() -> CacheConfig:
+    """The cache, in memory unless `TRADING_CACHE_REDIS` names a Redis.
+
+    **Why persistence is worth anything here.** The engine's cache holds the
+    orders and positions this process knows about, and it is in memory - so a
+    restart forgets them while the broker does not. Measured on 2026-11-21: a
+    ZonesEdge ETHUSD position opened 10:35, the container restarted 11:24, and
+    at 11:25 the engine logged *"Missing hedge position for ETHUSD.MT5... venue
+    reports -3.32, generating reconciliation order"* and attached the position
+    to a synthetic order with a random id. When its stop fired at 11:32 the
+    closing fill arrived correctly as `5843090622-SL` and matched nothing,
+    because the real bracket had been erased. That is the phantom, and no
+    amount of correctness in the adapter can fix it from below.
+
+    Nautilus ships the backend compiled in - `RedisCacheDatabase` is in the
+    Rust extension - so this adds no Python dependency.
+
+    **Three defaults are what make it work and they are already right**, which
+    is why none of them is set here: `flush_on_start` is `False`, so a restart
+    reads what is there; `use_instance_id` is `False`, so every run shares one
+    namespace rather than each getting its own; and `persist_account_events` is
+    `True`. Had `use_instance_id` been `True` this would have persisted into a
+    new keyspace per run and quietly carried nothing.
+
+    **Off by default, and off is the behaviour this desk has always had.** The
+    variable names a host and port - `172.17.0.1:6379` is the docker bridge
+    gateway, the same address the MT5 tunnel binds, so a Redis on the host is
+    reachable from the container without touching the network.
+
+    ## The hazard persistence introduces
+
+    A cache that survives a restart can be **stale**: if the broker closes a
+    position while this process is down, Redis still holds it when the process
+    returns. The protection is that `reconciliation=True` runs at startup and
+    the venue wins, which is this desk's standing rule -
+    `judge-the-desk-on-the-broker-not-the-journal`, where a magic off by one
+    relabelled every strategy. `test_the_broker_outranks_a_persisted_cache`
+    pins that order, because a persistent cache that overrode reconciliation
+    would be strictly worse than no cache at all.
+    """
+    where = os.environ.get("TRADING_CACHE_REDIS", "").strip()
+    if not where:
+        return CacheConfig(timestamps_as_iso8601=True)
+    host, _, port = where.partition(":")
+    return CacheConfig(
+        timestamps_as_iso8601=True,
+        database=DatabaseConfig(
+            type="redis",
+            host=host or "127.0.0.1",
+            port=int(port) if port.isdigit() else 6379,
+        ),
+        # **Named rather than left to the default**, because the whole point of
+        # the setting is that these two do not drift: flushing on start would
+        # make persistence a no-op, and an instance id would give each run its
+        # own keyspace so nothing would ever be read back.
+        flush_on_start=False,
+        use_instance_id=False,
+    )
 
 
 def _env(name: str, venue: str, fallback: str | None = None) -> str | None:
