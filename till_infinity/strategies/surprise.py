@@ -360,8 +360,14 @@ class SurpriseProfile(Profile):
             # expensive. Admit it once one real fill settles which route an
             # order fills at.
             "step index",
-            "range break 100",
-            "range break 200",
+            # **"Index" is part of the broker's name for these two** and the
+            # first version of this entry omitted it. The gate compares
+            # `sizes.feed_of`, which lowercases the broker symbol, so
+            # `"range break 100"` would have matched nothing and registered no
+            # desk - a silent no-op. Caught by asking the terminal for the
+            # symbol before adding it, which answered 404 on the short form.
+            "range break 100 index",
+            "range break 200 index",
             # 2026-11-21, on the operator's call. **The indices were in this
             # rule's original measurement and were never admitted**, which is
             # the gap here: the baseline above reads "1.80% of real-market 15m
