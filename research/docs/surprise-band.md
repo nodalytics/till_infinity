@@ -93,12 +93,49 @@ silently trading nothing, because *"a desk that refuses everything and a desk
 with no setups write the same report line"* -
 `venue-faults-hide-below-the-strategy`.
 
-## The cost of the lower floor, which is the thing to watch
+## The cost of the lower floor, measured
 
-At 3.0 the trigger fires on about **1.2%** of 15m bars across the admitted
-feeds. A standardised innovation reaches 1.3 on roughly a fifth of them, so
-**1.3 is something like a sixteen-fold increase in proposals** - each costing
-its own round trip.
+**Measured 2026-11-21**, after this page first estimated it. The estimate was
+"roughly a fifth of bars, so something like a sixteen-fold increase", which was
+a Gaussian guess about a quantity whose whole point is that it is not Gaussian.
+`research/ideas/surprise_threshold_sweep.py` ran the production fold over the
+same feeds and noise as the admission measurement:
+
+| threshold | share of bars | multiple on today's flow |
+| --- | --- | --- |
+| **1.3** | **29% to 31%** | **21x to 27x** |
+| 1.95 | 8.9% to 9.6% | ~8x |
+| 2.2 | 5.2% to 5.8% | ~5x |
+| 2.5 | 2.9% to 3.5% | ~2.6x |
+| 3.0 *(today)* | 1.08% to 1.55% | 1x |
+| 3.5 | 0.47% to 0.69% | 0.4x |
+
+So the floor is the expensive decision and it is **worse than the estimate**:
+**21x to 27x**, not 16x, and 29% of bars rather than a fifth. On the volatility
+indices, whose tails are thinner, the same move is **38x to 41x**.
+
+**Two things follow that the estimate hid.**
+
+First, **the ceiling at 3.5 is very nearly a no-op.** The share landing inside
+[1.3, 3.5] is 28.1% to 29.6% against a 1.3 rate of 28.8% to 30.2%: the ceiling
+removes about **2% of what the floor admits**. A band of [1.3, 3.5] is
+therefore a floor change wearing a band's clothes. If the ceiling is meant to
+do work - and `origin-returns-turn-at-z-one-three` says non-returners reach 2.2
+- it belongs nearer **2.2**, which would cut 29% to about 23.7% and actually
+excludes the readings that study associates with not coming back.
+
+Second, **at 29% of bars the word "surprise" stops describing the thing.** A
+1-in-3.4 event is not a dislocation, it is an ordinary bar. Whatever is being
+traded at a floor of 1.3 is not the same phenomenon the rule was named for, and
+it has to earn its own measurement rather than inherit the 3.0 one's.
+
+The shape is strikingly consistent across feeds - every admitted major, every
+index and both volatility indices sit within a percentage point of each other
+at 1.3, 1.95 and 2.2 - and they separate only in the far tail. That is a
+property of the standardisation, not of the markets, and it means a band chosen
+on one feed will transfer to the others.
+
+Each of those proposals costs its own round trip.
 
 Three consequences, in the order they will be felt:
 

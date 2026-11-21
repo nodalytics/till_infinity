@@ -93,6 +93,20 @@ class SurpriseProfile(Profile):
     #:
     #: That also says the current floor of 3.0 may be the expensive part: the
     #: same note records that z 2.5 already misses 85-89% of returns.
+    #:
+    #: **Measured 2026-11-21, and a ceiling at 3.5 is nearly a no-op.** The
+    #: fold clears 1.3 on **29% to 31%** of bars and 3.5 on 0.47% to 0.69%, so
+    #: a band of [1.3, 3.5] admits 28.1% to 29.6% - the ceiling removes about
+    #: 2% of what the floor lets in. A ceiling meant to do work belongs nearer
+    #: **2.2**, where `origin-returns-turn-at-z-one-three` puts the
+    #: non-returners, and which would cut 29% to roughly 23.7%.
+    #:
+    #: The floor is the expensive end: 1.3 is **21x to 27x** today's proposal
+    #: flow on the majors and indices, and 38x to 41x on the volatility
+    #: indices. `research/docs/surprise-band.md` has the grid and the warning
+    #: that at 29% of bars this stops being a dislocation and becomes an
+    #: ordinary bar, so a floor that low has to earn its own measurement
+    #: rather than inherit the 3.0 one's.
     most_surprise: ClassVar[float] = float("inf")
     #: The share of the move a round trip may cost before the idea is over.
     #:
