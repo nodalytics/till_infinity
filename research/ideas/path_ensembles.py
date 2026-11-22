@@ -78,10 +78,10 @@ import os
 import statistics
 from pathlib import Path
 
-from till_infinity.statespace.landau import Landau
-from till_infinity.statespace.linear import Gaussian
-from till_infinity.statespace.paths import hourly, simulate
-from till_infinity.statespace.reverting import Reverting
+from till_infinity.statespace.filters.landau import Landau
+from till_infinity.statespace.filters.linear import Gaussian
+from till_infinity.statespace.evidence.paths import hourly, simulate
+from till_infinity.statespace.filters.reverting import Reverting
 
 HOUR = 3600.0
 SEED = 20261012

@@ -212,7 +212,7 @@ def shifts_for(feed: str) -> tuple[float, float]:
     not been measured, and a symmetric correction is the honest default for a
     process whose asymmetry is unknown.
     """
-    from .behaving import classify
+    from ..observables.behaving import classify
 
     return SHIFTS.get(classify(feed), (SHIFT, SHIFT))
 
@@ -224,7 +224,7 @@ TRADED_CLASSES = frozenset({"fx_major", "fx_cross", "metal"})
 
 def classify_feed(feed: str) -> str:
     """`behaving.classify`, imported late for the same reason `shifts_for` does."""
-    from .behaving import classify
+    from ..observables.behaving import classify
 
     return classify(feed)
 

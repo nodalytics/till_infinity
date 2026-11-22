@@ -382,7 +382,7 @@ def fit_em(
     """
     import math as _math
 
-    from .smoothing import smooth
+    from ..dynamics.smoothing import smooth
 
     size = 0
     current_jerk, current_noise = float(jerk), float(noise)
@@ -670,7 +670,7 @@ def shape_cost(
     import math as _math
     import statistics
 
-    from .smoothing import smooth
+    from ..dynamics.smoothing import smooth
 
     got = smooth(
         lambda j=float(jerk), n=float(noise): build(j, n),

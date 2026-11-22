@@ -57,13 +57,13 @@ import random
 import statistics
 from pathlib import Path
 
-from till_infinity.statespace.displacements import (
+from till_infinity.statespace.observables.displacements import (
     PEAK,
     nodes,
     steps,
     structure,
 )
-from till_infinity.statespace.nulls import control, spearman, trailing
+from till_infinity.statespace.evidence.nulls import control, spearman, trailing
 
 HOUR = 3600.0
 

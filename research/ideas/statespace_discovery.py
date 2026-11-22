@@ -46,9 +46,10 @@ from pathlib import Path
 ROOT = Path(__file__).resolve().parents[2]
 sys.path.insert(0, str(ROOT))
 
-from till_infinity.statespace import searching, shaping, transitions  # noqa: E402
+from till_infinity.statespace.evidence import searching  # noqa: E402
+from till_infinity.statespace.observables import shaping, transitions  # noqa: E402
 from till_infinity.statespace.actor import READINGS, detector_reader  # noqa: E402
-from till_infinity.statespace.nulls import garch  # noqa: E402
+from till_infinity.statespace.evidence.nulls import garch  # noqa: E402
 
 PRICES = ROOT / ".data" / "prices" / "prices.db"
 BINANCE = ROOT / ".data" / "binance2023"
@@ -88,21 +89,23 @@ def from_prices(feed: str, interval: str, bars: int) -> list[tuple[float, float,
 def from_binance(symbol: str, bars: int) -> list[tuple[float, float, float, float]]:
     with (BINANCE / f"{symbol}.15m.csv").open() as handle:
         rows = list(csv.DictReader(handle))[-bars:]
-    return [
-        (float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])) for r in rows
-    ]
+    return [(float(r["open"]), float(r["high"]), float(r["low"]), float(r["close"])) for r in rows]
 
 
 def _sigma(candles: list[tuple[float, float, float, float]]) -> tuple[float, float]:
     """`(start price, per-bar log-return sd)` of a real series, for matching."""
     closes = [c[3] for c in candles]
-    steps = [math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes)) if closes[i - 1] > 0]
+    steps = [
+        math.log(closes[i] / closes[i - 1]) for i in range(1, len(closes)) if closes[i - 1] > 0
+    ]
     mean = sum(steps) / len(steps)
     var = sum((s - mean) ** 2 for s in steps) / len(steps)
     return closes[0], math.sqrt(max(var, 1e-18))
 
 
-def _wrap(closes: list[float], rng: random.Random, wick: float) -> list[tuple[float, float, float, float]]:
+def _wrap(
+    closes: list[float], rng: random.Random, wick: float
+) -> list[tuple[float, float, float, float]]:
     """Hang plausible bars on a close path. `wick` is the range in sigmas."""
     out = []
     for i, close in enumerate(closes):
@@ -232,8 +235,10 @@ def shapes_pass() -> None:
     pool = searching.run(cands, walk_like(base, 21), battery, **scoring) + searching.run(
         cands, garch_like(base, 31), battery, **scoring
     )
-    print(f"placebo pool: {len(pool)} trials on a matched walk and a matched GARCH "
-          f"({time.time() - started:.0f}s)")
+    print(
+        f"placebo pool: {len(pool)} trials on a matched walk and a matched GARCH "
+        f"({time.time() - started:.0f}s)"
+    )
 
     for name, candles in (
         ("eurusd 1h", base),
@@ -270,7 +275,9 @@ def shapes_pass() -> None:
         trials=searching.run(across, base, battery, **scoring),
         placebo=searching.run(across, walk_like(base, 21), battery, **scoring),
     )
-    _report(f"the named cells at reach 2, 3 and 5 on eurusd 1h ({len(across)} trials)", got, started)
+    _report(
+        f"the named cells at reach 2, 3 and 5 on eurusd 1h ({len(across)} trials)", got, started
+    )
 
 
 def words_pass() -> None:
@@ -409,9 +416,7 @@ def transitions_pass() -> None:
     ):
         readings = {}
         for name, candles in series:
-            readings[name] = _one_transition(
-                f"{title} on {name}", label, alphabet, candles, draws
-            )
+            readings[name] = _one_transition(f"{title} on {name}", label, alphabet, candles, draws)
         _placebo_gate(title, readings)
 
 

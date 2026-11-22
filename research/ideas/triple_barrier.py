@@ -67,7 +67,7 @@ import random
 import statistics
 from pathlib import Path
 
-from till_infinity.statespace.seasonal import Profile
+from till_infinity.statespace.filters.seasonal import Profile
 from till_infinity.strategies.barriers import duration, shift_for, slowdown
 
 HOUR = 3600.0

@@ -46,8 +46,8 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from .config import Settings
+from .dynamics.spanning import DEFAULT, garman_klass, parkinson, rogers_satchell
 from .facade import Desk, Readout
-from .spanning import DEFAULT, garman_klass, parkinson, rogers_satchell
 from .state import Progress
 from .store import load as _load
 from .store import save as _save

@@ -148,7 +148,7 @@ ADAPT = True
 
 
 def _factories(names: Sequence[str]) -> tuple[Callable[[], object], ...]:
-    from .family import members
+    from ..filters.family import members
 
     built = members()
     return tuple(built[name] for name in names if name in built)
@@ -218,7 +218,7 @@ class Pooled:
                     "used directly."
                 )
             if self.adapt:
-                from .adapting import MOST, Adapting
+                from ..dynamics.adapting import MOST, Adapting
 
                 self._pool = [
                     Adapting(
@@ -363,6 +363,6 @@ class Pooled:
         limitation, and why `statespace-conformal-band.md` remains the
         calibrated forecast and this one the sharp one.
         """
-        from .distance import _normal_quantile
+        from ..evidence.distance import _normal_quantile
 
         return [(level, self.value + self.sd * _normal_quantile(level)) for level in levels]

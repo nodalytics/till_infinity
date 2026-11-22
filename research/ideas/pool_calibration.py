@@ -79,12 +79,12 @@ for q in (HERE, HERE.parent, HERE.parents[1]):
 
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
-from till_infinity.statespace.diagnostics import crps  # noqa: E402
+from till_infinity.statespace.evidence.diagnostics import crps  # noqa: E402
 from till_infinity.statespace.engine import dispersion  # noqa: E402
 from till_infinity.statespace.facade import Desk  # noqa: E402
-from till_infinity.statespace.adapting import MOST, Adapting  # noqa: E402
-from till_infinity.statespace.pacing import Pace  # noqa: E402
-from till_infinity.statespace.pooling import DEFAULT, LEVERS, Pooled, _factories  # noqa: E402
+from till_infinity.statespace.dynamics.adapting import MOST, Adapting  # noqa: E402
+from till_infinity.statespace.dynamics.pacing import Pace  # noqa: E402
+from till_infinity.statespace.composition.pooling import DEFAULT, LEVERS, Pooled, _factories  # noqa: E402
 
 RULES = ("shrinking", "mixture", "argmax")
 NOISES = (0.265, 0.670)

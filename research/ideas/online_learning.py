@@ -54,10 +54,10 @@ import random
 import statistics
 from pathlib import Path
 
-from till_infinity.statespace.adapting import Adapting
-from till_infinity.statespace.driven import Driven
-from till_infinity.statespace.linear import Gaussian
-from till_infinity.statespace.seasonal import Profile
+from till_infinity.statespace.dynamics.adapting import Adapting
+from till_infinity.statespace.dynamics.driven import Driven
+from till_infinity.statespace.filters.linear import Gaussian
+from till_infinity.statespace.filters.seasonal import Profile
 
 HOUR = 3600.0
 SEED = 20261012

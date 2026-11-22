@@ -89,10 +89,10 @@ for q in (HERE, HERE.parent, HERE.parents[1]):
 
 from pattern_fingerprint import CACHE, classify, load  # noqa: E402
 
-from till_infinity.statespace.diagonal import Diagonal  # noqa: E402
+from till_infinity.statespace.filters.diagonal import Diagonal  # noqa: E402
 from till_infinity.statespace.facade import Desk  # noqa: E402
-from till_infinity.statespace.pooling import Pooled  # noqa: E402
-from till_infinity.statespace.subjects import DISPERSION  # noqa: E402
+from till_infinity.statespace.composition.pooling import Pooled  # noqa: E402
+from till_infinity.statespace.composition.subjects import DISPERSION  # noqa: E402
 
 FRAMES = ("1h", "4h")
 #: Real classes, then the generated one that fixes its own sigma - the control

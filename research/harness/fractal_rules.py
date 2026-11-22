@@ -79,7 +79,7 @@ from pathlib import Path
 import numpy as np
 
 from research.harness import fractalest
-from till_infinity.statespace import nulls
+from till_infinity.statespace.evidence import nulls
 
 SEQLAB = Path(os.environ.get("SEQLAB", ".data/seqlab"))
 SYN = Path(os.environ.get("SYN", ".data/syn"))

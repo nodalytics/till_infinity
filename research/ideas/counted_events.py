@@ -37,8 +37,8 @@ import os
 import statistics
 from pathlib import Path
 
-from till_infinity.statespace.inputs import Features, bar_hours, coverage
-from till_infinity.statespace.nulls import control, spearman, trailing
+from till_infinity.statespace.dynamics.inputs import Features, bar_hours, coverage
+from till_infinity.statespace.evidence.nulls import control, spearman, trailing
 
 SYMBOLS = (
     ("eurusd", "EURUSD"),

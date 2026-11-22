@@ -47,8 +47,8 @@ import os
 import statistics
 from pathlib import Path
 
-from till_infinity.statespace.driven import Driven
-from till_infinity.statespace.seasonal import Profile, Seasonal
+from till_infinity.statespace.dynamics.driven import Driven
+from till_infinity.statespace.filters.seasonal import Profile, Seasonal
 
 HOUR = 3600.0
 TAU = 2.0 * math.pi

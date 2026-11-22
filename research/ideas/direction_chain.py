@@ -47,7 +47,7 @@ import random
 import statistics
 from pathlib import Path
 
-from till_infinity.statespace.hmm import Direction, coin, fit, up_share
+from till_infinity.statespace.filters.hmm import Direction, coin, fit, up_share
 
 HOUR = 3600.0
 

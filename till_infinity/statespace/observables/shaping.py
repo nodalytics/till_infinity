@@ -71,7 +71,7 @@ from till_infinity.indicators.candles import engulfing, hammer, shooting_star
 from till_infinity.indicators.levels import DEFAULT_CONFIRM, points, structure, turns
 from till_infinity.indicators.trend import FIT_PIVOTS, REACH, Pivot, fit_line, pivots
 
-from .searching import Candidate
+from ..evidence.searching import Candidate
 
 #: Bars of history a shape is looked for over. 120 at 1h is five days, which
 #: is long enough for three pivots a side at `REACH` 3 and short enough that

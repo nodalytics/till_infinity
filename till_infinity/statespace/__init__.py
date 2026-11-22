@@ -419,11 +419,15 @@ asserts it rather than trusting it.
 
 from __future__ import annotations
 
-from .adapting import Adapting
-from .bounding import binding, feasible, least_horizon, slack, solve
-from .depths import AR1, Skill, Turn, Turns, depths, score
-from .diagnostics import Residuals, fit_jerk, residuals
-from .dispersion import (
+from .composition.subjects import INSTRUMENT, LEVEL, RELATION, SUBJECTS, Subject
+from .dynamics.adapting import Adapting
+from .dynamics.bounding import binding, feasible, least_horizon, slack, solve
+from .dynamics.rates import Slope, slope_per_bar, slope_per_hour
+from .dynamics.smoothing import Smoothed, smooth
+from .dynamics.spanning import Span, garman_klass, parkinson, rogers_satchell
+from .dynamics.tails import DOF, LEAST_DOF, coverage, dof_for, reach
+from .evidence.diagnostics import Residuals, fit_jerk, residuals
+from .evidence.dispersion import (
     borrow_weight,
     borrow_weight_of_means,
     differ,
@@ -433,23 +437,19 @@ from .dispersion import (
     tau_squared,
     tau_squared_of_means,
 )
+from .evidence.paths import Path, hourly, simulate, with_gaps
 from .facade import Desk, Interval, Readout
-from .family import MISSING, PENDING, Filter, members
-from .interacting import Attention, Depth, Interactions, Rate
-from .landau import Landau
-from .linear import Gaussian
-from .ornstein import Ornstein
-from .paths import Path, hourly, simulate, with_gaps
-from .pivoting import Pivot, fractal, overshoots, scaling
+from .filters.family import MISSING, PENDING, Filter, members
+from .filters.landau import Landau
+from .filters.linear import Gaussian
+from .filters.ornstein import Ornstein
+from .filters.reverting import Reverting
+from .filters.robust import Robust
+from .observables.depths import AR1, Skill, Turn, Turns, depths, score
+from .observables.interacting import Attention, Depth, Interactions, Rate
+from .observables.pivoting import Pivot, fractal, overshoots, scaling
 from .projecting import Projection, basis_price, project
-from .rates import Slope, slope_per_bar, slope_per_hour
-from .reverting import Reverting
-from .robust import Robust
 from .signalling import BOUNDS, NEUTRAL, Layer, Signal, squash, terms_from
-from .smoothing import Smoothed, smooth
-from .spanning import Span, garman_klass, parkinson, rogers_satchell
-from .subjects import INSTRUMENT, LEVEL, RELATION, SUBJECTS, Subject
-from .tails import DOF, LEAST_DOF, coverage, dof_for, reach
 
 __all__ = [
     "AR1",

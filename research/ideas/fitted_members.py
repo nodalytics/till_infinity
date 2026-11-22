@@ -42,14 +42,14 @@ import math
 import os
 from pathlib import Path
 
-from till_infinity.statespace.diagnostics import fit_jerk
-from till_infinity.statespace.fractional import Fractional
-from till_infinity.statespace.inputs import bar_hours
-from till_infinity.statespace.linear import Gaussian
-from till_infinity.statespace.nulls import Walk
-from till_infinity.statespace.oscillator import Oscillator
-from till_infinity.statespace.reverting import Reverting
-from till_infinity.statespace.switching import Switching
+from till_infinity.statespace.evidence.diagnostics import fit_jerk
+from till_infinity.statespace.filters.fractional import Fractional
+from till_infinity.statespace.dynamics.inputs import bar_hours
+from till_infinity.statespace.filters.linear import Gaussian
+from till_infinity.statespace.evidence.nulls import Walk
+from till_infinity.statespace.filters.oscillator import Oscillator
+from till_infinity.statespace.filters.reverting import Reverting
+from till_infinity.statespace.filters.switching import Switching
 
 SYMBOLS = (
     ("eurusd", "EURUSD"),

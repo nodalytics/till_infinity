@@ -52,7 +52,8 @@ from nautilus_trader.model.data import Bar, BarType
 
 from till_infinity.utils import topics
 
-from . import cohort, noticing
+from .composition import cohort
+from .observables import noticing
 
 #: How long a bar's aggregation unit lasts, in seconds.
 #:

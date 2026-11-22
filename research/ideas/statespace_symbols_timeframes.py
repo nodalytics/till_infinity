@@ -74,11 +74,11 @@ import statistics
 from collections import Counter
 from pathlib import Path
 
-from till_infinity.statespace.diagnostics import residuals
-from till_infinity.statespace.linear import Gaussian
-from till_infinity.statespace.reverting import Reverting
-from till_infinity.statespace.selective import Selective
-from till_infinity.statespace.swarm import Swarm
+from till_infinity.statespace.evidence.diagnostics import residuals
+from till_infinity.statespace.filters.linear import Gaussian
+from till_infinity.statespace.filters.reverting import Reverting
+from till_infinity.statespace.filters.selective import Selective
+from till_infinity.statespace.filters.swarm import Swarm
 
 #: The four symbols, and where each timeframe lives. `seqlab` carries 3m, 15m,
 #: 1h, 4h and 1d for all four; 30m exists only as a `fine` CSV. There is no 5m

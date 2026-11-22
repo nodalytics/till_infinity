@@ -114,7 +114,7 @@ class Subject:
         neither, rather than being handed a parameter that means nothing to
         it - which is why this inspects rather than assumes.
         """
-        from .family import composable
+        from ..filters.family import composable
 
         built = composable()[self.member]
         try:

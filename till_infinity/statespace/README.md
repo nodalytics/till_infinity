@@ -56,6 +56,32 @@ beaten a named null on held-out data.** `nulls.py` is where the nulls live.
 | **[`statespace-reading.md`](../../research/docs/statespace-reading.md)** | every reference read and what it gave: S4 to Mamba-3, HiPPO, LMU, BOCPD, FOCuS, Cboe, candlestick liquidity, order flow, kinetic modelling |
 | **[`race-calibration.md`](../../research/docs/race-calibration.md)** | `projecting.py` against the broker: it lands on the barrier identity at 33.3% where geometry requires 33.3%, and its gap to realisation measures drift |
 
+## The folders
+
+61 modules in one directory had no answer to "which layer is this?", so the
+internals sit in five folders and each folder's `__init__.py` is its catalogue
+- what belongs there, what does not, and why.
+
+| folder | | what it holds |
+| --- | --- | --- |
+| **the front door** | 10 | `actor`, `engine`, `facade`, `config`, `state`, `store`, `proposing`, `deciding`, `signalling`, `projecting`. Left at the top level deliberately: this is what a caller touches and what a reader opens first |
+| **[`filters/`](filters/__init__.py)** | 16 | the family - the alternative models, one per file. The spine is `family.members()`, so a member here is a candidate **measured against the others on the same data** |
+| **[`dynamics/`](dynamics/__init__.py)** | 12 | the mechanics every member shares: `Q`, the input channel, time, the band, the smoother |
+| **[`evidence/`](evidence/__init__.py)** | 7 | how a member is shown to be wrong: residual diagnostics, nulls, forward facts, recovery from generated data, the sweep |
+| **[`observables/`](observables/__init__.py)** | 9 | what is read off a market before any model is asked - pivots, displacements, ranges, what a level did |
+| **[`composition/`](composition/__init__.py)** | 6 | more than one of something: many members, many instruments, many subjects |
+
+**The split that matters is `filters/` against `dynamics/` and `evidence/`.**
+A member is only a candidate in a contest if the things around it are held
+constant, so a member that carried its own idea of where `Q` comes from would
+turn a comparison between two members into a comparison of two changes at once.
+And a member cannot grade itself, which is why the instruments that break it
+live somewhere else.
+
+**The folders are an internal arrangement, not part of the public name.**
+`__init__.py` still decides the package's public surface and no folder
+re-exports anything, so there is one list to keep in step rather than six.
+
 ## The rings of the package
 
 | ring | modules | status |
@@ -68,6 +94,12 @@ beaten a named null on held-out data.** `nulls.py` is where the nulls live.
 | **the subject** | `subjects.py` | names the quantity being modelled before any filter touches it |
 | **the members** | `reverting.py`, `linear.py`, `robust.py`, `diagonal.py`, `hmm.py`, `selective.py`, `swarm.py`, `landau.py`, `adapting.py` and the rest | alternatives on the bench, scored in `statespace-measured.md` |
 | **the instruments** | `diagnostics.py`, `nulls.py`, `symmetry.py`, `spanning.py`, `dispersion.py` | how a member is shown to be wrong |
+
+**The rings name a module the way a reader says it** - `reverting.py`, not
+`filters/reverting.py` - because a ring is about what runs when, and the folder
+is about what kind of thing it is. The two cut across each other on purpose:
+`pooling.py` is on the `read` path and lives in `composition/`, while most of
+`filters/` is not on it at all.
 
 **Only the third ring runs on a `read`.** The members are reachable from tests
 and research harnesses and from nowhere else, which is the phasing the spec

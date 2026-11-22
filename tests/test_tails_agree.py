@@ -24,7 +24,7 @@ from __future__ import annotations
 import pytest
 
 from till_infinity.domain import tails as mine
-from till_infinity.statespace import tails as theirs
+from till_infinity.statespace.dynamics import tails as theirs
 
 #: The measured range plus the ends of what a caller might ask for.
 COVERAGES = [0.50, 0.80, 0.90, 0.95, 0.99, 0.999]
