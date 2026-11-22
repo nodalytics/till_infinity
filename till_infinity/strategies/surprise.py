@@ -345,10 +345,11 @@ class SurpriseProfile(Profile):
             #                      chain, not an edge**, which makes it the live
             #                      equivalent of the shuffled arm and the best
             #                      single diagnostic this desk can carry.
-            #   `range break 100`  the **level positive control** - a range by
-            #   `range break 200`  construction. A rule that reads levels should
-            #                      find something here; one that finds nothing
-            #                      is blind rather than disciplined.
+            #   `range break 100`  **withdrawn 2026-11-22**, see the note
+            #   `range break 200`  below the `step index` entry. It was the
+            #                      level positive control - a range by
+            #                      construction - and that construction is
+            #                      exactly why this rule cannot hold it.
             #
             # **The contamination objection is weaker than it looks, for these.**
             # A synthetic's price comes from a generator, so this desk's orders
@@ -374,14 +375,34 @@ class SurpriseProfile(Profile):
             # expensive. Admit it once one real fill settles which route an
             # order fills at.
             "step index",
-            # **"Index" is part of the broker's name for these two** and the
-            # first version of this entry omitted it. The gate compares
-            # `sizes.feed_of`, which lowercases the broker symbol, so
-            # `"range break 100"` would have matched nothing and registered no
-            # desk - a silent no-op. Caught by asking the terminal for the
-            # symbol before adding it, which answered 404 on the short form.
-            "range break 100 index",
-            "range break 200 index",
+            # **`range break 100 index` and `range break 200 index` were here
+            # for one day and are withdrawn, 2026-11-22, on the operator's
+            # call: *"it enters after the impulse move"*.** That is not a
+            # threshold to tune, it is what this rule does on this generator.
+            #
+            # Range Break ranges and then breaks, once per range. This rule
+            # fires on a bar whose move exceeds the band's floor in sigma, and
+            # on that generator **the only bar that qualifies is the break
+            # itself** - so the entry is always after the impulse, never before
+            # it. Raising `TRADING_SURPRISE_MIN` makes it fire less often and
+            # *later*, which is the wrong direction; the ceiling
+            # (`TRADING_SURPRISE_MAX`, the `too-surprising` gate) is the only
+            # knob that refuses an already-extended bar, and it is global - one
+            # band for all 35 feeds - so it cannot be aimed at one of them.
+            #
+            # The live arm said the same thing in a day. On 2026-11-22 the
+            # entire open book was six Range Break positions and three BTCUSD,
+            # and Range Break outnumbered every other feed in the log by three
+            # to one. The control did its job - it told us where the rule's
+            # entry sits relative to the move - and the answer retires the arm
+            # rather than the question. `research/docs/surprise-band.md` holds
+            # the trace.
+            #
+            # If it is ever re-admitted: **"Index" is part of the broker's name
+            # for these two** and the first version of this entry omitted it.
+            # The gate compares `sizes.feed_of`, which lowercases the broker
+            # symbol, so `"range break 100"` matches nothing and registers no
+            # desk - a silent no-op. The terminal answers 404 on the short form.
             # 2026-11-21, on the operator's call. **The indices were in this
             # rule's original measurement and were never admitted**, which is
             # the gap here: the baseline above reads "1.80% of real-market 15m
