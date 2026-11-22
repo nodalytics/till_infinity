@@ -178,9 +178,66 @@ the 350 to 800 a win rate needs.
 | --- | --- |
 | code | **merged, defaults unchanged** |
 | live | **not enabled** - `STATESPACE_TRIGGER`, `TRADING_SURPRISE_MIN` and `TRADING_SURPRISE_MAX` are all unset |
-| measured | **nothing** |
+| measured | the **rate** grid above; no realised R yet |
 
 So the desk is still trading the 3.0 floor with no ceiling. Turning the band on
 is a decision about proposal volume as much as about edge, and this page exists
 so that whoever reads the result later knows what the setting was and why it was
 tried.
+
+## 2026-11-22: the live arm answered two questions in a day
+
+Neither answer came from the grid above. Both came from the arm admitted on the
+21st, which is the argument for running controls live.
+
+### One signal, three clocks, three positions
+
+`TRADING_INTERVALS` was `5m,15m,1h,4h`, with `statespace-surprise` scoped to
+15m, 1h and 4h. The intent was three timeframes; what the desk actually did was
+**take the same trade three times**, because `statespace` publishes one
+proposal per feed and every clock's desk consumes it:
+
+```
+00:30:17.949  Range Break 200 Index_E270_1h-1  BUY 2.34 @ 73727.5
+00:30:18.033  Range Break 200 Index_E270-1     BUY 2.34 @ 73729.5
+00:30:18.048  Range Break 200 Index_E270_4h-1  BUY 2.34 @ 73728.5
+```
+
+Same feed, same side, **100 milliseconds apart**, and each fill a point worse
+than the last. The same shape at 06:15 on Range Break 100 (three sells) and at
+08:46 on BTCUSD (three buys). At 08:44 the **entire** open book was nine
+positions holding three ideas.
+
+So the multi-clock deploy was not three timeframes of evidence, it was **3x
+leverage on one signal plus three spreads**, with the slippage ordered by
+arrival. `a-shorter-clock-multiplies-cost-in-r` prices the clock; this is the
+other half - a clock that adds no information still adds a round trip.
+
+**Fixed by returning to `TRADING_INTERVALS=5m,15m`** (15m statespace, 5m zones),
+on the operator's call: *"it sees the same thing regardless of timeframes and it
+is make it enter the same position 3 times except we use the multiple timeframe
+as confluence."* The confluence reading is the open design question and it is a
+different rule: one entry, conditioned on agreement across spans, rather than
+one entry per span. Nothing here measures it.
+
+### Range Break enters after the impulse, by construction
+
+Withdrawn the day after admission, on the operator's observation: *"it enters
+after the impulse move."*
+
+It is not a threshold to tune. Range Break ranges and then breaks, once per
+range; this rule fires on a bar exceeding the floor in sigma; **on that
+generator the only bar that qualifies is the break itself.** The entry is
+therefore always after the move, never before it - and raising the floor makes
+it fire less often and *later*, which is the wrong direction. The ceiling is the
+only knob that refuses an already-extended bar, and per the grid above a
+ceiling that does real work sits near **2.2** - but the band is global, one
+setting for all 35 feeds, so it cannot be aimed at one of them.
+
+The arm still paid for itself. It was admitted as the **level positive control**
+with the expected outcome stated in advance - *"a rule that reads levels should
+find something here"* - and what it found instead was where this rule's entry
+sits relative to the move. That retires the arm, not the question. `step index`
+stays: the tier-1 null is a measurement check, not a level claim, and nothing
+about today touches it.
+
