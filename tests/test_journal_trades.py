@@ -78,7 +78,7 @@ class Pitcher(Actor):
             {
                 "feed": "eurusd",
                 "shape": "statespace",
-                "interval": "5m",
+                "interval": "1h",
                 "direction": self.config.direction,
                 "features": {
                     "surprise": self.config.surprise,

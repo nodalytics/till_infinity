@@ -22,6 +22,7 @@ from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
 from till_infinity.domain.models import Intent, Refusal, Side
+from till_infinity.node.desks import SPECS
 from till_infinity.statespace.proposing import TRIGGER
 from till_infinity.strategies.entries import (
     ArrivalEntry,
@@ -279,6 +280,164 @@ def test_a_proposal_about_this_desks_own_feed_is_still_placed():
     assert len(sent) == 1, f"the desk's own feed was blocked: {strategy.passed_over}"
     assert strategy.taken == 1
     engine.dispose()
+
+
+def _clock_run(bar_spec: str, payload: dict) -> tuple[list[object], EdgeEntry]:
+    """Drive `payload` through `on_data` on a desk whose clock is `bar_spec`.
+
+    Through `on_data` and with a quote and equity in place, so an acceptance is
+    an order that reached `submit_order_list` and not merely a missing count.
+    """
+    bar_type = BarType.from_str(f"{EURUSD.id}-{bar_spec}-LAST-EXTERNAL")
+    engine, strategy = engine_with(config(bar_type=bar_type), build=_Deciding)
+    engine.trader.start()
+    strategy.cache.add_quote_tick(quote(1.09995, 1.10005))
+    strategy._equity = lambda: 1_000_000.0
+    sent: list[object] = []
+    strategy.submit_order_list = sent.append
+    strategy.on_data(payload)
+    engine.dispose()
+    return sent, strategy
+
+
+def test_a_proposal_for_another_clock_places_nothing():
+    """On 2026-11-22 one desk per interval over `15m,1h,4h` each accepted every
+    clock's proposal, so a single signal was entered three times, 100ms apart,
+    each fill a point worse (about -768 of the day's -1,152 was the
+    duplication itself)."""
+    sent, strategy = _clock_run("15-MINUTE", {"feed": "eurusd", "interval": "1h"})
+    assert sent == [], "a 1h proposal was traded by a 15m desk"
+    assert strategy.passed_over == {"(desk):other-clock": 1}
+    assert strategy.refused == 0, "another clock's proposal was never ours to decline"
+    assert strategy.taken == 0
+
+
+def test_a_proposal_for_this_desks_clock_is_placed():
+    sent, strategy = _clock_run("1-HOUR", {"feed": "eurusd", "interval": "1h"})
+    assert len(sent) == 1, f"the desk's own clock was blocked: {strategy.passed_over}"
+    assert strategy.taken == 1
+
+
+def test_the_production_payload_reaches_decide_on_its_own_clock():
+    """**The positive control that matters.** Hand-written dicts on both sides
+    only prove the two spellings agree with each other. This stamps the
+    interval the way production does - `statespace.actor._interval` over the
+    bar type, carried by `proposal_for` - which tabulates `1-HOUR` as `1h`. If
+    the desk and the actor disagreed on a spelling every desk would refuse
+    every proposal and nothing in the log would look unusual."""
+    import math
+    from types import SimpleNamespace
+
+    from till_infinity.statespace.actor import _interval
+    from till_infinity.statespace.proposing import proposal_for
+
+    readout = SimpleNamespace(
+        feed="eurusd",
+        interval=_interval(BAR_TYPE),
+        at=1_700_000_000.0,
+        value=2.0 * math.log(1e-4),
+        spread=0.05,
+        surprise=4.0,
+        stretch=0.3,
+        covering=lambda coverage: SimpleNamespace(
+            low=-1.0, high=1.0, coverage=0.9, source="anchored"
+        ),
+        barrier=lambda probability, horizon: {"probability": 0.42},
+    )
+    payload = proposal_for(
+        readout, {"open": 1.1000, "close": 1.1010, "high": 1.1012, "low": 1.0999}, trigger=0.0
+    )
+    assert payload is not None
+    assert payload["interval"] == "1h"
+
+    sent, strategy = _clock_run("1-HOUR", payload)
+    assert len(sent) == 1, f"a production payload was refused: {strategy.passed_over}"
+    assert "(desk):other-clock" not in strategy.passed_over
+
+
+def test_a_proposal_with_no_interval_is_accepted():
+    sent, strategy = _clock_run("1-HOUR", {"feed": "eurusd"})
+    assert len(sent) == 1, strategy.passed_over
+    sent, strategy = _clock_run("1-HOUR", {"feed": "eurusd", "interval": ""})
+    assert len(sent) == 1, strategy.passed_over
+
+
+def test_a_desk_on_an_activity_clock_accepts_any_interval(monkeypatch):
+    """A tick clock has no length, so nothing can be said to differ.
+
+    `Frames` refuses to build a desk on a tick bar, so the activity clock is
+    reached by making `seconds_of` report zero, which is what it returns for
+    one - the branch is what is under test, not the construction."""
+    from till_infinity.strategies import desk
+
+    real = desk.seconds_of
+    sent: list[object] = []
+    bar_type = BarType.from_str(f"{EURUSD.id}-1-HOUR-LAST-EXTERNAL")
+    engine, strategy = engine_with(config(bar_type=bar_type), build=_Deciding)
+    engine.trader.start()
+    strategy.cache.add_quote_tick(quote(1.09995, 1.10005))
+    strategy._equity = lambda: 1_000_000.0
+    strategy.submit_order_list = sent.append
+    monkeypatch.setattr(desk, "seconds_of", lambda bt: 0.0 if bt is bar_type else real(bt))
+    strategy.on_data({"feed": "eurusd", "interval": "15m"})
+    engine.dispose()
+    assert len(sent) == 1, strategy.passed_over
+
+
+def test_an_unrecognised_interval_name_is_accepted():
+    """`500tick` is not in `SECONDS`; unknown is not a mismatch."""
+    sent, strategy = _clock_run("1-HOUR", {"feed": "eurusd", "interval": "500tick"})
+    assert len(sent) == 1, strategy.passed_over
+
+
+def test_a_daily_proposal_is_accepted_under_either_spelling():
+    """`SECONDS` holds `1d` and `daily` at the same 86400.0. A name comparison
+    would refuse every daily proposal; comparing seconds does not."""
+    for name in ("1d", "daily"):
+        sent, strategy = _clock_run("1-DAY", {"feed": "eurusd", "interval": name})
+        assert len(sent) == 1, f"{name}: {strategy.passed_over}"
+    sent, strategy = _clock_run("1-HOUR", {"feed": "eurusd", "interval": "daily"})
+    assert sent == []
+    assert strategy.passed_over == {"(desk):other-clock": 1}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(
+            name,
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=ValueError,
+                reason=(
+                    "pre-existing: `SPECS` has 3m but `actor.INTERVALS` has no "
+                    "3-MINUTE, so `_interval` raises and the statespace actor "
+                    "can never stamp it. Out of scope here; it fails safe, "
+                    "since no proposal is ever stamped `3m`."
+                ),
+            ),
+        )
+        if name == "3m"
+        else name
+        for name in SPECS
+    ],
+)
+def test_every_deployable_interval_round_trips_to_the_same_clock(name):
+    """The chain a deploy relies on, for every name it can configure:
+    `spec_for(name)` -> bar type -> `actor._interval` -> `SECONDS` must land on
+    the same number as `seconds_of` of that bar type. A name that fails to look
+    up falls to "unknown" and is accepted; **a name that looks up to a
+    different known number makes every desk on that clock refuse every
+    proposal**, silently. Checked for all of them and not only `1h`."""
+    from till_infinity.node.desks import spec_for
+    from till_infinity.statespace.actor import _interval
+    from till_infinity.strategies.timeframes import seconds_of
+    from till_infinity.utils.intervals import SECONDS
+
+    bar_type = BarType.from_str(f"{EURUSD.id}-{spec_for(name)}-LAST-EXTERNAL")
+    stamped = _interval(bar_type)
+    assert stamped == name
+    assert SECONDS[stamped] == seconds_of(bar_type)
 
 
 def test_the_tally_names_its_own_feed():
