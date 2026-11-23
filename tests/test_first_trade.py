@@ -93,7 +93,7 @@ class Pitcher(Actor):
             {
                 "feed": "eurusd",
                 "shape": "statespace",
-                "interval": "5m",
+                "interval": "1h",
                 # The bar's own body, which is where the sign comes from - see
                 # `statespace/proposing.py` on why it cannot come from the
                 # variance fold.

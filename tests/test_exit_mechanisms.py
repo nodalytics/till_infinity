@@ -127,7 +127,7 @@ class Pitcher(Actor):
             {
                 "feed": "eurusd",
                 "shape": "statespace",
-                "interval": "5m",
+                "interval": "1h",
                 "direction": self.config.direction,
                 "features": {
                     "surprise": self.config.surprise,
@@ -335,6 +335,9 @@ def test_what_the_node_builds_puts_a_proposal_through_to_the_venue(monkeypatch):
     monkeypatch.setenv("TRADING_SYMBOLS", "EUR/USD,")
     monkeypatch.setenv("TRADING_ENTRIES", "edge")
     monkeypatch.setenv("TRADING_STRATEGIES", "statespace-surprise")
+    # The Pitcher addresses its proposal to 1h; a desk on any other clock
+    # correctly declines it as `(desk):other-clock`.
+    monkeypatch.setenv("TRADING_INTERVALS", "1h")
 
     built, dropped = desks.build_all()
     assert len(built) == 1, f"the node built {len(built)} desks, dropped {dropped}"

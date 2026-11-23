@@ -275,6 +275,18 @@ class Desk(NautilusStrategy):
             return ""
         return next((name for name, secs in SECONDS.items() if secs == span), "")
 
+    def _other_clock(self, payload: dict[str, Any]) -> bool:
+        """Whether `payload` is addressed to a different clock than this desk's.
+
+        True only when both lengths are known and differ. See `consider`.
+        """
+        from ..utils.intervals import SECONDS
+
+        named = str(payload.get("interval") or "")
+        theirs = SECONDS.get(named, 0.0)
+        mine = seconds_of(self._cfg.bar_type)
+        return theirs > 0.0 and mine > 0.0 and theirs != mine
+
     def _say_clock(self) -> None:
         """Say so when this desk trades a clock its rule was not measured on.
 
@@ -544,6 +556,34 @@ class Desk(NautilusStrategy):
         feed = str(payload.get("feed") or "")
         if feed != self._feed_name():
             self._count("(desk):other-feed")
+            return None
+
+        # ──── the clock, beside the feed and for the same reasons ────
+        #
+        # **A proposal is addressed to one clock as well as one feed.**
+        # `statespace/proposing.proposal_for` stamps the interval it was read
+        # on and `Surprise` copies it into the `Intent`, where `by_interval`
+        # sizes on it and `SECONDS` converts the hold. None of the rules'
+        # `wants` looked at it, so on 2026-11-22 one desk per interval over
+        # `15m,1h,4h` each took every clock's proposal: one signal entered
+        # three times in 100ms, each fill a point worse, about -768 of that
+        # day's -1,152 being the duplication itself.
+        #
+        # Here rather than in `wants` for the same reason as the feed: `place`
+        # can only trade this desk's clock, so a payload for another clock is
+        # a category error for every rule, and a rule that forgot the check
+        # would reintroduce it. `None` rather than a `Refusal` because it was
+        # never this desk's to decline.
+        #
+        # **Compared in seconds, never by name.** `SECONDS` holds both `1d` and
+        # `daily` at 86400.0, so a name comparison would refuse every daily
+        # proposal. **And only a definite mismatch refuses**: an absent or
+        # unrecognised interval (`500tick` is not in `SECONDS`), or a desk
+        # whose own clock is not a time clock, is accepted. A false refusal
+        # stops the desk trading with nothing unusual in the log; a false
+        # acceptance only restores the behaviour before this check.
+        if self._other_clock(payload):
+            self._count("(desk):other-clock")
             return None
 
         if not self.wants(payload):
