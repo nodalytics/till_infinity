@@ -241,3 +241,40 @@ sits relative to the move. That retires the arm, not the question. `step index`
 stays: the tier-1 null is a measurement check, not a level claim, and nothing
 about today touches it.
 
+#### What it cost, from the broker's own deals
+
+**Read 2026-11-23 from `/history/deals`, not from the journal.** The structural
+argument above was made before any P&L was in hand; this is what the arm
+actually cost in the day it ran.
+
+| feed | round trips | net |
+| --- | --- | --- |
+| Range Break 100 Index | 3 | **-815.49** |
+| Range Break 200 Index | 3 | **-336.96** |
+| *everything else, 11-20 to 11-23* | 44 | -98.94 |
+
+**-1,152.45 of a -1,251.39 total: 92% of three days' loss, on 12 deals.** The
+six Range Break round trips are five of the six worst on the book over that
+window.
+
+Two things that number is **not**. It is not a measurement of the rule on this
+feed - six round trips decide nothing, and the withdrawal rests on the
+construction argument above rather than on this. And it is not all
+attributable to the feed: these were taken while the desk ran one desk per
+interval, so **each signal was entered three times**.
+
+| signal | entered | closed | the three legs | total |
+| --- | --- | --- | --- | --- |
+| RB200 long | 00:30 | 00:41 | -109.98, -112.32, -114.66 | -336.96 |
+| RB100 short | 06:15 | 08:14 | -274.38, -271.83, -269.28 | -815.49 |
+
+One entry per signal would have cost about **-384**. The duplication added
+roughly **-768** on two ideas, which is the separate finding recorded in
+[[statespace-is-one-clock]] and fixed by returning `TRADING_INTERVALS` to
+`5m,15m`.
+
+**None of this reached the journal.** It holds nine `opened` entries for these
+positions and **zero** outcomes, because the desk was not running when they
+closed, so every report built on `report.trades` is blind to the worst day on
+the book. That is the gap `journal/recovering.py` exists to close.
+
