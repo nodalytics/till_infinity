@@ -45,6 +45,7 @@ from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
 from till_infinity.domain.models import Intent, Side
+from till_infinity.statespace.actor import _interval
 from till_infinity.strategies import leaves
 from till_infinity.strategies.entries import (
     ArrivalEntry,
@@ -98,6 +99,7 @@ class PitchConfig(ActorConfig, frozen=True):
     surprise: float = 4.2
     direction: int = 1
     after: int = WARM
+    interval: str = "1h"
 
 
 class Pitcher(Actor):
@@ -127,7 +129,7 @@ class Pitcher(Actor):
             {
                 "feed": "eurusd",
                 "shape": "statespace",
-                "interval": "1h",
+                "interval": self.config.interval,
                 "direction": self.config.direction,
                 "features": {
                     "surprise": self.config.surprise,
@@ -346,7 +348,15 @@ def test_what_the_node_builds_puts_a_proposal_through_to_the_venue(monkeypatch):
     engine = engine_for()
     engine.add_data(quotes())
     engine.add_strategy(strategy)
-    pitcher = Pitcher(PitchConfig(instrument_id=EURUSD.id))
+    pitcher = Pitcher(
+        PitchConfig(
+            instrument_id=EURUSD.id,
+            # Stamped the way the producer does, from the built desk's own
+            # bar type, so a node-versus-producer divergence in what a clock
+            # is called fails here instead of reading as a quiet desk.
+            interval=_interval(strategy._cfg.bar_type),
+        )
+    )
     engine.add_actor(pitcher)
     engine.run()
 

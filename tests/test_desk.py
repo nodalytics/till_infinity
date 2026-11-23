@@ -22,6 +22,7 @@ from nautilus_trader.model.objects import Money, Price, Quantity
 from nautilus_trader.test_kit.providers import TestInstrumentProvider
 
 from till_infinity.domain.models import Intent, Refusal, Side
+from till_infinity.node.desks import SPECS
 from till_infinity.statespace.proposing import TRIGGER
 from till_infinity.strategies.entries import (
     ArrivalEntry,
@@ -398,6 +399,45 @@ def test_a_daily_proposal_is_accepted_under_either_spelling():
     sent, strategy = _clock_run("1-HOUR", {"feed": "eurusd", "interval": "daily"})
     assert sent == []
     assert strategy.passed_over == {"(desk):other-clock": 1}
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        pytest.param(
+            name,
+            marks=pytest.mark.xfail(
+                strict=True,
+                raises=ValueError,
+                reason=(
+                    "pre-existing: `SPECS` has 3m but `actor.INTERVALS` has no "
+                    "3-MINUTE, so `_interval` raises and the statespace actor "
+                    "can never stamp it. Out of scope here; it fails safe, "
+                    "since no proposal is ever stamped `3m`."
+                ),
+            ),
+        )
+        if name == "3m"
+        else name
+        for name in SPECS
+    ],
+)
+def test_every_deployable_interval_round_trips_to_the_same_clock(name):
+    """The chain a deploy relies on, for every name it can configure:
+    `spec_for(name)` -> bar type -> `actor._interval` -> `SECONDS` must land on
+    the same number as `seconds_of` of that bar type. A name that fails to look
+    up falls to "unknown" and is accepted; **a name that looks up to a
+    different known number makes every desk on that clock refuse every
+    proposal**, silently. Checked for all of them and not only `1h`."""
+    from till_infinity.node.desks import spec_for
+    from till_infinity.statespace.actor import _interval
+    from till_infinity.strategies.timeframes import seconds_of
+    from till_infinity.utils.intervals import SECONDS
+
+    bar_type = BarType.from_str(f"{EURUSD.id}-{spec_for(name)}-LAST-EXTERNAL")
+    stamped = _interval(bar_type)
+    assert stamped == name
+    assert SECONDS[stamped] == seconds_of(bar_type)
 
 
 def test_the_tally_names_its_own_feed():
